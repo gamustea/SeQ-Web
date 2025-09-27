@@ -1,0 +1,11 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug proyecto",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}"
+        }
+    ]
+}

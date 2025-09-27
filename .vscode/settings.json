@@ -1,0 +1,10 @@
+{
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.languageServer": "Pylance",
+    "editor.formatOnSave": true,
+    "editor.tabSize": 4,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.venv": true
+    }
+}
