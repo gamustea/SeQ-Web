@@ -1,12 +1,15 @@
 
 import nmap
+import subprocess
+import json
 
+from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 
 
 
-class Task(ABC):
+class _Task(ABC):
     """
     Clase base abstracta para tareas de escaneo de puertos.
     Proporciona una interfaz común para diferentes tipos de tareas de escaneo.
@@ -16,10 +19,10 @@ class Task(ABC):
         results (dict): Los resultados del escaneo de puertos
     """
 
-    def __init__(self, target_host: str="localhost"):
+    def __init__(self, target):
         self.progress = 0
         self.results: Any = None
-        self.target_host: str = target_host
+        self.target: str = target
 
 
     @abstractmethod
@@ -35,7 +38,7 @@ class Task(ABC):
         return self.results
 
 
-class NmapScanTask(Task):
+class NmapScanTask(_Task):
     """
     Escáner de puertos que usa la biblioteca nmap para escanear puertos en un objetivo dado.
     Proporciona métodos para iniciar un escaneo y obtener los resultados del escaneo.
@@ -63,6 +66,49 @@ class NmapScanTask(Task):
         Los resultados del escaneo se almacenan en el atributo 'results'.
         """
         self.results = self.scanner.scan(
-            self.target_host, 
+            self.target,
             self.target_ports
         )
+
+
+class NiktoScanTask(_Task):
+    """
+    Escáner de vulnerabilidades web que usa la herramienta Nikto para escanear un objetivo web.
+    Proporciona métodos para iniciar un escaneo y obtener los resultados del escaneo.
+    Attributes:
+    -----------------------------------------------------------------------------------------
+        target (str): La URL del objetivo web a escanear
+    """
+
+
+    def __init__(self, target_domain: str="http://localhost"):
+        """
+        Inicializa el escáner de vulnerabilidades web Nikto con el objetivo web.
+        Args:
+            target_host (str): La URL del objetivo web a escanear
+        """
+        super().__init__(target_domain)
+        self.out_path = "temp/nikto_output.json"
+
+
+    def scan(self) -> None:
+        """
+        Ejecuta nikto contra `target` y guarda salida en JSON en out_path.
+        Devuelve dict con el JSON (o None si error).
+        """
+        out_file = Path(self.out_path).resolve()
+        cmd = ["nikto", "-h", self.target, "-o", str(out_file), "-Format", "json", "-nointeractive"]
+
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            print("nikto falló:", proc.returncode)
+            print("stderr:", proc.stderr)
+            return
+
+        # leer JSON generado (Nikto crea el fichero -Format json)
+        try:
+            with open(out_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.results = data
+        except Exception as e:
+            print("No se pudo leer/parsear el fichero de salida:", e)
