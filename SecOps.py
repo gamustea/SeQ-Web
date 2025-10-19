@@ -1,6 +1,9 @@
 
-from src.portscanner import SelfPortScanner
+import time
+from src.tasks import NmapScanTask
 
-
-scanner = SelfPortScanner("127.0.0.1")
-print(scanner.wide_scan())
+if __name__ == "__main__":
+    task = NmapScanTask();
+    task.scan()
+    print(task.get_task_results())
+    pass
