@@ -1,8 +1,8 @@
 
-from src.tasks import NmapScanTask
+from src.tasks import NmapScanTask, NiktoScanTask
 
 if __name__ == "__main__":
-    task = NmapScanTask()
+    task = NiktoScanTask()
     task.scan()
     print(task.get_task_results())
     pass

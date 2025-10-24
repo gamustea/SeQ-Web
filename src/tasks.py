@@ -2,6 +2,7 @@
 import nmap
 import subprocess
 import json
+import xmltodict
 
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -81,14 +82,14 @@ class NiktoScanTask(_Task):
     """
 
 
-    def __init__(self, target_domain: str="http://localhost"):
+    def __init__(self, target_domain: str="http://testphp.vulnweb.com"):
         """
         Inicializa el escáner de vulnerabilidades web Nikto con el objetivo web.
         Args:
             target_host (str): La URL del objetivo web a escanear
         """
         super().__init__(target_domain)
-        self.out_path = "temp/nikto_output.json"
+        self.out_path = "temp/nikto_output.xml"
 
 
     def scan(self) -> None:
@@ -97,7 +98,7 @@ class NiktoScanTask(_Task):
         Devuelve dict con el JSON (o None si error).
         """
         out_file = Path(self.out_path).resolve()
-        cmd = ["nikto", "-h", self.target, "-o", str(out_file), "-Format", "json", "-nointeractive"]
+        cmd = ["nikto", "-h", self.target, "-o", str(out_file), "-Format", "xml", "-nointeractive"]
 
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
@@ -107,8 +108,10 @@ class NiktoScanTask(_Task):
 
         # leer JSON generado (Nikto crea el fichero -Format json)
         try:
-            with open(out_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self.results = data
+            with open(out_file, "r") as f:
+                file_content = f.read()
+
+            xml_dict = xmltodict.parse(file_content)   
+            self.results = json.loads(json.dumps(xml_dict))
         except Exception as e:
             print("No se pudo leer/parsear el fichero de salida:", e)
