@@ -26,5 +26,3 @@ build/
 # Archivos de sistema
 .DS_Store
 Thumbs.db
-
-.gitignore
