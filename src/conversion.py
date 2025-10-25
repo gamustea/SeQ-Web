@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 
-class Conversion:
+class JSONManager:
     @staticmethod
-    def convert_multi_niktoscan_xml_to_json(xml_path: str, json_path: str) -> Optional[List[Dict[str, Any]]]:
+    def convert_multi_niktoscan_xml_to_json(xml_path: str) -> Optional[List[Dict[str, Any]]]:
         xml_file = Path(xml_path)
 
         if not xml_file.is_file():

@@ -1,8 +1,12 @@
 
+import json
+
 from src.tasks import NmapScanTask, NiktoScanTask
 
 
+
 if __name__ == "__main__":
-    task = NiktoScanTask()
+    task = NmapScanTask(target_host="192.168.1.1")
     task.scan()
-    print(task.get_task_results())
+    with open("archivo.json", "w") as archivo_json:
+        json.dump(task.get_task_results(), archivo_json, indent=4)

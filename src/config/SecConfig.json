@@ -1,0 +1,14 @@
+{
+    "directories": {
+        "tempdir": "/var/tmp/secapp",
+        "logdir": "/var/log/secapp",
+        "resultdir": "/var/secapp/results"
+    },
+    "dbconfig": {
+        "username": "gabriel",
+        "password": "dhu·&/(·YHUDSAddas3oynhdsaliuodh23qde1879he2189ce121",
+        "dbname": "secops",
+        "host": "localhost",
+        "port": 3306
+    }
+}

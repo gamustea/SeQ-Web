@@ -4,7 +4,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from src.conversion import Conversion
+from src.conversion import JSONManager
 
 
 class _Task(ABC):
@@ -31,16 +31,22 @@ class _Task(ABC):
 class NmapScanTask(_Task):
     """
     Escáner usando la librería nmap para escanear puertos.
+    Escaneo rápido y detallado con límite de tiempo para obtener una cantidad significativa de datos sin tardar demasiado.
     """
 
-    def __init__(self, target_host: str = "127.0.0.1", target_ports: str = "1-1024"):
+    def __init__(self, target_host: str = "127.0.0.1", target_ports: str = "1-6000", timeout: int = 10):
         super().__init__(target_host)
         self.target_ports = target_ports
+        self.timeout = timeout
         self.scanner = nmap.PortScanner()
 
     def scan(self) -> None:
         try:
-            self.results = self.scanner.scan(self.target, self.target_ports)
+            self.results = self.scanner.scan(
+                self.target,
+                self.target_ports,
+                arguments=f'--host-timeout {self.timeout}s'
+            )
         except nmap.PortScannerError as e:
             print(f"Error Nmap: {e}")
         except Exception as e:
@@ -80,9 +86,9 @@ class NiktoScanTask(_Task):
             return
 
         try:
-            self.results = Conversion.convert_multi_niktoscan_xml_to_json(
-                str(self.out_path), 
-                str(self.out_dir / (str(self.target) + "_nikto_output.json"))
+            self.results = JSONManager.convert_multi_niktoscan_xml_to_json(
+                str(self.out_path)
             )
+
         except Exception as e:
             print(f"No se pudo leer/parsear el fichero XML de Nikto: {e}")
