@@ -12,6 +12,7 @@ src/__pycache__/
 *$py.class
 
 # Archivos de logs
+log/*.log
 *.log
 
 # Archivos de entorno

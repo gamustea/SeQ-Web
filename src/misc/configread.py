@@ -22,3 +22,20 @@ class ConfigReader:
         database = configs["dbconfig"]["dbname"]
 
         return (usermane, password, host, database)
+
+    def get_directory_of(self, path) -> str:
+        """
+        Obtiene la ruta del directorio especificado en el archivo de configuración.
+        Los directorios disponibles son:
+            - tempdir: directorio temporal
+            - logdir: directorio de logs
+            - resultdir: directorio de resultados
+        """
+
+        configs = self.read_configs()
+        directories = configs["directories"]
+
+        if path not in directories:
+            raise ValueError(f"Directorio '{path}' no encontrado en la configuración.")
+
+        return directories[path]

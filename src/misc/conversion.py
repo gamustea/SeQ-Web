@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 class JSONManager:
+    
     @staticmethod
     def convert_multi_niktoscan_xml_to_json(xml_path: str) -> Optional[List[Dict[str, Any]]]:
         xml_file = Path(xml_path)
