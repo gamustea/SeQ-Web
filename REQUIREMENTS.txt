@@ -1,0 +1,2 @@
+nmap
+mysql-connector-python

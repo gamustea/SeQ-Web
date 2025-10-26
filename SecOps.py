@@ -1,12 +1,13 @@
 
 import json
 
-from src.tasks import NmapScanTask, NiktoScanTask
+from src.scanning.tasks import NmapScanTask, NiktoScanTask
+from src.misc.configread import ConfigReader
+from src.persistence.dbmanaging import DBManager
 
 
 
 if __name__ == "__main__":
-    task = NmapScanTask(target_host="192.168.1.1")
-    task.scan()
-    with open("archivo.json", "w") as archivo_json:
-        json.dump(task.get_task_results(), archivo_json, indent=4)
+    reader = ConfigReader()
+    db_credentials = reader.get_db_crendetials()
+    print("Database Credentials:", db_credentials)

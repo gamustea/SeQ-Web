@@ -4,7 +4,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from src.conversion import JSONManager
+from misc.conversion import JSONManager
 
 
 class _Task(ABC):
