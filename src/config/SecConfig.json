@@ -7,8 +7,8 @@
     "dbconfig": {
         "username": "gabriel",
         "password": "dhu·&/(·YHUDSAddas3oynhdsaliuodh23qde1879he2189ce121",
-        "dbname": "secops",
-        "host": "localhost",
+        "dbname": "SecOps",
+        "host": "127.0.0.1",
         "port": 3306
     }
 }

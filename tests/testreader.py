@@ -1,11 +1,11 @@
 import sys
 import os
 
-import unittest
+from unittest import TestCase
 from src.misc.configread import ConfigReader
 
 
-class TestReader(unittest.TestCase):
+class TestReader(TestCase):
 
     def test_get_directory_of_valid_path(self):
         config_reader = ConfigReader()
