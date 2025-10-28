@@ -25,6 +25,11 @@ class _Task(ABC):
     def scan(self) -> None:
         pass
 
+    @abstractmethod
+    def get_status(self) -> int:
+        pass
+        
+
     def get_task_results(self) -> Optional[Any]:
         """
         Obtiene los resultados del escaneo.
@@ -43,6 +48,10 @@ class NmapScanTask(_Task):
         self.target_ports = target_ports
         self.timeout = timeout
         self.scanner = nmap.PortScanner()
+
+
+    def get_status(self) -> int:
+        return 0
 
 
     def scan(self) -> None:
@@ -79,6 +88,8 @@ class NiktoScanTask(_Task):
 
         self.out_path = self.out_dir / "nikto_output.xml"
 
+    def get_status(self) -> int:
+        return 0
 
     def scan(self) -> None:
         """Ejecuta Nikto y procesa los resultados en formato XML."""

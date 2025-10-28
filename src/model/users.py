@@ -1,6 +1,7 @@
 
 from datetime import date
 
+
 class Person():
 
     def __init__(self, id: int, name: str, surname: str, email: str, date_created: date):
@@ -12,7 +13,6 @@ class Person():
 
     def __str__(self) -> str:
         return f"{self.name} {self.surname} <{self.email}> (Created on: {self.date_created})"
-
 
 
 class User():
