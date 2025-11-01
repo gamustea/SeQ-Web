@@ -1,90 +1,91 @@
+
+DROP DATABASE IF EXISTS SecOps;
+CREATE DATABASE IF NOT EXISTS SecOps;
+
+USE SecOps;
+
 CREATE TABLE `Persona` (
-  `id` integer PRIMARY KEY,
-  `nombre` varchar(255) NOT NULL,
-  `apellido` varhcar NOT NULL,
-  `fechaAlta` datetime NOT NULL
+  `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
+  `nombre` VARCHAR(64) NOT NULL,
+  `apellido` VARCHAR(64) NOT NULL,
+  `email` varchar(128) NOT NULL,
+  `fechaAlta` DATETIME NOT NULL
 );
 
 CREATE TABLE `Usuario` (
-  `id` integer PRIMARY KEY,
-  `username` varchar(255) NOT NULL,
-  `password` varchar(255) NOT NULL,
-  `idPersona` integer NOT NULL
+  `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
+  `username` VARCHAR(64) NOT NULL UNIQUE,
+  `password` VARCHAR(128) NOT NULL,
+  `idPersona` INTEGER NOT NULL,
+  FOREIGN KEY (`idPersona`) REFERENCES `Persona` (`id`)
 );
 
 CREATE TABLE `Escaneo` (
-  `id` integer PRIMARY KEY,
-  `objetivo` varchar(255) NOT NULL,
-  `fechaInicio` datetime NOT NULL,
-  `idUsuario` integer NOT NULL
+  `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
+  `objetivo` VARCHAR(255) NOT NULL,
+  `fechaInicio` DATETIME NOT NULL,
+  `idUsuario` INTEGER NOT NULL,
+  FOREIGN KEY (`idUsuario`) REFERENCES `Usuario` (`id`)
 );
 
 CREATE TABLE `EscaneoTerminado` (
-  `id` integer PRIMARY KEY,
-  `fechaFin` datetime NOT NULL
+  `id` INTEGER PRIMARY KEY,
+  `fechaFin` DATETIME NOT NULL,
+  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
 );
 
 CREATE TABLE `EscaneoNmap` (
-  `id` integer PRIMARY KEY
-);
-
-CREATE TABLE `PuertoObjetivo` (
-  `idPuerto` integer,
-  `idEscaneo` integer,
-  PRIMARY KEY (`idPuerto`, `idEscaneo`)
-);
-
-CREATE TABLE `PuertoAbierto` (
-  `idPuerto` integer,
-  `idEscaneo` integer,
-  `motivo` varchar(255) NOT NULL,
-  PRIMARY KEY (`idPuerto`, `idEscaneo`)
+  `id` INTEGER PRIMARY KEY,
+  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
 );
 
 CREATE TABLE `Puerto` (
-  `id` integer PRIMARY KEY,
-  `protocolo` varchar(255) UNIQUE NOT NULL
+  `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
+  `protocolo` VARCHAR(255) UNIQUE NOT NULL
 );
+
+
+CREATE TABLE `PuertoObjetivo` (
+  `idPuerto` INTEGER,
+  `idEscaneo` INTEGER,
+  PRIMARY KEY (`idPuerto`, `idEscaneo`),
+  FOREIGN KEY (`idPuerto`) REFERENCES `Puerto` (`id`),
+  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNmap` (`id`)
+);
+
+
+CREATE TABLE `PuertoAbierto` (
+  `idPuerto` INTEGER,
+  `idEscaneo` INTEGER,
+  `motivo` VARCHAR(255) NOT NULL,
+  PRIMARY KEY (`idPuerto`, `idEscaneo`),
+  FOREIGN KEY (`idPuerto`) REFERENCES `Puerto` (`id`),
+  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNmap` (`id`)
+);
+
 
 CREATE TABLE `EscaneoNikto` (
-  `id` integer PRIMARY KEY
+  `id` INTEGER PRIMARY KEY,
+  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
 );
 
-CREATE TABLE `IncidenciaEscaneo` (
-  `idEscaneo` integer,
-  `idIncidencia` integer,
-  PRIMARY KEY (`idEscaneo`, `idIncidencia`)
-);
 
 CREATE TABLE `IncidenciaNikto` (
-  `id` integer PRIMARY KEY,
-  `idEscaneo` integer NOT NULL
+  `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
+  `idEscaneo` INTEGER NOT NULL,
+  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNikto` (`id`)
+);
+
+
+CREATE TABLE `IncidenciaEscaneo` (
+  `idEscaneo` INTEGER,
+  `idIncidencia` INTEGER,
+  PRIMARY KEY (`idEscaneo`, `idIncidencia`),
+  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNikto` (`id`),
+  FOREIGN KEY (`idIncidencia`) REFERENCES `IncidenciaNikto` (`id`)
 );
 
 CREATE TABLE `EscaneoOpenVAS` (
-  `id` integer PRIMARY KEY
+  `id` INTEGER PRIMARY KEY,
+  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
 );
-
-ALTER TABLE `Usuario` ADD FOREIGN KEY (`idPersona`) REFERENCES `Persona` (`id`);
-
-ALTER TABLE `Escaneo` ADD FOREIGN KEY (`idUsuario`) REFERENCES `Persona` (`id`);
-
-ALTER TABLE `EscaneoTerminado` ADD FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`);
-
-ALTER TABLE `EscaneoNmap` ADD FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`);
-
-ALTER TABLE `PuertoObjetivo` ADD FOREIGN KEY (`idPuerto`) REFERENCES `Puerto` (`id`);
-
-ALTER TABLE `PuertoObjetivo` ADD FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNmap` (`id`);
-
-ALTER TABLE `PuertoAbierto` ADD FOREIGN KEY (`idPuerto`) REFERENCES `Puerto` (`id`);
-
-ALTER TABLE `PuertoAbierto` ADD FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNmap` (`id`);
-
-ALTER TABLE `EscaneoNikto` ADD FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`);
-
-ALTER TABLE `IncidenciaEscaneo` ADD FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNikto` (`id`);
-
-ALTER TABLE `IncidenciaEscaneo` ADD FOREIGN KEY (`idIncidencia`) REFERENCES `IncidenciaNikto` (`id`);
-
-ALTER TABLE `EscaneoOpenVAS` ADD FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`);

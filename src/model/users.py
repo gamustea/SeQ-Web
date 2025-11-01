@@ -1,10 +1,10 @@
 
-from datetime import date
+from datetime import datetime
 
 
 class Person():
 
-    def __init__(self, id: int, name: str, surname: str, email: str, date_created: date):
+    def __init__(self, id: int = 0, name: str = "", surname: str = "", email: str = "", date_created: datetime = datetime.today()):
         self.id = id
         self.name = name
         self.surname = surname
