@@ -7,6 +7,7 @@ from typing import Any, Optional
 from src.misc.configread import ConfigReader
 from src.misc.conversion import JSONManager
 from src.misc.logging import SecOpsLogger
+from src.misc.directorychecker import DirectoryChecker
 
 
 class _Task(ABC):
@@ -80,16 +81,13 @@ class NiktoScanTask(_Task):
 
     def __init__(self, target_domain: str = "http://testphp.vulnweb.com"):
         super().__init__(target_domain)
-        
-        path = self.config_reader.get_directory_of("tempdir")
 
-        self.out_dir = Path(path).resolve()
-        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_path = DirectoryChecker().verify_directory("tempdir") / "nikto_scan.xml"
 
-        self.out_path = self.out_dir / "nikto_output.xml"
 
     def get_status(self) -> int:
         return 0
+
 
     def scan(self) -> None:
         """Ejecuta Nikto y procesa los resultados en formato XML."""
@@ -97,7 +95,7 @@ class NiktoScanTask(_Task):
         cmd = [
             "nikto",
             "-h", self.target,
-            "-o", str(self.out_path),
+            "-o", str(self.temp_path),
             "-Format", "xml",
             "-nointeractive",
             "-maxtime", "20",
@@ -111,7 +109,7 @@ class NiktoScanTask(_Task):
 
         try:
             self.results = JSONManager.convert_multi_niktoscan_xml_to_json(
-                str(self.out_path)
+                str(self.temp_path)
             )
             self.logger.info(f"Escaneo Nikto completado en {self.target}")
         except Exception as e:

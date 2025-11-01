@@ -5,7 +5,7 @@ from typing import Optional
 
 class ConfigReader:
 
-    def __init__(self, configs_file: str = "src/config/SecConfig.json") -> None:
+    def __init__(self, configs_file: str = "API/src/config/SecConfig.json") -> None:
         self.configs_path = Path(configs_file).resolve()
 
     def read_configs(self) -> dict:
