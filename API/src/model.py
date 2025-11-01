@@ -61,15 +61,6 @@ class Scan(Base):
     openvas_scan = relationship("OpenVASScan", uselist=False, back_populates="scan")
 
 
-class FinishedScan(Base):
-    __tablename__ = 'FinishedScan'
-
-    id = Column(Integer, ForeignKey('Scan.id'), primary_key=True)
-    finished_at = Column(DateTime, nullable=False)
-
-    scan = relationship("Scan", back_populates="finished_scan")
-
-
 class NmapScan(Base):
     __tablename__ = 'NmapScan'
 
@@ -86,6 +77,15 @@ class NmapScan(Base):
         secondary=OpenPort,
         back_populates="open_scans"
     )
+
+
+class FinishedScan(Base):
+    __tablename__ = 'FinishedScan'
+
+    id = Column(Integer, ForeignKey('Scan.id'), primary_key=True)
+    finished_at = Column(DateTime, nullable=False)
+
+    scan = relationship("Scan", back_populates="finished_scan")
 
 
 class Port(Base):

@@ -10,7 +10,6 @@ class SecOpsLogger:
     def __init__(self, name=None, level=logging.DEBUG):
         """
         Inicializa un logger con nombre, nivel y archivo de log opcional.
-        Si log_file es None, solo mostrará en consola.
         """
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)

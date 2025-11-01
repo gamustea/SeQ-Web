@@ -1,7 +1,7 @@
 {
     "directories": {
         "tempdir": "/var/tmp/secapp",
-        "logdir": "log",
+        "logdir": "API/log",
         "resultdir": "/var/secapp/results"
     },
     "dbconfig": {
