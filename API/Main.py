@@ -1,28 +1,24 @@
 
 import json
+import threading
+import time
 
 from src.scanning.tasks import NmapScanTask, NiktoScanTask
 from src.misc.configread import ConfigReader
-from src.persistence.dbmanaging import DBManager
-from src.model import Person
-import threading
+from src.misc.conversion import JSONManager
+from src.scanning.scanmanaging import NmapScanManager
 
-import time
+from src.persistence.dbmanaging import *
+from src.model import *
+
 
 if __name__ == "__main__":
-    task = NmapScanTask(target_host="192.168.1.1", target_ports="1-1024")
+    user_db_manager = UserDBManager()
+    user = user_db_manager.get_user_by_id(1)
+    nmap_manager = NmapScanManager(user)
+    nmap_manager._do_scan_and_save(
+        target_host="127.0.0.1",
+        target_ports="22,80,443"
+    )
 
-    # Crear hilo para ejecutar el scan asincrónicamente
-    scan_thread = threading.Thread(target=task.scan)
-    scan_thread.start()
-    while (task.progress < 100):
-        print(f"Progreso del escaneo: {task.progress }%")
-        time.sleep(2)
-
-    # Esperar a que el escaneo termine si no ha terminado ya
-    scan_thread.join()
-    task.wait()
-    print(f"Progress: {task.progress}%")
-
-    print("Resultado del escaneo:")
-    print(task.results)
+    pass

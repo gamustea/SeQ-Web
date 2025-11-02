@@ -1,0 +1,90 @@
+{
+  "nmap": {
+    "command_line": "nmap -sT -p 1-1024 -oX /var/tmp/secapp/nmap_scan_192.168.1.1_1762084425.xml --stats-every 1s 192.168.1.1",
+    "scaninfo": {
+      "tcp": {
+        "method": "connect",
+        "services": "1-1024"
+      }
+    },
+    "scanstats": {
+      "timestr": "Sun Nov  2 12:53:45 2025",
+      "elapsed": "0.26",
+      "uphosts": "1",
+      "downhosts": "0",
+      "totalhosts": "1"
+    }
+  },
+  "scan": {
+    "192.168.1.1": {
+      "hostnames": [
+        {
+          "name": "liveboxplus",
+          "type": "PTR"
+        }
+      ],
+      "addresses": {
+        "ipv4": "192.168.1.1"
+      },
+      "vendor": {
+        
+      },
+      "status": {
+        "state": "up",
+        "reason": "syn-ack"
+      },
+      "tcp": {
+        "53": {
+          "state": "open",
+          "reason": "syn-ack",
+          "name": "domain",
+          "product": "",
+          "version": "",
+          "extrainfo": "",
+          "conf": "3",
+          "cpe": ""
+        },
+        "80": {
+          "state": "open",
+          "reason": "syn-ack",
+          "name": "http",
+          "product": "",
+          "version": "",
+          "extrainfo": "",
+          "conf": "3",
+          "cpe": ""
+        },
+        "139": {
+          "state": "open",
+          "reason": "syn-ack",
+          "name": "netbios-ssn",
+          "product": "",
+          "version": "",
+          "extrainfo": "",
+          "conf": "3",
+          "cpe": ""
+        },
+        "443": {
+          "state": "open",
+          "reason": "syn-ack",
+          "name": "https",
+          "product": "",
+          "version": "",
+          "extrainfo": "",
+          "conf": "3",
+          "cpe": ""
+        },
+        "445": {
+          "state": "open",
+          "reason": "syn-ack",
+          "name": "microsoft-ds",
+          "product": "",
+          "version": "",
+          "extrainfo": "",
+          "conf": "3",
+          "cpe": ""
+        }
+      }
+    }
+  }
+}

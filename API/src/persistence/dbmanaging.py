@@ -5,7 +5,7 @@ from typing import List, Optional
 import urllib.parse
 
 from src.misc.logging import SecOpsLogger
-from src.model import Person, User, Port, Scan, NmapScan
+from src.model import Person, User, Scan, Port
 from src.misc.configread import ConfigReader
 
 
@@ -13,19 +13,22 @@ from src.misc.configread import ConfigReader
 (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_crendetials()
 DEFAULT_DATABASE_URL = f"mysql+pymysql://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}/{DBNAME}"
 
+SHARED_SESSION: Optional[Session] = None
 
 class DBManager:
     """
     Gestor general para la sesión y operaciones básicas en la base de datos usando SQLAlchemy ORM.
+    
+    Implementa un patrón Singleton para la sesión: todas las instancias comparten la misma sesión.
 
     Atributos:
         session (Session): Sesión activa de SQLAlchemy para interactuar con la base de datos.
-        logger (Logger): Logger personalizado para registrar eventos e incidencias.
+        logger (Logger): Logger Personalizado para registrar eventos e incidencias.
     
     Métodos:
         __init__(session: Optional[Session] = None):
             Inicializa la sesión de base de datos. Si no se pasa una sesión, crea una a partir
-            de la URL por defecto.
+            de la URL por defecto o reutiliza la sesión compartida existente.
 
         _check_session():
             Verifica que la sesión esté establecida antes de realizar operaciones.
@@ -39,14 +42,23 @@ class DBManager:
         Constructor del gestor.
 
         Args:
-            session (Optional[Session]): Sesión SQLAlchemy externa. Si es None, crea una interna.
+            session (Optional[Session]): Sesión SQLAlchemy externa. Si es None, 
+                                         usa o crea la sesión compartida singleton.
         """
-        if session is None:
+        global SHARED_SESSION
+        
+        if session is not None:
+            # Si se pasa una sesión explícita, usarla
+            self.session = session
+        elif SHARED_SESSION is not None:
+            # Si ya existe una sesión compartida, reutilizarla
+            self.session = SHARED_SESSION
+        else:
+            # Crear nueva sesión y establecerla como compartida
             engine = create_engine(DEFAULT_DATABASE_URL)
             SessionLocal = sessionmaker(bind=engine)
             self.session = SessionLocal()
-        else:
-            self.session = session
+            SHARED_SESSION = self.session
 
         self.logger = SecOpsLogger(__name__).get_logger()
 
@@ -99,7 +111,16 @@ class DBManager:
             self.logger.error(f"Error al limpiar tablas: {err}")
             raise
 
-
+    @staticmethod
+    def close_shared_session():
+        """
+        Cierra la sesión compartida si existe y la resetea.
+        Útil para tests o cuando necesites reiniciar completamente la sesión.
+        """
+        global SHARED_SESSION
+        if SHARED_SESSION is not None:
+            SHARED_SESSION.close()
+            SHARED_SESSION = None
 class UserDBManager(DBManager):
     """
     Gestor específico para operaciones relacionadas con las entidades User y Person usando SQLAlchemy ORM.
@@ -148,7 +169,7 @@ class UserDBManager(DBManager):
         Verifica si existe una Person con el ID indicado.
 
         Args:
-            person_id (int): ID de la persona a buscar.
+            person_id (int): ID de la Persona a buscar.
 
         Returns:
             bool: True si existe, False en caso contrario.
@@ -167,7 +188,7 @@ class UserDBManager(DBManager):
 
     def create_person(self, person: Person) -> None:
         """
-        Añade una nueva persona a la base de datos.
+        Añade una nueva Persona a la base de datos.
 
         Args:
             person (Person): Objeto Person a crear.
@@ -179,7 +200,7 @@ class UserDBManager(DBManager):
         try:
             self.session.add(person)
             self.session.commit()
-            self.logger.info(f"Se creó un nuevo User: {person.first_name} {person.last_name} con ID {person.id}")
+            self.logger.info(f"Se creó un nuevo Person: {person.first_name} {person.last_name} con ID {person.id}")
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al crear Person: {err}")
@@ -190,14 +211,14 @@ class UserDBManager(DBManager):
         Añade un nuevo usuario al sistema. Crea la Person relacionada si no existe.
 
         Args:
-            user (User): Objeto User a crear, debe tener el atributo persona asociado.
+            user (User): Objeto User a crear, debe tener el atributo person asociado.
 
         Raises:
             SQLAlchemyError: En caso de error durante la inserción.
         """
         self._check_session()
         try:
-            if not self.person_exists(user.person_id):  # type: ignore
+            if not self.person_exists(user.person_id): # type: ignore
                 self.create_person(user.person)
             self.session.add(user)
             self.session.commit()
@@ -220,7 +241,7 @@ class UserDBManager(DBManager):
         self._check_session()
         try:
             people = self.session.query(Person).all()
-            self.logger.info("Se obtuvieron todos los Users de la base de datos.")
+            self.logger.info("Se obtuvieron todos los Person de la base de datos.")
             return people
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener todas las Persons: {err}")
@@ -242,7 +263,7 @@ class UserDBManager(DBManager):
         self._check_session()
         try:
             person = self.session.query(Person).filter(Person.id == person_id).one_or_none()
-            self.logger.info(f"Se obtuvo el User con ID {person_id} de la base de datos.")
+            self.logger.info(f"Se obtuvo el Person con ID {person_id} de la base de datos.")
             return person
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener Person por ID: {err}")
@@ -301,6 +322,7 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
+            # CORREGIDO: person.id en lugar de Person.id
             existing_person = self.session.query(Person).filter(Person.id == person.id).one_or_none()
             if existing_person:
                 existing_person.first_name = person.first_name
@@ -330,7 +352,8 @@ class UserDBManager(DBManager):
             existing_user = self.session.query(User).filter(User.id == user.id).one_or_none()
             if existing_user:
                 existing_user.username = user.username
-                existing_user.id = user.id  # Generalmente no cambia, pero se mantiene en la actualización
+                existing_user.password = user.password
+                # No actualices el ID, es la clave primaria
                 self.session.commit()
                 self.logger.info(f"Se actualizó la información del User con ID {user.id}.")
             else:
@@ -376,6 +399,7 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
+            # CORREGIDO: person.id en lugar de Person.id
             existing_person = self.session.query(Person).filter(Person.id == person.id).one_or_none()
             if existing_person:
                 self.session.delete(existing_person)
@@ -392,7 +416,6 @@ class UserDBManager(DBManager):
 class ScanDBManager(DBManager):
     """
     Clase para gestionar operaciones específicas de escaneos en la base de datos.
-    Actualmente no implementada.
     """
 
     #==============================================================
@@ -481,6 +504,7 @@ class ScanDBManager(DBManager):
         try:
             existing_scan = self.session.query(Scan).filter(Scan.id == scan.id).one_or_none()
             if existing_scan:
+                existing_scan.target = scan.target
                 existing_scan.started_at = scan.started_at
                 self.session.commit()
                 self.logger.info(f"Se actualizó la información del escaneo con ID {scan.id}.")
@@ -521,19 +545,54 @@ class ScanDBManager(DBManager):
 
 class NmapDBManager(DBManager):
     """
-    Clase para gestionar operaciones específicas de escaneos Nmap en la base de datos.
-    Actualmente no implementada.
+    Gestor específico para operaciones relacionadas con escaneos Nmap y puertos.
+    
+    Gestiona:
+    - Puertos (Port)
+    - Escaneos Nmap (NmapScan)
+    - Puertos objetivo (TargetPort)
+    - Puertos abiertos (OpenPort)
+    
+    Métodos CRUD para Port:
+        - port_exists(port_id: int) -> bool
+        - port_exists_by_protocol(protocol: str) -> bool
+        - create_port(port: Port) -> None
+        - get_port_by_id(port_id: int) -> Optional[Port]
+        - get_port_by_protocol(protocol: str) -> Optional[Port]
+        - get_all_ports() -> List[Port]
+        - update_port(port: Port) -> None
+        - delete_port(port: Port) -> None
+        - get_or_create_port(protocol: str) -> Port
+    
+    Métodos CRUD para NmapScan:
+        - nmap_scan_exists(scan_id: int) -> bool
+        - create_nmap_scan(scan: NmapScan) -> None
+        - get_nmap_scan_by_id(scan_id: int) -> Optional[NmapScan]
+        - get_all_nmap_scans() -> List[NmapScan]
+        - get_nmap_scans_by_user(user_id: int) -> List[NmapScan]
+        - update_nmap_scan(scan: NmapScan) -> None
+        - delete_nmap_scan(scan: NmapScan) -> None
+    
+    Métodos para gestionar relaciones:
+        - add_target_port(scan: NmapScan, port: Port) -> None
+        - add_target_ports(scan: NmapScan, ports: List[Port]) -> None
+        - remove_target_port(scan: NmapScan, port: Port) -> None
+        - add_open_port(scan: NmapScan, port: Port, reason: str) -> None
+        - remove_open_port(scan: NmapScan, port: Port) -> None
+        - get_target_ports(scan: NmapScan) -> List[Port]
+        - get_open_ports(scan: NmapScan) -> List[OpenPort]
     """
 
-    #===============================================================
-    #
-    #===============================================================
+    # ============================================================
+    # MÉTODOS PARA PORT - EXISTS
+    # ============================================================
+    
     def port_exists(self, port_id: int) -> bool:
         """
-        Verifica si existe un puerto con el número indicado.
+        Verifica si existe un puerto con el ID indicado.
 
         Args:
-            port_number (int): Número de puerto a buscar.
+            port_id (int): ID del puerto a buscar.
 
         Returns:
             bool: True si existe, False en caso contrario.
@@ -541,12 +600,582 @@ class NmapDBManager(DBManager):
         Raises:
             SQLAlchemyError: En caso de error en la consulta.
         """
-
         self._check_session()
         try:
             exists = self.session.query(Port).filter(Port.id == port_id).count() > 0
-            self.logger.info(f"Verificación de existencia del puerto '{port_id}': {exists}")
+            self.logger.info(f"Verificación de existencia del puerto con ID '{port_id}': {exists}")
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia del puerto: {err}")
+            raise
+
+    def port_exists_by_protocol(self, protocol: str) -> bool:
+        """
+        Verifica si existe un puerto con el protocolo indicado.
+
+        Args:
+            protocol (str): Protocolo del puerto (ej: "80/tcp", "443/tcp").
+
+        Returns:
+            bool: True si existe, False en caso contrario.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            exists = self.session.query(Port).filter(Port.protocol == protocol).count() > 0
+            self.logger.info(f"Verificación de existencia del puerto '{protocol}': {exists}")
+            return exists
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al verificar existencia del puerto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA PORT - CREATE
+    # ============================================================
+    
+    def create_port(self, port: Port) -> None:
+        """
+        Añade un nuevo puerto a la base de datos.
+
+        Args:
+            port (Port): Objeto Port a crear.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la inserción.
+        """
+        self._check_session()
+        try:
+            self.session.add(port)
+            self.session.commit()
+            self.logger.info(f"Se creó un nuevo puerto: {port.protocol} con ID {port.id}")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al crear puerto: {err}")
+            raise
+
+    def get_or_create_port(self, protocol: str) -> Port:
+        """
+        Obtiene un puerto por su protocolo, o lo crea si no existe.
+        Útil para evitar duplicados.
+
+        Args:
+            protocol (str): Protocolo del puerto (ej: "80/tcp").
+
+        Returns:
+            Port: Objeto Port existente o recién creado.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la operación.
+        """
+        self._check_session()
+        try:
+            port = self.get_port_by_protocol(protocol)
+            if port:
+                self.logger.info(f"Puerto '{protocol}' ya existe, reutilizando.")
+                return port
+            
+            new_port = Port(protocol=protocol)
+            self.create_port(new_port)
+            self.logger.info(f"Puerto '{protocol}' creado con ID {new_port.id}")
+            return new_port
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error en get_or_create_port: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA PORT - RETRIEVE
+    # ============================================================
+    
+    def get_port_by_id(self, port_id: int) -> Optional[Port]:
+        """
+        Obtiene un puerto por su ID.
+
+        Args:
+            port_id (int): ID del puerto a obtener.
+
+        Returns:
+            Optional[Port]: Objeto Port si existe, None si no.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            port = self.session.query(Port).filter(Port.id == port_id).one_or_none()
+            self.logger.info(f"Se obtuvo el puerto con ID {port_id} de la base de datos.")
+            return port
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener puerto por ID: {err}")
+            raise
+
+    def get_port_by_protocol(self, protocol: str) -> Optional[Port]:
+        """
+        Obtiene un puerto por su protocolo.
+
+        Args:
+            protocol (str): Protocolo del puerto (ej: "80/tcp").
+
+        Returns:
+            Optional[Port]: Objeto Port si existe, None si no.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            port = self.session.query(Port).filter(Port.protocol == protocol).one_or_none()
+            if port:
+                self.logger.info(f"Se obtuvo el puerto '{protocol}' con ID {port.id}.")
+            else:
+                self.logger.info(f"No se encontró puerto con protocolo '{protocol}'.")
+            return port
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener puerto por protocolo: {err}")
+            raise
+
+    def get_all_ports(self) -> List[Port]:
+        """
+        Obtiene todos los puertos existentes.
+
+        Returns:
+            List[Port]: Lista de todos los objetos Port.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            ports = self.session.query(Port).all()
+            self.logger.info(f"Se obtuvieron {len(ports)} puertos de la base de datos.")
+            return ports
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener todos los puertos: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA PORT - UPDATE
+    # ============================================================
+    
+    def update_port(self, port: Port) -> None:
+        """
+        Actualiza la información de un puerto existente.
+
+        Args:
+            port (Port): Objeto Port con los datos actualizados.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la actualización.
+        """
+        self._check_session()
+        try:
+            existing_port = self.session.query(Port).filter(Port.id == port.id).one_or_none()
+            if existing_port:
+                existing_port.protocol = port.protocol
+                self.session.commit()
+                self.logger.info(f"Se actualizó la información del puerto con ID {port.id}.")
+            else:
+                self.logger.warning(f"No se encontró puerto con ID {port.id} para actualizar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al actualizar puerto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA PORT - DELETE
+    # ============================================================
+    
+    def delete_port(self, port: Port) -> None:
+        """
+        Elimina un puerto existente.
+
+        Args:
+            port (Port): Objeto Port a eliminar.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la eliminación.
+        """
+        self._check_session()
+        try:
+            existing_port = self.session.query(Port).filter(Port.id == port.id).one_or_none()
+            if existing_port:
+                self.session.delete(existing_port)
+                self.session.commit()
+                self.logger.info(f"Se eliminó el puerto '{port.protocol}' con ID {port.id}.")
+            else:
+                self.logger.warning(f"No se encontró puerto con ID {port.id} para eliminar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al eliminar puerto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NMAPSCAN - EXISTS
+    # ============================================================
+    
+    def nmap_scan_exists(self, scan_id: int) -> bool:
+        """
+        Verifica si existe un escaneo Nmap con el ID indicado.
+
+        Args:
+            scan_id (int): ID del escaneo a buscar.
+
+        Returns:
+            bool: True si existe, False en caso contrario.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            from src.model import NmapScan
+            exists = self.session.query(NmapScan).filter(NmapScan.id == scan_id).count() > 0
+            self.logger.info(f"Verificación de existencia del escaneo Nmap con ID '{scan_id}': {exists}")
+            return exists
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al verificar existencia del escaneo Nmap: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NMAPSCAN - CREATE
+    # ============================================================
+    
+    def create_nmap_scan(self, scan) -> None:
+        """
+        Añade un nuevo escaneo Nmap a la base de datos.
+
+        Args:
+            scan (NmapScan): Objeto NmapScan a crear.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la inserción.
+        """
+        self._check_session()
+        try:
+            self.session.add(scan)
+            self.session.commit()
+            self.logger.info(f"Se creó un nuevo escaneo Nmap con ID {scan.id} para target '{scan.target}'")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al crear escaneo Nmap: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NMAPSCAN - RETRIEVE
+    # ============================================================
+    
+    def get_nmap_scan_by_id(self, scan_id: int):
+        """
+        Obtiene un escaneo Nmap por su ID.
+
+        Args:
+            scan_id (int): ID del escaneo a obtener.
+
+        Returns:
+            Optional[NmapScan]: Objeto NmapScan si existe, None si no.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            from src.model import NmapScan
+            scan = self.session.query(NmapScan).filter(NmapScan.id == scan_id).one_or_none()
+            self.logger.info(f"Se obtuvo el escaneo Nmap con ID {scan_id}.")
+            return scan
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener escaneo Nmap por ID: {err}")
+            raise
+
+    def get_all_nmap_scans(self) -> List:
+        """
+        Obtiene todos los escaneos Nmap existentes.
+
+        Returns:
+            List[NmapScan]: Lista de todos los escaneos Nmap.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            from src.model import NmapScan
+            scans = self.session.query(NmapScan).all()
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap de la base de datos.")
+            return scans
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener todos los escaneos Nmap: {err}")
+            raise
+
+    def get_nmap_scans_by_user(self, user_id: int) -> List:
+        """
+        Obtiene todos los escaneos Nmap de un usuario específico.
+
+        Args:
+            user_id (int): ID del usuario.
+
+        Returns:
+            List[NmapScan]: Lista de escaneos Nmap del usuario.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            from src.model import NmapScan
+            scans = self.session.query(NmapScan).filter(NmapScan.user_id == user_id).all()
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap del usuario con ID {user_id}.")
+            return scans
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener escaneos Nmap por usuario: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NMAPSCAN - UPDATE
+    # ============================================================
+    
+    def update_nmap_scan(self, scan) -> None:
+        """
+        Actualiza la información de un escaneo Nmap existente.
+
+        Args:
+            scan (NmapScan): Objeto NmapScan con los datos actualizados.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la actualización.
+        """
+        self._check_session()
+        try:
+            from src.model import NmapScan
+            existing_scan = self.session.query(NmapScan).filter(NmapScan.id == scan.id).one_or_none()
+            if existing_scan:
+                existing_scan.target = scan.target
+                existing_scan.started_at = scan.started_at
+                self.session.commit()
+                self.logger.info(f"Se actualizó el escaneo Nmap con ID {scan.id}.")
+            else:
+                self.logger.warning(f"No se encontró escaneo Nmap con ID {scan.id} para actualizar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al actualizar escaneo Nmap: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NMAPSCAN - DELETE
+    # ============================================================
+    
+    def delete_nmap_scan(self, scan) -> None:
+        """
+        Elimina un escaneo Nmap existente.
+
+        Args:
+            scan (NmapScan): Objeto NmapScan a eliminar.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la eliminación.
+        """
+        self._check_session()
+        try:
+            from src.model import NmapScan
+            existing_scan = self.session.query(NmapScan).filter(NmapScan.id == scan.id).one_or_none()
+            if existing_scan:
+                self.session.delete(existing_scan)
+                self.session.commit()
+                self.logger.info(f"Se eliminó el escaneo Nmap con ID {scan.id}.")
+            else:
+                self.logger.warning(f"No se encontró escaneo Nmap con ID {scan.id} para eliminar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al eliminar escaneo Nmap: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA GESTIONAR RELACIONES - TARGET PORTS
+    # ============================================================
+    
+    def add_target_port(self, scan, port: Port) -> None:
+        """
+        Añade un puerto objetivo a un escaneo Nmap.
+
+        Args:
+            scan (NmapScan): Escaneo al que añadir el puerto.
+            port (Port): Puerto a añadir como objetivo.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            if port not in scan.target_ports:
+                scan.target_ports.append(port)
+                self.session.commit()
+                self.logger.info(f"Puerto '{port.protocol}' añadido como objetivo al escaneo {scan.id}.")
+            else:
+                self.logger.info(f"Puerto '{port.protocol}' ya está en los objetivos del escaneo {scan.id}.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al añadir puerto objetivo: {err}")
+            raise
+
+    def add_target_ports(self, scan, ports: List[Port]) -> None:
+        """
+        Añade múltiples puertos objetivo a un escaneo Nmap.
+
+        Args:
+            scan (NmapScan): Escaneo al que añadir los puertos.
+            ports (List[Port]): Lista de puertos a añadir como objetivos.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            added = 0
+            for port in ports:
+                if port not in scan.target_ports:
+                    scan.target_ports.append(port)
+                    added += 1
+            
+            self.session.commit()
+            self.logger.info(f"Se añadieron {added} puertos objetivo al escaneo {scan.id}.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al añadir puertos objetivo: {err}")
+            raise
+
+    def remove_target_port(self, scan, port: Port) -> None:
+        """
+        Elimina un puerto objetivo de un escaneo Nmap.
+
+        Args:
+            scan (NmapScan): Escaneo del que eliminar el puerto.
+            port (Port): Puerto a eliminar de los objetivos.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            if port in scan.target_ports:
+                scan.target_ports.remove(port)
+                self.session.commit()
+                self.logger.info(f"Puerto '{port.protocol}' eliminado de los objetivos del escaneo {scan.id}.")
+            else:
+                self.logger.warning(f"Puerto '{port.protocol}' no está en los objetivos del escaneo {scan.id}.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al eliminar puerto objetivo: {err}")
+            raise
+
+    def get_target_ports(self, scan) -> List[Port]:
+        """
+        Obtiene todos los puertos objetivo de un escaneo Nmap.
+
+        Args:
+            scan (NmapScan): Escaneo del que obtener los puertos objetivo.
+
+        Returns:
+            List[Port]: Lista de puertos objetivo del escaneo.
+        """
+        self._check_session()
+        try:
+            ports = scan.target_ports
+            self.logger.info(f"Se obtuvieron {len(ports)} puertos objetivo del escaneo {scan.id}.")
+            return ports
+        except Exception as err:
+            self.logger.error(f"Error al obtener puertos objetivo: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA GESTIONAR RELACIONES - OPEN PORTS
+    # ============================================================
+    
+    def add_open_port(self, scan, port: Port, reason: str) -> None:
+        """
+        Marca un puerto como abierto en un escaneo Nmap.
+
+        Args:
+            scan (NmapScan): Escaneo en el que marcar el puerto.
+            port (Port): Puerto a marcar como abierto.
+            reason (str): Razón por la que el puerto está abierto (ej: "syn-ack").
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            from src.model import OpenPort
+            
+            # Verificar si ya existe
+            existing = self.session.query(OpenPort).filter(
+                OpenPort.port_id == port.id,
+                OpenPort.nmap_scan_id == scan.id
+            ).first()
+            
+            if existing:
+                self.logger.info(f"Puerto '{port.protocol}' ya está marcado como abierto en el escaneo {scan.id}.")
+                return
+            
+            open_port = OpenPort(
+                port_id=port.id,
+                nmap_scan_id=scan.id,
+                reason=reason
+            )
+            self.session.add(open_port)
+            self.session.commit()
+            self.logger.info(f"Puerto '{port.protocol}' marcado como abierto en escaneo {scan.id} (razón: {reason}).")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al añadir puerto abierto: {err}")
+            raise
+
+    def remove_open_port(self, scan, port: Port) -> None:
+        """
+        Elimina la marca de puerto abierto de un escaneo Nmap.
+
+        Args:
+            scan (NmapScan): Escaneo del que eliminar el puerto abierto.
+            port (Port): Puerto a eliminar de los puertos abiertos.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            from src.model import OpenPort
+            
+            open_port = self.session.query(OpenPort).filter(
+                OpenPort.port_id == port.id,
+                OpenPort.nmap_scan_id == scan.id
+            ).first()
+            
+            if open_port:
+                self.session.delete(open_port)
+                self.session.commit()
+                self.logger.info(f"Puerto '{port.protocol}' eliminado de puertos abiertos del escaneo {scan.id}.")
+            else:
+                self.logger.warning(f"Puerto '{port.protocol}' no está en los puertos abiertos del escaneo {scan.id}.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al eliminar puerto abierto: {err}")
+            raise
+
+    def get_open_ports(self, scan) -> List:
+        """
+        Obtiene todos los puertos abiertos de un escaneo Nmap.
+
+        Args:
+            scan (NmapScan): Escaneo del que obtener los puertos abiertos.
+
+        Returns:
+            List[OpenPort]: Lista de objetos OpenPort del escaneo.
+        """
+        self._check_session()
+        try:
+            open_ports = scan.open_ports_relation
+            self.logger.info(f"Se obtuvieron {len(open_ports)} puertos abiertos del escaneo {scan.id}.")
+            return open_ports
+        except Exception as err:
+            self.logger.error(f"Error al obtener puertos abiertos: {err}")
             raise

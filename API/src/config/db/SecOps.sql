@@ -1,90 +1,86 @@
 DROP DATABASE IF EXISTS SecOps;
+
 CREATE DATABASE IF NOT EXISTS SecOps;
 
 USE SecOps;
 
-CREATE TABLE `Persona` (
+CREATE TABLE `Person` (
   `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
-  `nombre` VARCHAR(64) NOT NULL,
-  `apellido` VARCHAR(64) NOT NULL,
+  `first_name` VARCHAR(64) NOT NULL,
+  `last_name` VARCHAR(64) NOT NULL,
   `email` varchar(128) NOT NULL,
-  `fechaAlta` DATETIME NOT NULL
+  `created_at` DATETIME NOT NULL
 );
 
-CREATE TABLE `Usuario` (
+CREATE TABLE `User` (
   `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
   `username` VARCHAR(64) NOT NULL UNIQUE,
   `password` VARCHAR(128) NOT NULL,
-  `idPersona` INTEGER NOT NULL,
-  FOREIGN KEY (`idPersona`) REFERENCES `Persona` (`id`)
+  `person_id` INTEGER NOT NULL,
+  FOREIGN KEY (`person_id`) REFERENCES `Person` (`id`)
 );
 
-CREATE TABLE `Escaneo` (
+CREATE TABLE `Scan` (
   `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
-  `objetivo` VARCHAR(255) NOT NULL,
-  `fechaInicio` DATETIME NOT NULL,
-  `idUsuario` INTEGER NOT NULL,
-  FOREIGN KEY (`idUsuario`) REFERENCES `Usuario` (`id`)
+  `target` VARCHAR(255) NOT NULL,
+  `started_at` DATETIME NOT NULL,
+  `user_id` INTEGER NOT NULL,
+  FOREIGN KEY (`user_id`) REFERENCES `User` (`id`)
 );
 
-CREATE TABLE `EscaneoTerminado` (
+CREATE TABLE `FinishedScan` (
   `id` INTEGER PRIMARY KEY,
-  `fechaFin` DATETIME NOT NULL,
-  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
+  `finished_at` DATETIME NOT NULL,
+  FOREIGN KEY (`id`) REFERENCES `Scan` (`id`)
 );
 
-CREATE TABLE `EscaneoNmap` (
+CREATE TABLE `NmapScan` (
   `id` INTEGER PRIMARY KEY,
-  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
+  FOREIGN KEY (`id`) REFERENCES `Scan` (`id`)
 );
 
-CREATE TABLE `Puerto` (
+CREATE TABLE `NiktoScan` (
+  `id` INTEGER PRIMARY KEY,
+  FOREIGN KEY (`id`) REFERENCES `Scan` (`id`)
+);
+
+CREATE TABLE `NiktoIncident` (
   `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
-  `protocolo` VARCHAR(255) UNIQUE NOT NULL
+  `nikto_scan_id` INTEGER NOT NULL,
+  FOREIGN KEY (`nikto_scan_id`) REFERENCES `NiktoScan` (`id`)
 );
 
-
-CREATE TABLE `PuertoObjetivo` (
-  `idPuerto` INTEGER,
-  `idEscaneo` INTEGER,
-  PRIMARY KEY (`idPuerto`, `idEscaneo`),
-  FOREIGN KEY (`idPuerto`) REFERENCES `Puerto` (`id`),
-  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNmap` (`id`)
+CREATE TABLE `ScanIncident` (
+  `nikto_scan_id` INTEGER NOT NULL,
+  `nikto_incident_id` INTEGER NOT NULL,
+  PRIMARY KEY (`nikto_scan_id`, `nikto_incident_id`),
+  FOREIGN KEY (`nikto_scan_id`) REFERENCES `NiktoScan` (`id`),
+  FOREIGN KEY (`nikto_incident_id`) REFERENCES `NiktoIncident` (`id`)
 );
 
-
-CREATE TABLE `PuertoAbierto` (
-  `idPuerto` INTEGER,
-  `idEscaneo` INTEGER,
-  `motivo` VARCHAR(255) NOT NULL,
-  PRIMARY KEY (`idPuerto`, `idEscaneo`),
-  FOREIGN KEY (`idPuerto`) REFERENCES `Puerto` (`id`),
-  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNmap` (`id`)
-);
-
-
-CREATE TABLE `EscaneoNikto` (
+CREATE TABLE `OpenVASScan` (
   `id` INTEGER PRIMARY KEY,
-  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
+  FOREIGN KEY (`id`) REFERENCES `Scan` (`id`)
 );
 
-
-CREATE TABLE `IncidenciaNikto` (
+CREATE TABLE `Port` (
   `id` INTEGER PRIMARY KEY AUTO_INCREMENT,
-  `idEscaneo` INTEGER NOT NULL,
-  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNikto` (`id`)
+  `protocol` VARCHAR(255) UNIQUE NOT NULL
 );
 
-
-CREATE TABLE `IncidenciaEscaneo` (
-  `idEscaneo` INTEGER,
-  `idIncidencia` INTEGER,
-  PRIMARY KEY (`idEscaneo`, `idIncidencia`),
-  FOREIGN KEY (`idEscaneo`) REFERENCES `EscaneoNikto` (`id`),
-  FOREIGN KEY (`idIncidencia`) REFERENCES `IncidenciaNikto` (`id`)
+CREATE TABLE `TargetPort` (
+  `port_id` INTEGER NOT NULL,
+  `nmap_scan_id` INTEGER NOT NULL,
+  PRIMARY KEY (`port_id`, `nmap_scan_id`),
+  FOREIGN KEY (`port_id`) REFERENCES `Port` (`id`),
+  FOREIGN KEY (`nmap_scan_id`) REFERENCES `NmapScan` (`id`)
 );
 
-CREATE TABLE `EscaneoOpenVAS` (
-  `id` INTEGER PRIMARY KEY,
-  FOREIGN KEY (`id`) REFERENCES `Escaneo` (`id`)
+CREATE TABLE `OpenPort` (
+  `port_id` INTEGER NOT NULL,
+  `nmap_scan_id` INTEGER NOT NULL,
+  `reason` VARCHAR(255) NOT NULL,
+  PRIMARY KEY (`port_id`, `nmap_scan_id`),
+  FOREIGN KEY (`port_id`) REFERENCES `Port` (`id`),
+  FOREIGN KEY (`nmap_scan_id`) REFERENCES `NmapScan` (`id`)
 );

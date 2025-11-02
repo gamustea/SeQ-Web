@@ -3,14 +3,16 @@ import threading
 import re
 import time
 from pathlib import Path
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 from enum import Enum, auto
 from abc import ABC, abstractmethod
+from nmap import PortScanner
 
 from src.misc.configread import ConfigReader
 from src.misc.logging import SecOpsLogger
 from src.misc.conversion import JSONManager
 from src.misc.directorychecker import DirectoryChecker
+
 
 
 class TaskStatus(Enum):
@@ -44,7 +46,7 @@ class _Task(ABC):
             target (str): Dirección IP, rango o dominio a escanear.
         """
         self.status = TaskStatus.NOT_STARTED  # Estado inicial: no iniciado
-        self.results: Optional[Any] = None   # Resultados estructurados tras finalización
+        self.results: Optional[Any]   # Resultados estructurados tras finalización
         self.target: str = target             # Objetivo del escaneo
         self.config_reader = ConfigReader()  # Para leer configuraciones externas
         self.logger = SecOpsLogger(name=__name__).get_logger()  # Logger para eventos e info
@@ -211,15 +213,6 @@ class _Task(ABC):
             self._finished.set()
             self.logger.info("Escaneo cancelado por el usuario")
 
-    def get_task_results(self) -> Optional[Any]:
-        """
-        Devuelve los resultados obtenidos tras la finalización del escaneo.
-
-        Returns:
-            Optional[Any]: Resultados del escaneo en formato estructurado o None si no disponible.
-        """
-        return self.results
-
 
 class NmapScanTask(_Task):
     """
@@ -260,7 +253,7 @@ class NmapScanTask(_Task):
         Tras finalizar el escaneo, lee el archivo XML generado y lo analiza con python-nmap,
         almacenando la información estructurada en `self.results`.
         """
-        from nmap import PortScanner
+
         self.scanner = PortScanner()
         if self._output_file.exists(): # type: ignore
             with self._output_file.open("r") as f: # type: ignore
