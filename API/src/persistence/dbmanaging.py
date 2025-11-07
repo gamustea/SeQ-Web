@@ -5,7 +5,7 @@ from typing import List, Optional
 import urllib.parse
 
 from src.misc.logging import SecOpsLogger
-from src.model import Person, User, Scan, Port
+from src.model import Person, User, Scan, Port, OpenPort, NmapScan
 from src.misc.configread import ConfigReader
 
 
@@ -121,6 +121,8 @@ class DBManager:
         if SHARED_SESSION is not None:
             SHARED_SESSION.close()
             SHARED_SESSION = None
+
+
 class UserDBManager(DBManager):
     """
     Gestor específico para operaciones relacionadas con las entidades User y Person usando SQLAlchemy ORM.
@@ -487,6 +489,26 @@ class ScanDBManager(DBManager):
             self.logger.error(f"Error al obtener escaneo por ID: {err}")
             raise
 
+    def get_next_scan_id(self) -> int:
+        """
+        Obtiene el próximo ID disponible para un nuevo escaneo.
+
+        Returns:
+            int: Próximo ID disponible.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            result = self.session.execute(text("SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Scan';"))
+            next_id = result.scalar_one()
+            self.logger.info(f"Próximo ID disponible para Scan: {next_id}")
+            return next_id
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener próximo ID para Scan: {err}")
+            raise
+
     #==============================================================
     # UPDATE
     #==============================================================
@@ -543,7 +565,7 @@ class ScanDBManager(DBManager):
             raise
 
 
-class NmapDBManager(DBManager):
+class NmapDBManager(ScanDBManager):
     """
     Gestor específico para operaciones relacionadas con escaneos Nmap y puertos.
     
@@ -829,7 +851,6 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import NmapScan
             exists = self.session.query(NmapScan).filter(NmapScan.id == scan_id).count() > 0
             self.logger.info(f"Verificación de existencia del escaneo Nmap con ID '{scan_id}': {exists}")
             return exists
@@ -880,7 +901,6 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import NmapScan
             scan = self.session.query(NmapScan).filter(NmapScan.id == scan_id).one_or_none()
             self.logger.info(f"Se obtuvo el escaneo Nmap con ID {scan_id}.")
             return scan
@@ -900,7 +920,6 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import NmapScan
             scans = self.session.query(NmapScan).all()
             self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap de la base de datos.")
             return scans
@@ -923,7 +942,6 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import NmapScan
             scans = self.session.query(NmapScan).filter(NmapScan.user_id == user_id).all()
             self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap del usuario con ID {user_id}.")
             return scans
@@ -947,7 +965,6 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import NmapScan
             existing_scan = self.session.query(NmapScan).filter(NmapScan.id == scan.id).one_or_none()
             if existing_scan:
                 existing_scan.target = scan.target
@@ -977,7 +994,6 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import NmapScan
             existing_scan = self.session.query(NmapScan).filter(NmapScan.id == scan.id).one_or_none()
             if existing_scan:
                 self.session.delete(existing_scan)
@@ -1105,7 +1121,7 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import OpenPort
+
             
             # Verificar si ya existe
             existing = self.session.query(OpenPort).filter(
@@ -1143,7 +1159,6 @@ class NmapDBManager(DBManager):
         """
         self._check_session()
         try:
-            from src.model import OpenPort
             
             open_port = self.session.query(OpenPort).filter(
                 OpenPort.port_id == port.id,

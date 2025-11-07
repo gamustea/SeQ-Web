@@ -25,6 +25,7 @@ CREATE TABLE `Scan` (
   `target` VARCHAR(255) NOT NULL,
   `started_at` DATETIME NOT NULL,
   `user_id` INTEGER NOT NULL,
+  `scan_type` varchar(64) NOT NULL, 
   FOREIGN KEY (`user_id`) REFERENCES `User` (`id`)
 );
 
@@ -84,3 +85,18 @@ CREATE TABLE `OpenPort` (
   FOREIGN KEY (`port_id`) REFERENCES `Port` (`id`),
   FOREIGN KEY (`nmap_scan_id`) REFERENCES `NmapScan` (`id`)
 );
+
+INSERT INTO Person VALUES 
+	(1, "Gabriel", "Musteata", "gamustea@unirioja.es", "2025-11-06");
+    
+INSERT INTO User VALUES
+	(1, "root", "root", 1);
+    
+SELECT *
+FROM Person AS P
+	JOIN User AS U ON U.person_id = P.id;
+
+SELECT *
+FROM NmapScan AS NS
+	JOIN OpenPort AS OP ON NS.id = OP.nmap_scan_id
+    JOIN Port AS P ON P.id = OP.port_id;

@@ -14,11 +14,13 @@ from src.model import *
 
 if __name__ == "__main__":
     user_db_manager = UserDBManager()
-    user = user_db_manager.get_user_by_id(1)
+    user: User = user_db_manager.get_user_by_id(1)
     nmap_manager = NmapScanManager(user)
-    nmap_manager._do_scan_and_save(
+    id = nmap_manager.run_task(
         target_host="127.0.0.1",
-        target_ports="22,80,443"
+        target_ports="1-65000"
     )
+    
+
 
     pass

@@ -1,4 +1,6 @@
 
+import threading
+
 from typing import Dict, Optional
 
 from src.persistence.dbmanaging import ScanDBManager, NmapDBManager
@@ -20,16 +22,12 @@ class NmapScanManager:
     def _do_scan_and_save(
         self, 
         target_host: str,
-        target_ports: str
+        target_ports: str,
+        nmap_scan_model: NmapScan
     ) -> None:
 
         task = NmapScanTask(target_host, target_ports)
         task.scan()
-
-        nmap_scan_model = NmapScan(
-            target=target_host,
-            user=self.active_user
-        )
 
         self.running_tasks[nmap_scan_model.id] = task # type: ignore
         task.wait()
@@ -43,3 +41,25 @@ class NmapScanManager:
             self.dbmanager.add_target_port(nmap_scan_model, port_model)
             self.dbmanager.add_open_port(nmap_scan_model, port_model, port[2])
 
+    def run_task(
+        self,
+        target_host: str,
+        target_ports: str
+    ) -> int:
+        nmap_scan_model = NmapScan(
+            target=target_host,
+            user=self.active_user
+        )
+
+        thread = threading.Thread(
+            target=self._do_scan_and_save,
+            args=(target_host, target_ports, nmap_scan_model)
+        )
+        thread.start()
+
+        return self.dbmanager.get
+
+    def get_running_task_progress(self, scan_id: int) -> Optional[int]:
+        if scan_id in self.running_tasks:
+            return self.running_tasks[scan_id].progress
+        return None
