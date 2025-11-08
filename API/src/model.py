@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Text
 from sqlalchemy.orm import relationship, declarative_base
 
 
@@ -425,29 +425,58 @@ class NiktoIncident(Base):
 
     Columnas:
         id (int): Identificador único del incidente.
-        nikto_scan_id (int): ID del escaneo Nikto asociado (clave foránea).
+        osvdb_id (str): Identificador OSVDB del incidente (ej: "OSVDB-3268").
+        method (str): Método HTTP usado (GET, POST, PUT, etc.).
+        url (str): URL completa donde se detectó el incidente.
+        description (str): Descripción detallada del incidente de seguridad.
+        severity (str): Nivel de severidad (low, medium, high, critical).
+        ip_address (str): Dirección IP del host afectado.
+        port (int): Puerto donde se detectó la vulnerabilidad.
+        references (str): Enlaces a CVE, documentación u otras referencias.
+        discovered_at (datetime): Fecha y hora del descubrimiento.
 
     Campos obligatorios al crear:
-        - nikto_scan_id (debe existir en la tabla NiktoScan)
+        - url (URL donde se detectó el incidente)
+        - description (descripción del incidente)
+        - discovered_at (timestamp del descubrimiento)
+
+    Campos opcionales:
+        - osvdb_id (identificador de OSVDB)
+        - method (método HTTP)
+        - severity (nivel de criticidad)
+        - ip_address (IP afectada)
+        - port (puerto afectado)
+        - references (enlaces de referencia)
 
     Campos autogenerados (NO asignar):
         - id (autoincremental)
 
     Campos a mostrar:
-        - id, nikto_scan_id
+        - id, osvdb_id, method, url, description, 
+          severity, ip_address, port, references, discovered_at
 
     Relaciones:
         - nikto_scans: Lista de escaneos Nikto que detectaron este incidente
-
-    Nota:
-        Esta tabla probablemente debería extenderse con más columnas para
-        almacenar detalles del incidente (descripción, severidad, etc.).
     """
 
     __tablename__ = "NiktoIncident"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    nikto_scan_id = Column(Integer, ForeignKey("NiktoScan.id"), nullable=False)
+    
+    # Información del incidente
+    osvdb_id = Column(String(20), nullable=True)
+    method = Column(String(10), nullable=True)
+    url = Column(String(512), nullable=False)
+    description = Column(Text, nullable=False)
+    
+    # Clasificación y contexto
+    severity = Column(String(20), nullable=True)  # low, medium, high, critical
+    ip_address = Column(String(45), nullable=True)
+    port = Column(Integer, nullable=True)
+    
+    # Referencias y timestamp
+    references = Column(Text, nullable=True)
+    discovered_at = Column(DateTime, nullable=False, default=datetime.now)
 
     # Relación muchos a muchos con NiktoScan
     nikto_scans = relationship(
@@ -455,10 +484,17 @@ class NiktoIncident(Base):
     )
 
     def __str__(self):
-        return f"NiktoIncident(id={self.id}, scan_id={self.nikto_scan_id})"
+        severity_str = f" [{self.severity.upper()}]" if self.severity else ""  #type: ignore
+        desc_preview = self.description[:50] + "..." if len(self.description) > 50 else self.description #type: ignore
+        return (
+            f"NiktoIncident(id={self.id}, "
+            f"OSVDB={self.osvdb_id or 'N/A'}{severity_str}, "
+            f"url='{self.url}', "
+            f"descripción='{desc_preview}')"
+        )
 
     def __repr__(self):
-        return f"<NiktoIncident(id={self.id})>"
+        return f"<NiktoIncident(id={self.id}, osvdb='{self.osvdb_id}', severity='{self.severity}')>"
 
 
 class OpenVASScan(Scan):

@@ -10,5 +10,19 @@
         "dbname": "SecOps",
         "host": "127.0.0.1",
         "port": 3306
+    },
+    "scanconfig": {
+        "nikto": {
+            "timeout": 20,
+            "scheduled:targets": []
+        },
+        "openvas": {
+            "timeout": 20,
+            "scheduled:targets": []
+        },
+        "nmap": {
+            "timeout": 20,
+            "scheduled:targets": []
+        }
     }
 }

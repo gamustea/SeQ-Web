@@ -2,10 +2,11 @@ from sqlalchemy import text, create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
+from abc import ABC
 import urllib.parse
 
 from src.misc.logging import SecOpsLogger
-from src.model import Person, User, Scan, Port, OpenPort, NmapScan
+from src.model import Person, User, Scan, Port, OpenPort, NmapScan, NiktoIncident, NiktoScan
 from src.misc.configread import ConfigReader
 
 
@@ -13,9 +14,11 @@ from src.misc.configread import ConfigReader
 (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_crendetials()
 DEFAULT_DATABASE_URL = f"mysql+pymysql://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}/{DBNAME}"
 
+
 SHARED_SESSION: Optional[Session] = None
 
-class DBManager:
+
+class DBManager(ABC):
     """
     Gestor general para la sesión y operaciones básicas en la base de datos usando SQLAlchemy ORM.
     
@@ -48,10 +51,8 @@ class DBManager:
         global SHARED_SESSION
         
         if session is not None:
-            # Si se pasa una sesión explícita, usarla
             self.session = session
         elif SHARED_SESSION is not None:
-            # Si ya existe una sesión compartida, reutilizarla
             self.session = SHARED_SESSION
         else:
             # Crear nueva sesión y establecerla como compartida
@@ -1193,4 +1194,521 @@ class NmapDBManager(ScanDBManager):
             return open_ports
         except Exception as err:
             self.logger.error(f"Error al obtener puertos abiertos: {err}")
+            raise
+
+
+class NiktoDBManager(ScanDBManager):
+    """
+    Gestor específico para operaciones relacionadas con escaneos Nikto e incidentes.
+    
+    Gestiona:
+    - Incidentes Nikto (NiktoIncident)
+    - Escaneos Nikto (NiktoScan)
+    - Relación entre escaneos e incidentes (ScanIncident)
+    
+    Métodos CRUD para NiktoIncident:
+        - nikto_incident_exists(incident_id: int) -> bool
+        - create_nikto_incident(incident: NiktoIncident) -> None
+        - get_nikto_incident_by_id(incident_id: int) -> Optional[NiktoIncident]
+        - get_all_nikto_incidents() -> List[NiktoIncident]
+        - update_nikto_incident(incident: NiktoIncident) -> None
+        - delete_nikto_incident(incident: NiktoIncident) -> None
+    
+    Métodos CRUD para NiktoScan:
+        - nikto_scan_exists(scan_id: int) -> bool
+        - create_nikto_scan(scan: NiktoScan) -> None
+        - get_nikto_scan_by_id(scan_id: int) -> Optional[NiktoScan]
+        - get_all_nikto_scans() -> List[NiktoScan]
+        - get_nikto_scans_by_user(user_id: int) -> List[NiktoScan]
+        - update_nikto_scan(scan: NiktoScan) -> None
+        - delete_nikto_scan(scan: NiktoScan) -> None
+    
+    Métodos para gestionar relaciones:
+        - add_incident(scan: NiktoScan, incident: NiktoIncident) -> None
+        - add_incidents(scan: NiktoScan, incidents: List[NiktoIncident]) -> None
+        - remove_incident(scan: NiktoScan, incident: NiktoIncident) -> None
+        - get_scan_incidents(scan: NiktoScan) -> List[NiktoIncident]
+    """
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOINCIDENT - EXISTS
+    # ============================================================
+    def nikto_incident_exists(self, incident_id: int) -> bool:
+        """
+        Verifica si existe un incidente Nikto con el ID indicado.
+
+        Args:
+            incident_id (int): ID del incidente a buscar.
+
+        Returns:
+            bool: True si existe, False en caso contrario.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            exists = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident_id).count() > 0
+            self.logger.info(f"Verificación de existencia del incidente Nikto con ID '{incident_id}': {exists}")
+            return exists
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al verificar existencia del incidente Nikto: {err}")
+            raise
+
+
+    def nikto_incident_exists_with_desc(self, incident_desc: str) -> bool:
+        """
+        Verifica si existe un incidente Nikto con el ID indicado.
+
+        Args:
+            incident_id (int): ID del incidente a buscar.
+
+        Returns:
+            bool: True si existe, False en caso contrario.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            exists = self.session.query(NiktoIncident).filter(NiktoIncident.description == incident_desc).count() > 0
+            self.logger.info(f"Verificación de existencia del incidente Nikto con ID '{incident_desc}': {exists}")
+            return exists
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al verificar existencia del incidente Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOINCIDENT - CREATE
+    # ============================================================
+    def create_nikto_incident(self, incident: NiktoIncident) -> None:
+        """
+        Añade un nuevo incidente Nikto a la base de datos.
+
+        Args:
+            incident (NiktoIncident): Objeto NiktoIncident a crear.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la inserción.
+        """
+        self._check_session()
+        try:
+            self.session.add(incident)
+            self.session.commit()
+            self.logger.info(f"Se creó un nuevo incidente Nikto con ID {incident.id}")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al crear incidente Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOINCIDENT - RETRIEVE
+    # ============================================================
+    def get_nikto_incident_by_id(self, incident_id: int) -> Optional[NiktoIncident]:
+        """
+        Obtiene un incidente Nikto por su ID.
+
+        Args:
+            incident_id (int): ID del incidente a obtener.
+
+        Returns:
+            Optional[NiktoIncident]: Objeto NiktoIncident si existe, None si no.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            incident = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident_id).one_or_none()
+            self.logger.info(f"Se obtuvo el incidente Nikto con ID {incident_id}.")
+            return incident
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener incidente Nikto por ID: {err}")
+            raise
+
+    def get_nikto_incident_by_description(self, incident_description: str) -> Optional[NiktoIncident]:
+        """
+        Obtiene un incidente Nikto por su ID.
+
+        Args:
+            incident_id (int): ID del incidente a obtener.
+
+        Returns:
+            Optional[NiktoIncident]: Objeto NiktoIncident si existe, None si no.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            incident = self.session.query(NiktoIncident).filter(NiktoIncident.description == incident_description).one_or_none()
+            self.logger.info(f"Se obtuvo el incidente Nikto con ID {incident_description}.")
+            return incident
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener incidente Nikto por ID: {err}")
+            raise
+
+    def get_all_nikto_incidents(self) -> List[NiktoIncident]:
+        """
+        Obtiene todos los incidentes Nikto existentes.
+
+        Returns:
+            List[NiktoIncident]: Lista de todos los objetos NiktoIncident.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            incidents = self.session.query(NiktoIncident).all()
+            self.logger.info(f"Se obtuvieron {len(incidents)} incidentes Nikto de la base de datos.")
+            return incidents
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener todos los incidentes Nikto: {err}")
+            raise
+
+    def get_or_create_nikto_incident(self, incident: NiktoIncident):
+        """"
+        Obtiene un puerto por su protocolo, o lo crea si no existe.
+        Útil para evitar duplicados.
+
+        Args:
+            protocol (str): Protocolo del puerto (ej: "80/tcp").
+
+        Returns:
+            Port: Objeto Port existente o recién creado.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la operación.
+        """
+        self._check_session()
+        try:
+            new_incident = self.get_nikto_incident_by_description(incident.description) #type: ignore
+            if new_incident:
+                self.logger.info(f"Incidente '{new_incident}' ya existe, reutilizando.")
+                return new_incident
+            
+            self.create_nikto_incident(incident)
+            self.logger.info(f"Incidente '{incident.description}' creado con ID {incident.id}")
+            return incident
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error en get_or_create_port: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOINCIDENT - UPDATE
+    # ============================================================
+    def update_nikto_incident(self, incident: NiktoIncident) -> None:
+        """
+        Actualiza la información de un incidente Nikto existente.
+
+        Args:
+            incident (NiktoIncident): Objeto NiktoIncident con los datos actualizados.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la actualización.
+        """
+        self._check_session()
+        try:
+            existing_incident = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident.id).one_or_none()
+            if existing_incident:
+                self.session.commit()
+                self.logger.info(f"Se actualizó el incidente Nikto con ID {incident.id}.")
+            else:
+                self.logger.warning(f"No se encontró incidente Nikto con ID {incident.id} para actualizar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al actualizar incidente Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOINCIDENT - DELETE
+    # ============================================================
+    def delete_nikto_incident(self, incident: NiktoIncident) -> None:
+        """
+        Elimina un incidente Nikto existente.
+
+        Args:
+            incident (NiktoIncident): Objeto NiktoIncident a eliminar.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la eliminación.
+        """
+        self._check_session()
+        try:
+            existing_incident = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident.id).one_or_none()
+            if existing_incident:
+                self.session.delete(existing_incident)
+                self.session.commit()
+                self.logger.info(f"Se eliminó el incidente Nikto con ID {incident.id}.")
+            else:
+                self.logger.warning(f"No se encontró incidente Nikto con ID {incident.id} para eliminar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al eliminar incidente Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOSCAN - EXISTS
+    # ============================================================
+    def nikto_scan_exists(self, scan_id: int) -> bool:
+        """
+        Verifica si existe un escaneo Nikto con el ID indicado.
+
+        Args:
+            scan_id (int): ID del escaneo a buscar.
+
+        Returns:
+            bool: True si existe, False en caso contrario.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            exists = self.session.query(NiktoScan).filter(NiktoScan.id == scan_id).count() > 0
+            self.logger.info(f"Verificación de existencia del escaneo Nikto con ID '{scan_id}': {exists}")
+            return exists
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al verificar existencia del escaneo Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOSCAN - CREATE
+    # ============================================================
+    def create_nikto_scan(self, scan: NiktoScan) -> None:
+        """
+        Añade un nuevo escaneo Nikto a la base de datos.
+
+        Args:
+            scan (NiktoScan): Objeto NiktoScan a crear.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la inserción.
+        """
+        self._check_session()
+        try:
+            self.session.add(scan)
+            self.session.commit()
+            self.logger.info(f"Se creó un nuevo escaneo Nikto con ID {scan.id} para target '{scan.target}'")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al crear escaneo Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOSCAN - RETRIEVE
+    # ============================================================
+    def get_nikto_scan_by_id(self, scan_id: int) -> Optional[NiktoScan]:
+        """
+        Obtiene un escaneo Nikto por su ID.
+
+        Args:
+            scan_id (int): ID del escaneo a obtener.
+
+        Returns:
+            Optional[NiktoScan]: Objeto NiktoScan si existe, None si no.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            scan = self.session.query(NiktoScan).filter(NiktoScan.id == scan_id).one_or_none()
+            self.logger.info(f"Se obtuvo el escaneo Nikto con ID {scan_id}.")
+            return scan
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener escaneo Nikto por ID: {err}")
+            raise
+
+    def get_all_nikto_scans(self) -> List[NiktoScan]:
+        """
+        Obtiene todos los escaneos Nikto existentes.
+
+        Returns:
+            List[NiktoScan]: Lista de todos los escaneos Nikto.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            scans = self.session.query(NiktoScan).all()
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto de la base de datos.")
+            return scans
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener todos los escaneos Nikto: {err}")
+            raise
+
+    def get_nikto_scans_by_user(self, user_id: int) -> List[NiktoScan]:
+        """
+        Obtiene todos los escaneos Nikto de un usuario específico.
+
+        Args:
+            user_id (int): ID del usuario.
+
+        Returns:
+            List[NiktoScan]: Lista de escaneos Nikto del usuario.
+
+        Raises:
+            SQLAlchemyError: En caso de error en la consulta.
+        """
+        self._check_session()
+        try:
+            scans = self.session.query(NiktoScan).filter(NiktoScan.user_id == user_id).all()
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto del usuario con ID {user_id}.")
+            return scans
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener escaneos Nikto por usuario: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOSCAN - UPDATE
+    # ============================================================
+    def update_nikto_scan(self, scan: NiktoScan) -> None:
+        """
+        Actualiza la información de un escaneo Nikto existente.
+
+        Args:
+            scan (NiktoScan): Objeto NiktoScan con los datos actualizados.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la actualización.
+        """
+        self._check_session()
+        try:
+            existing_scan = self.session.query(NiktoScan).filter(NiktoScan.id == scan.id).one_or_none()
+            if existing_scan:
+                existing_scan.target = scan.target
+                existing_scan.started_at = scan.started_at
+                self.session.commit()
+                self.logger.info(f"Se actualizó el escaneo Nikto con ID {scan.id}.")
+            else:
+                self.logger.warning(f"No se encontró escaneo Nikto con ID {scan.id} para actualizar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al actualizar escaneo Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA NIKTOSCAN - DELETE
+    # ============================================================
+    def delete_nikto_scan(self, scan: NiktoScan) -> None:
+        """
+        Elimina un escaneo Nikto existente.
+
+        Args:
+            scan (NiktoScan): Objeto NiktoScan a eliminar.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la eliminación.
+        """
+        self._check_session()
+        try:
+            existing_scan = self.session.query(NiktoScan).filter(NiktoScan.id == scan.id).one_or_none()
+            if existing_scan:
+                self.session.delete(existing_scan)
+                self.session.commit()
+                self.logger.info(f"Se eliminó el escaneo Nikto con ID {scan.id}.")
+            else:
+                self.logger.warning(f"No se encontró escaneo Nikto con ID {scan.id} para eliminar.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al eliminar escaneo Nikto: {err}")
+            raise
+
+    # ============================================================
+    # MÉTODOS PARA GESTIONAR RELACIONES - INCIDENTS
+    # ============================================================
+    def add_incident(self, scan: NiktoScan, incident: NiktoIncident) -> None:
+        """
+        Añade un incidente a un escaneo Nikto.
+
+        Args:
+            scan (NiktoScan): Escaneo al que añadir el incidente.
+            incident (NiktoIncident): Incidente a añadir.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            if incident not in scan.incidents:
+                scan.incidents.append(incident)
+                self.session.commit()
+                self.logger.info(f"Incidente con ID {incident.id} añadido al escaneo Nikto {scan.id}.")
+            else:
+                self.logger.info(f"Incidente con ID {incident.id} ya está asociado al escaneo Nikto {scan.id}.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al añadir incidente: {err}")
+            raise
+
+    def add_incidents(self, scan: NiktoScan, incidents: List[NiktoIncident]) -> None:
+        """
+        Añade múltiples incidentes a un escaneo Nikto.
+
+        Args:
+            scan (NiktoScan): Escaneo al que añadir los incidentes.
+            incidents (List[NiktoIncident]): Lista de incidentes a añadir.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            added = 0
+            for incident in incidents:
+                if incident not in scan.incidents:
+                    scan.incidents.append(incident)
+                    added += 1
+            
+            self.session.commit()
+            self.logger.info(f"Se añadieron {added} incidentes al escaneo Nikto {scan.id}.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al añadir incidentes: {err}")
+            raise
+
+    def remove_incident(self, scan: NiktoScan, incident: NiktoIncident) -> None:
+        """
+        Elimina un incidente de un escaneo Nikto.
+
+        Args:
+            scan (NiktoScan): Escaneo del que eliminar el incidente.
+            incident (NiktoIncident): Incidente a eliminar.
+
+        Raises:
+            SQLAlchemyError: En caso de error durante la operación.
+        """
+        self._check_session()
+        try:
+            if incident in scan.incidents:
+                scan.incidents.remove(incident)
+                self.session.commit()
+                self.logger.info(f"Incidente con ID {incident.id} eliminado del escaneo Nikto {scan.id}.")
+            else:
+                self.logger.warning(f"Incidente con ID {incident.id} no está asociado al escaneo Nikto {scan.id}.")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al eliminar incidente: {err}")
+            raise
+
+    def get_scan_incidents(self, scan: NiktoScan) -> List[NiktoIncident]:
+        """
+        Obtiene todos los incidentes de un escaneo Nikto.
+
+        Args:
+            scan (NiktoScan): Escaneo del que obtener los incidentes.
+
+        Returns:
+            List[NiktoIncident]: Lista de incidentes del escaneo.
+        """
+        self._check_session()
+        try:
+            incidents = scan.incidents
+            self.logger.info(f"Se obtuvieron {len(incidents)} incidentes del escaneo Nikto {scan.id}.")
+            return incidents
+        except Exception as err:
+            self.logger.error(f"Error al obtener incidentes del escaneo: {err}")
             raise

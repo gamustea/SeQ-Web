@@ -38,13 +38,14 @@ class _Task(ABC):
     de los resultados correspondientes a la herramienta usada.
     """
 
-    def __init__(self, target: str):
+    def __init__(self, target: str, timeout: int = 20):
         """
         Inicializa la tarea de escaneo con el objetivo (host o dominio) a escanear.
 
         Args:
             target (str): Dirección IP, rango o dominio a escanear.
         """
+        self.timeout = timeout
         self.status = TaskStatus.NOT_STARTED  # Estado inicial: no iniciado
         self.results: Optional[Any]   # Resultados estructurados tras finalización
         self.target: str = target             # Objetivo del escaneo
@@ -222,8 +223,8 @@ class NmapScanTask(_Task):
     con la librería python-nmap para obtener información estructurada.
     """
 
-    def __init__(self, target_host="127.0.0.1", target_ports="1-6000"):
-        super().__init__(target_host)
+    def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 20):
+        super().__init__(target_host, timeout)
         TEMP_DIR = ConfigReader().get_directory_of("tempdir")
         FILE_NAME = f"nmap_scan_{self.target}_{int(time.time())}.xml"
         self.target_ports = target_ports
@@ -272,8 +273,8 @@ class NiktoScanTask(_Task):
     lo procesa para obtener resultados en formato JSON.
     """
 
-    def __init__(self, target_domain="http://testphp.vulnweb.com"):
-        super().__init__(target_domain)
+    def __init__(self, target_domain="http://testphp.vulnweb.com", timeout: int = 20):
+        super().__init__(target_domain, timeout)
         self.temp_path = DirectoryChecker().verify_directory("tempdir") / "nikto_scan.xml"
         self._output_file = self.temp_path
 
@@ -291,7 +292,7 @@ class NiktoScanTask(_Task):
             "-o", str(self.temp_path),
             "-Format", "xml",
             "-nointeractive",
-            "-maxtime", "20",
+            "-maxtime", str(self.timeout),
         ]
 
     def _parse_progress(self, line: str) -> int:

@@ -5,7 +5,7 @@ import xmltodict
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
-from src.model import NmapScan
+from src.model import NmapScan, NiktoScan
 
 
 class JSONManager:
@@ -39,7 +39,7 @@ class JSONManager:
             return None
 
     @staticmethod
-    def convert_json_to_individual_data(json_data: str, scan: NmapScan) -> Dict:
+    def convert_json_to_individual_nmap_data(json_data: str, scan: NmapScan) -> Dict:
         """
         Extrae información del resultado JSON de Nmap y lo estructura para el ORM.
         
@@ -79,4 +79,20 @@ class JSONManager:
             "ports": result_ports
         }
 
+    @staticmethod
+    def convert_json_to_individual_nikto_data(json_data: dict) -> List:
+        """Dado un diccionario resultado de Nikto, devuelve un array con las incidencias encontradas,
+        incluyendo todos los campos que comienzan por '@'."""
+        try:
+            items = json_data['niktoscan']['scandetails']['item']
+            incidencias = []
+            for item in items:
+                incidencia = {}
+                for key, value in item.items():
+                    # Extraer tanto claves normales como las que empiezan por '@'
+                    incidencia[key.lstrip('@')] = value
+                incidencias.append(incidencia)
+            return incidencias
+        except KeyError:
+            return []
 

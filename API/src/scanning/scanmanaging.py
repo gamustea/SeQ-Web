@@ -3,21 +3,32 @@ import threading
 
 from typing import Dict, Optional
 
-from src.persistence.dbmanaging import ScanDBManager, NmapDBManager
-from src.scanning.tasks import NmapScanTask
-from src.model import NmapScan, User
+from abc import abstractmethod, ABC
+
+from src.persistence.dbmanaging import ScanDBManager, NmapDBManager, DBManager, NiktoDBManager
+from src.scanning.tasks import NmapScanTask, NiktoScanTask, _Task
+from src.model import NmapScan, User, NiktoScan, NiktoIncident
 from src.misc.conversion import JSONManager
 
 
-class NmapScanManager:
-    dbmanager: NmapDBManager
-    running_tasks: Dict[int, NmapScanTask]
+class _ScanManager(ABC):
+    running_tasks: Dict[str, _Task]
     active_user: User
 
     def __init__(self, user: User):
-        self.dbmanager = NmapDBManager()
         self.running_tasks = {}
         self.active_user = user
+
+    def get_running_task_progress(self, target: str) -> Optional[int]:
+        if target in self.running_tasks:
+            return self.running_tasks[target].progress
+        return None
+
+
+class NmapScanManager(_ScanManager):
+    def __init__(self, user: User):
+        super().__init__(user)
+        self.dbmanager = NmapDBManager()
 
     def _do_scan_and_save(
         self, 
@@ -27,12 +38,12 @@ class NmapScanManager:
     ) -> None:
 
         task = NmapScanTask(target_host, target_ports)
-        task.scan()
-
-        self.running_tasks[nmap_scan_model.id] = task # type: ignore
+        self.running_tasks[target_host] = task
+        
+        task.scan()       
         task.wait()
 
-        results = JSONManager.convert_json_to_individual_data(task.results, nmap_scan_model) # type: ignore
+        results = JSONManager.convert_json_to_individual_nmap_data(task.results, nmap_scan_model) # type: ignore
         nmap_scan_model.results = results
 
         self.dbmanager.create_nmap_scan(nmap_scan_model)
@@ -45,7 +56,10 @@ class NmapScanManager:
         self,
         target_host: str,
         target_ports: str
-    ) -> int:
+    ):
+        if target_host in self.running_tasks:
+            raise Exception(f"A scan is already running for target {target_host}")
+
         nmap_scan_model = NmapScan(
             target=target_host,
             user=self.active_user
@@ -57,9 +71,38 @@ class NmapScanManager:
         )
         thread.start()
 
-        return self.dbmanager.get
+        return self.dbmanager.get_next_scan_id()
 
-    def get_running_task_progress(self, scan_id: int) -> Optional[int]:
-        if scan_id in self.running_tasks:
-            return self.running_tasks[scan_id].progress
-        return None
+
+class NiktoScanManager(_ScanManager):
+    def __init__(self, user: User):
+        super().__init__(user)
+        self.dbmanager = NiktoDBManager()
+
+    def _do_scan_and_save(self, target_domain: str, nikto_scan_model: NiktoScan, timeout = 20) -> None:
+        task = NiktoScanTask(target_domain, timeout)
+        self.running_tasks[target_domain] = task
+
+        task.scan()
+        task.wait()
+
+        results = JSONManager.convert_json_to_individual_nikto_data(task.results[-1]) # type: ignore
+        task.results = results
+
+        self.dbmanager.create_nikto_scan(nikto_scan_model)
+        for result in results:
+            description = result["description"]
+            osvdbid = result["osvdbid"]
+            method = result["method"]
+            description = result["description"]
+            uri = result["uri"]
+
+            incident = NiktoIncident()
+            incident.description = description
+            incident.osvdb_id = osvdbid
+            incident.method = method
+            incident.url = uri
+
+            new_incident = self.dbmanager.get_or_create_nikto_incident(incident)
+            self.dbmanager.add_incident(nikto_scan_model, new_incident)
+    
