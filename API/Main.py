@@ -18,8 +18,13 @@ if __name__ == "__main__":
     user: User = user_db_manager.get_user_by_id(1)
 
     manager = NmapScanManager(user)
-    manager.run_task("127.0.0.1", "1-65000")
-    print("Se pueden hacer cosas mientras se ejecuta el NMAP")
-    while True:
-        time.sleep(0.5)
-        print("Sigue funcionando")
+    id = manager.run_task("127.0.0.1", "1-65000", timeout=60)
+    print(f"El id del proceso es {id}")
+
+    time.sleep(1)
+    if id is not None:
+        progress = manager.get_running_task_progress(id) #type: ignore
+        while (progress < 99): #type: ignore
+            print(f"Progeso: {progress}")
+            progress = manager.get_running_task_progress(id) #type: ignore
+            time.sleep(0.1)

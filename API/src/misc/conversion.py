@@ -59,7 +59,14 @@ class JSONManager:
         
         # Extraer información básica
         command = result["nmap"]["command_line"]
-        
+
+        if scan.target not in result["scan"]:
+            return {
+                "command": command,
+                "hostname": "",
+                "ports": []
+            }
+            
         # Extraer hostname (con manejo de casos sin hostname)
         hostnames = result["scan"][scan.target]["hostnames"]
         hostname = hostnames[0]["name"] if hostnames else ""
