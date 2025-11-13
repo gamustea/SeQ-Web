@@ -2,6 +2,7 @@
 import json
 import threading
 import time
+import os
 
 from src.scanning.tasks import NmapScanTask, NiktoScanTask
 from src.misc.configread import ConfigReader
@@ -16,9 +17,9 @@ if __name__ == "__main__":
     user_db_manager = UserDBManager()
     user: User = user_db_manager.get_user_by_id(1)
 
-    manager = NiktoScanManager(user)
-    scan = NiktoScan(
-        target="http://testphp.vulnweb.com",
-        user=user
-    )
-    manager._do_scan_and_save("http://testphp.vulnweb.com", scan)
+    manager = NmapScanManager(user)
+    manager.run_task("127.0.0.1", "1-65000")
+    print("Se pueden hacer cosas mientras se ejecuta el NMAP")
+    while True:
+        time.sleep(0.5)
+        print("Sigue funcionando")

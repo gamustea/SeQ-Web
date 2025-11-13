@@ -105,4 +105,24 @@ class NiktoScanManager(_ScanManager):
 
             new_incident = self.dbmanager.get_or_create_nikto_incident(incident)
             self.dbmanager.add_incident(nikto_scan_model, new_incident)
+
+    def run_task(
+        self,
+        target_host: str
+    ):
+        if target_host in self.running_tasks:
+            raise Exception(f"A scan is already running for target {target_host}")
+
+        nikto_scan_model = NiktoScan(
+            target=target_host,
+            user=self.active_user
+        )
+
+        thread = threading.Thread(
+            target=self._do_scan_and_save,
+            args=(target_host, nikto_scan_model)
+        )
+        thread.start()
+
+        return self.dbmanager.get_next_scan_id()
     
