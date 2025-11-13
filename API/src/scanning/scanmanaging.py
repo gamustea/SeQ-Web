@@ -1,7 +1,7 @@
 
 import threading
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from abc import abstractmethod, ABC
 
@@ -24,6 +24,10 @@ class _ScanManager(ABC):
         if id in self.running_tasks:
             return self.running_tasks[id].progress
         return None
+    
+    @abstractmethod
+    def get_scans_for_user(self) -> List:
+        pass
 
 
 class NmapScanManager(_ScanManager):
@@ -76,6 +80,8 @@ class NmapScanManager(_ScanManager):
 
         return nmap_scan_model.id
 
+    def get_scans_for_user(self) -> List:
+        return self.dbmanager.get_nmap_scans_by_user(self.active_user.id)
 
 class NiktoScanManager(_ScanManager):
     def __init__(self, user: User):
@@ -129,3 +135,6 @@ class NiktoScanManager(_ScanManager):
 
         return nikto_scan_model.id
     
+    def get_scans_for_user(self) -> List:
+        return self.dbmanager.get_nikto_scans_by_user(self.active_user.id)
+
