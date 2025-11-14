@@ -83,6 +83,7 @@ class NmapScanManager(_ScanManager):
     def get_scans_for_user(self) -> List:
         return self.dbmanager.get_nmap_scans_by_user(self.active_user.id)
 
+
 class NiktoScanManager(_ScanManager):
     def __init__(self, user: User):
         super().__init__(user)
@@ -116,7 +117,8 @@ class NiktoScanManager(_ScanManager):
 
     def run_task(
         self,
-        target_host: str
+        target_host: str,
+        timeout: int = 60
     ):
         if target_host in self.running_tasks:
             raise Exception(f"A scan is already running for target {target_host}")
