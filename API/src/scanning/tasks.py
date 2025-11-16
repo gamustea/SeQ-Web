@@ -8,7 +8,7 @@ from enum import Enum, auto
 from abc import ABC, abstractmethod
 from nmap import PortScanner
 
-from src.misc.configread import ConfigReader
+from src.misc.configread import ConfigReader, DirectoryType
 from src.misc.logging import SecOpsLogger
 from src.misc.conversion import JSONManager
 from src.misc.directorychecker import DirectoryChecker
@@ -225,8 +225,8 @@ class NmapScanTask(_Task):
 
     def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 20):
         super().__init__(target_host, timeout)
-        TEMP_DIR = ConfigReader().get_directory_of("tempdir")
-        FILE_NAME = f"nmap_scan_{self.target}_{int(time.time())}.xml"
+        TEMP_DIR = ConfigReader().get_directory_of(DirectoryType.TEMP)
+        FILE_NAME = f"nmap_scan_{self.target}_{int(time.time())}.xml" 
         self.target_ports = target_ports
         self._output_file = Path(f"{TEMP_DIR}/{FILE_NAME}")
         self.scanner = None  # Instancia python-nmap para análisis XML
@@ -275,7 +275,7 @@ class NiktoScanTask(_Task):
 
     def __init__(self, target_domain="http://testphp.vulnweb.com", timeout: int = 20):
         super().__init__(target_domain, timeout)
-        self.temp_path = DirectoryChecker().verify_directory("tempdir") / "nikto_scan.xml"
+        self.temp_path = DirectoryChecker().verify_directory(DirectoryType.TEMP) / "nikto_scan.xml"
         self._output_file = self.temp_path
 
     def _build_command(self) -> List[str]:

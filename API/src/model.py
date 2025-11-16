@@ -452,7 +452,7 @@ class NiktoIncident(Base):
         - id (autoincremental)
 
     Campos a mostrar:
-        - id, osvdb_id, method, url, description, 
+        - id, osvdb_id, method, url, description,
           severity, ip_address, port, references, discovered_at
 
     Relaciones:
@@ -462,18 +462,18 @@ class NiktoIncident(Base):
     __tablename__ = "NiktoIncident"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    
+
     # Información del incidente
     osvdb_id = Column(String(20), nullable=True)
     method = Column(String(10), nullable=True)
     url = Column(String(512), nullable=False)
     description = Column(Text, nullable=False)
-    
+
     # Clasificación y contexto
     severity = Column(String(20), nullable=True)  # low, medium, high, critical
     ip_address = Column(String(45), nullable=True)
     port = Column(Integer, nullable=True)
-    
+
     # Referencias y timestamp
     references = Column(Text, nullable=True)
     discovered_at = Column(DateTime, nullable=False, default=datetime.now)
@@ -484,8 +484,8 @@ class NiktoIncident(Base):
     )
 
     def __str__(self):
-        severity_str = f" [{self.severity.upper()}]" if self.severity else ""  #type: ignore
-        desc_preview = self.description[:50] + "..." if len(self.description) > 50 else self.description #type: ignore
+        severity_str = f" [{self.severity.upper()}]" if self.severity else ""  # type: ignore
+        desc_preview = self.description[:50] + "..." if len(self.description) > 50 else self.description  # type: ignore
         return (
             f"NiktoIncident(id={self.id}, "
             f"OSVDB={self.osvdb_id or 'N/A'}{severity_str}, "

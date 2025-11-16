@@ -1,7 +1,7 @@
 import logging
 import os
 
-from src.misc.configread import ConfigReader
+from src.misc.configread import ConfigReader, DirectoryType
 from pathlib import Path
 
 
@@ -27,7 +27,7 @@ class SecOpsLogger:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
-            path = Path(reader.get_directory_of("logdir")).resolve()
+            path = Path(reader.get_directory_of(DirectoryType.LOG)).resolve()
             path.mkdir(parents=True, exist_ok=True)
             log_file = path / "secops.log"
 

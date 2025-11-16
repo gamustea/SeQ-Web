@@ -2,7 +2,8 @@
     "directories": {
         "tempdir": "/var/tmp/secapp",
         "logdir": "API/log",
-        "resultdir": "/var/secapp/results"
+        "resultdir": "/var/secapp/results",
+        "resourcedir": "API/resources"
     },
     "dbconfig": {
         "username": "gabriel",
