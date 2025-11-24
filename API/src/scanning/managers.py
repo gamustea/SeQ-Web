@@ -8,7 +8,7 @@ from src.persistence import (
     DBManager,
     NiktoDBManager,
 )
-from src.tasks import NmapScanTask, NiktoScanTask, _Task
+from src.scanning.tasks import NmapScanTask, NiktoScanTask, _Task
 from src.model import NmapScan, User, NiktoScan, NiktoIncident, Scan
 from src.misc.conversion import JSONManager
 from src.misc.logging import SecOpsLogger
@@ -337,7 +337,7 @@ class NmapScanManager(_ScanManager):
 
             logger.info(f"Creando nuevo escaneo Nmap para {target_host}")
             nmap_scan_model = NmapScan(target=target_host, user=self.active_user)
-            nmap_scan_model.started_at = datetime.now() # type: ignore
+            nmap_scan_model.started_at = datetime.now()  # type: ignore
             self.dbmanager.create_nmap_scan(nmap_scan_model)
 
             logger.info(f"Escaneo Nmap {nmap_scan_model.id} creado, iniciando thread")
@@ -454,7 +454,7 @@ class NiktoScanManager(_ScanManager):
 
             logger.info(f"Creando nuevo escaneo Nikto para {target_host}")
             nikto_scan_model = NiktoScan(target=target_host, user=self.active_user)
-            nikto_scan_model.started_at = datetime.now() # type: ignore
+            nikto_scan_model.started_at = datetime.now()  # type: ignore
             self.dbmanager.create_nikto_scan(nikto_scan_model)
 
             logger.info(f"Escaneo Nikto {nikto_scan_model.id} creado, iniciando thread")

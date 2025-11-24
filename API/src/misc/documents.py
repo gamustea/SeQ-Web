@@ -1,11 +1,15 @@
 import os
 
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+from datetime import datetime
+from abc import ABC, abstractmethod
+from enum import Enum
+from typing import Optional
 
 from src.misc.configread import ConfigReader, DirectoryType
-from src.model import NmapScan, NiktoScan
+from src.model import NmapScan, NiktoScan, Scan
 
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import inch
@@ -17,14 +21,13 @@ from reportlab.platypus import (
     Spacer,
     Image,
     PageBreak,
+    CondPageBreak
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.pdfgen import canvas
 from reportlab.lib.enums import TA_JUSTIFY
-from datetime import datetime
-from abc import ABC, abstractmethod
-from enum import Enum
+
 
 class ColorType(Enum):
     BLACK = "black"
@@ -32,14 +35,15 @@ class ColorType(Enum):
     MAIN = "main"
     SECONDARY = "secondary"
     LIGHT = "light"
-    WHITE = "white"   
+    WHITE = "white"
 
 
 class _PrintingStrategy(ABC):
-    
-    def __init__(self) -> None:
+
+    def __init__(self, scan: Scan) -> None:
         super().__init__()
         self.color_palette: dict
+        self.scan = scan
 
     @abstractmethod
     def append_body(self, scan, styles, elements):
@@ -53,27 +57,31 @@ class _PrintingStrategy(ABC):
     def get_picture_name(self, dark: bool = True) -> str:
         pass
 
+    @abstractmethod
+    def get_report_title(self) -> str:
+        pass
+
 
 class NmapPrintingStrategy(_PrintingStrategy):
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, scan: NmapScan) -> None:
+        super().__init__(scan)
         self.color_palette = {
-            ColorType.MAIN: "#014F86",        # azul océano (oscuro)
-            ColorType.BLACK: "#121212",       # negro neutro cálido para contraste
-            ColorType.SECONDARY: "#555B6E",   # gris oscuro con matiz azulado
-            ColorType.DARK: "#01375A",        # azul océano más oscuro, derivado del principal
-            ColorType.LIGHT: "#4A90E2",       # azul océano claro, derivado del principal
-            ColorType.WHITE: "#E1E8F0",       # blanco con tintes azulados, derivado del azul claro
+            ColorType.MAIN: "#014F86",  # azul océano (oscuro)
+            ColorType.BLACK: "#121212",  # negro neutro cálido para contraste
+            ColorType.SECONDARY: "#555B6E",  # gris oscuro con matiz azulado
+            ColorType.DARK: "#01375A",  # azul océano más oscuro, derivado del principal
+            ColorType.LIGHT: "#4A90E2",  # azul océano claro, derivado del principal
+            ColorType.WHITE: "#E1E8F0",  # blanco con tintes azulados, derivado del azul claro
         }
 
     def append_body(self, scan, styles, elements):
-        BLACK_COLOR     = self.color_palette[ColorType.BLACK]
-        DARK_COLOR      = self.color_palette[ColorType.DARK]
-        MAIN_COLOR      = self.color_palette[ColorType.MAIN]
+        BLACK_COLOR = self.color_palette[ColorType.BLACK]
+        DARK_COLOR = self.color_palette[ColorType.DARK]
+        MAIN_COLOR = self.color_palette[ColorType.MAIN]
         SECONDARY_COLOR = self.color_palette[ColorType.SECONDARY]
-        LIGHT_COLOR     = self.color_palette[ColorType.LIGHT]
-        WHITE_COLOR     = self.color_palette[ColorType.WHITE]
+        LIGHT_COLOR = self.color_palette[ColorType.LIGHT]
+        WHITE_COLOR = self.color_palette[ColorType.WHITE]
 
         # Estilo personalizado para el título
         title_style = ParagraphStyle(
@@ -105,7 +113,6 @@ class NmapPrintingStrategy(_PrintingStrategy):
             textColor=colors.HexColor(SECONDARY_COLOR),
             spaceAfter=6,
         )
-
 
         # === ENCABEZADO ===
         title = Paragraph("Informe de Escaneo Nmap", title_style)
@@ -204,38 +211,41 @@ class NmapPrintingStrategy(_PrintingStrategy):
 
     def get_filename_suffix(self) -> str:
         return "_Nmap.pdf"
-    
+
     def get_picture_name(self, dark: bool = False) -> str:
         picture_name = "SecOps-Logo-Blue"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
+    def get_report_title(self) -> str:
+        return "Análisis de Seguridad de Red"
+
 
 class NiktoPrintingStrategy(_PrintingStrategy):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, scan: NiktoScan):
+        super().__init__(scan)
         self.color_palette = {
-            ColorType.MAIN: "#C75B12",        # naranja oscuro
-            ColorType.BLACK: "#4B2500",       # marrón muy oscuro, derivado cálido del naranja
-            ColorType.SECONDARY: "#FA8072",   # salmón
-            ColorType.DARK: "#8E3D0A",        # naranja oscuro más intenso, derivado del principal
-            ColorType.LIGHT: "#F9B49A",       # salmón claro, derivado del secundario
-            ColorType.WHITE: "#FFF5F0",       # blanco con matiz cálido, derivado del naranja claro
+            ColorType.MAIN: "#C75B12",  # naranja oscuro
+            ColorType.BLACK: "#4B2500",  # marrón muy oscuro, derivado cálido del naranja
+            ColorType.SECONDARY: "#FA8072",  # salmón
+            ColorType.DARK: "#8E3D0A",  # naranja oscuro más intenso, derivado del principal
+            ColorType.LIGHT: "#F9B49A",  # salmón claro, derivado del secundario
+            ColorType.WHITE: "#FFF5F0",  # blanco con matiz cálido, derivado del naranja claro
         }
 
     def append_body(self, scan, styles, elements):
-        BLACK_COLOR     = self.color_palette[ColorType.BLACK]
-        DARK_COLOR      = self.color_palette[ColorType.DARK]
-        MAIN_COLOR      = self.color_palette[ColorType.MAIN]
+        BLACK_COLOR = self.color_palette[ColorType.BLACK]
+        DARK_COLOR = self.color_palette[ColorType.DARK]
+        MAIN_COLOR = self.color_palette[ColorType.MAIN]
         SECONDARY_COLOR = self.color_palette[ColorType.SECONDARY]
-        LIGHT_COLOR     = self.color_palette[ColorType.LIGHT]
-        WHITE_COLOR     = self.color_palette[ColorType.WHITE]
+        LIGHT_COLOR = self.color_palette[ColorType.LIGHT]
+        WHITE_COLOR = self.color_palette[ColorType.WHITE]
 
         title_style = ParagraphStyle(
             "CustomTitle",
             parent=styles["Heading1"],
             fontSize=24,
-            textColor=colors.HexColor("#1a1a1a"),
+            textColor=colors.HexColor(BLACK_COLOR),
             spaceAfter=30,
             alignment=TA_CENTER,
             fontName="Helvetica-Bold",
@@ -246,7 +256,7 @@ class NiktoPrintingStrategy(_PrintingStrategy):
             "CustomSubtitle",
             parent=styles["Heading2"],
             fontSize=16,
-            textColor=colors.HexColor("#c0392b"),  # Rojo para vulnerabilidades
+            textColor=colors.HexColor(MAIN_COLOR),  # Rojo para vulnerabilidades
             spaceAfter=12,
             spaceBefore=12,
             fontName="Helvetica-Bold",
@@ -257,7 +267,7 @@ class NiktoPrintingStrategy(_PrintingStrategy):
             "InfoStyle",
             parent=styles["Normal"],
             fontSize=10,
-            textColor=colors.HexColor("#555555"),
+            textColor=colors.HexColor(LIGHT_COLOR),
             spaceAfter=6,
         )
 
@@ -266,7 +276,7 @@ class NiktoPrintingStrategy(_PrintingStrategy):
             "DescriptionStyle",
             parent=styles["Normal"],
             fontSize=9,
-            textColor=colors.HexColor("#333333"),
+            textColor=colors.HexColor(BLACK_COLOR),
             alignment=TA_JUSTIFY,
             leading=12,
         )
@@ -290,15 +300,15 @@ class NiktoPrintingStrategy(_PrintingStrategy):
         info_table.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#ffe6e6")),
-                    ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#c0392b")),
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(WHITE_COLOR)),
+                    ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor(MAIN_COLOR)),
                     ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                     ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                     ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
                     ("FONTSIZE", (0, 0), (-1, -1), 10),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
                     ("TOPPADDING", (0, 0), (-1, -1), 8),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(DARK_COLOR)),
                 ]
             )
         )
@@ -353,7 +363,12 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                     TableStyle(
                         [
                             # Encabezado
-                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#c0392b")),
+                            (
+                                "BACKGROUND",
+                                (0, 0),
+                                (-1, 0),
+                                colors.HexColor(SECONDARY_COLOR),
+                            ),
                             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
                             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -365,7 +380,13 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                             ("FONTSIZE", (0, 1), (-1, -1), 10),
                             ("TOPPADDING", (0, 1), (-1, -1), 8),
                             ("BOTTOMPADDING", (0, 1), (-1, -1), 8),
-                            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+                            (
+                                "GRID",
+                                (0, 0),
+                                (-1, -1),
+                                0.5,
+                                colors.HexColor(DARK_COLOR),
+                            ),
                         ]
                     )
                 )
@@ -374,12 +395,12 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                 elements.append(Spacer(1, 0.3 * inch))
 
         # === SECCIÓN DE INCIDENTES DETECTADOS ===
+        # SECCIÓN DE INCIDENTES DETECTADOS
         subtitle = Paragraph("Incidentes de Seguridad Detectados", subtitle_style)
         elements.append(subtitle)
         elements.append(Spacer(1, 0.1 * inch))
-
+        
         if scan.incidents:
-            # Ordenar incidentes por severidad
             severity_priority = {
                 "CRITICAL": 0,
                 "HIGH": 1,
@@ -394,9 +415,15 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                     x.severity if x.severity else "unknown", 5
                 ),
             )
-
+            
             for idx, incident in enumerate(sorted_incidents, 1):
-                # Color de fondo según severidad
+                # ==========================================
+                # CLAVE: CondPageBreak ANTES de cada incidente
+                # ==========================================
+                # Verificar que hay al menos 2.5 pulgadas disponibles
+                # Si no, salta a la siguiente página
+                elements.append(CondPageBreak(2.5 * inch))
+                
                 severity = incident.severity if incident.severity else "unknown"
                 severity_colors = {
                     "CRITICAL": colors.HexColor("#ffcccc"),
@@ -405,190 +432,123 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                     "LOW": colors.HexColor("#e6f7ff"),
                     "UNKNOWN": colors.HexColor("#f0f0f0"),
                 }
-                bg_color = severity_colors.get(severity, colors.HexColor("#f0f0f0"))
-
-                # Crear datos del incidente
+                bgcolor = severity_colors.get(severity, colors.HexColor("#f0f0f0"))
+                
+                # ENCABEZADO DEL INCIDENTE
                 incident_data = [
-                    [
-                        f"Incidente #{idx}",
-                        f"Severidad: {severity.upper() if severity else 'UNKNOWN'}",
-                    ],
+                    [f"Incidente #{idx}", f"Severidad: {severity.upper() if severity else 'UNKNOWN'}"]
                 ]
-
-                # Tabla de encabezado del incidente
+                
                 incident_header = Table(incident_data, colWidths=[3 * inch, 3 * inch])
                 incident_header.setStyle(
-                    TableStyle(
-                        [
-                            ("BACKGROUND", (0, 0), (-1, -1), bg_color),
-                            ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#1a1a1a")),
-                            ("ALIGN", (0, 0), (0, -1), "LEFT"),
-                            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-                            ("FONTSIZE", (0, 0), (-1, -1), 10),
-                            ("TOPPADDING", (0, 0), (-1, -1), 6),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                            ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#cccccc")),
-                        ]
-                    )
+                    TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, -1), bgcolor),
+                        ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor(BLACK_COLOR)),
+                        ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 10),
+                        ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor(WHITE_COLOR)),
+                    ])
                 )
-
                 elements.append(incident_header)
-
-                # Detalles del incidente
+                
+                # DETALLES DEL INCIDENTE
                 details = []
-
                 if incident.osvdb_id:
                     details.append(["OSVDB ID:", str(incident.osvdb_id)])
-
                 if incident.method:
                     details.append(["Método:", str(incident.method)])
-
                 if incident.url:
                     details.append(["URL:", str(incident.url)])
-
                 if incident.ip_address:
                     details.append(["IP:", str(incident.ip_address)])
-
                 if incident.port:
                     details.append(["Puerto:", str(incident.port)])
-
                 if incident.discovered_at:
                     discovered = incident.discovered_at.strftime("%d/%m/%Y %H:%M:%S")
                     details.append(["Detectado:", discovered])
-
-                # Tabla de detalles
+                
                 if details:
                     details_table = Table(details, colWidths=[1.5 * inch, 4.5 * inch])
                     details_table.setStyle(
-                        TableStyle(
-                            [
-                                (
-                                    "BACKGROUND",
-                                    (0, 0),
-                                    (0, -1),
-                                    colors.HexColor("#f9f9f9"),
-                                ),
-                                ("ALIGN", (0, 0), (0, -1), "LEFT"),
-                                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                                ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-                                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                                (
-                                    "GRID",
-                                    (0, 0),
-                                    (-1, -1),
-                                    0.5,
-                                    colors.HexColor("#dddddd"),
-                                ),
-                            ]
-                        )
+                        TableStyle([
+                            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor("#f9f9f9")),
+                            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 9),
+                            ('TOPPADDING', (0, 0), (-1, -1), 4),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
+                        ])
                     )
-
                     elements.append(details_table)
-
-                # Descripción
+                
+                # DESCRIPCIÓN
                 if incident.description:
-                    desc_text = incident.description[:500]  # Limitar longitud
+                    desc_text = incident.description[:500]
                     if len(incident.description) > 500:
                         desc_text += "..."
-
-                    description = Paragraph(
-                        f"<b>Descripción:</b> {desc_text}", description_style
-                    )
-                    desc_table = Table([[description]], colWidths=[6 * inch])
+                    description = [
+                        [Paragraph(f"<b>Descripción:</b> {desc_text}", description_style)]
+                    ]
+                    desc_table = Table(description, colWidths=[6 * inch])
                     desc_table.setStyle(
-                        TableStyle(
-                            [
-                                ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-                                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                                (
-                                    "BOX",
-                                    (0, 0),
-                                    (-1, -1),
-                                    0.5,
-                                    colors.HexColor("#dddddd"),
-                                ),
-                            ]
-                        )
+                        TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, -1), colors.white),
+                            ('TOPPADDING', (0, 0), (-1, -1), 8),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
+                        ])
                     )
-
                     elements.append(desc_table)
-
-                # Referencias
+                
+                # REFERENCIAS
                 if incident.references:
-                    ref_text = incident.references[:300]  # Limitar longitud
+                    ref_text = incident.references[:300]
                     if len(incident.references) > 300:
                         ref_text += "..."
-
-                    references = Paragraph(
-                        f"<b>Referencias:</b> {ref_text}", description_style
-                    )
-                    ref_table = Table([[references]], colWidths=[6 * inch])
+                    references = [
+                        [Paragraph(f"<b>Referencias:</b> {ref_text}", description_style)]
+                    ]
+                    ref_table = Table(references, colWidths=[6 * inch])
                     ref_table.setStyle(
-                        TableStyle(
-                            [
-                                (
-                                    "BACKGROUND",
-                                    (0, 0),
-                                    (-1, -1),
-                                    colors.HexColor("#f0f8ff"),
-                                ),
-                                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                                (
-                                    "BOX",
-                                    (0, 0),
-                                    (-1, -1),
-                                    0.5,
-                                    colors.HexColor("#dddddd"),
-                                ),
-                            ]
-                        )
+                        TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#f0f8ff")),
+                            ('TOPPADDING', (0, 0), (-1, -1), 8),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
+                        ])
                     )
-
                     elements.append(ref_table)
-
+                
                 # Espaciador entre incidentes
                 elements.append(Spacer(1, 0.2 * inch))
+        
         else:
             no_incidents = Paragraph(
                 "No se detectaron incidentes de seguridad.", info_style
             )
             elements.append(no_incidents)
 
-        # Espaciador final
-        elements.append(Spacer(1, 0.3 * inch))
-
-        # Pie de página informativo
-        footer_style = ParagraphStyle(
-            "Footer",
-            parent=styles["Normal"],
-            fontSize=8,
-            textColor=colors.HexColor("#888888"),
-            alignment=TA_CENTER,
-        )
-
-        footer = Paragraph(
-            f"Generado automáticamente | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
-            footer_style,
-        )
-        elements.append(footer)
-
     def get_filename_suffix(self) -> str:
         return "_Nikto.pdf"
-    
+
     def get_picture_name(self, dark: bool = False) -> str:
         picture_name = "SecOps-Logo-Salmon"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
+
+    def get_report_title(self) -> str:
+        return "Análisis de Vulnerabilidades Web"
 
 
 class PDFCreator:
@@ -597,8 +557,161 @@ class PDFCreator:
         self.config_reader = ConfigReader()
         self.directory = self.config_reader.get_directory_of(DirectoryType.TEMP)
         self.printing_strategy = printing_strategy
+        self.scan = printing_strategy.scan
+
+    def set_pdf_metadata(self, doc, scan):
+        """Configura metadatos del PDF"""
+        doc.title = f"Informe de Seguridad - {scan.id}"
+        doc.author = "SecOps Security Team"
+        doc.subject = (
+            f"Análisis de seguridad realizado el {scan.started_at.strftime('%d/%m/%Y')}"
+        )
+        doc.creator = "SecOps PDF Generator v1.0"
+
+    def append_cover_page(
+        self,
+        elements,
+        styles,
+        title: str = "Análisis de seguridad",
+        subtitle: str = "",
+        client_name: Optional[str] = None,
+        document_type: str = "Informe de Seguridad",
+        date: datetime = datetime.now(),
+    ):
+        """
+        Crea una portada profesional usando la paleta de colores de la estrategia actual.
+
+        Args:
+            elements: Lista de elementos del PDF donde se añadirá la portada
+            styles: Estilos de reportlab
+            title: Título principal del documento
+            subtitle: Subtítulo opcional
+            client_name: Nombre del cliente (opcional)
+            document_type: Tipo de documento
+            date: Fecha del documento (por defecto, fecha actual)
+        """
+        if date is None:
+            date = datetime.now()
+
+        # Obtener colores de la estrategia actual
+        color_palette = self.printing_strategy.color_palette
+        MAIN_COLOR = color_palette[ColorType.MAIN]
+        DARK_COLOR = color_palette[ColorType.DARK]
+        LIGHT_COLOR = color_palette[ColorType.LIGHT]
+        WHITE_COLOR = color_palette[ColorType.WHITE]
+        BLACK_COLOR = color_palette[ColorType.BLACK]
+
+        # Logo en la parte superior
+        self.append_logo(elements, is_cover=True)
+
+        # Tipo de documento
+        doc_type_style = ParagraphStyle(
+            "CoverDocType",
+            parent=styles["Normal"],
+            fontSize=12,
+            textColor=colors.HexColor(MAIN_COLOR),
+            alignment=TA_CENTER,
+            fontName="Helvetica-Bold",
+            letterSpacing=2,
+        )
+        elements.append(Paragraph(document_type.upper(), doc_type_style))
+        elements.append(Spacer(1, 0.3 * inch))
+
+        # Título principal con fondo
+        title_style = ParagraphStyle(
+            "CoverTitle",
+            parent=styles["Heading1"],
+            fontSize=32,
+            textColor=colors.HexColor(WHITE_COLOR),
+            alignment=TA_CENTER,
+            fontName="Helvetica-Bold",
+            leading=38,
+        )
+
+        title_paragraph = Paragraph(title, title_style)
+        title_table = Table([[title_paragraph]], colWidths=[6 * inch])
+        title_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(MAIN_COLOR)),
+                    ("TOPPADDING", (0, 0), (-1, -1), 20),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 20),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 20),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        elements.append(title_table)
+
+        # Subtítulo (si existe)
+        if subtitle:
+            elements.append(Spacer(1, 0.3 * inch))
+            subtitle_style = ParagraphStyle(
+                "CoverSubtitle",
+                parent=styles["Normal"],
+                fontSize=14,
+                textColor=colors.HexColor(DARK_COLOR),
+                alignment=TA_CENTER,
+                fontName="Helvetica",
+            )
+            elements.append(Paragraph(subtitle, subtitle_style))
+
+        # Espaciador
+        elements.append(Spacer(1, 1.5 * inch))
+
+        # Información del cliente y fecha
+        info_style = ParagraphStyle(
+            "CoverInfo",
+            parent=styles["Normal"],
+            fontSize=11,
+            textColor=colors.HexColor(BLACK_COLOR),
+            alignment=TA_CENTER,
+            fontName="Helvetica",
+        )
+
+        info_data = []
+        if client_name:
+            info_data.append(["Cliente:", client_name])
+        info_data.append(["Fecha:", date.strftime("%d/%m/%Y")])
+
+        info_table = Table(info_data, colWidths=[1.5 * inch, 3 * inch])
+        info_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(WHITE_COLOR)),
+                    ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor(MAIN_COLOR)),
+                    ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor(BLACK_COLOR)),
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 11),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 10),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                    ("BOX", (0, 0), (-1, -1), 1, colors.HexColor(LIGHT_COLOR)),
+                ]
+            )
+        )
+        elements.append(info_table)
+
+        # Barra decorativa inferior
+        elements.append(Spacer(1, 1 * inch))
+        decoration_table = Table([[""]], colWidths=[6 * inch], rowHeights=[0.1 * inch])
+        decoration_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(LIGHT_COLOR)),
+                ]
+            )
+        )
+        elements.append(decoration_table)
+
+        # Salto de página después de la portada
+        elements.append(PageBreak())
 
     def append_consent(self, elements, color_palette: dict):
+        elements.append(PageBreak())
+
         # Estilo para el texto de consentimiento
         consent_style = ParagraphStyle(
             "ConsentStyle",
@@ -650,12 +763,23 @@ class PDFCreator:
         consent_table.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(color_palette[ColorType.WHITE])),
+                    (
+                        "BACKGROUND",
+                        (0, 0),
+                        (-1, -1),
+                        colors.HexColor(color_palette[ColorType.WHITE]),
+                    ),
                     ("TOPPADDING", (0, 0), (-1, -1), 12),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
                     ("LEFTPADDING", (0, 0), (-1, -1), 12),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-                    ("BOX", (0, 0), (-1, -1), 1.5, colors.HexColor(color_palette[ColorType.MAIN])),
+                    (
+                        "BOX",
+                        (0, 0),
+                        (-1, -1),
+                        1.5,
+                        colors.HexColor(color_palette[ColorType.MAIN]),
+                    ),
                 ]
             )
         )
@@ -663,15 +787,33 @@ class PDFCreator:
         elements.append(consent_table)
         elements.append(Spacer(1, 0.3 * inch))
 
-    def append_logo(self, elements):
-        # Verificar si el archivo existe antes de intentar cargarlo
-        image_filename = f"{self.config_reader.get_directory_of(DirectoryType.RESOURCE)}/{self.printing_strategy.get_picture_name()}"
+    def append_logo(self, elements, is_cover: bool = False):
+        """
+        Añade el logo al documento. El tamaño y posicionamiento dependen de si es portada o no.
+
+        Args:
+            elements: Lista de elementos del PDF donde se añadirá el logo
+            is_cover: Si True, muestra el logo centrado y grande para portada.
+                    Si False, muestra el logo pequeño alineado a la izquierda (comportamiento original)
+        """
+        resource_directory = self.config_reader.get_directory_of(DirectoryType.RESOURCE)
+        picture_name = self.printing_strategy.get_picture_name()
+        image_filename = f"{resource_directory}/{picture_name}"
+
         if os.path.exists(image_filename):
             try:
-                logo = Image(image_filename, width=1 * inch, height=1 * inch)
-                logo.hAlign = "LEFT"
-                elements.append(logo)
-                elements.append(Spacer(1, 0.1 * inch))
+                if is_cover:
+                    # LOGO PARA PORTADA: centrado y más grande
+                    logo = Image(image_filename, width=3 * inch, height=3 * inch)
+                    logo.hAlign = "CENTER"
+                    elements.append(logo)
+                    elements.append(Spacer(1, 0.3 * inch))
+                else:
+                    # LOGO PARA CONTENIDO: pequeño y alineado a la izquierda (original)
+                    logo = Image(image_filename, width=1.4 * inch, height=1.4 * inch)
+                    logo.hAlign = "LEFT"
+                    elements.append(logo)
+                    elements.append(Spacer(1, 0.1 * inch))
             except Exception as e:
                 print(f"Error al cargar la imagen: {e}")
 
@@ -690,13 +832,13 @@ class PDFCreator:
         )
         elements.append(footer)
 
-    def print_pdf(self, scan: NmapScan):
+    def print_pdf(self):
         os.makedirs(self.directory, exist_ok=True)
 
-        directory   = self.directory
-        id          = scan.id
-        suffix      = self.printing_strategy.get_filename_suffix()
-        filename    = f"{directory}/{id}{suffix}"
+        directory = self.directory
+        id = self.scan.id
+        suffix = self.printing_strategy.get_filename_suffix()
+        filename = f"{directory}/{id}{suffix}"
 
         # Crear el documento
         doc = SimpleDocTemplate(
@@ -714,13 +856,14 @@ class PDFCreator:
         # Estilos
         styles = getSampleStyleSheet()
 
-        self.append_logo(elements)
-
-        self.printing_strategy.append_body(
-            scan=scan,
+        self.append_cover_page(
+            elements=elements,
             styles=styles,
-            elements=elements
+            title=self.printing_strategy.get_report_title(),
         )
+
+        self.append_logo(elements)
+        self.printing_strategy.append_body(scan=self.scan, styles=styles, elements=elements)
 
         # Espaciador final
         elements.append(Spacer(1, 0.5 * inch))
@@ -729,6 +872,8 @@ class PDFCreator:
         self.append_footer(elements, styles)
 
         # Construir el PDF
+        self.set_pdf_metadata(doc=doc, scan=self.scan)
+
         doc.build(elements)
 
         return filename

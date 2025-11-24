@@ -2,9 +2,10 @@ import os
 import base64
 
 from src.persistence import UserDBManager
-from src.managers import NmapScanManager, NiktoScanManager
+from src.scanning.managers import NmapScanManager, NiktoScanManager
 from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
 from src.misc.logging import SecOpsLogger
+from src.model import Scan
 
 from flask import send_file, request, jsonify, Flask
 
@@ -12,14 +13,27 @@ from flask import send_file, request, jsonify, Flask
 USER = UserDBManager().get_user_by_id(1)
 NMAP_MANAGER = NmapScanManager(USER)
 NIKTO_MANAGER = NiktoScanManager(USER)
-NMAP_PDF_CREATOR = PDFCreator(NmapPrintingStrategy())
-NIKTO_PDF_CREATOR = PDFCreator(NiktoPrintingStrategy())
+PDF_CREATOR = None
 
 app = Flask(__name__)
 
 # Configurar logger
 logger_instance = SecOpsLogger(name="APIMain")
 logger = logger_instance.get_logger()
+
+
+
+def build_pdf_creator(scan: Scan) -> PDFCreator:
+    # Generar el PDF según el tipo de escaneo
+    if scan.scan_type == "nmap":        #type: ignore
+        strategy = NmapPrintingStrategy(scan=scan)
+    elif scan.scan_type == "nikto":     #type: ignore
+        strategy = NiktoPrintingStrategy(scan=scan)
+    else:
+        logger.error(f"Tipo de escaneo no soportado: {scan.scan_type}")
+        return jsonify({"error": f"Tipo de escaneo no soportado: {scan.scan_type}"}), 400
+
+    return PDFCreator(strategy)
 
 # ============================================================================
 # ENDPOINTS GENERALES
@@ -33,13 +47,6 @@ def hello():
         jsonify({"message": "You did it! You reached an endpoint!", "status": "ok"}),
         200,
     )
-
-# ============================================================================
-# ENDPOINTS DE ESCANEO
-# ============================================================================
-
-
-
 
 # ============================================================================
 # ENDPOINTS DE ESCANEO
@@ -224,14 +231,10 @@ def generate_pdf():
 
         logger.info(f"Escaneo identificado como tipo: {scan_type}")
 
-        # Generar el PDF según el tipo de escaneo
-        if scan_type == "nmap":
-            pdf_path = NMAP_PDF_CREATOR.print_pdf(scan=scan)
-        elif scan_type == "nikto":
-            pdf_path = NIKTO_PDF_CREATOR.print_pdf(scan=scan)
-        else:
-            logger.error(f"Tipo de escaneo no soportado: {scan_type}")
-            return jsonify({"error": f"Tipo de escaneo no soportado: {scan_type}"}), 400
+
+
+        PDF_CREATOR = build_pdf_creator(scan)
+        pdf_path = PDF_CREATOR.print_pdf()
 
         # Validar que el archivo se creó correctamente
         if not pdf_path or not os.path.exists(pdf_path):
@@ -307,14 +310,7 @@ def generate_pdf_base64():
 
         logger.info(f"Escaneo identificado como tipo: {scan_type}")
 
-        # Generar el PDF según el tipo de escaneo
-        if scan_type == "nmap":
-            pdf_path = NMAP_PDF_CREATOR.print_pdf(scan=scan)
-        elif scan_type == "nikto":
-            pdf_path = NIKTO_PDF_CREATOR.print_pdf(scan=scan)
-        else:
-            logger.error(f"Tipo de escaneo no soportado: {scan_type}")
-            return jsonify({"error": f"Tipo de escaneo no soportado: {scan_type}"}), 400
+        
 
         if not pdf_path or not os.path.exists(pdf_path):
             logger.error(
