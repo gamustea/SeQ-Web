@@ -23,119 +23,64 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.pdfgen import canvas
 from reportlab.lib.enums import TA_JUSTIFY
 from datetime import datetime
+from abc import ABC, abstractmethod
+from enum import Enum
+
+class ColorType(Enum):
+    BLACK = "black"
+    DARK = "dark"
+    MAIN = "main"
+    SECONDARY = "secondary"
+    LIGHT = "light"
+    WHITE = "white"   
 
 
-def append_logo(elements, image_filename: str):
-    # Verificar si el archivo existe antes de intentar cargarlo
-    if os.path.exists(image_filename):
-        try:
-            logo = Image(image_filename, width=1 * inch, height=1 * inch)
-            logo.hAlign = "LEFT"
-            elements.append(logo)
-            elements.append(Spacer(1, 0.1 * inch))
-        except Exception as e:
-            print(f"Error al cargar la imagen: {e}")
-
-
-def append_consent(elements, main_color):
-    # Estilo para el texto de consentimiento
-    consent_style = ParagraphStyle(
-        "ConsentStyle",
-        fontSize=9,
-        textColor=colors.HexColor("#333333"),
-        alignment=TA_JUSTIFY,
-        leading=12,
-        spaceBefore=6,
-        spaceAfter=6,
-    )
-
-    # Título de la sección
-    consent_title_style = ParagraphStyle(
-        "ConsentTitle",
-        fontSize=11,
-        textColor=colors.HexColor(main_color),
-        spaceAfter=8,
-        fontName="Helvetica-Bold",
-    )
-
-    consent_title = Paragraph(
-        "DECLARACIÓN DE CONFORMIDAD Y CONSENTIMIENTO", consent_title_style
-    )
-    elements.append(consent_title)
-
-    # Texto de consentimiento
-    consent_text = """
-    El usuario declara y confirma que ha otorgado su consentimiento expreso e 
-    inequívoco para la realización del escaneo de seguridad sobre el sitio web 
-    y/o sistema informático objeto del presente informe. El usuario acepta y 
-    reconoce que es el titular legítimo o cuenta con la autorización necesaria 
-    de los equipos, sistemas y redes escaneados.
-    <br/><br/>
-    El usuario asume la plena responsabilidad sobre las consecuencias derivadas 
-    del escaneo realizado, incluyendo cualquier resultado, hallazgo o 
-    vulnerabilidad identificada en el proceso. Asimismo, el usuario exonera 
-    de toda responsabilidad a los ejecutores del análisis de seguridad respecto 
-    al uso que se haga de la información contenida en este documento.
-    <br/><br/>
-    Este documento contiene información sensible de carácter confidencial y 
-    debe ser tratado con las medidas de seguridad apropiadas conforme a la 
-    normativa vigente en materia de protección de datos.
-    """
-
-    consent_paragraph = Paragraph(consent_text, consent_style)
-
-    # Tabla para el texto de consentimiento con fondo destacado
-    consent_table = Table([[consent_paragraph]], colWidths=[6 * inch])
-    consent_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff9e6")),
-                ("TOPPADDING", (0, 0), (-1, -1), 12),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
-                ("LEFTPADDING", (0, 0), (-1, -1), 12),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-                ("BOX", (0, 0), (-1, -1), 1.5, colors.HexColor(main_color)),
-            ]
-        )
-    )
-
-    elements.append(consent_table)
-    elements.append(Spacer(1, 0.3 * inch))
-
-
-class PDFCreator:
+class _PrintingStrategy(ABC):
+    
     def __init__(self) -> None:
-        self.config_reader = ConfigReader()
-        self.directory = self.config_reader.get_directory_of(DirectoryType.TEMP)  # type: ignore
+        super().__init__()
+        self.color_palette: dict
 
-    def print_nmap_pdf(self, scan: NmapScan):
-        # Crear el directorio si no existe
-        os.makedirs(self.directory, exist_ok=True)
+    @abstractmethod
+    def append_body(self, scan, styles, elements):
+        pass
 
-        filename = f"{self.directory}/{scan.id}_NmapScan.pdf"
+    @abstractmethod
+    def get_filename_suffix(self) -> str:
+        pass
 
-        # Crear el documento
-        doc = SimpleDocTemplate(
-            filename,
-            pagesize=letter,
-            rightMargin=36,
-            leftMargin=36,
-            topMargin=36,
-            bottomMargin=36,
-        )
+    @abstractmethod
+    def get_picture_name(self, dark: bool = True) -> str:
+        pass
 
-        # Contenedor para los elementos del PDF
-        elements = []
 
-        # Estilos
-        styles = getSampleStyleSheet()
+class NmapPrintingStrategy(_PrintingStrategy):
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.color_palette = {
+            ColorType.MAIN: "#014F86",        # azul océano (oscuro)
+            ColorType.BLACK: "#121212",       # negro neutro cálido para contraste
+            ColorType.SECONDARY: "#555B6E",   # gris oscuro con matiz azulado
+            ColorType.DARK: "#01375A",        # azul océano más oscuro, derivado del principal
+            ColorType.LIGHT: "#4A90E2",       # azul océano claro, derivado del principal
+            ColorType.WHITE: "#E1E8F0",       # blanco con tintes azulados, derivado del azul claro
+        }
+
+    def append_body(self, scan, styles, elements):
+        BLACK_COLOR     = self.color_palette[ColorType.BLACK]
+        DARK_COLOR      = self.color_palette[ColorType.DARK]
+        MAIN_COLOR      = self.color_palette[ColorType.MAIN]
+        SECONDARY_COLOR = self.color_palette[ColorType.SECONDARY]
+        LIGHT_COLOR     = self.color_palette[ColorType.LIGHT]
+        WHITE_COLOR     = self.color_palette[ColorType.WHITE]
 
         # Estilo personalizado para el título
         title_style = ParagraphStyle(
             "CustomTitle",
             parent=styles["Heading1"],
             fontSize=24,
-            textColor=colors.HexColor("#1a1a1a"),
+            textColor=colors.HexColor(BLACK_COLOR),
             spaceAfter=30,
             alignment=TA_CENTER,
             fontName="Helvetica-Bold",
@@ -146,7 +91,7 @@ class PDFCreator:
             "CustomSubtitle",
             parent=styles["Heading2"],
             fontSize=16,
-            textColor=colors.HexColor("#2c3e50"),
+            textColor=colors.HexColor(MAIN_COLOR),
             spaceAfter=12,
             spaceBefore=12,
             fontName="Helvetica-Bold",
@@ -157,12 +102,10 @@ class PDFCreator:
             "InfoStyle",
             parent=styles["Normal"],
             fontSize=10,
-            textColor=colors.HexColor("#555555"),
+            textColor=colors.HexColor(SECONDARY_COLOR),
             spaceAfter=6,
         )
 
-        image_filename = f"{self.config_reader.get_directory_of(DirectoryType.RESOURCE)}/SecOps-Logo-BlueLight.png"
-        append_logo(elements, image_filename)
 
         # === ENCABEZADO ===
         title = Paragraph("Informe de Escaneo Nmap", title_style)
@@ -182,15 +125,15 @@ class PDFCreator:
         info_table.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8f4f8")),
-                    ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#2c3e50")),
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(WHITE_COLOR)),
+                    ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor(MAIN_COLOR)),
                     ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                     ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                     ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
                     ("FONTSIZE", (0, 0), (-1, -1), 10),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
                     ("TOPPADDING", (0, 0), (-1, -1), 8),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(WHITE_COLOR)),
                 ]
             )
         )
@@ -224,7 +167,7 @@ class PDFCreator:
                 TableStyle(
                     [
                         # Encabezado
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(MAIN_COLOR)),
                         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
                         ("ALIGN", (0, 0), (-1, 0), "CENTER"),
                         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -233,7 +176,7 @@ class PDFCreator:
                         ("TOPPADDING", (0, 0), (-1, 0), 12),
                         # Cuerpo de la tabla
                         ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
-                        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#333333")),
+                        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor(DARK_COLOR)),
                         ("ALIGN", (0, 1), (0, -1), "CENTER"),
                         ("ALIGN", (1, 1), (-1, -1), "LEFT"),
                         ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
@@ -245,11 +188,11 @@ class PDFCreator:
                             "ROWBACKGROUNDS",
                             (0, 1),
                             (-1, -1),
-                            [colors.white, colors.HexColor("#f9f9f9")],
+                            [colors.white, colors.HexColor(WHITE_COLOR)],
                         ),
                         # Bordes
-                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
-                        ("LINEBELOW", (0, 0), (-1, 0), 2, colors.HexColor("#2c3e50")),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(LIGHT_COLOR)),
+                        ("LINEBELOW", (0, 0), (-1, 0), 2, colors.HexColor(MAIN_COLOR)),
                     ]
                 )
             )
@@ -259,63 +202,35 @@ class PDFCreator:
             no_ports = Paragraph("No se detectaron puertos abiertos.", info_style)
             elements.append(no_ports)
 
-        # Espaciador final
-        elements.append(Spacer(1, 0.5 * inch))
+    def get_filename_suffix(self) -> str:
+        return "_Nmap.pdf"
+    
+    def get_picture_name(self, dark: bool = False) -> str:
+        picture_name = "SecOps-Logo-Blue"
+        return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
-        append_consent(elements, "#2c3e50")
 
-        # Pie de página informativo
-        footer_style = ParagraphStyle(
-            "Footer",
-            parent=styles["Normal"],
-            fontSize=8,
-            textColor=colors.HexColor("#888888"),
-            alignment=TA_CENTER,
-        )
+class NiktoPrintingStrategy(_PrintingStrategy):
 
-        footer = Paragraph(
-            f"Generado automáticamente | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
-            footer_style,
-        )
-        elements.append(footer)
+    def __init__(self):
+        super().__init__()
+        self.color_palette = {
+            ColorType.MAIN: "#C75B12",        # naranja oscuro
+            ColorType.BLACK: "#4B2500",       # marrón muy oscuro, derivado cálido del naranja
+            ColorType.SECONDARY: "#FA8072",   # salmón
+            ColorType.DARK: "#8E3D0A",        # naranja oscuro más intenso, derivado del principal
+            ColorType.LIGHT: "#F9B49A",       # salmón claro, derivado del secundario
+            ColorType.WHITE: "#FFF5F0",       # blanco con matiz cálido, derivado del naranja claro
+        }
 
-        # Construir el PDF
-        doc.build(elements)
+    def append_body(self, scan, styles, elements):
+        BLACK_COLOR     = self.color_palette[ColorType.BLACK]
+        DARK_COLOR      = self.color_palette[ColorType.DARK]
+        MAIN_COLOR      = self.color_palette[ColorType.MAIN]
+        SECONDARY_COLOR = self.color_palette[ColorType.SECONDARY]
+        LIGHT_COLOR     = self.color_palette[ColorType.LIGHT]
+        WHITE_COLOR     = self.color_palette[ColorType.WHITE]
 
-        return filename
-
-    def print_nikto_pdf(self, scan: NiktoScan):
-        """
-        Genera un PDF profesional con los resultados de un escaneo Nikto.
-
-        Args:
-            scan: Instancia de NiktoScan con los resultados del escaneo
-
-        Returns:
-            str: Ruta del archivo PDF generado
-        """
-        # Crear el directorio si no existe
-        os.makedirs(self.directory, exist_ok=True)
-
-        filename = f"{self.directory}/{scan.id}_NiktoScan.pdf"
-
-        # Crear el documento
-        doc = SimpleDocTemplate(
-            filename,
-            pagesize=letter,
-            rightMargin=36,
-            leftMargin=36,
-            topMargin=36,
-            bottomMargin=36,
-        )
-
-        # Contenedor para los elementos del PDF
-        elements = []
-
-        # Estilos
-        styles = getSampleStyleSheet()
-
-        # Estilo personalizado para el título
         title_style = ParagraphStyle(
             "CustomTitle",
             parent=styles["Heading1"],
@@ -355,10 +270,6 @@ class PDFCreator:
             alignment=TA_JUSTIFY,
             leading=12,
         )
-
-        # === LOGO SECOPS ===
-        image_filename = f"{self.config_reader.get_directory_of(DirectoryType.RESOURCE)}/SecOps-Logo-SalmonLight.png"
-        append_logo(elements, image_filename)
 
         # === ENCABEZADO ===
         title = Paragraph("Informe de Escaneo Nikto", title_style)
@@ -657,8 +568,6 @@ class PDFCreator:
         # Espaciador final
         elements.append(Spacer(1, 0.3 * inch))
 
-        append_consent(elements, "#c0392b")
-
         # Pie de página informativo
         footer_style = ParagraphStyle(
             "Footer",
@@ -673,6 +582,151 @@ class PDFCreator:
             footer_style,
         )
         elements.append(footer)
+
+    def get_filename_suffix(self) -> str:
+        return "_Nikto.pdf"
+    
+    def get_picture_name(self, dark: bool = False) -> str:
+        picture_name = "SecOps-Logo-Salmon"
+        return picture_name + "Dark.png" if dark else picture_name + "Light.png"
+
+
+class PDFCreator:
+
+    def __init__(self, printing_strategy: _PrintingStrategy) -> None:
+        self.config_reader = ConfigReader()
+        self.directory = self.config_reader.get_directory_of(DirectoryType.TEMP)
+        self.printing_strategy = printing_strategy
+
+    def append_consent(self, elements, color_palette: dict):
+        # Estilo para el texto de consentimiento
+        consent_style = ParagraphStyle(
+            "ConsentStyle",
+            fontSize=9,
+            textColor=colors.HexColor(color_palette[ColorType.DARK]),
+            alignment=TA_JUSTIFY,
+            leading=12,
+            spaceBefore=6,
+            spaceAfter=6,
+        )
+
+        # Título de la sección
+        consent_title_style = ParagraphStyle(
+            "ConsentTitle",
+            fontSize=11,
+            textColor=colors.HexColor(color_palette[ColorType.MAIN]),
+            spaceAfter=8,
+            fontName="Helvetica-Bold",
+        )
+
+        consent_title = Paragraph(
+            "DECLARACIÓN DE CONFORMIDAD Y CONSENTIMIENTO", consent_title_style
+        )
+        elements.append(consent_title)
+
+        # Texto de consentimiento
+        consent_text = """
+        El usuario declara y confirma que ha otorgado su consentimiento expreso e 
+        inequívoco para la realización del escaneo de seguridad sobre el sitio web 
+        y/o sistema informático objeto del presente informe. El usuario acepta y 
+        reconoce que es el titular legítimo o cuenta con la autorización necesaria 
+        de los equipos, sistemas y redes escaneados.
+        <br/><br/>
+        El usuario asume la plena responsabilidad sobre las consecuencias derivadas 
+        del escaneo realizado, incluyendo cualquier resultado, hallazgo o 
+        vulnerabilidad identificada en el proceso. Asimismo, el usuario exonera 
+        de toda responsabilidad a los ejecutores del análisis de seguridad respecto 
+        al uso que se haga de la información contenida en este documento.
+        <br/><br/>
+        Este documento contiene información sensible de carácter confidencial y 
+        debe ser tratado con las medidas de seguridad apropiadas conforme a la 
+        normativa vigente en materia de protección de datos.
+        """
+
+        consent_paragraph = Paragraph(consent_text, consent_style)
+
+        # Tabla para el texto de consentimiento con fondo destacado
+        consent_table = Table([[consent_paragraph]], colWidths=[6 * inch])
+        consent_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(color_palette[ColorType.WHITE])),
+                    ("TOPPADDING", (0, 0), (-1, -1), 12),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                    ("BOX", (0, 0), (-1, -1), 1.5, colors.HexColor(color_palette[ColorType.MAIN])),
+                ]
+            )
+        )
+
+        elements.append(consent_table)
+        elements.append(Spacer(1, 0.3 * inch))
+
+    def append_logo(self, elements):
+        # Verificar si el archivo existe antes de intentar cargarlo
+        image_filename = f"{self.config_reader.get_directory_of(DirectoryType.RESOURCE)}/{self.printing_strategy.get_picture_name()}"
+        if os.path.exists(image_filename):
+            try:
+                logo = Image(image_filename, width=1 * inch, height=1 * inch)
+                logo.hAlign = "LEFT"
+                elements.append(logo)
+                elements.append(Spacer(1, 0.1 * inch))
+            except Exception as e:
+                print(f"Error al cargar la imagen: {e}")
+
+    def append_footer(self, elements, styles):
+        footer_style = ParagraphStyle(
+            "Footer",
+            parent=styles["Normal"],
+            fontSize=8,
+            textColor=colors.HexColor("#cfcfcf"),
+            alignment=TA_CENTER,
+        )
+
+        footer = Paragraph(
+            f"Generado automáticamente | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+            footer_style,
+        )
+        elements.append(footer)
+
+    def print_pdf(self, scan: NmapScan):
+        os.makedirs(self.directory, exist_ok=True)
+
+        directory   = self.directory
+        id          = scan.id
+        suffix      = self.printing_strategy.get_filename_suffix()
+        filename    = f"{directory}/{id}{suffix}"
+
+        # Crear el documento
+        doc = SimpleDocTemplate(
+            filename,
+            pagesize=letter,
+            rightMargin=36,
+            leftMargin=36,
+            topMargin=36,
+            bottomMargin=36,
+        )
+
+        # Contenedor para los elementos del PDF
+        elements = []
+
+        # Estilos
+        styles = getSampleStyleSheet()
+
+        self.append_logo(elements)
+
+        self.printing_strategy.append_body(
+            scan=scan,
+            styles=styles,
+            elements=elements
+        )
+
+        # Espaciador final
+        elements.append(Spacer(1, 0.5 * inch))
+
+        self.append_consent(elements, self.printing_strategy.color_palette)
+        self.append_footer(elements, styles)
 
         # Construir el PDF
         doc.build(elements)

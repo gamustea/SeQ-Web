@@ -1,16 +1,20 @@
 import os
 import base64
-from src.persistence.dbmanaging import UserDBManager
-from src.scanning.scanmanaging import NmapScanManager, NiktoScanManager
-from src.documents import PDFCreator
-from flask import send_file, request, jsonify, Flask
+
+from src.persistence import UserDBManager
+from src.managers import NmapScanManager, NiktoScanManager
+from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
 from src.misc.logging import SecOpsLogger
+
+from flask import send_file, request, jsonify, Flask
 
 # Inicialización
 USER = UserDBManager().get_user_by_id(1)
 NMAP_MANAGER = NmapScanManager(USER)
 NIKTO_MANAGER = NiktoScanManager(USER)
-PDF_CREATOR = PDFCreator()
+NMAP_PDF_CREATOR = PDFCreator(NmapPrintingStrategy())
+NIKTO_PDF_CREATOR = PDFCreator(NiktoPrintingStrategy())
+
 app = Flask(__name__)
 
 # Configurar logger
@@ -29,6 +33,12 @@ def hello():
         jsonify({"message": "You did it! You reached an endpoint!", "status": "ok"}),
         200,
     )
+
+# ============================================================================
+# ENDPOINTS DE ESCANEO
+# ============================================================================
+
+
 
 
 # ============================================================================
@@ -216,9 +226,9 @@ def generate_pdf():
 
         # Generar el PDF según el tipo de escaneo
         if scan_type == "nmap":
-            pdf_path = PDF_CREATOR.print_nmap_pdf(scan=scan)
+            pdf_path = NMAP_PDF_CREATOR.print_pdf(scan=scan)
         elif scan_type == "nikto":
-            pdf_path = PDF_CREATOR.print_nikto_pdf(scan=scan)
+            pdf_path = NIKTO_PDF_CREATOR.print_pdf(scan=scan)
         else:
             logger.error(f"Tipo de escaneo no soportado: {scan_type}")
             return jsonify({"error": f"Tipo de escaneo no soportado: {scan_type}"}), 400
@@ -242,7 +252,7 @@ def generate_pdf():
 
     except Exception as e:
         logger.error(f"Error interno al generar PDF: {str(e)}", exc_info=True)
-        return jsonify({"error": "Error interno del servidor", "details": str(e)}), 500
+        return jsonify({"error": "Error interno del servidor"}), 500
 
 @app.route("/api/scans/generate-pdf-base64", methods=["GET"])
 def generate_pdf_base64():
@@ -299,9 +309,9 @@ def generate_pdf_base64():
 
         # Generar el PDF según el tipo de escaneo
         if scan_type == "nmap":
-            pdf_path = PDF_CREATOR.print_nmap_pdf(scan=scan)
+            pdf_path = NMAP_PDF_CREATOR.print_pdf(scan=scan)
         elif scan_type == "nikto":
-            pdf_path = PDF_CREATOR.print_nikto_pdf(scan=scan)
+            pdf_path = NIKTO_PDF_CREATOR.print_pdf(scan=scan)
         else:
             logger.error(f"Tipo de escaneo no soportado: {scan_type}")
             return jsonify({"error": f"Tipo de escaneo no soportado: {scan_type}"}), 400
@@ -593,7 +603,6 @@ def not_found(error):
         404,
     )
 
-
 @app.errorhandler(405)
 def method_not_allowed(error):
     """Manejo de métodos HTTP no permitidos."""
@@ -607,7 +616,6 @@ def method_not_allowed(error):
         ),
         405,
     )
-
 
 @app.errorhandler(500)
 def internal_error(error):

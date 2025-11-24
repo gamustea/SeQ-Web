@@ -2,13 +2,13 @@ import threading
 from datetime import datetime
 from typing import Dict, Optional, List
 from abc import abstractmethod, ABC
-from src.persistence.dbmanaging import (
+from src.persistence import (
     ScanDBManager,
     NmapDBManager,
     DBManager,
     NiktoDBManager,
 )
-from src.scanning.tasks import NmapScanTask, NiktoScanTask, _Task
+from src.tasks import NmapScanTask, NiktoScanTask, _Task
 from src.model import NmapScan, User, NiktoScan, NiktoIncident, Scan
 from src.misc.conversion import JSONManager
 from src.misc.logging import SecOpsLogger

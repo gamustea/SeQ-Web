@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.model import Base, Person, User, Scan, NmapScan, NiktoScan, NiktoIncident, OpenVASScan, Port, OpenPort
-from src.persistence.dbmanaging import UserDBManager, ScanDBManager, NmapDBManager, NiktoDBManager
+from src.persistence import UserDBManager, ScanDBManager, NmapDBManager, NiktoDBManager
 
 
 class TestScanDBManager(unittest.TestCase):

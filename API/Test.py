@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.model import Person, User, NmapScan, Port, OpenPort, NiktoIncident, NiktoScan
-from src.persistence.dbmanaging import UserDBManager, ScanDBManager
+from API.src.persistence import UserDBManager, ScanDBManager
 
 """
 Script de ejemplo para agregar usuarios y escaneos Nmap a la base de datos.
@@ -23,7 +23,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.model import Person, User, NmapScan, Port, OpenPort
-from src.persistence.dbmanaging import UserDBManager, ScanDBManager, NmapDBManager
+from API.src.persistence import UserDBManager, ScanDBManager, NmapDBManager
 
 
 def ejemplo_con_dbmanagers():
