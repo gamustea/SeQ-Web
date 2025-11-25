@@ -224,6 +224,13 @@ def generate_pdf():
                 jsonify({"error": f"No se encontró el escaneo con ID: {scan_id}"}),
                 404,
             )
+        
+        escaneo_terminado = NIKTO_MANAGER.scan_is_finished(scan)
+        if not escaneo_terminado:
+            return (
+                jsonify({"error": f"El escaneo con el id {scan_id} no está terminado"}),
+                404,
+            ) 
 
         # Verificar si el modelo tiene atributo scan_type y usarlo
         if hasattr(scan, "scan_type"):

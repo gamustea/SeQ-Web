@@ -189,7 +189,6 @@ class _Task(ABC):
                         self.logger.error(f"El escaneo terminó con error: código {retcode}")
                         return False
 
-                # Procesar resultados con implementación específica
                 self._process_results()
                 self.status = TaskStatus.COMPLETED
                 self.logger.info("Escaneo completado correctamente.")

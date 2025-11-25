@@ -258,6 +258,7 @@ class _ScanManager(ABC):
         self.running_tasks = {}
         self.active_user = user
         self.thread = None
+        self.scan_db_manager = ScanDBManager()
         logger.info(
             f"ScanManager inicializado para usuario: {user.id if hasattr(user, 'id') else 'unknown'}"
         )
@@ -273,6 +274,9 @@ class _ScanManager(ABC):
     @abstractmethod
     def get_scans_for_user(self) -> List:
         pass
+
+    def scan_is_finished(self, scan: Scan) -> bool:
+        return self.scan_db_manager.scan_is_finished(scan.id) #type: ignore
 
 
 class NmapScanManager(_ScanManager):
@@ -298,28 +302,33 @@ class NmapScanManager(_ScanManager):
 
             logger.info(f"Ejecutando escaneo Nmap con ID {nmap_scan_model.id}")
             task.scan()
-            task.wait()
+            finished = task.wait()
 
-            logger.info(
-                f"Escaneo Nmap {nmap_scan_model.id} completado, procesando resultados"
-            )
-            results = JSONManager.convert_json_to_individual_nmap_data(task.results, nmap_scan_model)  # type: ignore
-            nmap_scan_model.results = results
+            if finished:
+                logger.info(
+                    f"Escaneo Nmap {nmap_scan_model.id} completado, procesando resultados"
+                )
+                results = JSONManager.convert_json_to_individual_nmap_data(task.results, nmap_scan_model)  # type: ignore
+                nmap_scan_model.results = results
 
-            # Procesar puertos encontrados
-            ports_count = len(results["ports"])
-            logger.info(
-                f"Procesando {ports_count} puertos del escaneo {nmap_scan_model.id}"
-            )
+                # Procesar puertos encontrados
+                ports_count = len(results["ports"])
+                logger.info(
+                    f"Procesando {ports_count} puertos del escaneo {nmap_scan_model.id}"
+                )
 
-            for port in results["ports"]:
-                port_model = self.dbmanager.get_or_create_port(port[0])
-                self.dbmanager.add_target_port(nmap_scan_model, port_model)
-                self.dbmanager.add_open_port(nmap_scan_model, port_model, port[2])
+                for port in results["ports"]:
+                    port_model = self.dbmanager.get_or_create_port(port[0])
+                    self.dbmanager.add_target_port(nmap_scan_model, port_model)
+                    self.dbmanager.add_open_port(nmap_scan_model, port_model, port[2])
 
-            logger.info(
-                f"Escaneo Nmap {nmap_scan_model.id} guardado exitosamente con {ports_count} puertos"
-            )
+                logger.info(
+                    f"Escaneo Nmap {nmap_scan_model.id} guardado exitosamente con {ports_count} puertos"
+                )
+                self.dbmanager.set_scan_as_finished(nmap_scan_model)
+            else:
+                logger.info(f"El escaneo con id {nmap_scan_model.id} fue cancelado")
+            
 
         except Exception as e:
             logger.error(
@@ -404,39 +413,44 @@ class NiktoScanManager(_ScanManager):
 
             logger.info(f"Ejecutando escaneo Nikto con ID {nikto_scan_model.id}")
             task.scan()
-            task.wait()
+            finished = task.wait()
 
-            logger.info(
-                f"Escaneo Nikto {nikto_scan_model.id} completado, procesando resultados"
-            )
-            results = JSONManager.convert_json_to_individual_nikto_data(task.results[-1])  # type: ignore
-            task.results = results
+            if finished:
+                logger.info(
+                    f"Escaneo Nikto {nikto_scan_model.id} completado, procesando resultados"
+                )
+                results = JSONManager.convert_json_to_individual_nikto_data(task.results[-1])  # type: ignore
+                task.results = results
 
-            # Procesar incidentes encontrados
-            incidents_count = len(results)
-            logger.info(
-                f"Procesando {incidents_count} incidentes del escaneo Nikto {nikto_scan_model.id}"
-            )
+                # Procesar incidentes encontrados
+                incidents_count = len(results)
+                logger.info(
+                    f"Procesando {incidents_count} incidentes del escaneo Nikto {nikto_scan_model.id}"
+                )
 
-            for result in results:
-                description = result["description"]
-                osvdbid = result["osvdbid"]
-                method = result["method"]
-                uri = result["uri"]
+                for result in results:
+                    description = result["description"]
+                    osvdbid = result["osvdbid"]
+                    method = result["method"]
+                    uri = result["uri"]
 
-                incident = NiktoIncident()
-                incident.description = description
-                incident.osvdb_id = osvdbid
-                incident.method = method
-                incident.url = uri
-                assign_severity_to_nikto_incident(incident)
+                    incident = NiktoIncident()
+                    incident.description = description
+                    incident.osvdb_id = osvdbid
+                    incident.method = method
+                    incident.url = uri
+                    assign_severity_to_nikto_incident(incident)
 
-                new_incident = self.dbmanager.get_or_create_nikto_incident(incident)  # type: ignore
-                self.dbmanager.add_incident(nikto_scan_model, new_incident)
+                    new_incident = self.dbmanager.get_or_create_nikto_incident(incident)  # type: ignore
+                    self.dbmanager.add_incident(nikto_scan_model, new_incident)
 
-            logger.info(
-                f"Escaneo Nikto {nikto_scan_model.id} guardado exitosamente con {incidents_count} incidentes"
-            )
+                logger.info(
+                    f"Escaneo Nikto {nikto_scan_model.id} guardado exitosamente con {incidents_count} incidentes"
+                )
+                self.dbmanager.set_scan_as_finished(nikto_scan_model)
+            else:
+                logger.info(f"El escano con id {nikto_scan_model.id} se canceló")
+            
 
         except Exception as e:
             logger.error(

@@ -2,11 +2,12 @@ from sqlalchemy import text, create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
+from datetime import datetime
 from abc import ABC
 import urllib.parse
 
 from src.misc.logging import SecOpsLogger
-from src.model import Person, User, Scan, Port, OpenPort, NmapScan, NiktoIncident, NiktoScan
+from src.model import Person, User, Scan, Port, OpenPort, NmapScan, NiktoIncident, NiktoScan, FinishedScan
 from src.misc.configread import ConfigReader
 
 
@@ -443,6 +444,23 @@ class ScanDBManager(DBManager):
             self.logger.error(f"Error al verificar existencia del escaneo: {err}")
             raise
 
+    def scan_is_finished(self, scan_id: int) -> bool:
+
+        existe_escaneo = self.scan_exists(scan_id)
+        if not existe_escaneo:
+            self.logger.error(f"El escaneo con el siguiente id: {scan_id}")
+            return False
+        
+        try:
+            exists = self.session.query(FinishedScan).filter(FinishedScan.id == scan_id).count() > 0
+            self.logger.info(f"Verificación de existencia del escaneo con ID '{scan_id}': {exists}")
+            return exists
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al verificar existencia del escaneo: {err}")
+            raise
+
+        return True
+
     #==============================================================
     # CREATE
     #==============================================================    
@@ -464,6 +482,21 @@ class ScanDBManager(DBManager):
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al crear escaneo: {err}")
+            raise
+
+    def set_scan_as_finished(self, scan: Scan) -> None:
+        self._check_session()
+        try:
+            finished_scan = FinishedScan()
+            finished_scan.id = scan.id
+            finished_scan.finished_at = datetime.now() #type: ignore
+            
+            self.session.add(finished_scan)
+            self.session.commit()
+            self.logger.info(f"Se creó un nuevo escaneo con ID {finished_scan.id}")
+        except SQLAlchemyError as err:
+            self.session.rollback()
+            self.logger.error(f"Error al marcar un escaneo como terminado: {err}")
             raise
 
     #==============================================================
