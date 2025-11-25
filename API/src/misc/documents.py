@@ -67,12 +67,12 @@ class NmapPrintingStrategy(_PrintingStrategy):
     def __init__(self, scan: NmapScan) -> None:
         super().__init__(scan)
         self.color_palette = {
-            ColorType.MAIN: "#014F86",  # azul océano (oscuro)
-            ColorType.BLACK: "#121212",  # negro neutro cálido para contraste
-            ColorType.SECONDARY: "#555B6E",  # gris oscuro con matiz azulado
-            ColorType.DARK: "#01375A",  # azul océano más oscuro, derivado del principal
-            ColorType.LIGHT: "#4A90E2",  # azul océano claro, derivado del principal
-            ColorType.WHITE: "#E1E8F0",  # blanco con tintes azulados, derivado del azul claro
+            ColorType.BLACK: "#121212",         # negro neutro cálido para contraste
+            ColorType.DARK: "#01375A",          # azul océano más oscuro, derivado del principal
+            ColorType.MAIN: "#014F86",          # azul océano (oscuro)
+            ColorType.SECONDARY: "#555B6E",     # gris oscuro con matiz azulado
+            ColorType.LIGHT: "#4A90E2",         # azul océano claro, derivado del principal
+            ColorType.WHITE: "#E1E8F0",         # blanco con tintes azulados, derivado del azul claro
         }
 
     def append_body(self, scan, styles, elements):
@@ -225,12 +225,12 @@ class NiktoPrintingStrategy(_PrintingStrategy):
     def __init__(self, scan: NiktoScan):
         super().__init__(scan)
         self.color_palette = {
-            ColorType.MAIN: "#C75B12",  # naranja oscuro
-            ColorType.BLACK: "#4B2500",  # marrón muy oscuro, derivado cálido del naranja
-            ColorType.SECONDARY: "#FA8072",  # salmón
-            ColorType.DARK: "#8E3D0A",  # naranja oscuro más intenso, derivado del principal
-            ColorType.LIGHT: "#F9B49A",  # salmón claro, derivado del secundario
-            ColorType.WHITE: "#FFF5F0",  # blanco con matiz cálido, derivado del naranja claro
+            ColorType.BLACK: "#4B2500",         # marrón muy oscuro, derivado cálido del naranja
+            ColorType.DARK: "#8E3D0A",          # naranja oscuro más intenso, derivado del principal
+            ColorType.MAIN: "#C75B12",          # naranja oscuro
+            ColorType.SECONDARY: "#FA8072",     # salmón
+            ColorType.LIGHT: "#F9B49A",         # salmón claro, derivado del secundario
+            ColorType.WHITE: "#FFF5F0",         # blanco con matiz cálido, derivado del naranja claro
         }
 
     def append_body(self, scan, styles, elements):

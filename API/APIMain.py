@@ -22,7 +22,6 @@ logger_instance = SecOpsLogger(name="APIMain")
 logger = logger_instance.get_logger()
 
 
-
 def build_pdf_creator(scan: Scan) -> PDFCreator:
     # Generar el PDF según el tipo de escaneo
     if scan.scan_type == "nmap":        #type: ignore
@@ -31,7 +30,7 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
         strategy = NiktoPrintingStrategy(scan=scan)
     else:
         logger.error(f"Tipo de escaneo no soportado: {scan.scan_type}")
-        return jsonify({"error": f"Tipo de escaneo no soportado: {scan.scan_type}"}), 400
+        return jsonify({"error": f"Tipo de escaneo no soportado: {scan.scan_type}"}), 400 # type: ignore
 
     return PDFCreator(strategy)
 
@@ -239,7 +238,6 @@ def generate_pdf():
         logger.info(f"Escaneo identificado como tipo: {scan_type}")
 
 
-
         PDF_CREATOR = build_pdf_creator(scan)
         pdf_path = PDF_CREATOR.print_pdf()
 
@@ -317,7 +315,9 @@ def generate_pdf_base64():
 
         logger.info(f"Escaneo identificado como tipo: {scan_type}")
 
-        
+        PDF_CREATOR = build_pdf_creator(scan)
+        pdf_path = PDF_CREATOR.print_pdf()
+
 
         if not pdf_path or not os.path.exists(pdf_path):
             logger.error(
