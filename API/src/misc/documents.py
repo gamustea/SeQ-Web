@@ -454,6 +454,16 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                     ])
                 )
                 elements.append(incident_header)
+
+                url_style = ParagraphStyle(
+                    "UrlStyle",
+                    parent=styles["Normal"],
+                    fontName="Helvetica",
+                    fontSize=9,
+                    textColor=colors.HexColor(BLACK_COLOR),
+                    wordWrap="CJK",  # CLAVE: Permite cortar la URL en cualquier carácter si es necesario
+                    alignment=TA_LEFT
+                )
                 
                 # DETALLES DEL INCIDENTE
                 details = []
@@ -462,7 +472,7 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                 if incident.method:
                     details.append(["Método:", str(incident.method)])
                 if incident.url:
-                    details.append(["URL:", str(incident.url)])
+                    details.append(["URL:", Paragraph(str(incident.url), url_style)])
                 if incident.ip_address:
                     details.append(["IP:", str(incident.ip_address)])
                 if incident.port:

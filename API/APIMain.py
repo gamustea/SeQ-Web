@@ -38,7 +38,7 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
 # ENDPOINTS GENERALES
 # ============================================================================
 
-@app.route("/api/say-hello", methods=["GET"])
+@app.route("/say-hello", methods=["GET"])
 def hello():
     """Endpoint de prueba para verificar que la API está funcionando."""
     logger.info("Endpoint /api/say-hello invocado")
@@ -47,11 +47,38 @@ def hello():
         200,
     )
 
+@app.route("/is-finished", methods=["GET"])
+def is_scan_finished():
+    try:
+        scan_id = request.args.get("id")
+        if not scan_id:
+            return jsonify({"message": f"No existe o no tienes acceso al id {scan_id}"}), 401
+        
+        scan = NMAP_MANAGER.get_scan_by_id(int(scan_id))
+        if not scan:
+            scan = NIKTO_MANAGER.get_scan_by_id(int(scan_id))
+            if not scan:
+                return jsonify({"message": f"No existe o no tienes acceso al id {scan_id}"}), 401
+
+        exists_scan = NMAP_MANAGER.scan_is_finished(scan)
+        message = f"El escaneo con id {scan_id} está terminado" if exists_scan else f"El escaneo con id {scan_id} no está terminado"
+
+        return (
+            jsonify(
+                {
+                    "message": message,
+                    "existe": exists_scan
+                }
+            )
+        )
+    except Exception:
+        return (jsonify({"message": "Ha ocurrido un error interno del servidor"}), 500)
+
 # ============================================================================
 # ENDPOINTS DE ESCANEO
 # ============================================================================
 
-@app.route("/api/scans/nmap/start", methods=["POST"])
+@app.route("/scans/nmap/start", methods=["POST"])
 def start_nmap_scan():
     """
     Inicia un escaneo Nmap.
@@ -113,7 +140,7 @@ def start_nmap_scan():
         logger.error(f"Error al iniciar el escaneo Nmap: {str(e)}", exc_info=True)
         return jsonify({"error": "Error al iniciar el escaneo", "details": str(e)}), 500
 
-@app.route("/api/scans/nikto/start", methods=["POST"])
+@app.route("/scans/nikto/start", methods=["POST"])
 def start_nikto_scan():
     """
     Inicia un escaneo Nikto.
@@ -180,7 +207,7 @@ def start_nikto_scan():
 # GENERAR PDFs
 # ============================================================================
 
-@app.route("/api/scans/generate-pdf", methods=["GET"])
+@app.route("/scans/generate-pdf", methods=["GET"])
 def generate_pdf():
     """
     Genera y descarga un PDF de un escaneo (Nmap o Nikto).
@@ -262,7 +289,7 @@ def generate_pdf():
         logger.error(f"Error interno al generar PDF: {str(e)}", exc_info=True)
         return jsonify({"error": "Error interno del servidor"}), 500
 
-@app.route("/api/scans/generate-pdf-base64", methods=["GET"])
+@app.route("/scans/generate-pdf-base64", methods=["GET"])
 def generate_pdf_base64():
     """
     Genera un PDF de un escaneo (Nmap o Nikto) y lo devuelve en base64.
@@ -356,7 +383,7 @@ def generate_pdf_base64():
 # GENERAR JSONs
 # ============================================================================
 
-@app.route("/api/scans/results", methods=["GET"])
+@app.route("/scans/results", methods=["GET"])
 def retrieve_all_scans():
     """
     Obtiene todos los escaneos del usuario (Nmap y Nikto).
@@ -473,7 +500,7 @@ def retrieve_all_scans():
         logger.error(f"Error al obtener los escaneos: {str(e)}", exc_info=True)
         return jsonify({"error": "Error al obtener los escaneos", "details": str(e)}), 500
 
-@app.route("/api/scans/results/<int:scan_id>", methods=["GET"])
+@app.route("/scans/results/<int:scan_id>", methods=["GET"])
 def retrieve_scan_by_id(scan_id):
     """
     Obtiene un escaneo específico por ID (Nmap o Nikto).
