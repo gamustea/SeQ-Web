@@ -1,0 +1,90 @@
+/**
+ * THEME: Dark Yellow
+ * Efectos visuales, fondos ambientales y esquema de color oscuro
+ */
+
+/* Efecto Glow de Fondo */
+.ambient-glow {
+    position: fixed;
+    width: 800px;
+    height: 800px;
+    background: radial-gradient(
+        circle, 
+        rgba(253, 216, 53, 0.07) 0%, 
+        rgba(18, 18, 18, 0) 70%
+    );
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: -1;
+    pointer-events: none;
+}
+
+/* Gradiente de Marca (Texto) */
+.gradient-text {
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Botones */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px 32px;
+    border-radius: var(--radius-full);
+    text-decoration: none;
+    font-weight: var(--font-weight-medium);
+    transition: all var(--transition-fast);
+    border: none;
+    cursor: pointer;
+    font-size: var(--font-size-base);
+}
+
+.btn-primary {
+    background: var(--gradient-brand);
+    color: var(--color-bg-primary);
+    box-shadow: var(--shadow-glow);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(253, 216, 53, 0.3);
+}
+
+.btn-text {
+    background: transparent;
+    color: var(--color-accent-yellow);
+    margin-left: var(--spacing-sm);
+}
+
+.btn-text:hover {
+    text-decoration: underline;
+}
+
+/* Version Badge */
+.version-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-full);
+    font-size: 0.85rem;
+    color: var(--color-accent-yellow);
+    margin-bottom: var(--spacing-sm);
+    font-family: var(--font-family-mono);
+}
+
+/* Footer */
+.site-footer {
+    padding: var(--spacing-lg) 0;
+    text-align: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.footer-text {
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+}

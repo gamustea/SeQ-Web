@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecOps Sentinel | API Documentation</title>
+
+    <link rel="stylesheet" href="./resources/css/core-variables.css">
+    <link rel="stylesheet" href="./resources/css/theme-dark-yellow.css">
+    <link rel="stylesheet" href="./resources/css/layout-structure.css">
+    <link rel="stylesheet" href="./resources/css/component-terminal.css">
+</head>
+
+<body>
+
+    <div class="ambient-glow"></div>
+
+    <header class="site-header">
+        <div class="container header-wrapper">
+            <div class="brand-logo">
+                <img src="../../shared/resources/images/SecOps-Logo-YellowDark-shadeless.png" alt="SecOps Sentinel"
+                    class="logo-image">
+                SecOps Sentinel
+            </div>
+        </div>
+    </header>
+
+    <section class="hero-section">
+        <div class="container hero-layout">
+            <div class="hero-content">
+                <span class="version-badge">v1.0 REST API</span>
+                <h1 class="hero-title">
+                    Orquestación de seguridad <br>
+                    <span class="gradient-text">Automatizada</span>
+                </h1>
+                <p class="hero-description">
+                    Unifica la gestión de vulnerabilidades. Lanza escaneos de Nmap y Nikto,
+                    gestiona usuarios y genera reportes PDF ejecutivos a través de una API simple y potente.
+                </p>
+                <div class="cta-buttons">
+                    <a href="https://github.com/gamustea/SecOps/blob/main/README.md" target="_blank"
+                        class="btn btn-primary">Ver Documentación</a>
+                    <a href="https://github.com/gamustea/SecOps" target="_blank" class="btn btn-text">GitHub Repo
+                        &rarr;</a>
+                </div>
+            </div>
+
+            <div class="terminal-demo">
+                <div class="terminal-window">
+                    <div class="terminal-titlebar">
+                        <div class="window-control red"></div>
+                        <div class="window-control yellow"></div>
+                        <div class="window-control green"></div>
+                    </div>
+                    <div class="terminal-screen" id="terminalOutput">
+                        <!-- JavaScript inyectará contenido aquí -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="capabilities-section">
+        <div class="container">
+            <div class="section-heading">
+                <h2>Capacidades del Sistema</h2>
+                <p class="section-subtitle">Arquitectura modular basada en Flask y Managers de escaneo.</p>
+            </div>
+
+            <div class="feature-cards">
+                <!-- Card Nmap -->
+                <article class="capability-card">
+                    <div class="card-icon">⚡</div>
+                    <h3 class="card-title">Nmap Scanner</h3>
+                    <p class="card-description">
+                        Gestión asíncrona de escaneos de puertos. Define tus objetivos mediante headers HTTP estándar.
+                    </p>
+                    <div class="code-preview">
+                        Headers: <br>
+                        host: "192.168.1.10"<br>
+                        ports: "80,443,8080"
+                    </div>
+                </article>
+
+                <!-- Card Nikto -->
+                <article class="capability-card">
+                    <div class="card-icon">🕷️</div>
+                    <h3 class="card-title">Nikto Integration</h3>
+                    <p class="card-description">
+                        Detección de vulnerabilidades web. Soporta configuración de timeout y targets específicos.
+                    </p>
+                    <div class="code-preview">
+                        POST /scans/nikto/start<br>
+                        Header 'target': "webapp.local"<br>
+                        Query 'timeout': 180
+                    </div>
+                </article>
+
+                <!-- Card PDF -->
+                <article class="capability-card">
+                    <div class="card-icon">📄</div>
+                    <h3 class="card-title">Smart Reporting</h3>
+                    <p class="card-description">
+                        Motor <code>PDFCreator</code> integrado con estrategias de impresión personalizadas para cada
+                        tipo de escaneo.
+                    </p>
+                    <div class="code-preview">
+                        GET /scans/generate-pdf-base64<br>
+                        Strategies: Nmap & Nikto<br>
+                        Format: Base64 / Stream
+                    </div>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <!-- Sección de Escaneo Activo -->
+    <section class="scan-launcher-section">
+        <div class="container">
+            <div class="section-heading">
+                <h2>Lanzar Escaneos</h2>
+                <p class="section-subtitle">Inicia auditorías de seguridad contra tus objetivos.</p>
+            </div>
+
+            <div class="scan-forms-grid">
+                <!-- Formulario NMAP -->
+                <div class="scan-form-card">
+                    <div class="form-header">
+                        <div class="form-icon">⚡</div>
+                        <h3>Nmap Scanner</h3>
+                    </div>
+                    <form id="nmapScanForm">
+                        <div class="form-field">
+                            <label for="nmapHost">Host / IP Objetivo</label>
+                            <input type="text" id="nmapHost" name="host" placeholder="192.168.1.10" required
+                                autocomplete="off" VALUE="192.168.1.1">
+                            <span class="field-hint">Dirección IP o hostname del objetivo</span>
+                        </div>
+                        <div class="form-field">
+                            <label for="nmapPorts">Puertos</label>
+                            <input type="text" id="nmapPorts" name="ports" placeholder="80,443,8080 o 1-1000" required
+                                autocomplete="off" value="1-1024">
+                            <span class="field-hint">Lista de puertos o rango</span>
+                        </div>
+                        <button type="submit" class="btn btn-primary full-width">
+                            <span class="btn-icon">🚀</span>
+                            Iniciar Escaneo Nmap
+                        </button>
+                        <div class="form-status" id="nmapStatus"></div>
+                    </form>
+                </div>
+
+                <!-- Formulario NIKTO -->
+                <div class="scan-form-card">
+                    <div class="form-header">
+                        <div class="form-icon">🕷️</div>
+                        <h3>Nikto Scanner</h3>
+                    </div>
+                    <form id="niktoScanForm">
+                        <div class="form-field">
+                            <label for="niktoTarget">Target URL</label>
+                            <input type="text" id="niktoTarget" name="target" placeholder="http://example.com" required
+                                autocomplete="off">
+                            <span class="field-hint">URL completa del objetivo web</span>
+                        </div>
+                        <div class="form-field">
+                            <label for="niktoTimeout">Timeout (segundos)</label>
+                            <input type="number" id="niktoTimeout" name="timeout" value="180" min="1" max="3600"
+                                autocomplete="off">
+                            <span class="field-hint">Tiempo máximo de ejecución</span>
+                        </div>
+                        <button type="submit" class="btn btn-primary full-width">
+                            <span class="btn-icon">🚀</span>
+                            Iniciar Escaneo Nikto
+                        </button>
+                        <div class="form-status" id="niktoStatus"></div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Sección de Historial de Escaneos -->
+    <section class="scan-history-section">
+        <div class="container">
+            <div class="section-heading">
+                <h2>Historial de Escaneos</h2>
+                <button id="refreshHistoryBtn" class="btn btn-outlined btn-sm">
+                    ↻ Actualizar
+                </button>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="scan-history-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Tipo</th>
+                            <th>Objetivo</th>
+                            <th>Fecha de Inicio</th>
+                            <th>Estado</th>
+                            <th>Reporte</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scanHistoryBody">
+                        <tr>
+                            <td colspan="6" class="loading-cell">Cargando escaneos...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <footer class="site-footer">
+        <div class="container">
+            <p class="footer-text">&copy; 2025 SecOps Sentinel. Powered by Flask & Python Security Tools.</p>
+        </div>
+    </footer>
+
+    <script src="./resources/js/terminal-animation.js"></script>
+    <script src="./resources/js/scan-launcher.js"></script>
+</body>
+
+</html>

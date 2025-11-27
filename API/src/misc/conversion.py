@@ -92,11 +92,18 @@ class JSONManager:
         incluyendo todos los campos que comienzan por '@'."""
         try:
             items = json_data['niktoscan']['scandetails']['item']
+            print(items)
+
+            if isinstance(items, dict):
+                incidencia = {}
+                for key, value in items.items():  # ← AÑADE .items()
+                    incidencia[key.lstrip('@')] = value
+                return [incidencia]
+
             incidencias = []
             for item in items:
                 incidencia = {}
                 for key, value in item.items():
-                    # Extraer tanto claves normales como las que empiezan por '@'
                     incidencia[key.lstrip('@')] = value
                 incidencias.append(incidencia)
             return incidencias

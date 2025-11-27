@@ -1,42 +1,346 @@
 import os
 import base64
 
-from src.persistence import UserDBManager
+from src.persistence import UserDBManager, ScanDBManager
 from src.scanning.managers import NmapScanManager, NiktoScanManager
 from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
 from src.misc.logging import SecOpsLogger
 from src.model import Scan
 
 from flask import send_file, request, jsonify, Flask
+from flask_cors import CORS  # ← AÑADE ESTO
+
+import ipaddress
+import itertools
+
+# ... tus otros imports ...
+
+app = Flask(__name__)
+CORS(app)  # ← AÑADE ESTO (habilita CORS para todos los endpoints)
 
 # Inicialización
 USER = UserDBManager().get_user_by_id(1)
 NMAP_MANAGER = NmapScanManager(USER)
 NIKTO_MANAGER = NiktoScanManager(USER)
+SCAN_DB_MANAGER = ScanDBManager()
 PDF_CREATOR = None
-
-app = Flask(__name__)
 
 # Configurar logger
 logger_instance = SecOpsLogger(name="APIMain")
 logger = logger_instance.get_logger()
 
 
+def validar_puertos_nmap(puertos_str):
+    """
+    Valida que una cadena de puertos sea válida para Nmap y devuelve la lista expandida.
+
+    Reglas de validación:
+    - Puertos en rango 1-65535
+    - Puertos y rangos en orden ascendente
+    - Rangos válidos (inicio < fin)
+    - No solapamiento de rangos
+    - Formato: "80", "80,443", "1-1000", "80,443-8080,9000"
+
+    Args:
+        puertos_str (str): String con especificación de puertos
+
+    Returns:
+        tuple: (bool, list, str) - (es_válido, lista_puertos, mensaje)
+    """
+
+    if not puertos_str or not isinstance(puertos_str, str):
+        return False, [], "El parámetro debe ser una cadena no vacía"
+
+    puertos_str = puertos_str.strip()
+
+    if not puertos_str:
+        return False, [], "La cadena de puertos está vacía"
+
+    segmentos = puertos_str.split(",")
+    ultimo_puerto = 0
+    lista_puertos = []  # Lista expandida de todos los puertos
+
+    for i, segmento in enumerate(segmentos):
+        segmento = segmento.strip()
+
+        if not segmento:
+            return False, [], f"Segmento vacío encontrado en la posición {i+1}"
+
+        if "-" in segmento:
+            partes = segmento.split("-")
+
+            # Rango desde 1: "-1000"
+            if segmento.startswith("-"):
+                if len(partes) != 2 or partes[0] != "":
+                    return False, [], f"Formato de rango incorrecto: '{segmento}'"
+
+                try:
+                    fin = int(partes[1])
+                except ValueError:
+                    return False, [], f"Puerto de fin no válido en rango: '{segmento}'"
+
+                if fin < 1 or fin > 65535:
+                    return False, [], f"Puerto de fin fuera de rango (1-65535): {fin}"
+
+                inicio = 1
+
+            # Rango hasta 65535: "1000-"
+            elif segmento.endswith("-"):
+                if len(partes) != 2 or partes[1] != "":
+                    return False, [], f"Formato de rango incorrecto: '{segmento}'"
+
+                try:
+                    inicio = int(partes[0])
+                except ValueError:
+                    return (
+                        False,
+                        [],
+                        f"Puerto de inicio no válido en rango: '{segmento}'",
+                    )
+
+                if inicio < 1 or inicio > 65535:
+                    return (
+                        False,
+                        [],
+                        f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                    )
+
+                fin = 65535
+
+            # Rango normal: "80-443"
+            else:
+                if len(partes) != 2:
+                    return (
+                        False,
+                        [],
+                        f"Formato de rango incorrecto (demasiados guiones): '{segmento}'",
+                    )
+
+                try:
+                    inicio = int(partes[0])
+                    fin = int(partes[1])
+                except ValueError:
+                    return False, [], f"Puertos no numéricos en rango: '{segmento}'"
+
+                if inicio < 1 or inicio > 65535:
+                    return (
+                        False,
+                        [],
+                        f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                    )
+
+                if fin < 1 or fin > 65535:
+                    return False, [], f"Puerto de fin fuera de rango (1-65535): {fin}"
+
+                if inicio >= fin:
+                    return (
+                        False,
+                        [],
+                        f"Rango inválido: el inicio ({inicio}) debe ser menor que el fin ({fin})",
+                    )
+
+            if inicio <= ultimo_puerto:
+                return (
+                    False,
+                    [],
+                    f"Los puertos no están en orden ascendente: {inicio} aparece después de {ultimo_puerto}",
+                )
+
+            # Expandir el rango y añadir a la lista
+            lista_puertos.extend(range(inicio, fin + 1))
+            ultimo_puerto = fin
+
+        else:
+            # Puerto individual
+            try:
+                puerto = int(segmento)
+            except ValueError:
+                return False, [], f"Puerto no numérico: '{segmento}'"
+
+            if puerto < 1 or puerto > 65535:
+                return False, [], f"Puerto fuera de rango (1-65535): {puerto}"
+
+            if puerto <= ultimo_puerto:
+                return (
+                    False,
+                    [],
+                    f"Los puertos no están en orden ascendente: {puerto} aparece después de {ultimo_puerto}",
+                )
+
+            # Añadir puerto individual a la lista
+            lista_puertos.append(puerto)
+            ultimo_puerto = puerto
+
+    return (
+        True,
+        lista_puertos,
+        f"Especificación válida con {len(lista_puertos)} puertos",
+    )
+
+
+def validar_ips_nmap(ips_str):
+    """
+    Valida que una cadena de IPs sea válida para Nmap y devuelve la lista expandida.
+
+    Formatos soportados:
+    - IP individual: "192.168.1.1"
+    - CIDR: "192.168.1.0/24"
+    - Rangos por octeto: "192.168.1.1-10" o "192.168.1-2.1-10"
+    - Lista separada por comas: "192.168.1.1,192.168.1.5"
+    - Wildcards: "192.168.1.*" (equivalente a 192.168.1.0-255)
+
+    Args:
+        ips_str (str): String con especificación de IPs
+
+    Returns:
+        tuple: (bool, list, str) - (es_válido, lista_ips, mensaje)
+    """
+
+    if not ips_str or not isinstance(ips_str, str):
+        return False, [], "El parámetro debe ser una cadena no vacía"
+
+    ips_str = ips_str.strip()
+
+    if not ips_str:
+        return False, [], "La cadena de IPs está vacía"
+
+    # Dividir por comas para procesar múltiples targets
+    segmentos = [s.strip() for s in ips_str.split(",")]
+
+    lista_ips = []
+
+    for segmento in segmentos:
+        if not segmento:
+            return False, [], "Segmento vacío encontrado"
+
+        # Caso 1: Notación CIDR (192.168.1.0/24)
+        if "/" in segmento:
+            try:
+                red = ipaddress.ip_network(segmento, strict=False)
+                # Expandir la red a todas las IPs
+                lista_ips.extend([str(ip) for ip in red.hosts()])
+                # Si es /32 o /31, hosts() puede estar vacío, incluir la IP de red
+                if not lista_ips or red.prefixlen >= 31:
+                    lista_ips.extend([str(ip) for ip in red])
+            except ValueError as e:
+                return False, [], f"Notación CIDR inválida '{segmento}': {str(e)}"
+
+        # Caso 2: Rangos por octeto o wildcards (192.168.1.1-10 o 192.168.1.*)
+        elif "-" in segmento or "*" in segmento:
+            try:
+                ips_expandidas = expandir_rango_octetos(segmento)
+                if ips_expandidas is None:
+                    return False, [], f"Formato de rango inválido: '{segmento}'"
+                lista_ips.extend(ips_expandidas)
+            except Exception as e:
+                return False, [], f"Error al procesar rango '{segmento}': {str(e)}"
+
+        # Caso 3: IP individual (192.168.1.1)
+        else:
+            try:
+                ip = ipaddress.ip_address(segmento)
+                lista_ips.append(str(ip))
+            except ValueError:
+                return False, [], f"Dirección IP inválida: '{segmento}'"
+
+    if not lista_ips:
+        return False, [], "No se generaron IPs válidas"
+
+    # Eliminar duplicados manteniendo el orden
+    lista_ips_unicas = list(dict.fromkeys(lista_ips))
+
+    return (
+        True,
+        lista_ips_unicas,
+        f"Especificación válida con {len(lista_ips_unicas)} IPs",
+    )
+
+
+def expandir_rango_octetos(rango_str):
+    """
+    Expande un rango de octetos al estilo Nmap.
+    Ejemplos:
+    - "192.168.1.1-10" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.1.10"]
+    - "192.168.1-2.1-5" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.2.5"]
+    - "192.168.1.*" -> ["192.168.1.0", "192.168.1.1", ..., "192.168.1.255"]
+    """
+
+    # Reemplazar wildcards por rangos completos
+    rango_str = rango_str.replace("*", "0-255")
+
+    # Dividir por puntos
+    octetos = rango_str.split(".")
+
+    if len(octetos) != 4:
+        return None
+
+    # Procesar cada octeto
+    rangos_octetos = []
+
+    for octeto in octetos:
+        if "-" in octeto:
+            # Es un rango: "1-10"
+            partes = octeto.split("-")
+            if len(partes) != 2:
+                return None
+
+            try:
+                inicio = int(partes[0])
+                fin = int(partes[1])
+            except ValueError:
+                return None
+
+            # Validar rango de octeto (0-255)
+            if inicio < 0 or inicio > 255 or fin < 0 or fin > 255:
+                return None
+
+            if inicio > fin:
+                return None
+
+            rangos_octetos.append(range(inicio, fin + 1))
+        else:
+            # Es un número fijo
+            try:
+                valor = int(octeto)
+            except ValueError:
+                return None
+
+            if valor < 0 or valor > 255:
+                return None
+
+            rangos_octetos.append([valor])
+
+    # Generar todas las combinaciones
+    lista_ips = []
+    for combinacion in itertools.product(*rangos_octetos):
+        ip_str = ".".join(map(str, combinacion))
+        # Validar que sea una IP válida
+        try:
+            ipaddress.ip_address(ip_str)
+            lista_ips.append(ip_str)
+        except ValueError:
+            continue
+
+    return lista_ips if lista_ips else None
+
+
 def build_pdf_creator(scan: Scan) -> PDFCreator:
     # Generar el PDF según el tipo de escaneo
-    if scan.scan_type == "nmap":        #type: ignore
+    if scan.scan_type == "nmap":  # type: ignore
         strategy = NmapPrintingStrategy(scan=scan)
-    elif scan.scan_type == "nikto":     #type: ignore
+    elif scan.scan_type == "nikto":  # type: ignore
         strategy = NiktoPrintingStrategy(scan=scan)
     else:
         logger.error(f"Tipo de escaneo no soportado: {scan.scan_type}")
-        return jsonify({"error": f"Tipo de escaneo no soportado: {scan.scan_type}"}), 400 # type: ignore
+        return jsonify({"error": f"Tipo de escaneo no soportado: {scan.scan_type}"}), 400  # type: ignore
 
     return PDFCreator(strategy)
+
 
 # ============================================================================
 # ENDPOINTS GENERALES
 # ============================================================================
+
 
 @app.route("/say-hello", methods=["GET"])
 def hello():
@@ -47,36 +351,33 @@ def hello():
         200,
     )
 
+
 @app.route("/is-finished", methods=["GET"])
 def is_scan_finished():
     try:
-        scan_id = request.args.get("id")
+        scan_id = int(request.args.get("id"))  # type: ignore
         if not scan_id:
-            return jsonify({"message": f"No existe o no tienes acceso al id {scan_id}"}), 401
-        
-        scan = NMAP_MANAGER.get_scan_by_id(int(scan_id))
-        if not scan:
-            scan = NIKTO_MANAGER.get_scan_by_id(int(scan_id))
-            if not scan:
-                return jsonify({"message": f"No existe o no tienes acceso al id {scan_id}"}), 401
-
-        exists_scan = NMAP_MANAGER.scan_is_finished(scan)
-        message = f"El escaneo con id {scan_id} está terminado" if exists_scan else f"El escaneo con id {scan_id} no está terminado"
-
-        return (
-            jsonify(
-                {
-                    "message": message,
-                    "existe": exists_scan
-                }
+            return (
+                jsonify({"message": f"No existe o no tienes acceso al id {scan_id}"}),
+                401,
             )
+
+        exists_scan = SCAN_DB_MANAGER.scan_is_finished(scan_id)
+        message = (
+            f"El escaneo con id {scan_id} está terminado"
+            if exists_scan
+            else f"El escaneo con id {scan_id} no está terminado"
         )
+
+        return jsonify({"message": message, "existe": exists_scan})
     except Exception:
         return (jsonify({"message": "Ha ocurrido un error interno del servidor"}), 500)
+
 
 # ============================================================================
 # ENDPOINTS DE ESCANEO
 # ============================================================================
+
 
 @app.route("/scans/nmap/start", methods=["POST"])
 def start_nmap_scan():
@@ -91,8 +392,8 @@ def start_nmap_scan():
     try:
         logger.info("Iniciando escaneo Nmap")
         # Obtener parámetros de los headers
-        host = request.headers.get("host")
-        ports = request.headers.get("ports")
+        host = request.headers.get("X-Target-Host")
+        ports = request.headers.get("X-Target-Ports")
 
         # Validar parámetros requeridos
         if not host or not ports:
@@ -140,6 +441,7 @@ def start_nmap_scan():
         logger.error(f"Error al iniciar el escaneo Nmap: {str(e)}", exc_info=True)
         return jsonify({"error": "Error al iniciar el escaneo", "details": str(e)}), 500
 
+
 @app.route("/scans/nikto/start", methods=["POST"])
 def start_nikto_scan():
     """
@@ -154,7 +456,7 @@ def start_nikto_scan():
     try:
         logger.info("Iniciando escaneo Nikto")
         # Obtener parámetros
-        target = request.headers.get("target")
+        target = request.headers.get("X-Target")
         timeout = request.args.get("timeout", 180)
 
         # Validar target requerido
@@ -207,6 +509,7 @@ def start_nikto_scan():
 # GENERAR PDFs
 # ============================================================================
 
+
 @app.route("/scans/generate-pdf", methods=["GET"])
 def generate_pdf():
     """
@@ -250,20 +553,19 @@ def generate_pdf():
                 jsonify({"error": f"No se encontró el escaneo con ID: {scan_id}"}),
                 404,
             )
-        
+
         escaneo_terminado = NIKTO_MANAGER.scan_is_finished(scan)
         if not escaneo_terminado:
             return (
                 jsonify({"error": f"El escaneo con el id {scan_id} no está terminado"}),
                 404,
-            ) 
+            )
 
         # Verificar si el modelo tiene atributo scan_type y usarlo
         if hasattr(scan, "scan_type"):
             scan_type = scan.scan_type.lower()
 
         logger.info(f"Escaneo identificado como tipo: {scan_type}")
-
 
         PDF_CREATOR = build_pdf_creator(scan)
         pdf_path = PDF_CREATOR.print_pdf()
@@ -288,6 +590,7 @@ def generate_pdf():
     except Exception as e:
         logger.error(f"Error interno al generar PDF: {str(e)}", exc_info=True)
         return jsonify({"error": "Error interno del servidor"}), 500
+
 
 @app.route("/scans/generate-pdf-base64", methods=["GET"])
 def generate_pdf_base64():
@@ -345,7 +648,6 @@ def generate_pdf_base64():
         PDF_CREATOR = build_pdf_creator(scan)
         pdf_path = PDF_CREATOR.print_pdf()
 
-
         if not pdf_path or not os.path.exists(pdf_path):
             logger.error(
                 f"Error al generar el archivo PDF base64 para escaneo ID: {scan_id}"
@@ -383,68 +685,67 @@ def generate_pdf_base64():
 # GENERAR JSONs
 # ============================================================================
 
+
 @app.route("/scans/results", methods=["GET"])
 def retrieve_all_scans():
     """
     Obtiene todos los escaneos del usuario (Nmap y Nikto).
-    
+
     Query Parameters (opcional):
     - type: Tipo de escaneo ('nmap', 'nikto', o 'all'). Default: 'all'
-    
+
     Returns:
     JSON con la lista de escaneos y sus resultados
     """
     try:
         scan_type = request.args.get("type", "all").lower()
         logger.info(f"Obteniendo escaneos. Tipo: {scan_type}")
-        
+
         # Validar tipo de escaneo
         if scan_type not in ["nmap", "nikto", "all"]:
             logger.warning(f"Tipo de escaneo inválido: {scan_type}")
             return (
-                jsonify({
-                    "error": "Tipo de escaneo inválido",
-                    "message": "Los tipos válidos son: 'nmap', 'nikto' o 'all'"
-                }),
+                jsonify(
+                    {
+                        "error": "Tipo de escaneo inválido",
+                        "message": "Los tipos válidos son: 'nmap', 'nikto' o 'all'",
+                    }
+                ),
                 400,
             )
-        
+
         all_results = []
-        
+
         # Obtener escaneos Nmap si aplica
         if scan_type in ["nmap", "all"]:
-            try:
-                nmap_results = NMAP_MANAGER.get_scans_for_user()
-                formatted_nmap = [
-                    {
-                        "id": result.id,
-                        "scanType": "nmap",
-                        "target": result.target,
-                        "targetedPorts": [
-                            f"{port.port}/{port.protocol}" 
-                            for port in result.target_ports
-                        ],
-                        "startedAt": (
-                            result.started_at.isoformat()
-                            if hasattr(result.started_at, "isoformat")
-                            else str(result.started_at)
-                        ),
-                        "openPorts": [
-                            {
-                                "port": f"{port.port.port}/{port.port.protocol}",
-                                "reason": port.reason,
-                            }
-                            for port in result.open_ports_relation
-                        ],
-                        "totalOpenPorts": len(result.open_ports_relation),
-                    }
-                    for result in nmap_results
-                ]
-                all_results.extend(formatted_nmap)
-                logger.info(f"Se obtuvieron {len(formatted_nmap)} escaneos Nmap")
-            except Exception as e:
-                logger.error(f"Error al obtener escaneos Nmap: {str(e)}")
-        
+            nmap_results = NMAP_MANAGER.get_scans_for_user()
+            formatted_nmap = [
+                {
+                    "id": result.id,
+                    "scanType": "nmap",
+                    "target": result.target,
+                    "targetedPorts": [
+                        f"{port.id}/{port.protocol}" for port in result.target_ports
+                    ],
+                    "startedAt": (
+                        result.started_at.isoformat()
+                        if hasattr(result.started_at, "isoformat")
+                        else str(result.started_at)
+                    ),
+                    "openPorts": [
+                        {
+                            "port": f"{open_port.port_id}/{open_port.port.protocol}",
+                            "reason": open_port.reason,
+                        }
+                        for open_port in result.open_ports_relation
+                    ],
+                    "totalOpenPorts": len(result.open_ports_relation),
+                }
+                for result in nmap_results
+            ]
+            all_results.extend(formatted_nmap)
+            logger.info(f"Se obtuvieron {len(formatted_nmap)} escaneos Nmap")
+
         # Obtener escaneos Nikto si aplica
         if scan_type in ["nikto", "all"]:
             try:
@@ -481,9 +782,9 @@ def retrieve_all_scans():
                 logger.info(f"Se obtuvieron {len(formatted_nikto)} escaneos Nikto")
             except Exception as e:
                 logger.error(f"Error al obtener escaneos Nikto: {str(e)}")
-        
+
         logger.info(f"Total de escaneos obtenidos: {len(all_results)}")
-        
+
         return (
             jsonify(
                 {
@@ -495,50 +796,52 @@ def retrieve_all_scans():
             ),
             200,
         )
-    
+
     except Exception as e:
         logger.error(f"Error al obtener los escaneos: {str(e)}", exc_info=True)
-        return jsonify({"error": "Error al obtener los escaneos", "details": str(e)}), 500
+        return (
+            jsonify({"error": "Error al obtener los escaneos", "details": str(e)}),
+            500,
+        )
+
 
 @app.route("/scans/results/<int:scan_id>", methods=["GET"])
 def retrieve_scan_by_id(scan_id):
     """
     Obtiene un escaneo específico por ID (Nmap o Nikto).
-    
+
     Args:
     scan_id: ID del escaneo
-    
+
     Returns:
     JSON con los detalles del escaneo
     """
     try:
         logger.info(f"Obteniendo escaneo con ID: {scan_id}")
-        
+
         # Intentar obtener el escaneo primero como Nmap
         result = NMAP_MANAGER.get_scan_by_id(scan_id)
         scan_type = "nmap"
-        
+
         # Si no existe en Nmap, buscar en Nikto
         if not result:
             result = NIKTO_MANAGER.get_scan_by_id(scan_id)
             scan_type = "nikto"
-        
+
         # Validar que el escaneo existe
         if not result:
-            logger.warning(
-                f"Escaneo con ID {scan_id} no encontrado en Nmap ni Nikto"
-            )
+            logger.warning(f"Escaneo con ID {scan_id} no encontrado en Nmap ni Nikto")
             return (
                 jsonify({"error": f"No se encontró el escaneo con ID: {scan_id}"}),
                 404,
             )
-        
+
         # Verificar si el modelo tiene atributo scan_type y usarlo
-        if hasattr(result, 'scan_type'):
+        if hasattr(result, "scan_type"):
             scan_type = result.scan_type.lower()
-        
+
         logger.info(f"Escaneo identificado como tipo: {scan_type}")
-        
+
         # Formatear resultado según el tipo de escaneo
         if scan_type == "nmap":
             formatted_result = {
@@ -546,8 +849,7 @@ def retrieve_scan_by_id(scan_id):
                 "scanType": "nmap",
                 "target": result.target,
                 "targetedPorts": [
-                    f"{port}/{port.protocol}" 
-                    for port in result.target_ports
+                    f"{port}/{port.protocol}" for port in result.target_ports
                 ],
                 "startedAt": (
                     result.started_at.isoformat()
@@ -563,7 +865,7 @@ def retrieve_scan_by_id(scan_id):
                 ],
                 "totalOpenPorts": len(result.open_ports_relation),
             }
-        
+
         elif scan_type == "nikto":
             formatted_result = {
                 "id": result.id,
@@ -590,13 +892,13 @@ def retrieve_scan_by_id(scan_id):
                 ],
                 "totalIncidents": len(result.incidents),
             }
-        
+
         else:
             logger.error(f"Tipo de escaneo no soportado: {scan_type}")
             return jsonify({"error": f"Tipo de escaneo no soportado: {scan_type}"}), 400
-        
+
         logger.info(f"Escaneo {scan_type} con ID {scan_id} obtenido correctamente")
-        
+
         return (
             jsonify(
                 {
@@ -606,7 +908,7 @@ def retrieve_scan_by_id(scan_id):
             ),
             200,
         )
-    
+
     except Exception as e:
         logger.error(
             f"Error al obtener el escaneo con ID {scan_id}: {str(e)}",
@@ -618,6 +920,7 @@ def retrieve_scan_by_id(scan_id):
 # ============================================================================
 # MANEJO DE ERRORES GLOBALES
 # ============================================================================
+
 
 @app.errorhandler(404)
 def not_found(error):
@@ -633,6 +936,7 @@ def not_found(error):
         404,
     )
 
+
 @app.errorhandler(405)
 def method_not_allowed(error):
     """Manejo de métodos HTTP no permitidos."""
@@ -646,6 +950,7 @@ def method_not_allowed(error):
         ),
         405,
     )
+
 
 @app.errorhandler(500)
 def internal_error(error):

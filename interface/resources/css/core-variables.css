@@ -1,0 +1,72 @@
+/**
+ * CORE VARIABLES
+ * Sistema de tokens de diseño: colores, tipografía, espaciado
+ */
+
+:root {
+    /* Paleta de Colores Base */
+    --color-bg-primary: #121212;
+    --color-bg-surface: #1e1e1e;
+    --color-bg-surface-hover: #2d2d2d;
+    
+    --color-text-primary: #e3e3e3;
+    --color-text-secondary: #9aa0a6;
+    --color-text-muted: #555555;
+    
+    /* Acentos Amarillos (Identidad de marca) */
+    --color-accent-yellow: #fdd835;
+    --color-accent-amber: #ffb300;
+    --gradient-brand: linear-gradient(135deg, #fdd835 0%, #ffb300 100%);
+    
+    /* Tipografía */
+    --font-family-base: 'Roboto', system-ui, -apple-system, sans-serif;
+    --font-family-mono: 'Courier New', 'Consolas', monospace;
+    
+    --font-size-base: 1rem;
+    --font-size-lg: 1.2rem;
+    --font-size-xl: 2.2rem;
+    --font-size-hero: 3.5rem;
+    
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-bold: 700;
+    
+    /* Espaciado */
+    --spacing-xs: 8px;
+    --spacing-sm: 16px;
+    --spacing-md: 24px;
+    --spacing-lg: 40px;
+    --spacing-xl: 60px;
+    --spacing-2xl: 100px;
+    
+    /* Bordes y Radios */
+    --radius-sm: 8px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+    --radius-full: 50px;
+    
+    /* Sombras */
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
+    --shadow-glow: 0 4px 15px rgba(253, 216, 53, 0.2);
+    
+    /* Transiciones */
+    --transition-fast: 0.2s ease;
+    --transition-base: 0.3s ease;
+}
+
+/* Reset Universal */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--font-family-base);
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    line-height: 1.6;
+    overflow-x: hidden;
+}

@@ -7,13 +7,25 @@ from abc import ABC
 import urllib.parse
 
 from src.misc.logging import SecOpsLogger
-from src.model import Person, User, Scan, Port, OpenPort, NmapScan, NiktoIncident, NiktoScan, FinishedScan
+from src.model import (
+    Person,
+    User,
+    Scan,
+    Port,
+    OpenPort,
+    NmapScan,
+    NiktoIncident,
+    NiktoScan,
+    FinishedScan,
+)
 from src.misc.configread import ConfigReader
 
 
 # Obtener credenciales para la conexión a la base de datos y construir la URL de conexión MySQL
 (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_crendetials()
-DEFAULT_DATABASE_URL = f"mysql+pymysql://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}/{DBNAME}"
+DEFAULT_DATABASE_URL = (
+    f"mysql+pymysql://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}/{DBNAME}"
+)
 
 
 SHARED_SESSION: Optional[Session] = None
@@ -22,13 +34,13 @@ SHARED_SESSION: Optional[Session] = None
 class DBManager(ABC):
     """
     Gestor general para la sesión y operaciones básicas en la base de datos usando SQLAlchemy ORM.
-    
+
     Implementa un patrón Singleton para la sesión: todas las instancias comparten la misma sesión.
 
     Atributos:
         session (Session): Sesión activa de SQLAlchemy para interactuar con la base de datos.
         logger (Logger): Logger Personalizado para registrar eventos e incidencias.
-    
+
     Métodos:
         __init__(session: Optional[Session] = None):
             Inicializa la sesión de base de datos. Si no se pasa una sesión, crea una a partir
@@ -46,11 +58,11 @@ class DBManager(ABC):
         Constructor del gestor.
 
         Args:
-            session (Optional[Session]): Sesión SQLAlchemy externa. Si es None, 
+            session (Optional[Session]): Sesión SQLAlchemy externa. Si es None,
                                          usa o crea la sesión compartida singleton.
         """
         global SHARED_SESSION
-        
+
         if session is not None:
             self.session = session
         elif SHARED_SESSION is not None:
@@ -97,7 +109,7 @@ class DBManager(ABC):
             "NiktoScan",
             "NiktoIncident",
             "ScanIncident",
-            "OpenVASScan"
+            "OpenVASScan",
         ]
 
         try:
@@ -107,7 +119,9 @@ class DBManager(ABC):
                 self.logger.info(f"Tabla '{table}' vaciada correctamente.")
             self.session.execute(text("SET FOREIGN_KEY_CHECKS=1;"))
             self.session.commit()
-            self.logger.info("Todas las tablas han sido limpiadas sin modificar la estructura.")
+            self.logger.info(
+                "Todas las tablas han sido limpiadas sin modificar la estructura."
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al limpiar tablas: {err}")
@@ -161,8 +175,12 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
-            exists = self.session.query(User).filter(User.username == username).count() > 0
-            self.logger.info(f"Verificación de existencia del User '{username}': {exists}")
+            exists = (
+                self.session.query(User).filter(User.username == username).count() > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia del User '{username}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia de User: {err}")
@@ -183,8 +201,12 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
-            exists = self.session.query(Person).filter(Person.id == person_id).count() > 0
-            self.logger.info(f"Verificación de existencia de la Person con ID '{person_id}': {exists}")
+            exists = (
+                self.session.query(Person).filter(Person.id == person_id).count() > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia de la Person con ID '{person_id}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia de Person: {err}")
@@ -204,7 +226,9 @@ class UserDBManager(DBManager):
         try:
             self.session.add(person)
             self.session.commit()
-            self.logger.info(f"Se creó un nuevo Person: {person.first_name} {person.last_name} con ID {person.id}")
+            self.logger.info(
+                f"Se creó un nuevo Person: {person.first_name} {person.last_name} con ID {person.id}"
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al crear Person: {err}")
@@ -222,11 +246,13 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
-            if not self.person_exists(user.person_id): # type: ignore
+            if not self.person_exists(user.person_id):  # type: ignore
                 self.create_person(user.person)
             self.session.add(user)
             self.session.commit()
-            self.logger.info(f"Se creó un nuevo User de sistema: {user.username} con ID {user.id}")
+            self.logger.info(
+                f"Se creó un nuevo User de sistema: {user.username} con ID {user.id}"
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al crear User: {err}")
@@ -266,8 +292,12 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
-            person = self.session.query(Person).filter(Person.id == person_id).one_or_none()
-            self.logger.info(f"Se obtuvo el Person con ID {person_id} de la base de datos.")
+            person = (
+                self.session.query(Person).filter(Person.id == person_id).one_or_none()
+            )
+            self.logger.info(
+                f"Se obtuvo el Person con ID {person_id} de la base de datos."
+            )
             return person
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener Person por ID: {err}")
@@ -327,15 +357,21 @@ class UserDBManager(DBManager):
         self._check_session()
         try:
             # CORREGIDO: person.id en lugar de Person.id
-            existing_person = self.session.query(Person).filter(Person.id == person.id).one_or_none()
+            existing_person = (
+                self.session.query(Person).filter(Person.id == person.id).one_or_none()
+            )
             if existing_person:
                 existing_person.first_name = person.first_name
                 existing_person.last_name = person.last_name
                 existing_person.email = person.email
                 self.session.commit()
-                self.logger.info(f"Se actualizó la información de la Person con ID {person.id}.")
+                self.logger.info(
+                    f"Se actualizó la información de la Person con ID {person.id}."
+                )
             else:
-                self.logger.warning(f"No se encontró Person con ID {person.id} para actualizar.")
+                self.logger.warning(
+                    f"No se encontró Person con ID {person.id} para actualizar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al actualizar Person: {err}")
@@ -353,15 +389,21 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
-            existing_user = self.session.query(User).filter(User.id == user.id).one_or_none()
+            existing_user = (
+                self.session.query(User).filter(User.id == user.id).one_or_none()
+            )
             if existing_user:
                 existing_user.username = user.username
                 existing_user.password = user.password
                 # No actualices el ID, es la clave primaria
                 self.session.commit()
-                self.logger.info(f"Se actualizó la información del User con ID {user.id}.")
+                self.logger.info(
+                    f"Se actualizó la información del User con ID {user.id}."
+                )
             else:
-                self.logger.warning(f"No se encontró User con ID {user.id} para actualizar.")
+                self.logger.warning(
+                    f"No se encontró User con ID {user.id} para actualizar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al actualizar User: {err}")
@@ -379,13 +421,19 @@ class UserDBManager(DBManager):
         """
         self._check_session()
         try:
-            existing_user = self.session.query(User).filter(User.id == user.id).one_or_none()
+            existing_user = (
+                self.session.query(User).filter(User.id == user.id).one_or_none()
+            )
             if existing_user:
                 self.session.delete(existing_user)
                 self.session.commit()
-                self.logger.info(f"Se eliminó el User con ID {user.id} de la base de datos.")
+                self.logger.info(
+                    f"Se eliminó el User con ID {user.id} de la base de datos."
+                )
             else:
-                self.logger.warning(f"No se encontró User con ID {user.id} para eliminar.")
+                self.logger.warning(
+                    f"No se encontró User con ID {user.id} para eliminar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar User: {err}")
@@ -404,13 +452,19 @@ class UserDBManager(DBManager):
         self._check_session()
         try:
             # CORREGIDO: person.id en lugar de Person.id
-            existing_person = self.session.query(Person).filter(Person.id == person.id).one_or_none()
+            existing_person = (
+                self.session.query(Person).filter(Person.id == person.id).one_or_none()
+            )
             if existing_person:
                 self.session.delete(existing_person)
                 self.session.commit()
-                self.logger.info(f"Se eliminó la Person con ID {person.id} de la base de datos.")
+                self.logger.info(
+                    f"Se eliminó la Person con ID {person.id} de la base de datos."
+                )
             else:
-                self.logger.warning(f"No se encontró Person con ID {person.id} para eliminar.")
+                self.logger.warning(
+                    f"No se encontró Person con ID {person.id} para eliminar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar Person: {err}")
@@ -422,9 +476,9 @@ class ScanDBManager(DBManager):
     Clase para gestionar operaciones específicas de escaneos en la base de datos.
     """
 
-    #==============================================================
+    # ==============================================================
     # EXIST
-    #==============================================================
+    # ==============================================================
     def scan_exists(self, scan_id: int) -> bool:
         """
         Verifica si existe un escaneo con el ID indicado.
@@ -438,10 +492,13 @@ class ScanDBManager(DBManager):
         self._check_session()
         try:
             exists = self.session.query(Scan).filter(Scan.id == scan_id).count() > 0
-            self.logger.info(f"Verificación de existencia del escaneo con ID '{scan_id}': {exists}")
+            self.logger.info(
+                f"Verificación de existencia del escaneo con ID '{scan_id}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia del escaneo: {err}")
+            self.session.rollback()
             raise
 
     def scan_is_finished(self, scan_id: int) -> bool:
@@ -450,20 +507,25 @@ class ScanDBManager(DBManager):
         if not existe_escaneo:
             self.logger.error(f"El escaneo con el siguiente id: {scan_id}")
             return False
-        
+
         try:
-            exists = self.session.query(FinishedScan).filter(FinishedScan.id == scan_id).count() > 0
-            self.logger.info(f"Verificación de existencia del escaneo con ID '{scan_id}': {exists}")
+            exists = (
+                self.session.query(FinishedScan)
+                .filter(FinishedScan.id == scan_id)
+                .count()
+                > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia del escaneo con ID '{scan_id}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia del escaneo: {err}")
             raise
 
-        return True
-
-    #==============================================================
+    # ==============================================================
     # CREATE
-    #==============================================================    
+    # ==============================================================
     def create_scan(self, scan: Scan) -> None:
         """
         Añade un nuevo escaneo a la base de datos.
@@ -489,8 +551,8 @@ class ScanDBManager(DBManager):
         try:
             finished_scan = FinishedScan()
             finished_scan.id = scan.id
-            finished_scan.finished_at = datetime.now() #type: ignore
-            
+            finished_scan.finished_at = datetime.now()  # type: ignore
+
             self.session.add(finished_scan)
             self.session.commit()
             self.logger.info(f"Se creó un nuevo escaneo con ID {finished_scan.id}")
@@ -499,9 +561,9 @@ class ScanDBManager(DBManager):
             self.logger.error(f"Error al marcar un escaneo como terminado: {err}")
             raise
 
-    #==============================================================
+    # ==============================================================
     # RETRIEVE
-    #==============================================================
+    # ==============================================================
     def get_scan_by_id(self, scan_id: int) -> Optional[Scan]:
         """
         Obtiene un objeto Scan dado su ID.
@@ -517,7 +579,9 @@ class ScanDBManager(DBManager):
         self._check_session()
         try:
             scan = self.session.query(Scan).filter(Scan.id == scan_id).one_or_none()
-            self.logger.info(f"Se obtuvo el escaneo con ID {scan_id} de la base de datos.")
+            self.logger.info(
+                f"Se obtuvo el escaneo con ID {scan_id} de la base de datos."
+            )
             return scan
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener escaneo por ID: {err}")
@@ -535,7 +599,11 @@ class ScanDBManager(DBManager):
         """
         self._check_session()
         try:
-            result = self.session.execute(text("SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Scan';"))
+            result = self.session.execute(
+                text(
+                    "SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Scan';"
+                )
+            )
             next_id = result.scalar_one()
             self.logger.info(f"Próximo ID disponible para Scan: {next_id}")
             return next_id
@@ -543,9 +611,9 @@ class ScanDBManager(DBManager):
             self.logger.error(f"Error al obtener próximo ID para Scan: {err}")
             raise
 
-    #==============================================================
+    # ==============================================================
     # UPDATE
-    #==============================================================
+    # ==============================================================
     def update_scan(self, scan: Scan) -> None:
         """
         Actualiza la información de un Scan existente.
@@ -558,22 +626,28 @@ class ScanDBManager(DBManager):
         """
         self._check_session()
         try:
-            existing_scan = self.session.query(Scan).filter(Scan.id == scan.id).one_or_none()
+            existing_scan = (
+                self.session.query(Scan).filter(Scan.id == scan.id).one_or_none()
+            )
             if existing_scan:
                 existing_scan.target = scan.target
                 existing_scan.started_at = scan.started_at
                 self.session.commit()
-                self.logger.info(f"Se actualizó la información del escaneo con ID {scan.id}.")
+                self.logger.info(
+                    f"Se actualizó la información del escaneo con ID {scan.id}."
+                )
             else:
-                self.logger.warning(f"No se encontró escaneo con ID {scan.id} para actualizar.")
+                self.logger.warning(
+                    f"No se encontró escaneo con ID {scan.id} para actualizar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al actualizar escaneo: {err}")
             raise
 
-    #==============================================================
+    # ==============================================================
     # DELETE
-    #==============================================================
+    # ==============================================================
     def delete_scan(self, scan: Scan) -> None:
         """
         Elimina un Scan existente.
@@ -586,13 +660,19 @@ class ScanDBManager(DBManager):
         """
         self._check_session()
         try:
-            existing_scan = self.session.query(Scan).filter(Scan.id == scan.id).one_or_none()
+            existing_scan = (
+                self.session.query(Scan).filter(Scan.id == scan.id).one_or_none()
+            )
             if existing_scan:
                 self.session.delete(existing_scan)
                 self.session.commit()
-                self.logger.info(f"Se eliminó el escaneo con ID {scan.id} de la base de datos.")
+                self.logger.info(
+                    f"Se eliminó el escaneo con ID {scan.id} de la base de datos."
+                )
             else:
-                self.logger.warning(f"No se encontró escaneo con ID {scan.id} para eliminar.")
+                self.logger.warning(
+                    f"No se encontró escaneo con ID {scan.id} para eliminar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar escaneo: {err}")
@@ -602,13 +682,13 @@ class ScanDBManager(DBManager):
 class NmapDBManager(ScanDBManager):
     """
     Gestor específico para operaciones relacionadas con escaneos Nmap y puertos.
-    
+
     Gestiona:
     - Puertos (Port)
     - Escaneos Nmap (NmapScan)
     - Puertos objetivo (TargetPort)
     - Puertos abiertos (OpenPort)
-    
+
     Métodos CRUD para Port:
         - port_exists(port_id: int) -> bool
         - port_exists_by_protocol(protocol: str) -> bool
@@ -619,7 +699,7 @@ class NmapDBManager(ScanDBManager):
         - update_port(port: Port) -> None
         - delete_port(port: Port) -> None
         - get_or_create_port(protocol: str) -> Port
-    
+
     Métodos CRUD para NmapScan:
         - nmap_scan_exists(scan_id: int) -> bool
         - create_nmap_scan(scan: NmapScan) -> None
@@ -628,7 +708,7 @@ class NmapDBManager(ScanDBManager):
         - get_nmap_scans_by_user(user_id: int) -> List[NmapScan]
         - update_nmap_scan(scan: NmapScan) -> None
         - delete_nmap_scan(scan: NmapScan) -> None
-    
+
     Métodos para gestionar relaciones:
         - add_target_port(scan: NmapScan, port: Port) -> None
         - add_target_ports(scan: NmapScan, ports: List[Port]) -> None
@@ -642,7 +722,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA PORT - EXISTS
     # ============================================================
-    
+
     def port_exists(self, port_id: int) -> bool:
         """
         Verifica si existe un puerto con el ID indicado.
@@ -659,7 +739,9 @@ class NmapDBManager(ScanDBManager):
         self._check_session()
         try:
             exists = self.session.query(Port).filter(Port.id == port_id).count() > 0
-            self.logger.info(f"Verificación de existencia del puerto con ID '{port_id}': {exists}")
+            self.logger.info(
+                f"Verificación de existencia del puerto con ID '{port_id}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia del puerto: {err}")
@@ -680,8 +762,12 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            exists = self.session.query(Port).filter(Port.protocol == protocol).count() > 0
-            self.logger.info(f"Verificación de existencia del puerto '{protocol}': {exists}")
+            exists = (
+                self.session.query(Port).filter(Port.protocol == protocol).count() > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia del puerto '{protocol}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia del puerto: {err}")
@@ -690,7 +776,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA PORT - CREATE
     # ============================================================
-    
+
     def create_port(self, port: Port) -> None:
         """
         Añade un nuevo puerto a la base de datos.
@@ -705,7 +791,9 @@ class NmapDBManager(ScanDBManager):
         try:
             self.session.add(port)
             self.session.commit()
-            self.logger.info(f"Se creó un nuevo puerto: {port.protocol} con ID {port.id}")
+            self.logger.info(
+                f"Se creó un nuevo puerto: {port.protocol} con ID {port.id}"
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al crear puerto: {err}")
@@ -731,7 +819,7 @@ class NmapDBManager(ScanDBManager):
             if port:
                 self.logger.info(f"Puerto '{protocol}' ya existe, reutilizando.")
                 return port
-            
+
             new_port = Port(protocol=protocol)
             self.create_port(new_port)
             self.logger.info(f"Puerto '{protocol}' creado con ID {new_port.id}")
@@ -743,7 +831,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA PORT - RETRIEVE
     # ============================================================
-    
+
     def get_port_by_id(self, port_id: int) -> Optional[Port]:
         """
         Obtiene un puerto por su ID.
@@ -760,7 +848,9 @@ class NmapDBManager(ScanDBManager):
         self._check_session()
         try:
             port = self.session.query(Port).filter(Port.id == port_id).one_or_none()
-            self.logger.info(f"Se obtuvo el puerto con ID {port_id} de la base de datos.")
+            self.logger.info(
+                f"Se obtuvo el puerto con ID {port_id} de la base de datos."
+            )
             return port
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener puerto por ID: {err}")
@@ -781,7 +871,9 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            port = self.session.query(Port).filter(Port.protocol == protocol).one_or_none()
+            port = (
+                self.session.query(Port).filter(Port.protocol == protocol).one_or_none()
+            )
             if port:
                 self.logger.info(f"Se obtuvo el puerto '{protocol}' con ID {port.id}.")
             else:
@@ -813,7 +905,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA PORT - UPDATE
     # ============================================================
-    
+
     def update_port(self, port: Port) -> None:
         """
         Actualiza la información de un puerto existente.
@@ -826,13 +918,19 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_port = self.session.query(Port).filter(Port.id == port.id).one_or_none()
+            existing_port = (
+                self.session.query(Port).filter(Port.id == port.id).one_or_none()
+            )
             if existing_port:
                 existing_port.protocol = port.protocol
                 self.session.commit()
-                self.logger.info(f"Se actualizó la información del puerto con ID {port.id}.")
+                self.logger.info(
+                    f"Se actualizó la información del puerto con ID {port.id}."
+                )
             else:
-                self.logger.warning(f"No se encontró puerto con ID {port.id} para actualizar.")
+                self.logger.warning(
+                    f"No se encontró puerto con ID {port.id} para actualizar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al actualizar puerto: {err}")
@@ -841,7 +939,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA PORT - DELETE
     # ============================================================
-    
+
     def delete_port(self, port: Port) -> None:
         """
         Elimina un puerto existente.
@@ -854,13 +952,19 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_port = self.session.query(Port).filter(Port.id == port.id).one_or_none()
+            existing_port = (
+                self.session.query(Port).filter(Port.id == port.id).one_or_none()
+            )
             if existing_port:
                 self.session.delete(existing_port)
                 self.session.commit()
-                self.logger.info(f"Se eliminó el puerto '{port.protocol}' con ID {port.id}.")
+                self.logger.info(
+                    f"Se eliminó el puerto '{port.protocol}' con ID {port.id}."
+                )
             else:
-                self.logger.warning(f"No se encontró puerto con ID {port.id} para eliminar.")
+                self.logger.warning(
+                    f"No se encontró puerto con ID {port.id} para eliminar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar puerto: {err}")
@@ -869,7 +973,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA NMAPSCAN - EXISTS
     # ============================================================
-    
+
     def nmap_scan_exists(self, scan_id: int) -> bool:
         """
         Verifica si existe un escaneo Nmap con el ID indicado.
@@ -885,8 +989,12 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            exists = self.session.query(NmapScan).filter(NmapScan.id == scan_id).count() > 0
-            self.logger.info(f"Verificación de existencia del escaneo Nmap con ID '{scan_id}': {exists}")
+            exists = (
+                self.session.query(NmapScan).filter(NmapScan.id == scan_id).count() > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia del escaneo Nmap con ID '{scan_id}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia del escaneo Nmap: {err}")
@@ -895,7 +1003,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA NMAPSCAN - CREATE
     # ============================================================
-    
+
     def create_nmap_scan(self, scan) -> None:
         """
         Añade un nuevo escaneo Nmap a la base de datos.
@@ -910,7 +1018,9 @@ class NmapDBManager(ScanDBManager):
         try:
             self.session.add(scan)
             self.session.commit()
-            self.logger.info(f"Se creó un nuevo escaneo Nmap con ID {scan.id} para target '{scan.target}'")
+            self.logger.info(
+                f"Se creó un nuevo escaneo Nmap con ID {scan.id} para target '{scan.target}'"
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al crear escaneo Nmap: {err}")
@@ -919,7 +1029,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA NMAPSCAN - RETRIEVE
     # ============================================================
-    
+
     def get_nmap_scan_by_id(self, scan_id: int):
         """
         Obtiene un escaneo Nmap por su ID.
@@ -935,7 +1045,11 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            scan = self.session.query(NmapScan).filter(NmapScan.id == scan_id).one_or_none()
+            scan = (
+                self.session.query(NmapScan)
+                .filter(NmapScan.id == scan_id)
+                .one_or_none()
+            )
             self.logger.info(f"Se obtuvo el escaneo Nmap con ID {scan_id}.")
             return scan
         except SQLAlchemyError as err:
@@ -955,7 +1069,9 @@ class NmapDBManager(ScanDBManager):
         self._check_session()
         try:
             scans = self.session.query(NmapScan).all()
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap de la base de datos.")
+            self.logger.info(
+                f"Se obtuvieron {len(scans)} escaneos Nmap de la base de datos."
+            )
             return scans
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener todos los escaneos Nmap: {err}")
@@ -976,8 +1092,12 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            scans = self.session.query(NmapScan).filter(NmapScan.user_id == user_id).all()
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap del usuario con ID {user_id}.")
+            scans = (
+                self.session.query(NmapScan).filter(NmapScan.user_id == user_id).all()
+            )
+            self.logger.info(
+                f"Se obtuvieron {len(scans)} escaneos Nmap del usuario con ID {user_id}."
+            )
             return scans
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener escaneos Nmap por usuario: {err}")
@@ -986,7 +1106,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA NMAPSCAN - UPDATE
     # ============================================================
-    
+
     def update_nmap_scan(self, scan) -> None:
         """
         Actualiza la información de un escaneo Nmap existente.
@@ -999,14 +1119,20 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_scan = self.session.query(NmapScan).filter(NmapScan.id == scan.id).one_or_none()
+            existing_scan = (
+                self.session.query(NmapScan)
+                .filter(NmapScan.id == scan.id)
+                .one_or_none()
+            )
             if existing_scan:
                 existing_scan.target = scan.target
                 existing_scan.started_at = scan.started_at
                 self.session.commit()
                 self.logger.info(f"Se actualizó el escaneo Nmap con ID {scan.id}.")
             else:
-                self.logger.warning(f"No se encontró escaneo Nmap con ID {scan.id} para actualizar.")
+                self.logger.warning(
+                    f"No se encontró escaneo Nmap con ID {scan.id} para actualizar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al actualizar escaneo Nmap: {err}")
@@ -1015,7 +1141,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA NMAPSCAN - DELETE
     # ============================================================
-    
+
     def delete_nmap_scan(self, scan) -> None:
         """
         Elimina un escaneo Nmap existente.
@@ -1028,13 +1154,19 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_scan = self.session.query(NmapScan).filter(NmapScan.id == scan.id).one_or_none()
+            existing_scan = (
+                self.session.query(NmapScan)
+                .filter(NmapScan.id == scan.id)
+                .one_or_none()
+            )
             if existing_scan:
                 self.session.delete(existing_scan)
                 self.session.commit()
                 self.logger.info(f"Se eliminó el escaneo Nmap con ID {scan.id}.")
             else:
-                self.logger.warning(f"No se encontró escaneo Nmap con ID {scan.id} para eliminar.")
+                self.logger.warning(
+                    f"No se encontró escaneo Nmap con ID {scan.id} para eliminar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar escaneo Nmap: {err}")
@@ -1043,7 +1175,7 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA GESTIONAR RELACIONES - TARGET PORTS
     # ============================================================
-    
+
     def add_target_port(self, scan, port: Port) -> None:
         """
         Añade un puerto objetivo a un escaneo Nmap.
@@ -1060,9 +1192,13 @@ class NmapDBManager(ScanDBManager):
             if port not in scan.target_ports:
                 scan.target_ports.append(port)
                 self.session.commit()
-                self.logger.info(f"Puerto '{port.protocol}' añadido como objetivo al escaneo {scan.id}.")
+                self.logger.info(
+                    f"Puerto '{port.protocol}' añadido como objetivo al escaneo {scan.id}."
+                )
             else:
-                self.logger.info(f"Puerto '{port.protocol}' ya está en los objetivos del escaneo {scan.id}.")
+                self.logger.info(
+                    f"Puerto '{port.protocol}' ya está en los objetivos del escaneo {scan.id}."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al añadir puerto objetivo: {err}")
@@ -1086,9 +1222,11 @@ class NmapDBManager(ScanDBManager):
                 if port not in scan.target_ports:
                     scan.target_ports.append(port)
                     added += 1
-            
+
             self.session.commit()
-            self.logger.info(f"Se añadieron {added} puertos objetivo al escaneo {scan.id}.")
+            self.logger.info(
+                f"Se añadieron {added} puertos objetivo al escaneo {scan.id}."
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al añadir puertos objetivo: {err}")
@@ -1110,9 +1248,13 @@ class NmapDBManager(ScanDBManager):
             if port in scan.target_ports:
                 scan.target_ports.remove(port)
                 self.session.commit()
-                self.logger.info(f"Puerto '{port.protocol}' eliminado de los objetivos del escaneo {scan.id}.")
+                self.logger.info(
+                    f"Puerto '{port.protocol}' eliminado de los objetivos del escaneo {scan.id}."
+                )
             else:
-                self.logger.warning(f"Puerto '{port.protocol}' no está en los objetivos del escaneo {scan.id}.")
+                self.logger.warning(
+                    f"Puerto '{port.protocol}' no está en los objetivos del escaneo {scan.id}."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar puerto objetivo: {err}")
@@ -1131,7 +1273,9 @@ class NmapDBManager(ScanDBManager):
         self._check_session()
         try:
             ports = scan.target_ports
-            self.logger.info(f"Se obtuvieron {len(ports)} puertos objetivo del escaneo {scan.id}.")
+            self.logger.info(
+                f"Se obtuvieron {len(ports)} puertos objetivo del escaneo {scan.id}."
+            )
             return ports
         except Exception as err:
             self.logger.error(f"Error al obtener puertos objetivo: {err}")
@@ -1140,43 +1284,35 @@ class NmapDBManager(ScanDBManager):
     # ============================================================
     # MÉTODOS PARA GESTIONAR RELACIONES - OPEN PORTS
     # ============================================================
-    
+
     def add_open_port(self, scan, port: Port, reason: str) -> None:
         """
         Marca un puerto como abierto en un escaneo Nmap.
-
-        Args:
-            scan (NmapScan): Escaneo en el que marcar el puerto.
-            port (Port): Puerto a marcar como abierto.
-            reason (str): Razón por la que el puerto está abierto (ej: "syn-ack").
-
-        Raises:
-            SQLAlchemyError: En caso de error durante la operación.
+        NO hace commit automáticamente, permite batch inserts.
         """
         self._check_session()
         try:
-
-            
-            # Verificar si ya existe
-            existing = self.session.query(OpenPort).filter(
-                OpenPort.port_id == port.id,
-                OpenPort.nmap_scan_id == scan.id
-            ).first()
-            
-            if existing:
-                self.logger.info(f"Puerto '{port.protocol}' ya está marcado como abierto en el escaneo {scan.id}.")
-                return
-            
-            open_port = OpenPort(
-                port_id=port.id,
-                nmap_scan_id=scan.id,
-                reason=reason
+            existing = (
+                self.session.query(OpenPort)
+                .filter(OpenPort.port_id == port.id, OpenPort.nmap_scan_id == scan.id)
+                .first()
             )
+
+            if existing:
+                self.logger.info(
+                    f"Puerto {port.protocol} ya está marcado como abierto en el escaneo {scan.id}."
+                )
+                return
+
+            open_port = OpenPort(port_id=port.id, nmap_scan_id=scan.id, reason=reason)
             self.session.add(open_port)
-            self.session.commit()
-            self.logger.info(f"Puerto '{port.protocol}' marcado como abierto en escaneo {scan.id} (razón: {reason}).")
+            # NO HACER COMMIT AQUÍ - se hará después del loop
+
+            self.logger.info(
+                f"Puerto {port.protocol} marcado como abierto en escaneo {scan.id} (razón: {reason})."
+            )
+
         except SQLAlchemyError as err:
-            self.session.rollback()
             self.logger.error(f"Error al añadir puerto abierto: {err}")
             raise
 
@@ -1193,18 +1329,23 @@ class NmapDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            
-            open_port = self.session.query(OpenPort).filter(
-                OpenPort.port_id == port.id,
-                OpenPort.nmap_scan_id == scan.id
-            ).first()
-            
+
+            open_port = (
+                self.session.query(OpenPort)
+                .filter(OpenPort.port_id == port.id, OpenPort.nmap_scan_id == scan.id)
+                .first()
+            )
+
             if open_port:
                 self.session.delete(open_port)
                 self.session.commit()
-                self.logger.info(f"Puerto '{port.protocol}' eliminado de puertos abiertos del escaneo {scan.id}.")
+                self.logger.info(
+                    f"Puerto '{port.protocol}' eliminado de puertos abiertos del escaneo {scan.id}."
+                )
             else:
-                self.logger.warning(f"Puerto '{port.protocol}' no está en los puertos abiertos del escaneo {scan.id}.")
+                self.logger.warning(
+                    f"Puerto '{port.protocol}' no está en los puertos abiertos del escaneo {scan.id}."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar puerto abierto: {err}")
@@ -1223,7 +1364,9 @@ class NmapDBManager(ScanDBManager):
         self._check_session()
         try:
             open_ports = scan.open_ports_relation
-            self.logger.info(f"Se obtuvieron {len(open_ports)} puertos abiertos del escaneo {scan.id}.")
+            self.logger.info(
+                f"Se obtuvieron {len(open_ports)} puertos abiertos del escaneo {scan.id}."
+            )
             return open_ports
         except Exception as err:
             self.logger.error(f"Error al obtener puertos abiertos: {err}")
@@ -1233,12 +1376,12 @@ class NmapDBManager(ScanDBManager):
 class NiktoDBManager(ScanDBManager):
     """
     Gestor específico para operaciones relacionadas con escaneos Nikto e incidentes.
-    
+
     Gestiona:
     - Incidentes Nikto (NiktoIncident)
     - Escaneos Nikto (NiktoScan)
     - Relación entre escaneos e incidentes (ScanIncident)
-    
+
     Métodos CRUD para NiktoIncident:
         - nikto_incident_exists(incident_id: int) -> bool
         - create_nikto_incident(incident: NiktoIncident) -> None
@@ -1246,7 +1389,7 @@ class NiktoDBManager(ScanDBManager):
         - get_all_nikto_incidents() -> List[NiktoIncident]
         - update_nikto_incident(incident: NiktoIncident) -> None
         - delete_nikto_incident(incident: NiktoIncident) -> None
-    
+
     Métodos CRUD para NiktoScan:
         - nikto_scan_exists(scan_id: int) -> bool
         - create_nikto_scan(scan: NiktoScan) -> None
@@ -1255,7 +1398,7 @@ class NiktoDBManager(ScanDBManager):
         - get_nikto_scans_by_user(user_id: int) -> List[NiktoScan]
         - update_nikto_scan(scan: NiktoScan) -> None
         - delete_nikto_scan(scan: NiktoScan) -> None
-    
+
     Métodos para gestionar relaciones:
         - add_incident(scan: NiktoScan, incident: NiktoIncident) -> None
         - add_incidents(scan: NiktoScan, incidents: List[NiktoIncident]) -> None
@@ -1281,13 +1424,21 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            exists = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident_id).count() > 0
-            self.logger.info(f"Verificación de existencia del incidente Nikto con ID '{incident_id}': {exists}")
+            exists = (
+                self.session.query(NiktoIncident)
+                .filter(NiktoIncident.id == incident_id)
+                .count()
+                > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia del incidente Nikto con ID '{incident_id}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
-            self.logger.error(f"Error al verificar existencia del incidente Nikto: {err}")
+            self.logger.error(
+                f"Error al verificar existencia del incidente Nikto: {err}"
+            )
             raise
-
 
     def nikto_incident_exists_with_desc(self, incident_desc: str) -> bool:
         """
@@ -1304,11 +1455,20 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            exists = self.session.query(NiktoIncident).filter(NiktoIncident.description == incident_desc).count() > 0
-            self.logger.info(f"Verificación de existencia del incidente Nikto con ID '{incident_desc}': {exists}")
+            exists = (
+                self.session.query(NiktoIncident)
+                .filter(NiktoIncident.description == incident_desc)
+                .count()
+                > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia del incidente Nikto con ID '{incident_desc}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
-            self.logger.error(f"Error al verificar existencia del incidente Nikto: {err}")
+            self.logger.error(
+                f"Error al verificar existencia del incidente Nikto: {err}"
+            )
             raise
 
     # ============================================================
@@ -1352,14 +1512,20 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            incident = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident_id).one_or_none()
+            incident = (
+                self.session.query(NiktoIncident)
+                .filter(NiktoIncident.id == incident_id)
+                .one_or_none()
+            )
             self.logger.info(f"Se obtuvo el incidente Nikto con ID {incident_id}.")
             return incident
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener incidente Nikto por ID: {err}")
             raise
 
-    def get_nikto_incident_by_description(self, incident_description: str) -> Optional[NiktoIncident]:
+    def get_nikto_incident_by_description(
+        self, incident_description: str
+    ) -> Optional[NiktoIncident]:
         """
         Obtiene un incidente Nikto por su ID.
 
@@ -1374,8 +1540,14 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            incident = self.session.query(NiktoIncident).filter(NiktoIncident.description == incident_description).one_or_none()
-            self.logger.info(f"Se obtuvo el incidente Nikto con ID {incident_description}.")
+            incident = (
+                self.session.query(NiktoIncident)
+                .filter(NiktoIncident.description == incident_description)
+                .one_or_none()
+            )
+            self.logger.info(
+                f"Se obtuvo el incidente Nikto con ID {incident_description}."
+            )
             return incident
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener incidente Nikto por ID: {err}")
@@ -1394,14 +1566,16 @@ class NiktoDBManager(ScanDBManager):
         self._check_session()
         try:
             incidents = self.session.query(NiktoIncident).all()
-            self.logger.info(f"Se obtuvieron {len(incidents)} incidentes Nikto de la base de datos.")
+            self.logger.info(
+                f"Se obtuvieron {len(incidents)} incidentes Nikto de la base de datos."
+            )
             return incidents
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener todos los incidentes Nikto: {err}")
             raise
 
     def get_or_create_nikto_incident(self, incident: NiktoIncident):
-        """"
+        """ "
         Obtiene un puerto por su protocolo, o lo crea si no existe.
         Útil para evitar duplicados.
 
@@ -1416,13 +1590,15 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            new_incident = self.get_nikto_incident_by_description(incident.description) #type: ignore
+            new_incident = self.get_nikto_incident_by_description(incident.description)  # type: ignore
             if new_incident:
                 self.logger.info(f"Incidente '{new_incident}' ya existe, reutilizando.")
                 return new_incident
-            
+
             self.create_nikto_incident(incident)
-            self.logger.info(f"Incidente '{incident.description}' creado con ID {incident.id}")
+            self.logger.info(
+                f"Incidente '{incident.description}' creado con ID {incident.id}"
+            )
             return incident
         except SQLAlchemyError as err:
             self.logger.error(f"Error en get_or_create_port: {err}")
@@ -1443,12 +1619,20 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_incident = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident.id).one_or_none()
+            existing_incident = (
+                self.session.query(NiktoIncident)
+                .filter(NiktoIncident.id == incident.id)
+                .one_or_none()
+            )
             if existing_incident:
                 self.session.commit()
-                self.logger.info(f"Se actualizó el incidente Nikto con ID {incident.id}.")
+                self.logger.info(
+                    f"Se actualizó el incidente Nikto con ID {incident.id}."
+                )
             else:
-                self.logger.warning(f"No se encontró incidente Nikto con ID {incident.id} para actualizar.")
+                self.logger.warning(
+                    f"No se encontró incidente Nikto con ID {incident.id} para actualizar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al actualizar incidente Nikto: {err}")
@@ -1469,13 +1653,19 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_incident = self.session.query(NiktoIncident).filter(NiktoIncident.id == incident.id).one_or_none()
+            existing_incident = (
+                self.session.query(NiktoIncident)
+                .filter(NiktoIncident.id == incident.id)
+                .one_or_none()
+            )
             if existing_incident:
                 self.session.delete(existing_incident)
                 self.session.commit()
                 self.logger.info(f"Se eliminó el incidente Nikto con ID {incident.id}.")
             else:
-                self.logger.warning(f"No se encontró incidente Nikto con ID {incident.id} para eliminar.")
+                self.logger.warning(
+                    f"No se encontró incidente Nikto con ID {incident.id} para eliminar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar incidente Nikto: {err}")
@@ -1499,8 +1689,13 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            exists = self.session.query(NiktoScan).filter(NiktoScan.id == scan_id).count() > 0
-            self.logger.info(f"Verificación de existencia del escaneo Nikto con ID '{scan_id}': {exists}")
+            exists = (
+                self.session.query(NiktoScan).filter(NiktoScan.id == scan_id).count()
+                > 0
+            )
+            self.logger.info(
+                f"Verificación de existencia del escaneo Nikto con ID '{scan_id}': {exists}"
+            )
             return exists
         except SQLAlchemyError as err:
             self.logger.error(f"Error al verificar existencia del escaneo Nikto: {err}")
@@ -1523,7 +1718,9 @@ class NiktoDBManager(ScanDBManager):
         try:
             self.session.add(scan)
             self.session.commit()
-            self.logger.info(f"Se creó un nuevo escaneo Nikto con ID {scan.id} para target '{scan.target}'")
+            self.logger.info(
+                f"Se creó un nuevo escaneo Nikto con ID {scan.id} para target '{scan.target}'"
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al crear escaneo Nikto: {err}")
@@ -1547,7 +1744,11 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            scan = self.session.query(NiktoScan).filter(NiktoScan.id == scan_id).one_or_none()
+            scan = (
+                self.session.query(NiktoScan)
+                .filter(NiktoScan.id == scan_id)
+                .one_or_none()
+            )
             self.logger.info(f"Se obtuvo el escaneo Nikto con ID {scan_id}.")
             return scan
         except SQLAlchemyError as err:
@@ -1567,7 +1768,9 @@ class NiktoDBManager(ScanDBManager):
         self._check_session()
         try:
             scans = self.session.query(NiktoScan).all()
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto de la base de datos.")
+            self.logger.info(
+                f"Se obtuvieron {len(scans)} escaneos Nikto de la base de datos."
+            )
             return scans
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener todos los escaneos Nikto: {err}")
@@ -1588,8 +1791,12 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            scans = self.session.query(NiktoScan).filter(NiktoScan.user_id == user_id).all()
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto del usuario con ID {user_id}.")
+            scans = (
+                self.session.query(NiktoScan).filter(NiktoScan.user_id == user_id).all()
+            )
+            self.logger.info(
+                f"Se obtuvieron {len(scans)} escaneos Nikto del usuario con ID {user_id}."
+            )
             return scans
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener escaneos Nikto por usuario: {err}")
@@ -1610,14 +1817,20 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_scan = self.session.query(NiktoScan).filter(NiktoScan.id == scan.id).one_or_none()
+            existing_scan = (
+                self.session.query(NiktoScan)
+                .filter(NiktoScan.id == scan.id)
+                .one_or_none()
+            )
             if existing_scan:
                 existing_scan.target = scan.target
                 existing_scan.started_at = scan.started_at
                 self.session.commit()
                 self.logger.info(f"Se actualizó el escaneo Nikto con ID {scan.id}.")
             else:
-                self.logger.warning(f"No se encontró escaneo Nikto con ID {scan.id} para actualizar.")
+                self.logger.warning(
+                    f"No se encontró escaneo Nikto con ID {scan.id} para actualizar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al actualizar escaneo Nikto: {err}")
@@ -1638,13 +1851,19 @@ class NiktoDBManager(ScanDBManager):
         """
         self._check_session()
         try:
-            existing_scan = self.session.query(NiktoScan).filter(NiktoScan.id == scan.id).one_or_none()
+            existing_scan = (
+                self.session.query(NiktoScan)
+                .filter(NiktoScan.id == scan.id)
+                .one_or_none()
+            )
             if existing_scan:
                 self.session.delete(existing_scan)
                 self.session.commit()
                 self.logger.info(f"Se eliminó el escaneo Nikto con ID {scan.id}.")
             else:
-                self.logger.warning(f"No se encontró escaneo Nikto con ID {scan.id} para eliminar.")
+                self.logger.warning(
+                    f"No se encontró escaneo Nikto con ID {scan.id} para eliminar."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar escaneo Nikto: {err}")
@@ -1669,9 +1888,13 @@ class NiktoDBManager(ScanDBManager):
             if incident not in scan.incidents:
                 scan.incidents.append(incident)
                 self.session.commit()
-                self.logger.info(f"Incidente con ID {incident.id} añadido al escaneo Nikto {scan.id}.")
+                self.logger.info(
+                    f"Incidente con ID {incident.id} añadido al escaneo Nikto {scan.id}."
+                )
             else:
-                self.logger.info(f"Incidente con ID {incident.id} ya está asociado al escaneo Nikto {scan.id}.")
+                self.logger.info(
+                    f"Incidente con ID {incident.id} ya está asociado al escaneo Nikto {scan.id}."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al añadir incidente: {err}")
@@ -1695,9 +1918,11 @@ class NiktoDBManager(ScanDBManager):
                 if incident not in scan.incidents:
                     scan.incidents.append(incident)
                     added += 1
-            
+
             self.session.commit()
-            self.logger.info(f"Se añadieron {added} incidentes al escaneo Nikto {scan.id}.")
+            self.logger.info(
+                f"Se añadieron {added} incidentes al escaneo Nikto {scan.id}."
+            )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al añadir incidentes: {err}")
@@ -1719,9 +1944,13 @@ class NiktoDBManager(ScanDBManager):
             if incident in scan.incidents:
                 scan.incidents.remove(incident)
                 self.session.commit()
-                self.logger.info(f"Incidente con ID {incident.id} eliminado del escaneo Nikto {scan.id}.")
+                self.logger.info(
+                    f"Incidente con ID {incident.id} eliminado del escaneo Nikto {scan.id}."
+                )
             else:
-                self.logger.warning(f"Incidente con ID {incident.id} no está asociado al escaneo Nikto {scan.id}.")
+                self.logger.warning(
+                    f"Incidente con ID {incident.id} no está asociado al escaneo Nikto {scan.id}."
+                )
         except SQLAlchemyError as err:
             self.session.rollback()
             self.logger.error(f"Error al eliminar incidente: {err}")
@@ -1740,7 +1969,9 @@ class NiktoDBManager(ScanDBManager):
         self._check_session()
         try:
             incidents = scan.incidents
-            self.logger.info(f"Se obtuvieron {len(incidents)} incidentes del escaneo Nikto {scan.id}.")
+            self.logger.info(
+                f"Se obtuvieron {len(incidents)} incidentes del escaneo Nikto {scan.id}."
+            )
             return incidents
         except Exception as err:
             self.logger.error(f"Error al obtener incidentes del escaneo: {err}")
