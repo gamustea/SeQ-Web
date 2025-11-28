@@ -93,7 +93,7 @@ document.getElementById('niktoScanForm').addEventListener('submit', async (e) =>
         const response = await fetch(`${API_BASE_URL}/scans/nikto/start?timeout=${timeout}`, {
             method: 'POST',
             headers: {
-                'X-Target-Host': target
+                'X-Target': target
             }
         });
         
@@ -127,13 +127,10 @@ document.getElementById('niktoScanForm').addEventListener('submit', async (e) =>
     }
 });
 
-// ===== POLLING INTELIGENTE SIN PARPADEO =====
-
-let pollingInterval = null;
-let currentScans = new Map(); // Guardar IDs de escaneos actuales
+// ===== GESTIÓN DE HISTORIAL (SIN POLLING AUTOMÁTICO) =====
 
 /**
- * Verifica el estado de un escaneo específico y actualiza SOLO su celda
+ * Verifica el estado de un escaneo específico
  */
 async function checkScanStatus(scanId) {
     try {
@@ -145,17 +142,12 @@ async function checkScanStatus(scanId) {
         
         if (statusCell && downloadBtn) {
             if (data.existe) {
-                // Solo actualizar si cambió
-                if (!downloadBtn.classList.contains('enabled')) {
-                    statusCell.innerHTML = '<span class="status-finished">✓ Terminado</span>';
-                    downloadBtn.disabled = false;
-                    downloadBtn.classList.add('enabled');
-                }
+                statusCell.innerHTML = '<span class="status-finished">✓ Terminado</span>';
+                downloadBtn.disabled = false;
+                downloadBtn.classList.add('enabled');
             } else {
-                // Solo actualizar si cambió
-                if (downloadBtn.disabled && !downloadBtn.classList.contains('enabled')) {
-                    statusCell.innerHTML = '<span class="status-running">⟳ En proceso</span>';
-                }
+                statusCell.innerHTML = '<span class="status-running">⟳ En proceso</span>';
+                downloadBtn.disabled = true;
             }
         }
         
@@ -165,10 +157,19 @@ async function checkScanStatus(scanId) {
 }
 
 /**
- * Actualiza la tabla de forma inteligente (solo cambios)
+ * Carga y actualiza toda la tabla de escaneos
  */
-async function updateScansTable() {
+async function loadScanHistory() {
     const tbody = document.getElementById('scanHistoryBody');
+    const refreshBtn = document.getElementById('refreshHistoryBtn');
+    
+    // Mostrar loading en el botón
+    const originalBtnText = refreshBtn.innerHTML;
+    refreshBtn.innerHTML = '⟳ Actualizando...';
+    refreshBtn.disabled = true;
+    
+    // Mostrar loading en la tabla
+    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Cargando escaneos...</td></tr>';
     
     try {
         const response = await fetch(`${API_BASE_URL}/scans/results?type=all`);
@@ -180,54 +181,39 @@ async function updateScansTable() {
         const data = await response.json();
         const scans = data.results || [];
         
-        // Ordenar por ID descendente
+        // Ordenar por ID descendente (más recientes primero)
         scans.sort((a, b) => b.id - a.id);
         
-        const newScansMap = new Map(scans.map(s => [s.id, s]));
+        // Limpiar tabla
+        tbody.innerHTML = '';
         
-        // Si la tabla está vacía, crear todo
-        if (tbody.querySelector('.empty-cell') || tbody.querySelector('.loading-cell')) {
-            tbody.innerHTML = '';
-            for (const scan of scans) {
-                const row = createScanRow(scan);
-                tbody.appendChild(row);
-                checkScanStatus(scan.id);
-            }
-            currentScans = newScansMap;
+        if (scans.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">No hay escaneos registrados todavía.</td></tr>';
             return;
         }
         
-        // Detectar escaneos nuevos
-        const newScanIds = scans.filter(s => !currentScans.has(s.id));
-        
-        // Añadir nuevos escaneos al principio (sin recrear toda la tabla)
-        if (newScanIds.length > 0) {
-            for (const scan of newScanIds.reverse()) {
-                const row = createScanRow(scan);
-                tbody.insertBefore(row, tbody.firstChild);
-                checkScanStatus(scan.id);
-            }
-        }
-        
-        // Actualizar solo los estados de escaneos existentes
+        // Crear filas para cada escaneo
         for (const scan of scans) {
-            if (currentScans.has(scan.id)) {
-                checkScanStatus(scan.id);
-            }
+            const row = createScanRow(scan);
+            tbody.appendChild(row);
+            
+            // Verificar estado de cada escaneo
+            await checkScanStatus(scan.id);
         }
-        
-        // Detectar escaneos eliminados (si hubiera)
-        for (const [oldId] of currentScans) {
-            if (!newScansMap.has(oldId)) {
-                const oldRow = tbody.querySelector(`tr[data-scan-id="${oldId}"]`);
-                if (oldRow) oldRow.remove();
-            }
-        }
-        
-        currentScans = newScansMap;
         
     } catch (error) {
-        console.error('Error al actualizar tabla:', error);
+        console.error('Error cargando historial:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="error-cell">
+                    ❌ Error al cargar los escaneos. Verifica que Flask esté corriendo en el puerto 5000.
+                </td>
+            </tr>
+        `;
+    } finally {
+        // Restaurar botón
+        refreshBtn.innerHTML = originalBtnText;
+        refreshBtn.disabled = false;
     }
 }
 
@@ -273,29 +259,6 @@ function createScanRow(scan) {
 }
 
 /**
- * Inicia el polling automático cada 1 segundo
- */
-function startPolling() {
-    if (pollingInterval) {
-        return;
-    }
-    
-    console.log('Iniciando polling automático cada 1 segundo...');
-    pollingInterval = setInterval(updateScansTable, 1000);
-}
-
-/**
- * Detiene el polling automático
- */
-function stopPolling() {
-    if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
-        console.log('Polling automático detenido.');
-    }
-}
-
-/**
  * Descarga el PDF de un escaneo
  */
 window.downloadPDF = async function(scanId) {
@@ -323,18 +286,12 @@ window.downloadPDF = async function(scanId) {
 
 // ===== EVENTOS =====
 
-// Cargar tabla inicial y comenzar polling
+// Cargar tabla inicial cuando carga la página
 document.addEventListener('DOMContentLoaded', () => {
-    updateScansTable();
-    startPolling();
+    loadScanHistory();
 });
 
 // Botón de actualizar manual
 document.getElementById('refreshHistoryBtn').addEventListener('click', () => {
-    updateScansTable();
-});
-
-// Detener polling al cerrar
-window.addEventListener('beforeunload', () => {
-    stopPolling();
+    loadScanHistory();
 });

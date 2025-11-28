@@ -22,7 +22,6 @@ CORS(app)  # ← AÑADE ESTO (habilita CORS para todos los endpoints)
 USER = UserDBManager().get_user_by_id(1)
 NMAP_MANAGER = NmapScanManager(USER)
 NIKTO_MANAGER = NiktoScanManager(USER)
-SCAN_DB_MANAGER = ScanDBManager()
 PDF_CREATOR = None
 
 # Configurar logger
@@ -362,14 +361,24 @@ def is_scan_finished():
                 401,
             )
 
-        exists_scan = SCAN_DB_MANAGER.scan_is_finished(scan_id)
+        scan = NMAP_MANAGER.get_scan_by_id(scan_id)
+        if not scan:
+            scan = NIKTO_MANAGER.get_scan_by_id(scan_id)
+            if not scan:
+                return(
+                    jsonify({
+                        "message": f"El escaneo con id {scan_id} no existe"
+                    })
+                )
+
+        scan_finished = NMAP_MANAGER.scan_is_finished(scan)
         message = (
             f"El escaneo con id {scan_id} está terminado"
-            if exists_scan
-            else f"El escaneo con id {scan_id} no está terminado"
+            if scan_finished
+            else f"El escaneo con id {scan_id} no está terminado o no existe"
         )
 
-        return jsonify({"message": message, "existe": exists_scan})
+        return jsonify({"message": message, "existe": scan_finished})
     except Exception:
         return (jsonify({"message": "Ha ocurrido un error interno del servidor"}), 500)
 
@@ -404,7 +413,7 @@ def start_nmap_scan():
                 jsonify(
                     {
                         "error": "Faltan cabeceras requeridas",
-                        "required_headers": ["host", "ports"],
+                        "required_headers": ["X-Target-Host", "X-Target-Ports"],
                     }
                 ),
                 400,
@@ -420,17 +429,36 @@ def start_nmap_scan():
             logger.warning("Puertos vacíos proporcionados")
             return jsonify({"error": "Los puertos no pueden estar vacíos"}), 400
 
+        valido, hosts, mensaje = validar_ips_nmap(host)
+
+        if not valido:
+            return (
+                jsonify({"error": "Error ingresando cabeceras", "message": mensaje}),
+                400,
+            )
+
+        valido, puertos, mensaje = validar_puertos_nmap(ports)
+
+        if not valido:
+            return (
+                jsonify({"error": "Error ingresando cabeceras", "message": mensaje}),
+                400,
+            )
+
         # Ejecutar el escaneo
-        scan_id = NMAP_MANAGER.run_task(host, ports)
-        logger.info(
-            f"Escaneo Nmap iniciado correctamente con ID: {scan_id}, host: {host}, ports: {ports}"
-        )
+        ids = []
+        for target_host in hosts:
+            scan_id = NMAP_MANAGER.run_task(target_host, ports)
+            logger.info(
+                f"Escaneo Nmap iniciado correctamente con ID: {scan_id}, host: {target_host}, ports: {ports}"
+            )
+            ids.append(scan_id)
 
         return (
             jsonify(
                 {
                     "message": "Escaneo Nmap iniciado correctamente",
-                    "scanId": scan_id,
+                    "scanId": ids,
                     "target": {"host": host, "ports": ports},
                 }
             ),
@@ -462,7 +490,7 @@ def start_nikto_scan():
         # Validar target requerido
         if not target:
             logger.warning("Falta la cabecera 'target' para iniciar escaneo Nikto")
-            return jsonify({"error": "Falta la cabecera requerida 'target'"}), 400
+            return jsonify({"error": "Falta la cabecera requerida 'X-target'"}), 400
 
         # Validar que el target no esté vacío
         if not target.strip():
@@ -972,5 +1000,26 @@ def internal_error(error):
 # ============================================================================
 
 if __name__ == "__main__":
+    # Inicialización
+    try:
+        user_db = UserDBManager()
+        USER = user_db.get_user_by_id(1)
+        if USER:
+            # Obtener el ID inmediatamente para evitar lazy loading posterior
+            user_id = USER.id
+            logger.info(f"Usuario cargado: ID {user_id}")
+        else:
+            logger.error("No se pudo cargar el usuario con ID 1")
+            USER = None
+        user_db.close_session()
+    except Exception as e:
+        logger.error(f"Error al inicializar usuario: {e}")
+        USER = None
+
+    if USER:
+        NMAP_MANAGER = NmapScanManager(USER)
+        NIKTO_MANAGER = NiktoScanManager(USER)
+    else:
+        logger.critical("No se pudieron inicializar los managers sin usuario válido")
     logger.info("Iniciando aplicación Flask")
     app.run(debug=True)

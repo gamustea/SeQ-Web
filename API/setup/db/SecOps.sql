@@ -98,3 +98,10 @@ INSERT INTO Person VALUES
 INSERT INTO User VALUES
 	(1, "root", "root", 1);
     
+SELECT *
+FROM Scan;
+
+SELECT *
+FROM FinishedScan AS FS
+	JOIN Scan AS S ON FS.id = S.id;
+    
