@@ -5,6 +5,7 @@
 
 const API_BASE_URL = 'http://127.0.0.1:5000';
 
+
 // ===== UTILIDADES =====
 
 function showStatus(elementId, message, type = 'info') {
@@ -102,7 +103,7 @@ document.getElementById('niktoScanForm').addEventListener('submit', async (e) =>
         if (response.ok) {
             showStatus(
                 'niktoStatus', 
-                `✅ Escaneo iniciado correctamente (ID: ${data.scanId})`, 
+                `✅ Escaneo iniciado correctamente`, 
                 'success'
             );
             e.target.reset();
@@ -283,6 +284,335 @@ window.downloadPDF = async function(scanId) {
         button.disabled = false;
     }
 };
+
+/**
+ * SISTEMA DE PAGINACIÓN PARA HISTORIAL DE ESCANEOS
+ * Añadir al final de scan-launcher.js
+ */
+
+// ===== CONFIGURACIÓN DE PAGINACIÓN =====
+
+const PAGINATION_CONFIG = {
+    itemsPerPage: 10,
+    currentPage: 1,
+    totalItems: 0,
+    totalPages: 0,
+    allScans: [] // Almacena todos los escaneos cargados
+};
+
+/**
+ * Actualiza la configuración de paginación
+ */
+function updatePaginationConfig(scans) {
+    PAGINATION_CONFIG.allScans = scans;
+    PAGINATION_CONFIG.totalItems = scans.length;
+    PAGINATION_CONFIG.totalPages = Math.ceil(scans.length / PAGINATION_CONFIG.itemsPerPage);
+    
+    // Si la página actual excede el total, resetear a 1
+    if (PAGINATION_CONFIG.currentPage > PAGINATION_CONFIG.totalPages) {
+        PAGINATION_CONFIG.currentPage = 1;
+    }
+}
+
+/**
+ * Obtiene los escaneos de la página actual
+ */
+function getCurrentPageScans() {
+    const startIndex = (PAGINATION_CONFIG.currentPage - 1) * PAGINATION_CONFIG.itemsPerPage;
+    const endIndex = startIndex + PAGINATION_CONFIG.itemsPerPage;
+    return PAGINATION_CONFIG.allScans.slice(startIndex, endIndex);
+}
+
+/**
+ * Cambia a una página específica
+ */
+function goToPage(pageNumber) {
+    if (pageNumber < 1 || pageNumber > PAGINATION_CONFIG.totalPages) {
+        return;
+    }
+    
+    PAGINATION_CONFIG.currentPage = pageNumber;
+    renderCurrentPage();
+    updatePaginationControls();
+    
+    // Scroll suave a la tabla
+    document.querySelector('.scan-history-section').scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'start'
+    });
+}
+
+/**
+ * Renderiza los escaneos de la página actual
+ */
+async function renderCurrentPage() {
+    const tbody = document.getElementById('scanHistoryBody');
+    const pageScans = getCurrentPageScans();
+    
+    if (pageScans.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">No hay escaneos en esta página.</td></tr>';
+        return;
+    }
+    
+    // Limpiar tabla
+    tbody.innerHTML = '';
+    
+    // Crear filas para cada escaneo de la página
+    for (const scan of pageScans) {
+        const row = createScanRow(scan);
+        tbody.appendChild(row);
+        
+        // Verificar estado asíncronamente
+        await checkScanStatus(scan.id);
+    }
+}
+
+/**
+ * Crea los controles de paginación
+ */
+function createPaginationControls() {
+    const { currentPage, totalPages, totalItems, itemsPerPage } = PAGINATION_CONFIG;
+    
+    if (totalPages <= 1) {
+        return ''; // No mostrar paginación si solo hay una página
+    }
+    
+    // Calcular rango de items mostrados
+    const startItem = (currentPage - 1) * itemsPerPage + 1;
+    const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+    
+    let html = '<div class="pagination-container">';
+    
+    // Información de items
+    html += `
+        <div class="pagination-info">
+            Mostrando <strong>${startItem}-${endItem}</strong> de <strong>${totalItems}</strong> escaneos
+        </div>
+    `;
+    
+    // Controles de navegación
+    html += '<div class="pagination-controls">';
+    
+    // Botón Primera página
+    html += `
+        <button 
+            class="pagination-btn ${currentPage === 1 ? 'disabled' : ''}" 
+            onclick="goToPage(1)"
+            ${currentPage === 1 ? 'disabled' : ''}>
+            ⟨⟨
+        </button>
+    `;
+    
+    // Botón Anterior
+    html += `
+        <button 
+            class="pagination-btn ${currentPage === 1 ? 'disabled' : ''}" 
+            onclick="goToPage(${currentPage - 1})"
+            ${currentPage === 1 ? 'disabled' : ''}>
+            ⟨ Anterior
+        </button>
+    `;
+    
+    // Números de página (mostrar máximo 7 páginas)
+    const pageNumbers = generatePageNumbers(currentPage, totalPages);
+    
+    pageNumbers.forEach(pageNum => {
+        if (pageNum === '...') {
+            html += '<span class="pagination-ellipsis">...</span>';
+        } else {
+            html += `
+                <button 
+                    class="pagination-btn page-number ${pageNum === currentPage ? 'active' : ''}" 
+                    onclick="goToPage(${pageNum})">
+                    ${pageNum}
+                </button>
+            `;
+        }
+    });
+    
+    // Botón Siguiente
+    html += `
+        <button 
+            class="pagination-btn ${currentPage === totalPages ? 'disabled' : ''}" 
+            onclick="goToPage(${currentPage + 1})"
+            ${currentPage === totalPages ? 'disabled' : ''}>
+            Siguiente ⟩
+        </button>
+    `;
+    
+    // Botón Última página
+    html += `
+        <button 
+            class="pagination-btn ${currentPage === totalPages ? 'disabled' : ''}" 
+            onclick="goToPage(${totalPages})"
+            ${currentPage === totalPages ? 'disabled' : ''}>
+            ⟩⟩
+        </button>
+    `;
+    
+    html += '</div>'; // pagination-controls
+    
+    // Selector de items por página
+    html += `
+        <div class="pagination-selector">
+            <label for="itemsPerPageSelect">Items por página:</label>
+            <select id="itemsPerPageSelect" onchange="changeItemsPerPage(this.value)">
+                <option value="5" ${itemsPerPage === 5 ? 'selected' : ''}>5</option>
+                <option value="10" ${itemsPerPage === 10 ? 'selected' : ''}>10</option>
+                <option value="20" ${itemsPerPage === 20 ? 'selected' : ''}>20</option>
+                <option value="50" ${itemsPerPage === 50 ? 'selected' : ''}>50</option>
+            </select>
+        </div>
+    `;
+    
+    html += '</div>'; // pagination-container
+    
+    return html;
+}
+
+/**
+ * Genera array de números de página a mostrar
+ */
+function generatePageNumbers(currentPage, totalPages) {
+    const pages = [];
+    
+    if (totalPages <= 7) {
+        // Mostrar todas las páginas si son 7 o menos
+        for (let i = 1; i <= totalPages; i++) {
+            pages.push(i);
+        }
+    } else {
+        // Lógica compleja para mostrar: 1 ... 4 5 6 ... 10
+        if (currentPage <= 3) {
+            // Al inicio
+            for (let i = 1; i <= 5; i++) pages.push(i);
+            pages.push('...');
+            pages.push(totalPages);
+        } else if (currentPage >= totalPages - 2) {
+            // Al final
+            pages.push(1);
+            pages.push('...');
+            for (let i = totalPages - 4; i <= totalPages; i++) pages.push(i);
+        } else {
+            // En medio
+            pages.push(1);
+            pages.push('...');
+            for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
+            pages.push('...');
+            pages.push(totalPages);
+        }
+    }
+    
+    return pages;
+}
+
+/**
+ * Actualiza los controles de paginación en el DOM
+ */
+function updatePaginationControls() {
+    let paginationContainer = document.getElementById('paginationContainer');
+    
+    if (!paginationContainer) {
+        // Crear contenedor si no existe
+        paginationContainer = document.createElement('div');
+        paginationContainer.id = 'paginationContainer';
+        
+        const tableWrapper = document.querySelector('.table-wrapper');
+        tableWrapper.appendChild(paginationContainer);
+    }
+    
+    paginationContainer.innerHTML = createPaginationControls();
+}
+
+/**
+ * Cambia el número de items por página
+ */
+window.changeItemsPerPage = function(newValue) {
+    PAGINATION_CONFIG.itemsPerPage = parseInt(newValue);
+    PAGINATION_CONFIG.currentPage = 1; // Resetear a primera página
+    
+    // Recalcular páginas
+    PAGINATION_CONFIG.totalPages = Math.ceil(
+        PAGINATION_CONFIG.totalItems / PAGINATION_CONFIG.itemsPerPage
+    );
+    
+    renderCurrentPage();
+    updatePaginationControls();
+};
+
+/**
+ * Función loadScanHistory MODIFICADA para usar paginación
+ */
+async function loadScanHistory() {
+    const tbody = document.getElementById('scanHistoryBody');
+    const refreshBtn = document.getElementById('refreshHistoryBtn');
+    
+    // Mostrar loading en el botón
+    const originalBtnText = refreshBtn.innerHTML;
+    refreshBtn.innerHTML = '⟳ Actualizando...';
+    refreshBtn.disabled = true;
+    
+    // Mostrar loading en la tabla
+    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Cargando escaneos...</td></tr>';
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/scans/results?type=all`);
+        
+        if (!response.ok) {
+            throw new Error('Error al obtener los escaneos');
+        }
+        
+        const data = await response.json();
+        const scans = data.results || [];
+        
+        // Ordenar por ID descendente (más recientes primero)
+        scans.sort((a, b) => b.id - a.id);
+        
+        if (scans.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">No hay escaneos registrados todavía.</td></tr>';
+            
+            // Limpiar paginación
+            const paginationContainer = document.getElementById('paginationContainer');
+            if (paginationContainer) {
+                paginationContainer.innerHTML = '';
+            }
+            
+            return;
+        }
+        
+        // Actualizar configuración de paginación
+        updatePaginationConfig(scans);
+        
+        // Renderizar primera página
+        await renderCurrentPage();
+        
+        // Crear/actualizar controles de paginación
+        updatePaginationControls();
+        
+    } catch (error) {
+        console.error('Error cargando historial:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="error-cell">
+                    ❌ Error al cargar los escaneos. Verifica que Flask esté corriendo en el puerto 5000.
+                </td>
+            </tr>
+        `;
+        
+        // Limpiar paginación en caso de error
+        const paginationContainer = document.getElementById('paginationContainer');
+        if (paginationContainer) {
+            paginationContainer.innerHTML = '';
+        }
+    } finally {
+        // Restaurar botón
+        refreshBtn.innerHTML = originalBtnText;
+        refreshBtn.disabled = false;
+    }
+}
+
+// Exponer función goToPage globalmente
+window.goToPage = goToPage;
 
 // ===== EVENTOS =====
 

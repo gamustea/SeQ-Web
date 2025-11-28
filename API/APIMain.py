@@ -1,5 +1,6 @@
 import os
 import base64
+import time
 
 from src.persistence import UserDBManager, ScanDBManager
 from src.scanning.managers import NmapScanManager, NiktoScanManager
@@ -361,27 +362,34 @@ def is_scan_finished():
                 401,
             )
 
+        # Intentar obtener el scan de Nmap
         scan = NMAP_MANAGER.get_scan_by_id(scan_id)
+        manager = NMAP_MANAGER  # Usar el manager correcto
+        
+        # Si no existe en Nmap, buscar en Nikto
         if not scan:
             scan = NIKTO_MANAGER.get_scan_by_id(scan_id)
+            manager = NIKTO_MANAGER  # ← CRUCIAL: Cambiar al manager correcto
+            
             if not scan:
-                return(
-                    jsonify({
-                        "message": f"El escaneo con id {scan_id} no existe"
-                    })
-                )
+                return jsonify({
+                    "message": f"El escaneo con id {scan_id} no existe"
+                }), 404
 
-        scan_finished = NMAP_MANAGER.scan_is_finished(scan)
+        # USAR EL MANAGER CORRECTO
+        scan_finished = manager.scan_is_finished(scan)
+        
         message = (
             f"El escaneo con id {scan_id} está terminado"
             if scan_finished
-            else f"El escaneo con id {scan_id} no está terminado o no existe"
+            else f"El escaneo con id {scan_id} no está terminado"
         )
 
         return jsonify({"message": message, "existe": scan_finished})
-    except Exception:
-        return (jsonify({"message": "Ha ocurrido un error interno del servidor"}), 500)
-
+        
+    except Exception as e:
+        logger.error(f"Error en is-finished: {e}", exc_info=True)
+        return jsonify({"message": "Ha ocurrido un error interno del servidor"}), 500
 
 # ============================================================================
 # ENDPOINTS DE ESCANEO
@@ -453,6 +461,7 @@ def start_nmap_scan():
                 f"Escaneo Nmap iniciado correctamente con ID: {scan_id}, host: {target_host}, ports: {ports}"
             )
             ids.append(scan_id)
+            time.sleep(0.5)
 
         return (
             jsonify(

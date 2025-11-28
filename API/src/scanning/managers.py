@@ -260,6 +260,7 @@ class _ScanManager(ABC):
         self.running_tasks = {}
         self.active_user = user
         self.thread = None
+        self.dbmanager = ScanDBManager()
         logger.info(
             f"ScanManager inicializado para usuario: {user.id if hasattr(user, 'id') else 'unknown'}"
         )
@@ -283,6 +284,9 @@ class _ScanManager(ABC):
                 logger.error("dbmanager no está inicializado")
                 return False
 
+            # SOLUCIÓN: Refrescar el objeto antes de usar su ID
+            self.dbmanager.session.refresh(scan)
+            
             return self.dbmanager.scan_is_finished(scan.id)  # type: ignore
         except Exception as e:
             logger.error(
@@ -290,6 +294,33 @@ class _ScanManager(ABC):
             )
             return False
 
+    def scan_is_finished_by_id(self, scan_id: int) -> Optional[bool]:
+        """
+        Verifica si un escaneo ha finalizado usando solo su ID.
+        
+        Returns:
+            True si está terminado
+            False si no está terminado
+            None si no existe
+        """
+        try:
+            if not self.dbmanager: # type: ignore
+                logger.error("dbmanager no está inicializado")
+                return None
+
+            # Verificar que el escaneo existe
+            if not self.dbmanager.scan_exists(scan_id):
+                logger.warning(f"Escaneo {scan_id} no existe")
+                return None
+                
+            # Verificar si está terminado
+            return self.dbmanager.scan_is_finished(scan_id)  # type: ignore
+            
+        except Exception as e:
+            logger.error(
+                f"Error al verificar si el escaneo {scan_id} está terminado: {e}"
+            )
+            return None
 
 class NmapScanManager(_ScanManager):
     def __init__(self, user: User):
@@ -353,6 +384,14 @@ class NmapScanManager(_ScanManager):
             
             thread_db.update_nmap_scan(nmap_scan_model)
             thread_db.set_scan_as_finished(nmap_scan_model)
+
+            # AGREGAR ESTO:
+            logger.info(f"[DEBUG] Escaneo {scan_id} marcado como finished")
+            logger.info(f"[DEBUG] Thread DB Session ID: {id(thread_db.session)}")
+
+            # Verificar inmediatamente si se guardó
+            verification = thread_db.scan_is_finished(scan_id)
+            logger.info(f"[DEBUG] Verificación inmediata en thread: {verification}")
             
             logger.info(
                 f"Escaneo Nmap {scan_id} guardado exitosamente con {ports_count} puertos"
@@ -568,12 +607,6 @@ class NiktoScanManager(_ScanManager):
 
     def run_task(self, target_host: str, timeout: int = 60):
         try:
-            # Verificar si ya hay un escaneo corriendo
-            if any(task.target == target_host for task in self.running_tasks.values() if hasattr(task, 'target')):
-                logger.warning(
-                    f"Intento de escaneo Nikto duplicado para target: {target_host}"
-                )
-                raise Exception(f"A scan is already running for target {target_host}")
 
             logger.info(f"Creando nuevo escaneo Nikto para {target_host}")
             
