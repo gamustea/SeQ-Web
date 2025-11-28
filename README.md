@@ -1,26 +1,68 @@
-# 📡 Documentación de Endpoints de la API
+# SecOps Scanner Platform
 
-## URL Base
+Plataforma unificada de gestión de auditorías de seguridad que integra **Nmap** y **Nikto** a través de una API REST moderna. Permite lanzar escaneos asíncronos, consultar resultados y generar reportes PDF ejecutivos con arquitectura modular basada en Flask.
+
+## 🎯 Características principales
+
+### Escaneo de puertos con Nmap
+- Gestión asíncrona de múltiples escaneos simultáneos.
+- Soporte para especificaciones avanzadas de objetivos:
+  - IPs individuales: `192.168.1.1`
+  - Notación CIDR: `192.168.1.0/24`
+  - Rangos por octeto: `192.168.1.1-10` o `192.168.1-2.1-10`
+  - Wildcards: `192.168.1.*`
+- Especificación flexible de puertos: `80,443`, `1-1000`, `-1000`, `8080-`.
+- Validación estricta de formato inspirada en sintaxis Nmap.
+
+### Escaneo de vulnerabilidades con Nikto
+- Detección automatizada de vulnerabilidades web.
+- Configuración de timeouts personalizados.
+- Catalogación de incidentes con referencias OSVDB.
+- Tracking temporal de descubrimientos.
+
+### Generación de reportes
+- `PDFCreator` con estrategias de impresión específicas por tipo de escaneo (Nmap, Nikto).
+- Exportación en formato binario (descarga directa).
+- Exportación en Base64 (visualización embebida en front-end).
+- Diseño orientado a reportes ejecutivos con metadatos completos.
+
+### Interfaz web interactiva
+- Dashboard visual (`index.html`) con animación de terminal en tiempo real (`terminal-animation.js`).
+- Formularios validados para lanzar escaneos (`scan-launcher.js`).
+- Historial de auditorías con estados actualizables.
+- Descarga directa de reportes PDF.
+- Diseño sencillo y extensible.
+
+## 🏗️ Arquitectura del proyecto
+
+```text
+SecOpsScanner/
+├── APIMain.py                 # API Flask principal
+├── index.html                 # Dashboard web
+├── terminal-animation.js      # Animaciones de terminal
+├── scan-launcher.js           # Lógica de formularios y llamadas a la API
+├── requirements.txt           # Dependencias Python
+└── src/
+    ├── persistence/           # Gestión de base de datos
+    │   ├── UserDBManager
+    │   └── ScanDBManager
+    ├── scanning/              # Managers de escaneo
+    │   ├── NmapScanManager
+    │   └── NiktoScanManager
+    ├── misc/
+    │   ├── documents/         # Generación de PDFs (PDFCreator, estrategias)
+    │   └── logging/           # Sistema de logs (SecOpsLogger)
+    └── model/                 # Modelos de dominio (Scan, puertos, incidentes, etc.)
 ```
-http://localhost:5000
-```
 
----
+## 📡 API Reference (resumen)
 
-## Endpoints Generales
+### Endpoints generales
 
-### Verificar Estado de la API
+#### `GET /say-hello`
+Endpoint de health check para verificar disponibilidad de la API.
 
-**Endpoint:** `GET /api/say-hello`
-
-**Descripción:** Verifica que la API está funcionando correctamente.
-
-**Ejemplo de solicitud:**
-```bash
-curl -X GET http://localhost:5000/api/say-hello
-```
-
-**Respuesta exitosa (200):**
+Respuesta de ejemplo:
 ```json
 {
   "message": "You did it! You reached an endpoint!",
@@ -28,70 +70,122 @@ curl -X GET http://localhost:5000/api/say-hello
 }
 ```
 
----
+#### `GET /is-finished?id={scan_id}`
+Verifica el estado de finalización de un escaneo (Nmap o Nikto).
 
-## Escaneos Nmap
+Parámetros:
+- `id` (query): ID del escaneo.
 
-### Iniciar Escaneo Nmap
-
-**Endpoint:** `POST /api/scans/nmap/start`
-
-**Descripción:** Inicia un nuevo escaneo Nmap en un host específico.
-
-**Headers requeridos:**
-- `host` (string): Host o dirección IP a escanear
-- `ports` (string): Puertos a escanear (ejemplo: "80,443" o "1-1000")
-
-**Ejemplo de solicitud:**
-```bash
-curl -X POST http://localhost:5000/api/scans/nmap/start \
-  -H "host: 192.168.1.1" \
-  -H "ports: 80,443,8080"
+Respuesta de ejemplo:
+```json
+{
+  "message": "El escaneo con id 104 está terminado",
+  "existe": true
+}
 ```
 
-**Respuesta exitosa (201):**
+### Endpoints de escaneo
+
+#### `POST /scans/nmap/start`
+Inicia un escaneo Nmap.
+
+Headers requeridos:
+- `X-Target-Host`: Host o rango de IPs a escanear.
+- `X-Target-Ports`: Puertos a escanear.
+
+Ejemplo:
+```bash
+curl -X POST http://localhost:5000/scans/nmap/start \
+  -H "X-Target-Host: 192.168.1.0/24" \
+  -H "X-Target-Ports: 22,80,443-8080"
+```
+
+Respuesta de ejemplo:
 ```json
 {
   "message": "Escaneo Nmap iniciado correctamente",
-  "scanId": 1,
+  "scanId": [104, 105, 106],
   "target": {
-    "host": "192.168.1.1",
-    "ports": "80,443,8080"
+    "host": "192.168.1.0/24",
+    "ports": "22,80,443-8080"
   }
 }
 ```
 
-**Errores posibles:**
-- `400`: Faltan headers requeridos o formato inválido
-- `500`: Error interno al iniciar el escaneo
+#### `POST /scans/nikto/start?timeout={seconds}`
+Inicia un escaneo Nikto.
 
----
+Headers requeridos:
+- `X-Target`: URL objetivo del escaneo.
 
-### Obtener Todos los Escaneos Nmap
+Query parameters:
+- `timeout` (opcional): tiempo máximo en segundos (por defecto: 180).
 
-**Endpoint:** `GET /api/scans/nmap/results`
-
-**Descripción:** Obtiene la lista completa de escaneos Nmap realizados por el usuario.
-
-**Ejemplo de solicitud:**
+Ejemplo:
 ```bash
-curl -X GET http://localhost:5000/api/scans/nmap/results
+curl -X POST http://localhost:5000/scans/nikto/start?timeout=300 \
+  -H "X-Target: http://example.com"
 ```
 
-**Respuesta exitosa (200):**
+Respuesta de ejemplo:
+```json
+{
+  "message": "Escaneo Nikto iniciado correctamente",
+  "scanId": 42,
+  "target": "http://example.com",
+  "timeout": 300
+}
+```
+
+### Endpoints de reportes
+
+#### `GET /scans/generate-pdf?id={scan_id}`
+Genera y descarga un PDF del escaneo.
+
+Parámetros:
+- `id` (query): ID del escaneo.
+
+Respuesta: archivo PDF (`application/pdf`) para descarga directa.
+
+#### `GET /scans/generate-pdf-base64?id={scan_id}`
+Genera un PDF en formato Base64.
+
+Respuesta de ejemplo:
+```json
+{
+  "message": "PDF generado exitosamente",
+  "scanId": "104",
+  "scanType": "nmap",
+  "filename": "nmap_scan_104.pdf",
+  "pdfBase64": "JVBERi0xLjQKJ...",
+  "contentType": "application/pdf"
+}
+```
+
+### Endpoints de resultados
+
+#### `GET /scans/results?type={scan_type}`
+Obtiene todos los escaneos del usuario.
+
+Query parameters:
+- `type` (opcional): `nmap`, `nikto` o `all` (por defecto: `all`).
+
+Respuesta de ejemplo:
 ```json
 {
   "message": "Escaneos obtenidos correctamente",
-  "count": 2,
+  "filter": "all",
+  "count": 15,
   "results": [
     {
-      "id": 1,
-      "target": "192.168.1.1",
-      "targetedPorts": ["80/tcp", "443/tcp"],
-      "startedAt": "2025-11-16T14:30:00",
+      "id": 104,
+      "scanType": "nmap",
+      "target": "192.168.1.10",
+      "targetedPorts": ["22/tcp", "80/tcp"],
+      "startedAt": "2025-11-28T20:15:30",
       "openPorts": [
         {
-          "port": "80/tcp",
+          "port": "22/tcp",
           "reason": "syn-ack"
         }
       ],
@@ -101,499 +195,135 @@ curl -X GET http://localhost:5000/api/scans/nmap/results
 }
 ```
 
----
+#### `GET /scans/results/{scan_id}`
+Obtiene los detalles de un escaneo específico (Nmap o Nikto).
 
-### Obtener Escaneo Nmap por ID
+## 🚀 Instalación y puesta en marcha
 
-**Endpoint:** `GET /api/scans/nmap/results/<scan_id>`
+### Requisitos previos
 
-**Descripción:** Obtiene los detalles de un escaneo Nmap específico.
+- Python 3.8 o superior.
+- Nmap instalado en el sistema.
+- Nikto instalado en el sistema.
+- Base de datos configurada (por ejemplo SQLite / PostgreSQL / MySQL).
+- Navegador moderno para la interfaz web.
 
-**Parámetros de ruta:**
-- `scan_id` (integer): ID del escaneo
+### Pasos de instalación
 
-**Ejemplo de solicitud:**
+1. Clonar el repositorio:
 ```bash
-curl -X GET http://localhost:5000/api/scans/nmap/results/1
+git clone https://github.com/tu-usuario/secops-scanner.git
+cd secops-scanner
 ```
 
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "Escaneo obtenido correctamente",
-  "result": {
-    "id": 1,
-    "target": "192.168.1.1",
-    "targetedPorts": ["80/tcp", "443/tcp"],
-    "startedAt": "2025-11-16T14:30:00",
-    "openPorts": [
-      {
-        "port": "80/tcp",
-        "reason": "syn-ack"
-      }
-    ],
-    "totalOpenPorts": 1
-  }
-}
-```
-
-**Errores posibles:**
-- `404`: Escaneo no encontrado
-- `500`: Error interno del servidor
-
----
-
-### Generar PDF de Escaneo Nmap
-
-**Endpoint:** `GET /api/scans/nmap/generate-pdf`
-
-**Descripción:** Genera y descarga un informe PDF del escaneo Nmap.
-
-**Query Parameters:**
-- `id` (integer, requerido): ID del escaneo
-
-**Ejemplo de solicitud:**
+2. Crear entorno virtual:
 ```bash
-curl -X GET "http://localhost:5000/api/scans/nmap/generate-pdf?id=1" \
-  --output nmap_scan_1.pdf
+python -m venv venv
+source venv/bin/activate  # En Windows: venv\Scripts\activate
 ```
 
-**Respuesta exitosa (200):**
-- Archivo PDF descargable
-
-**Errores posibles:**
-- `400`: Falta el parámetro 'id' o formato inválido
-- `404`: Escaneo no encontrado
-- `500`: Error al generar el PDF
-
----
-
-### Generar PDF de Escaneo Nmap (Base64)
-
-**Endpoint:** `GET /api/scans/nmap/generate-pdf-base64`
-
-**Descripción:** Genera un PDF del escaneo Nmap y lo devuelve en formato base64.
-
-**Query Parameters:**
-- `id` (integer, requerido): ID del escaneo
-
-**Ejemplo de solicitud:**
+3. Instalar dependencias:
 ```bash
-curl -X GET "http://localhost:5000/api/scans/nmap/generate-pdf-base64?id=1"
+pip install -r requirements.txt
 ```
 
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "PDF generado exitosamente",
-  "scanId": "1",
-  "filename": "nmap_scan_1.pdf",
-  "pdfBase64": "JVBERi0xLjQKJeLjz9MKM...",
-  "contentType": "application/pdf"
-}
-```
-
----
-
-## Escaneos Nikto
-
-### Iniciar Escaneo Nikto
-
-**Endpoint:** `POST /api/scans/nikto/start`
-
-**Descripción:** Inicia un nuevo escaneo de vulnerabilidades Nikto.
-
-**Headers requeridos:**
-- `target` (string): URL objetivo del escaneo
-
-**Query Parameters opcionales:**
-- `timeout` (integer): Tiempo máximo de ejecución en segundos (default: 180)
-
-**Ejemplo de solicitud:**
+4. Configurar la base de datos:
 ```bash
-curl -X POST "http://localhost:5000/api/scans/nikto/start?timeout=300" \
-  -H "target: https://example.com"
+# Ajustar la cadena de conexión en src/persistence/config.py o variables de entorno
+python -m src.persistence.init_db
 ```
 
-**Respuesta exitosa (201):**
-```json
-{
-  "message": "Escaneo Nikto iniciado correctamente",
-  "scanId": 1,
-  "target": "https://example.com",
-  "timeout": 300
-}
-```
-
-**Errores posibles:**
-- `400`: Falta header 'target' o formato inválido
-- `500`: Error al iniciar el escaneo
-
----
-
-### Obtener Todos los Escaneos Nikto
-
-**Endpoint:** `GET /api/scans/nikto/results`
-
-**Descripción:** Obtiene la lista completa de escaneos Nikto realizados.
-
-**Ejemplo de solicitud:**
+5. Iniciar la API Flask:
 ```bash
-curl -X GET http://localhost:5000/api/scans/nikto/results
+python APIMain.py
 ```
 
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "Escaneos obtenidos correctamente",
-  "count": 1,
-  "results": [
-    {
-      "id": 1,
-      "target": "https://example.com",
-      "startedAt": "2025-11-16T15:00:00",
-      "incidents": [
-        {
-          "osvdbId": "12345",
-          "method": "GET",
-          "url": "/admin",
-          "description": "Admin panel found without authentication",
-          "discoveredAt": "2025-11-16T15:05:00"
-        }
-      ],
-      "totalIncidents": 1
-    }
-  ]
-}
-```
-
----
-
-### Obtener Escaneo Nikto por ID
-
-**Endpoint:** `GET /api/scans/nikto/results/<scan_id>`
-
-**Descripción:** Obtiene los detalles de un escaneo Nikto específico.
-
-**Parámetros de ruta:**
-- `scan_id` (integer): ID del escaneo
-
-**Ejemplo de solicitud:**
+6. Servir la interfaz web:
 ```bash
-curl -X GET http://localhost:5000/api/scans/nikto/results/1
+# Opción simple
+python -m http.server 8000
+# Navegar a:
+# http://localhost:8000/index.html
 ```
 
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "Escaneo obtenido correctamente",
-  "result": {
-    "id": 1,
-    "target": "https://example.com",
-    "startedAt": "2025-11-16T15:00:00",
-    "incidents": [
-      {
-        "osvdbId": "12345",
-        "method": "GET",
-        "url": "/admin",
-        "description": "Admin panel found without authentication",
-        "discoveredAt": "2025-11-16T15:05:00"
-      }
-    ],
-    "totalIncidents": 1
-  }
-}
+## 🔒 Validaciones de entrada
+
+### Validación de puertos (Nmap)
+- Rango permitido: 1–65535.
+- Puertos y rangos en orden ascendente.
+- Sin solapamiento de rangos.
+- Soporte de:
+  - Puertos individuales: `80`
+  - Listas separadas por comas: `80,443,8080`
+  - Rangos: `1-1000`
+  - Rangos abiertos: `-1000`, `1000-`
+
+### Validación de IPs / targets
+- IP individual: `192.168.1.1`.
+- CIDR: `192.168.1.0/24`.
+- Rangos por octeto: `192.168.1.1-10`, `192.168.1-2.1-10`.
+- Wildcards: `192.168.1.*` (expandido a `192.168.1.0-255`).
+- Eliminación de duplicados respetando el orden de entrada.
+
+## 📊 Logging y manejo de errores
+
+### Logging
+- Se utiliza `SecOpsLogger` para logging centralizado.
+- Niveles: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+- Timestamps con formato legible y consistentes.
+- Logs específicos por endpoint y tipo de escaneo.
+
+### Manejo de errores
+Los endpoints devuelven códigos HTTP estándar:
+- `200` – Operación correcta.
+- `201` – Recurso creado (inicio de escaneo, generación de reporte).
+- `400` – Error de validación de parámetros de entrada.
+- `404` – Recurso / escaneo no encontrado.
+- `500` – Error interno del servidor.
+
+Las respuestas de error incluyen un mensaje humano-legible y, en algunos casos, detalles adicionales para depuración.
+
+## 🧪 Testing (recomendado)
+
+Estructura sugerida:
+```text
+tests/
+├── __init__.py
+├── test_validators.py       # Tests para validar_puertos_nmap(), validar_ips_nmap()
+├── test_endpoints.py        # Tests para endpoints de la API
+├── test_pdf_generation.py   # Tests para PDFCreator
+└── integration/
+    └── test_full_scan.py    # Tests end-to-end
 ```
 
-**Errores posibles:**
-- `404`: Escaneo no encontrado
-- `500`: Error interno del servidor
-
----
-
-### Generar PDF de Escaneo Nikto
-
-**Endpoint:** `GET /api/scans/nikto/generate-pdf`
-
-**Descripción:** Genera y descarga un informe PDF del escaneo Nikto.
-
-**Query Parameters:**
-- `id` (integer, requerido): ID del escaneo
-
-**Ejemplo de solicitud:**
+Ejemplos:
 ```bash
-curl -X GET "http://localhost:5000/api/scans/nikto/generate-pdf?id=1" \
-  --output nikto_scan_1.pdf
+# Ejecutar tests unitarios
+pytest tests/
+
+# Con cobertura
+pytest --cov=src tests/
 ```
 
-**Respuesta exitosa (200):**
-- Archivo PDF descargable
+## 🔧 Configuración adicional recomendada
+
+- Archivo `.env` para configuración sensible (claves, URLs de BBDD, rutas a Nmap/Nikto).
+- Archivo `.gitignore` para excluir `venv`, PDFs generados, logs, etc.
+- Dockerfile y `docker-compose.yml` para despliegue reproducible.
+- Integración de CI (GitHub Actions u otro) para ejecutar tests en cada push.
+
+## 👥 Contribución
+
+1. Haz un fork del repositorio.
+2. Crea una rama de feature: `git checkout -b feature/MiFeature`.
+3. Haz commits claros: `git commit -m "Add MiFeature"`.
+4. Sube la rama: `git push origin feature/MiFeature`.
+5. Abre un Pull Request describiendo los cambios.
+
+## 📜 Licencia
+
+Este proyecto se distribuye bajo una licencia abierta (por ejemplo, MIT). Añade el archivo `LICENSE` correspondiente en la raíz del proyecto.
 
 ---
 
-### Generar PDF de Escaneo Nikto (Base64)
-
-**Endpoint:** `GET /api/scans/nikto/generate-pdf-base64`
-
-**Descripción:** Genera un PDF del escaneo Nikto y lo devuelve en formato base64.
-
-**Query Parameters:**
-- `id` (integer, requerido): ID del escaneo
-
-**Ejemplo de solicitud:**
-```bash
-curl -X GET "http://localhost:5000/api/scans/nikto/generate-pdf-base64?id=1"
-```
-
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "PDF generado exitosamente",
-  "scanId": "1",
-  "filename": "nikto_scan_1.pdf",
-  "pdfBase64": "JVBERi0xLjQKJeLjz9MKM...",
-  "contentType": "application/pdf"
-}
-```
-
----
-
-## 🔄 Endpoints Unificados (Recomendados)
-
-Los siguientes endpoints detectan automáticamente el tipo de escaneo (Nmap o Nikto) basándose en el ID proporcionado.
-
-### Obtener Todos los Escaneos
-
-**Endpoint:** `GET /api/scans/results`
-
-**Descripción:** Obtiene todos los escaneos (Nmap y Nikto) con opción de filtrado.
-
-**Query Parameters opcionales:**
-- `type` (string): Tipo de escaneo - valores: `nmap`, `nikto`, `all` (default: `all`)
-
-**Ejemplos de solicitud:**
-```bash
-# Obtener todos los escaneos
-curl -X GET http://localhost:5000/api/scans/results
-
-# Obtener solo escaneos Nmap
-curl -X GET "http://localhost:5000/api/scans/results?type=nmap"
-
-# Obtener solo escaneos Nikto
-curl -X GET "http://localhost:5000/api/scans/results?type=nikto"
-```
-
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "Escaneos obtenidos correctamente",
-  "filter": "all",
-  "count": 3,
-  "results": [
-    {
-      "id": 1,
-      "scanType": "nmap",
-      "target": "192.168.1.1",
-      "startedAt": "2025-11-16T14:30:00",
-      "totalOpenPorts": 2
-    },
-    {
-      "id": 2,
-      "scanType": "nikto",
-      "target": "https://example.com",
-      "startedAt": "2025-11-16T15:00:00",
-      "totalIncidents": 5
-    }
-  ]
-}
-```
-
----
-
-### Obtener Escaneo por ID (Unificado)
-
-**Endpoint:** `GET /api/scans/results/<scan_id>`
-
-**Descripción:** Obtiene un escaneo específico detectando automáticamente si es Nmap o Nikto.
-
-**Parámetros de ruta:**
-- `scan_id` (integer): ID del escaneo
-
-**Ejemplo de solicitud:**
-```bash
-curl -X GET http://localhost:5000/api/scans/results/1
-```
-
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "Escaneo obtenido correctamente",
-  "result": {
-    "id": 1,
-    "scanType": "nmap",
-    "target": "192.168.1.1",
-    "startedAt": "2025-11-16T14:30:00",
-    "openPorts": [
-      {
-        "port": "80/tcp",
-        "reason": "syn-ack"
-      }
-    ],
-    "totalOpenPorts": 2
-  }
-}
-```
-
-**Errores posibles:**
-- `404`: Escaneo no encontrado
-- `500`: Error interno del servidor
-
----
-
-### Generar PDF (Unificado)
-
-**Endpoint:** `GET /api/scans/generate-pdf`
-
-**Descripción:** Genera un PDF detectando automáticamente el tipo de escaneo (Nmap o Nikto).
-
-**Query Parameters:**
-- `id` (integer, requerido): ID del escaneo
-
-**Ejemplo de solicitud:**
-```bash
-curl -X GET "http://localhost:5000/api/scans/generate-pdf?id=1" \
-  --output scan_report.pdf
-```
-
-**Respuesta exitosa (200):**
-- Archivo PDF descargable
-
-**Errores posibles:**
-- `400`: Falta el parámetro 'id' o formato inválido
-- `404`: Escaneo no encontrado
-- `500`: Error al generar el PDF
-
----
-
-### Generar PDF Base64 (Unificado)
-
-**Endpoint:** `GET /api/scans/generate-pdf-base64`
-
-**Descripción:** Genera un PDF en base64 detectando automáticamente el tipo de escaneo.
-
-**Query Parameters:**
-- `id` (integer, requerido): ID del escaneo
-
-**Ejemplo de solicitud:**
-```bash
-curl -X GET "http://localhost:5000/api/scans/generate-pdf-base64?id=1"
-```
-
-**Respuesta exitosa (200):**
-```json
-{
-  "message": "PDF generado exitosamente",
-  "scanId": "1",
-  "scanType": "nmap",
-  "filename": "nmap_scan_1.pdf",
-  "pdfBase64": "JVBERi0xLjQKJeLjz9MKM...",
-  "contentType": "application/pdf"
-}
-```
-
-**Errores posibles:**
-- `400`: Falta el parámetro 'id' o formato inválido
-- `404`: Escaneo no encontrado
-- `500`: Error al generar el PDF
-
----
-
-## 🔒 Códigos de Estado HTTP
-
-| Código | Descripción |
-|--------|-------------|
-| 200 | OK - Solicitud exitosa |
-| 201 | Created - Recurso creado exitosamente |
-| 400 | Bad Request - Parámetros inválidos o faltantes |
-| 404 | Not Found - Recurso no encontrado |
-| 405 | Method Not Allowed - Método HTTP no permitido |
-| 500 | Internal Server Error - Error interno del servidor |
-
----
-
-## 📝 Notas Importantes
-
-1. **Autenticación**: Actualmente la API no requiere autenticación, pero se recomienda implementarla en producción.
-
-2. **Formatos de fecha**: Todas las fechas se devuelven en formato ISO 8601 (ejemplo: `2025-11-16T14:30:00`).
-
-3. **Límites**: No hay límites de rate limiting configurados actualmente.
-
-4. **Timeout**: Los escaneos Nikto tienen un timeout configurable (default: 180 segundos).
-
-5. **PDFs con consentimiento**: Los PDFs generados incluyen una sección de conformidad y consentimiento del usuario antes del footer, indicando que el usuario ha dado su consentimiento para escanear el sitio web y asume las consecuencias.
-
-6. **Endpoints unificados**: Se recomienda usar los endpoints unificados (`/api/scans/results` y `/api/scans/generate-pdf`) en lugar de los específicos por tipo, ya que ofrecen mayor flexibilidad y simplifican la integración.
-
----
-
-## 🚀 Ejemplos de Uso Completo
-
-### Flujo de trabajo típico para Nmap
-
-```bash
-# 1. Iniciar un escaneo Nmap
-curl -X POST http://localhost:5000/api/scans/nmap/start \
-  -H "host: 192.168.1.1" \
-  -H "ports: 80,443,8080"
-
-# Respuesta: {"scanId": 1, ...}
-
-# 2. Obtener los resultados del escaneo
-curl -X GET http://localhost:5000/api/scans/results/1
-
-# 3. Generar el PDF del informe
-curl -X GET "http://localhost:5000/api/scans/generate-pdf?id=1" \
-  --output informe_escaneo.pdf
-```
-
-### Flujo de trabajo típico para Nikto
-
-```bash
-# 1. Iniciar un escaneo Nikto
-curl -X POST "http://localhost:5000/api/scans/nikto/start?timeout=300" \
-  -H "target: https://example.com"
-
-# Respuesta: {"scanId": 2, ...}
-
-# 2. Obtener los resultados del escaneo
-curl -X GET http://localhost:5000/api/scans/results/2
-
-# 3. Generar el PDF del informe
-curl -X GET "http://localhost:5000/api/scans/generate-pdf?id=2" \
-  --output informe_nikto.pdf
-```
-
-### Obtener todos los escaneos y filtrar
-
-```bash
-# Ver todos los escaneos
-curl -X GET http://localhost:5000/api/scans/results
-
-# Ver solo escaneos Nmap
-curl -X GET "http://localhost:5000/api/scans/results?type=nmap"
-
-# Ver solo escaneos Nikto
-curl -X GET "http://localhost:5000/api/scans/results?type=nikto"
-```
-
----
-
-## 📧 Soporte
-
-Para reportar problemas o sugerencias, contacta al equipo de desarrollo.
-
----
-
-**Versión de la documentación:** 1.0  
-**Última actualización:** 16 de noviembre de 2025
+> ⚠️ Uso responsable: Esta herramienta está pensada para entornos de auditoría y pruebas de penetración autorizadas. No debe utilizarse contra sistemas para los que no se tenga permiso explícito.

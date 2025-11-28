@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/secops
+      - FLASK_ENV=production
+    depends_on:
+      - db
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    networks:
+      - secops-network
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: secops
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - secops-network
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./index.html:/usr/share/nginx/html/index.html
+      - ./terminal-animation.js:/usr/share/nginx/html/terminal-animation.js
+      - ./scan-launcher.js:/usr/share/nginx/html/scan-launcher.js
+    depends_on:
+      - api
+    networks:
+      - secops-network
+
+volumes:
+  postgres_data:
+
+networks:
+  secops-network:
+    driver: bridge
