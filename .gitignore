@@ -1,41 +1,29 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+# Entornos virtuales
 venv/
-env/
-ENV/
+.venv/
 
-# Database
-*.db
-*.sqlite3
-migrations/
-
-# Logs
-logs/
-*.log
-
-# PDFs generados
-reports/
-*.pdf
-
-# IDE
+# Archivos de configuración de editores
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# Environment
+# Archivos de Python compilados
+src/__pycache__/
+*.py[cod]
+*$py.class
+
+# Archivos de logs
+log/*.log
+*.log
+
+# Archivos de entorno
 .env
-.env.local
+.env.*
 
-# OS
+# Dependencias
+*.egg-info/
+dist/
+build/
+
+# Archivos de sistema
 .DS_Store
 Thumbs.db
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
