@@ -322,7 +322,7 @@ pytest --cov=src tests/
 
 ## 📜 Licencia
 
-Este proyecto se distribuye bajo una licencia abierta (por ejemplo, MIT). Añade el archivo `LICENSE` correspondiente en la raíz del proyecto.
+Este proyecto se distribuye bajo una licencia CC BY-NC
 
 ---
 
