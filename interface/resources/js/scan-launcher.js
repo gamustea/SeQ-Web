@@ -4,6 +4,7 @@
  */
 
 const API_BASE_URL = 'http://127.0.0.1:5000';
+const CHECKED_SCANS = new Set();
 
 
 // ===== UTILIDADES =====
@@ -134,6 +135,13 @@ document.getElementById('niktoScanForm').addEventListener('submit', async (e) =>
  * Verifica el estado de un escaneo específico
  */
 async function checkScanStatus(scanId) {
+    if (CHECKED_SCANS.has(scanId)) {
+        statusCell.innerHTML = '<span class="status-finished">✓ Terminado</span>';
+        downloadBtn.disabled = false;
+        downloadBtn.classList.add('enabled');
+        return;
+    }
+
     try {
         const response = await fetch(`${API_BASE_URL}/is-finished?id=${scanId}`);
         const data = await response.json();

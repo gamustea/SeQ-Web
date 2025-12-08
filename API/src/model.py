@@ -167,7 +167,7 @@ class Scan(Base):
 
     def __str__(self):
         started = (
-            self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
+            self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A" # type: ignore
         )
         return f"Scan(id={self.id}, tipo='{self.scan_type}', target='{self.target}', inicio={started})"
 
@@ -208,7 +208,7 @@ class FinishedScan(Base):
     def __str__(self):
         finished = (
             self.finished_at.strftime("%Y-%m-%d %H:%M:%S")
-            if self.finished_at
+            if self.finished_at # type: ignore
             else "N/A"
         )
         return f"FinishedScan(scan_id={self.id}, finalizado={finished})"
@@ -268,7 +268,7 @@ class NmapScan(Scan):
 
     def __str__(self):
         started = (
-            self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
+            self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A" # type: ignore
         )
         num_ports = len(self.open_ports_relation) if self.open_ports_relation else 0
         return f"NmapScan(id={self.id}, target='{self.target}', puertos_abiertos={num_ports}, inicio={started})"
@@ -410,7 +410,7 @@ class NiktoScan(Scan):
 
     def __str__(self):
         started = (
-            self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
+            self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A" # type: ignore
         )
         num_incidents = len(self.incidents) if self.incidents else 0
         return f"NiktoScan(id={self.id}, target='{self.target}', incidentes={num_incidents}, inicio={started})"

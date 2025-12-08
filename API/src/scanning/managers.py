@@ -330,7 +330,7 @@ class NmapScanManager(_ScanManager):
 
     def _do_scan_and_save(
         self,
-        scan_id: int,  # CAMBIO: Recibe ID en lugar del objeto
+        scan_id: int,
         target_host: str,
         target_ports: str,
         timeout: int = 20,
@@ -339,11 +339,9 @@ class NmapScanManager(_ScanManager):
         Función ejecutada en thread separado.
         IMPORTANTE: Crea su propia sesión de BD para evitar conflictos.
         """
-        # Crear DBManager exclusivo para este thread
         thread_db = NmapDBManager()
         
         try:
-            # Recuperar el escaneo con la sesión del thread
             nmap_scan_model = thread_db.get_nmap_scan_by_id(scan_id)
             
             if not nmap_scan_model:
@@ -368,7 +366,6 @@ class NmapScanManager(_ScanManager):
                 task.results, nmap_scan_model #type: ignore
             )
 
-            # Procesar puertos encontrados
             ports_count = len(results["ports"])
             logger.info(
                 f"Procesando {ports_count} puertos del escaneo {scan_id}"
@@ -384,15 +381,7 @@ class NmapScanManager(_ScanManager):
             
             thread_db.update_nmap_scan(nmap_scan_model)
             thread_db.set_scan_as_finished(nmap_scan_model)
-
-            # AGREGAR ESTO:
-            logger.info(f"[DEBUG] Escaneo {scan_id} marcado como finished")
-            logger.info(f"[DEBUG] Thread DB Session ID: {id(thread_db.session)}")
-
-            # Verificar inmediatamente si se guardó
-            verification = thread_db.scan_is_finished(scan_id)
-            logger.info(f"[DEBUG] Verificación inmediata en thread: {verification}")
-            
+           
             logger.info(
                 f"Escaneo Nmap {scan_id} guardado exitosamente con {ports_count} puertos"
             )
@@ -478,7 +467,7 @@ class NmapScanManager(_ScanManager):
         except Exception as e:
             # Asegurar rollback antes de cualquier acceso adicional
             try:
-                self.dbmanager.safe_rollback()
+                self.dbmanager.safe_rollback() #type: ignore
             except:
                 pass
             
@@ -653,7 +642,7 @@ class NiktoScanManager(_ScanManager):
         except Exception as e:
             # Asegurar rollback antes de cualquier acceso adicional
             try:
-                self.dbmanager.safe_rollback()
+                self.dbmanager.safe_rollback() #type: ignore
             except:
                 pass
                 

@@ -32,6 +32,8 @@ pytest-mock==3.12.0
 mypy==1.7.1
 black==23.11.0
 flake8==6.1.0
+pymysql==1.0.3
+cryptography==41.0.4
 
 # NOTA IMPORTANTE:
 # Nmap y Nikto deben instalarse directamente en el sistema operativo:

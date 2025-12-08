@@ -461,7 +461,7 @@ def start_nmap_scan():
                 f"Escaneo Nmap iniciado correctamente con ID: {scan_id}, host: {target_host}, ports: {ports}"
             )
             ids.append(scan_id)
-            time.sleep(1)
+            time.sleep(0.10)
 
         return (
             jsonify(
