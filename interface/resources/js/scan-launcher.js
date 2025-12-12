@@ -1,9 +1,6 @@
-/**
- * SCAN LAUNCHER
- * Maneja los formularios de escaneo Nmap y Nikto
- */
-
 const API_BASE_URL = 'http://127.0.0.1:5000';
+const USERNAME = 'root';
+const PASSWORD = 'root';
 const CHECKED_SCANS = new Set();
 
 
@@ -46,6 +43,8 @@ document.getElementById('nmapScanForm').addEventListener('submit', async (e) => 
         const response = await fetch(`${API_BASE_URL}/scans/nmap/start`, {
             method: 'POST',
             headers: {
+                'X-Username': USERNAME,
+                'X-Password': PASSWORD,
                 'X-Target-Host': host,
                 'X-Target-Ports': ports
             }
@@ -95,7 +94,9 @@ document.getElementById('niktoScanForm').addEventListener('submit', async (e) =>
         const response = await fetch(`${API_BASE_URL}/scans/nikto/start?timeout=${timeout}`, {
             method: 'POST',
             headers: {
-                'X-Target': target
+                'X-Target': target,
+                'X-Username': USERNAME,
+                'X-Password': PASSWORD
             }
         });
         
@@ -143,14 +144,19 @@ async function checkScanStatus(scanId) {
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/is-finished?id=${scanId}`);
+        const response = await fetch(`${API_BASE_URL}/is-finished?id=${scanId}`, {
+            headers: {
+                'X-Username': USERNAME,
+                'X-Password': PASSWORD
+            }
+        });
         const data = await response.json();
         
         const statusCell = document.getElementById(`status-${scanId}`);
         const downloadBtn = document.getElementById(`download-${scanId}`);
         
         if (statusCell && downloadBtn) {
-            if (data.existe) {
+            if (data.isFinished) {
                 statusCell.innerHTML = '<span class="status-finished">✓ Terminado</span>';
                 downloadBtn.disabled = false;
                 downloadBtn.classList.add('enabled');
@@ -181,7 +187,12 @@ async function loadScanHistory() {
     tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Cargando escaneos...</td></tr>';
     
     try {
-        const response = await fetch(`${API_BASE_URL}/scans/results?type=all`);
+        const response = await fetch(`${API_BASE_URL}/scans/results?type=all`, {
+            headers: {
+                'X-Username': USERNAME,
+                'X-Password': PASSWORD
+            }
+        });
         
         if (!response.ok) {
             throw new Error('Error al obtener los escaneos');
@@ -278,7 +289,24 @@ window.downloadPDF = async function(scanId) {
         button.innerHTML = '⏳ Generando...';
         button.disabled = true;
         
-        window.location.href = `${API_BASE_URL}/scans/generate-pdf?id=${scanId}`;
+        const response = await fetch(`${API_BASE_URL}/scans/generate-pdf?id=${scanId}`, {
+            headers: {
+                'X-Username': USERNAME,
+                'X-Password': PASSWORD
+            }
+        });
+        
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `scan_${scanId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }
         
         setTimeout(() => {
             button.innerHTML = originalText;
@@ -564,7 +592,12 @@ async function loadScanHistory() {
     tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Cargando escaneos...</td></tr>';
     
     try {
-        const response = await fetch(`${API_BASE_URL}/scans/results?type=all`);
+        const response = await fetch(`${API_BASE_URL}/scans/results?type=all`, {
+            headers: {
+                'X-Username': USERNAME,
+                'X-Password': PASSWORD
+            }
+        });
         
         if (!response.ok) {
             throw new Error('Error al obtener los escaneos');
