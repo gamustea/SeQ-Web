@@ -1,5 +1,4 @@
 import logging
-import os
 
 from src.misc.configread import ConfigReader, DirectoryType
 from pathlib import Path
@@ -16,13 +15,11 @@ class SecOpsLogger:
 
         reader = ConfigReader()
 
-        # Evitar agregar handlers duplicados
         if not self.logger.hasHandlers():
             formatter = logging.Formatter(
                 "[+] (%(asctime)s) %(message)s [%(levelname)s]"
             )
 
-            # Handler de consola
             console_handler = logging.StreamHandler()
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
@@ -31,7 +28,6 @@ class SecOpsLogger:
             path.mkdir(parents=True, exist_ok=True)
             log_file = path / "secops.log"
 
-            # Handler de archivo si se especifica log_file
             if log_file:
                 file_handler = logging.FileHandler(log_file)
                 file_handler.setFormatter(formatter)

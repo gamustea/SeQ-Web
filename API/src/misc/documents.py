@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Optional
 
 from src.misc.configread import ConfigReader, DirectoryType
-from src.model import NmapScan, NiktoScan, Scan
+from src.core.model import NmapScan, NiktoScan, Scan
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
@@ -603,7 +603,6 @@ class PDFCreator:
         if date is None:
             date = datetime.now()
 
-        # Obtener colores de la estrategia actual
         color_palette = self.printing_strategy.color_palette
         MAIN_COLOR = color_palette[ColorType.MAIN]
         DARK_COLOR = color_palette[ColorType.DARK]
@@ -611,10 +610,8 @@ class PDFCreator:
         WHITE_COLOR = color_palette[ColorType.WHITE]
         BLACK_COLOR = color_palette[ColorType.BLACK]
 
-        # Logo en la parte superior
         self.append_logo(elements, is_cover=True)
 
-        # Tipo de documento
         doc_type_style = ParagraphStyle(
             "CoverDocType",
             parent=styles["Normal"],
@@ -627,7 +624,6 @@ class PDFCreator:
         elements.append(Paragraph(document_type.upper(), doc_type_style))
         elements.append(Spacer(1, 0.3 * inch))
 
-        # Título principal con fondo
         title_style = ParagraphStyle(
             "CoverTitle",
             parent=styles["Heading1"],
@@ -654,7 +650,6 @@ class PDFCreator:
         )
         elements.append(title_table)
 
-        # Subtítulo (si existe)
         if subtitle:
             elements.append(Spacer(1, 0.3 * inch))
             subtitle_style = ParagraphStyle(
@@ -667,10 +662,8 @@ class PDFCreator:
             )
             elements.append(Paragraph(subtitle, subtitle_style))
 
-        # Espaciador
         elements.append(Spacer(1, 1.5 * inch))
 
-        # Información del cliente y fecha
         info_style = ParagraphStyle(
             "CoverInfo",
             parent=styles["Normal"],

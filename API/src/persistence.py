@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 import urllib.parse
 
 from src.misc.logging import SecOpsLogger
-from src.model import (
+from src.core.model import (
     Person,
     User,
     Scan,
@@ -87,7 +87,7 @@ class DBManager(ABC):
             self._owns_session = False  # No cerramos sesiones externas
         else:
             # Obtener sesión del thread actual (thread-safe)
-            self.session = _SESSION_FACTORY()
+            self.session = _SESSION_FACTORY() # type: ignore
             self._owns_session = True
 
         self.logger = SecOpsLogger(__name__).get_logger()
@@ -109,7 +109,7 @@ class DBManager(ABC):
         if self._owns_session and self.session is not None:
             try:
                 self.session.close()
-                _SESSION_FACTORY.remove()  # Limpia la sesión del thread local
+                _SESSION_FACTORY.remove()  # type: ignore
             except Exception as e:
                 self.logger.warning(f"Error al cerrar sesión: {e}")
 
@@ -225,6 +225,23 @@ class UserDBManager(DBManager):
     Hereda método y atributos de DBManager para gestión de sesión y logging.
     """
 
+    def validate_credentials(self, username: str, password: str) -> bool:
+        self._check_session()
+        try:
+            user = (
+                self.session.query(User)
+                .filter(User.username == username, User.password == password)
+                .one_or_none()
+            )
+            is_valid = user is not None
+            self.logger.info(
+                f"Validación de credenciales para '{username}': {is_valid}"
+            )
+            return is_valid
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al validar credenciales: {err}")
+            raise
+
     def user_exists(self, username: str) -> bool:
         self._check_session()
         try:
@@ -323,6 +340,20 @@ class UserDBManager(DBManager):
             return user
         except SQLAlchemyError as err:
             self.logger.error(f"Error al obtener User por ID: {err}")
+            raise
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        self._check_session()
+        try:
+            user = (
+                self.session.query(User).filter(User.username == username).one_or_none()
+            )
+            self.logger.info(
+                f"Se obtuvo el User con username '{username}' de la base de datos."
+            )
+            return user
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener User por username: {err}")
             raise
 
     def update_person(self, person: Person) -> None:

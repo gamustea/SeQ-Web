@@ -7,18 +7,13 @@ from abc import abstractmethod, ABC
 from src.persistence import (
     ScanDBManager,
     NmapDBManager,
-    DBManager,
     NiktoDBManager,
 )
 
-from src.scanning.tasks import NmapScanTask, NiktoScanTask, _Task
-from src.model import NmapScan, User, NiktoScan, NiktoIncident, Scan
+from src.logic.tasking.tasks import NmapScanTask, NiktoScanTask, _Task
+from src.core.model import NmapScan, User, NiktoScan, NiktoIncident, Scan
 from src.misc.conversion import JSONManager
 from src.misc.logging import SecOpsLogger
-
-# Configurar logger
-logger_instance = SecOpsLogger(name="ScanManager")
-logger = logger_instance.get_logger()
 
 
 def assign_severity_to_nikto_incident(incident):
@@ -252,6 +247,7 @@ def assign_severity_to_nikto_incident(incident):
     # Por defecto, asignar MEDIUM como nivel conservador
     incident.severity = "MEDIUM"
 
+
 class _ScanManager(ABC):
     running_tasks: Dict[int, _Task]
     active_user: User
@@ -261,16 +257,18 @@ class _ScanManager(ABC):
         self.active_user = user
         self.thread = None
         self.dbmanager = ScanDBManager()
-        logger.info(
+        
+        self.logger = SecOpsLogger(name="ScanManager").get_logger()
+        self.logger.info(
             f"ScanManager inicializado para usuario: {user.id if hasattr(user, 'id') else 'unknown'}"
         )
 
     def get_running_task_progress(self, id: int) -> Optional[int]:
         if id in self.running_tasks:
             progress = self.running_tasks[id].progress
-            logger.debug(f"Progreso de tarea {id}: {progress}%")
+            self.logger.debug(f"Progreso de tarea {id}: {progress}%")
             return progress
-        logger.warning(f"Tarea {id} no encontrada en tareas en ejecución")
+        self.logger.warning(f"Tarea {id} no encontrada en tareas en ejecución")
         return None
 
     @abstractmethod
@@ -281,7 +279,7 @@ class _ScanManager(ABC):
         """Verifica si un escaneo ha finalizado."""
         try:
             if not self.dbmanager: # type: ignore
-                logger.error("dbmanager no está inicializado")
+                self.logger.error("dbmanager no está inicializado")
                 return False
 
             # SOLUCIÓN: Refrescar el objeto antes de usar su ID
@@ -289,7 +287,7 @@ class _ScanManager(ABC):
             
             return self.dbmanager.scan_is_finished(scan.id)  # type: ignore
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"Error al verificar si el escaneo {scan.id} está terminado: {e}"
             )
             return False
@@ -305,28 +303,29 @@ class _ScanManager(ABC):
         """
         try:
             if not self.dbmanager: # type: ignore
-                logger.error("dbmanager no está inicializado")
+                self.logger.error("dbmanager no está inicializado")
                 return None
 
             # Verificar que el escaneo existe
             if not self.dbmanager.scan_exists(scan_id):
-                logger.warning(f"Escaneo {scan_id} no existe")
+                self.logger.warning(f"Escaneo {scan_id} no existe")
                 return None
                 
             # Verificar si está terminado
             return self.dbmanager.scan_is_finished(scan_id)  # type: ignore
             
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"Error al verificar si el escaneo {scan_id} está terminado: {e}"
             )
             return None
+
 
 class NmapScanManager(_ScanManager):
     def __init__(self, user: User):
         super().__init__(user)
         self.dbmanager = NmapDBManager()
-        logger.info("NmapScanManager inicializado correctamente")
+        self.logger.info("NmapScanManager inicializado correctamente")
 
     def _do_scan_and_save(
         self,
@@ -345,21 +344,21 @@ class NmapScanManager(_ScanManager):
             nmap_scan_model = thread_db.get_nmap_scan_by_id(scan_id)
             
             if not nmap_scan_model:
-                logger.error(f"No se encontró escaneo Nmap con ID {scan_id}")
+                self.logger.error(f"No se encontró escaneo Nmap con ID {scan_id}")
                 return
             
-            logger.info(
+            self.logger.info(
                 f"Iniciando escaneo Nmap {scan_id}: target={target_host}, ports={target_ports}, timeout={timeout}"
             )
 
             task = NmapScanTask(target_host, target_ports, timeout=timeout)
             self.running_tasks[scan_id] = task
 
-            logger.info(f"Ejecutando escaneo Nmap con ID {scan_id}")
+            self.logger.info(f"Ejecutando escaneo Nmap con ID {scan_id}")
             task.scan()
             task.wait()
 
-            logger.info(
+            self.logger.info(
                 f"Escaneo Nmap {scan_id} completado, procesando resultados"
             )
             results = JSONManager.convert_json_to_individual_nmap_data(
@@ -367,7 +366,7 @@ class NmapScanManager(_ScanManager):
             )
 
             ports_count = len(results["ports"])
-            logger.info(
+            self.logger.info(
                 f"Procesando {ports_count} puertos del escaneo {scan_id}"
             )
 
@@ -382,12 +381,12 @@ class NmapScanManager(_ScanManager):
             thread_db.update_nmap_scan(nmap_scan_model)
             thread_db.set_scan_as_finished(nmap_scan_model)
            
-            logger.info(
+            self.logger.info(
                 f"Escaneo Nmap {scan_id} guardado exitosamente con {ports_count} puertos"
             )
 
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"Error en escaneo Nmap {scan_id}: {str(e)}", exc_info=True
             )
             
@@ -399,15 +398,14 @@ class NmapScanManager(_ScanManager):
                     error_scan.ended_at = datetime.now()
                     thread_db.update_nmap_scan(error_scan)
             except Exception as update_err:
-                logger.error(f"No se pudo actualizar estado de error: {update_err}")
+                self.logger.error(f"No se pudo actualizar estado de error: {update_err}")
         
         finally:
-            # CRÍTICO: Cerrar la sesión del thread
             try:
                 thread_db.close_session()
-                logger.debug(f"Sesión del thread para escaneo {scan_id} cerrada")
+                self.logger.debug(f"Sesión del thread para escaneo {scan_id} cerrada")
             except Exception as close_err:
-                logger.warning(f"Error al cerrar sesión del thread: {close_err}")
+                self.logger.warning(f"Error al cerrar sesión del thread: {close_err}")
             
             # Limpiar de running_tasks
             if scan_id in self.running_tasks:
@@ -415,16 +413,14 @@ class NmapScanManager(_ScanManager):
 
     def run_task(self, target_host: str, target_ports: str, timeout: int = 20):
         try:
-            # Verificar si ya hay un escaneo corriendo (usar ID, no host)
             if any(task.target == target_host for task in self.running_tasks.values() if hasattr(task, 'target')):
-                logger.warning(
+                self.logger.warning(
                     f"Intento de escaneo duplicado para target: {target_host}"
                 )
                 raise Exception(f"A scan is already running for target {target_host}")
 
-            logger.info(f"Creando nuevo escaneo Nmap para {target_host}")
+            self.logger.info(f"Creando nuevo escaneo Nmap para {target_host}")
             
-            # Crear el escaneo con el dbmanager del thread principal
             nmap_scan_model = NmapScan(
                 target=target_host, 
                 user=self.active_user,
@@ -432,12 +428,9 @@ class NmapScanManager(_ScanManager):
             )
             self.dbmanager.create_nmap_scan(nmap_scan_model)
             
-            # IMPORTANTE: Extraer el ID antes de lanzar el thread
             scan_id = nmap_scan_model.id
 
-            logger.info(f"Escaneo Nmap {scan_id} creado, iniciando thread")
-            
-            # Lanzar thread pasando SOLO el ID, no el objeto completo
+            self.logger.info(f"Escaneo Nmap {scan_id} creado, iniciando thread")
             self.thread = threading.Thread(
                 target=self._do_scan_and_save,
                 args=(scan_id, target_host, target_ports, timeout),
@@ -446,23 +439,22 @@ class NmapScanManager(_ScanManager):
             )
             self.thread.start()
 
-            logger.info(
+            self.logger.info(
                 f"Thread de escaneo Nmap {scan_id} iniciado exitosamente"
             )
             return scan_id
 
         except Exception as e:
-            logger.error(f"Error al iniciar tarea Nmap: {str(e)}", exc_info=True)
+            self.logger.error(f"Error al iniciar tarea Nmap: {str(e)}", exc_info=True)
             raise
 
     def get_scans_for_user(self) -> List:
-        # CRÍTICO: Guardar el ID antes de cualquier operación que pueda fallar
         user_id = self.active_user.id
         
         try:
-            logger.info(f"Obteniendo escaneos Nmap para usuario {user_id}")
+            self.logger.info(f"Obteniendo escaneos Nmap para usuario {user_id}")
             scans = self.dbmanager.get_nmap_scans_by_user(user_id)
-            logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap para usuario {user_id}")
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap para usuario {user_id}")
             return scans
         except Exception as e:
             # Asegurar rollback antes de cualquier acceso adicional
@@ -471,7 +463,7 @@ class NmapScanManager(_ScanManager):
             except:
                 pass
             
-            logger.error(
+            self.logger.error(
                 f"Error al obtener escaneos Nmap para usuario {user_id}: {str(e)}",
                 exc_info=True,
             )
@@ -479,15 +471,15 @@ class NmapScanManager(_ScanManager):
 
     def get_scan_by_id(self, id: int) -> Scan:
         try:
-            logger.info(f"Obteniendo escaneo Nmap con ID: {id}")
+            self.logger.info(f"Obteniendo escaneo Nmap con ID: {id}")
             scan = self.dbmanager.get_scan_by_id(id)
             if scan:
-                logger.info(f"Escaneo Nmap {id} obtenido exitosamente")
+                self.logger.info(f"Escaneo Nmap {id} obtenido exitosamente")
             else:
-                logger.warning(f"Escaneo Nmap {id} no encontrado")
+                self.logger.warning(f"Escaneo Nmap {id} no encontrado")
             return scan
         except Exception as e:
-            logger.error(f"Error al obtener escaneo Nmap {id}: {str(e)}", exc_info=True)
+            self.logger.error(f"Error al obtener escaneo Nmap {id}: {str(e)}", exc_info=True)
             raise
 
 
@@ -495,7 +487,7 @@ class NiktoScanManager(_ScanManager):
     def __init__(self, user: User):
         super().__init__(user)
         self.dbmanager = NiktoDBManager()
-        logger.info("NiktoScanManager inicializado correctamente")
+        self.logger.info("NiktoScanManager inicializado correctamente")
 
     def _do_scan_and_save(
         self, 
@@ -515,29 +507,28 @@ class NiktoScanManager(_ScanManager):
             nikto_scan_model = thread_db.get_nikto_scan_by_id(scan_id)
             
             if not nikto_scan_model:
-                logger.error(f"No se encontró escaneo Nikto con ID {scan_id}")
+                self.logger.error(f"No se encontró escaneo Nikto con ID {scan_id}")
                 return
             
-            logger.info(
+            self.logger.info(
                 f"Iniciando escaneo Nikto {scan_id}: target={target_domain}, timeout={timeout}"
             )
 
             task = NiktoScanTask(target_domain, timeout)
             self.running_tasks[scan_id] = task
 
-            logger.info(f"Ejecutando escaneo Nikto con ID {scan_id}")
+            self.logger.info(f"Ejecutando escaneo Nikto con ID {scan_id}")
             task.scan()
             task.wait()
 
-            logger.info(
+            self.logger.info(
                 f"Escaneo Nikto {scan_id} completado, procesando resultados"
             )
             results = JSONManager.convert_json_to_individual_nikto_data(task.results[-1]) # type: ignore
             task.results = results
 
-            # Procesar incidentes encontrados
             incidents_count = len(results)
-            logger.info(
+            self.logger.info(
                 f"Procesando {incidents_count} incidentes del escaneo Nikto {scan_id}"
             )
 
@@ -563,12 +554,12 @@ class NiktoScanManager(_ScanManager):
             thread_db.update_nikto_scan(nikto_scan_model)
             thread_db.set_scan_as_finished(nikto_scan_model)
             
-            logger.info(
+            self.logger.info(
                 f"Escaneo Nikto {scan_id} guardado exitosamente con {incidents_count} incidentes"
             )
 
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"Error en escaneo Nikto {scan_id}: {str(e)}", exc_info=True
             )
             
@@ -580,15 +571,15 @@ class NiktoScanManager(_ScanManager):
                     error_scan.ended_at = datetime.now()
                     thread_db.update_nikto_scan(error_scan)
             except Exception as update_err:
-                logger.error(f"No se pudo actualizar estado de error: {update_err}")
+                self.logger.error(f"No se pudo actualizar estado de error: {update_err}")
         
         finally:
             # CRÍTICO: Cerrar la sesión del thread
             try:
                 thread_db.close_session()
-                logger.debug(f"Sesión del thread para escaneo {scan_id} cerrada")
+                self.logger.debug(f"Sesión del thread para escaneo {scan_id} cerrada")
             except Exception as close_err:
-                logger.warning(f"Error al cerrar sesión del thread: {close_err}")
+                self.logger.warning(f"Error al cerrar sesión del thread: {close_err}")
             
             # Limpiar de running_tasks
             if scan_id in self.running_tasks:
@@ -597,7 +588,7 @@ class NiktoScanManager(_ScanManager):
     def run_task(self, target_host: str, timeout: int = 60):
         try:
 
-            logger.info(f"Creando nuevo escaneo Nikto para {target_host}")
+            self.logger.info(f"Creando nuevo escaneo Nikto para {target_host}")
             
             # Crear el escaneo con el dbmanager del thread principal
             nikto_scan_model = NiktoScan(
@@ -610,7 +601,7 @@ class NiktoScanManager(_ScanManager):
             # IMPORTANTE: Extraer el ID antes de lanzar el thread
             scan_id = nikto_scan_model.id
 
-            logger.info(f"Escaneo Nikto {scan_id} creado, iniciando thread")
+            self.logger.info(f"Escaneo Nikto {scan_id} creado, iniciando thread")
             
             # Lanzar thread pasando SOLO el ID, no el objeto completo
             self.thread = threading.Thread(
@@ -621,13 +612,13 @@ class NiktoScanManager(_ScanManager):
             )
             self.thread.start()
 
-            logger.info(
+            self.logger.info(
                 f"Thread de escaneo Nikto {scan_id} iniciado exitosamente"
             )
             return scan_id
 
         except Exception as e:
-            logger.error(f"Error al iniciar tarea Nikto: {str(e)}", exc_info=True)
+            self.logger.error(f"Error al iniciar tarea Nikto: {str(e)}", exc_info=True)
             raise
 
     def get_scans_for_user(self) -> List:
@@ -635,9 +626,9 @@ class NiktoScanManager(_ScanManager):
         user_id = self.active_user.id
         
         try:
-            logger.info(f"Obteniendo escaneos Nikto para usuario {user_id}")
+            self.logger.info(f"Obteniendo escaneos Nikto para usuario {user_id}")
             scans = self.dbmanager.get_nikto_scans_by_user(user_id)
-            logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto para usuario {user_id}")
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto para usuario {user_id}")
             return scans
         except Exception as e:
             # Asegurar rollback antes de cualquier acceso adicional
@@ -646,7 +637,7 @@ class NiktoScanManager(_ScanManager):
             except:
                 pass
                 
-            logger.error(
+            self.logger.error(
                 f"Error al obtener escaneos Nikto para usuario {user_id}: {str(e)}",
                 exc_info=True,
             )
@@ -654,15 +645,15 @@ class NiktoScanManager(_ScanManager):
 
     def get_scan_by_id(self, id: int) -> Scan:
         try:
-            logger.info(f"Obteniendo escaneo Nikto con ID: {id}")
+            self.logger.info(f"Obteniendo escaneo Nikto con ID: {id}")
             scan = self.dbmanager.get_scan_by_id(id)
             if scan:
-                logger.info(f"Escaneo Nikto {id} obtenido exitosamente")
+                self.logger.info(f"Escaneo Nikto {id} obtenido exitosamente")
             else:
-                logger.warning(f"Escaneo Nikto {id} no encontrado")
+                self.logger.warning(f"Escaneo Nikto {id} no encontrado")
             return scan
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"Error al obtener escaneo Nikto {id}: {str(e)}", exc_info=True
             )
             raise

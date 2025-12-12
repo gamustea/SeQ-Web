@@ -1,792 +1,747 @@
+"""
+API REST para SecOps - Sistema de escaneo de seguridad
+Versión con autenticación y managers por usuario.
+"""
+
 import os
 import base64
 import time
-
-from src.persistence import UserDBManager, ScanDBManager
-from src.scanning.managers import NmapScanManager, NiktoScanManager
-from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
-from src.misc.logging import SecOpsLogger
-from src.model import Scan
+from functools import wraps
+from typing import Optional, Tuple
 
 from flask import send_file, request, jsonify, Flask
-from flask_cors import CORS  # ← AÑADE ESTO
+from flask_cors import CORS
 
-import ipaddress
-import itertools
+from src.persistence import UserDBManager
+from src.logic.tasking.managers import NmapScanManager, NiktoScanManager
+from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
+from src.misc.logging import SecOpsLogger
+from src.misc.validation import PortValidator, IPValidator
+from src.core.model import Scan, User
 
-# ... tus otros imports ...
+# Importar excepciones personalizadas
+from src.core.exceptions import (
+    AuthenticationError,
+    InvalidCredentialsError,
+    ValidationError,
+    MissingParameterError,
+    EntityNotFoundError,
+    ScanNotFoundError,
+    ScanExecutionError,
+    ReportGenerationError,
+    create_error_response,
+    ExceptionHandler
+)
+
+# Importar UserManager para autenticación
+from src.logic.userutilities import UserManager
+
+# ============================================================================
+# INICIALIZACIÓN DE LA APLICACIÓN
+# ============================================================================
 
 app = Flask(__name__)
-CORS(app)  # ← AÑADE ESTO (habilita CORS para todos los endpoints)
-
-# Inicialización
-USER = UserDBManager().get_user_by_id(1)
-NMAP_MANAGER = NmapScanManager(USER)
-NIKTO_MANAGER = NiktoScanManager(USER)
-PDF_CREATOR = None
+CORS(app)
 
 # Configurar logger
 logger_instance = SecOpsLogger(name="APIMain")
 logger = logger_instance.get_logger()
 
+# Manager de usuarios para autenticación
+USER_MANAGER = UserManager()
 
-def validar_puertos_nmap(puertos_str):
+# ============================================================================
+# UTILIDADES DE AUTENTICACIÓN Y USUARIO
+# ============================================================================
+
+
+def get_current_user_id() -> int:
+    return request.current_user_id # type: ignore
+
+def get_current_username() -> str:
+    return request.current_username # type: ignore
+
+def get_user_managers(user_id: int) -> Tuple[NmapScanManager, NiktoScanManager]:
     """
-    Valida que una cadena de puertos sea válida para Nmap y devuelve la lista expandida.
-
-    Reglas de validación:
-    - Puertos en rango 1-65535
-    - Puertos y rangos en orden ascendente
-    - Rangos válidos (inicio < fin)
-    - No solapamiento de rangos
-    - Formato: "80", "80,443", "1-1000", "80,443-8080,9000"
+    Crea managers de escaneo para un usuario específico.
 
     Args:
-        puertos_str (str): String con especificación de puertos
+        user: Usuario del ORM para el cual crear los managers
 
     Returns:
-        tuple: (bool, list, str) - (es_válido, lista_puertos, mensaje)
+        Tupla (NmapScanManager, NiktoScanManager) configurados para el usuario
     """
-
-    if not puertos_str or not isinstance(puertos_str, str):
-        return False, [], "El parámetro debe ser una cadena no vacía"
-
-    puertos_str = puertos_str.strip()
-
-    if not puertos_str:
-        return False, [], "La cadena de puertos está vacía"
-
-    segmentos = puertos_str.split(",")
-    ultimo_puerto = 0
-    lista_puertos = []  # Lista expandida de todos los puertos
-
-    for i, segmento in enumerate(segmentos):
-        segmento = segmento.strip()
-
-        if not segmento:
-            return False, [], f"Segmento vacío encontrado en la posición {i+1}"
-
-        if "-" in segmento:
-            partes = segmento.split("-")
-
-            # Rango desde 1: "-1000"
-            if segmento.startswith("-"):
-                if len(partes) != 2 or partes[0] != "":
-                    return False, [], f"Formato de rango incorrecto: '{segmento}'"
-
-                try:
-                    fin = int(partes[1])
-                except ValueError:
-                    return False, [], f"Puerto de fin no válido en rango: '{segmento}'"
-
-                if fin < 1 or fin > 65535:
-                    return False, [], f"Puerto de fin fuera de rango (1-65535): {fin}"
-
-                inicio = 1
-
-            # Rango hasta 65535: "1000-"
-            elif segmento.endswith("-"):
-                if len(partes) != 2 or partes[1] != "":
-                    return False, [], f"Formato de rango incorrecto: '{segmento}'"
-
-                try:
-                    inicio = int(partes[0])
-                except ValueError:
-                    return (
-                        False,
-                        [],
-                        f"Puerto de inicio no válido en rango: '{segmento}'",
-                    )
-
-                if inicio < 1 or inicio > 65535:
-                    return (
-                        False,
-                        [],
-                        f"Puerto de inicio fuera de rango (1-65535): {inicio}",
-                    )
-
-                fin = 65535
-
-            # Rango normal: "80-443"
-            else:
-                if len(partes) != 2:
-                    return (
-                        False,
-                        [],
-                        f"Formato de rango incorrecto (demasiados guiones): '{segmento}'",
-                    )
-
-                try:
-                    inicio = int(partes[0])
-                    fin = int(partes[1])
-                except ValueError:
-                    return False, [], f"Puertos no numéricos en rango: '{segmento}'"
-
-                if inicio < 1 or inicio > 65535:
-                    return (
-                        False,
-                        [],
-                        f"Puerto de inicio fuera de rango (1-65535): {inicio}",
-                    )
-
-                if fin < 1 or fin > 65535:
-                    return False, [], f"Puerto de fin fuera de rango (1-65535): {fin}"
-
-                if inicio >= fin:
-                    return (
-                        False,
-                        [],
-                        f"Rango inválido: el inicio ({inicio}) debe ser menor que el fin ({fin})",
-                    )
-
-            if inicio <= ultimo_puerto:
-                return (
-                    False,
-                    [],
-                    f"Los puertos no están en orden ascendente: {inicio} aparece después de {ultimo_puerto}",
-                )
-
-            # Expandir el rango y añadir a la lista
-            lista_puertos.extend(range(inicio, fin + 1))
-            ultimo_puerto = fin
-
-        else:
-            # Puerto individual
-            try:
-                puerto = int(segmento)
-            except ValueError:
-                return False, [], f"Puerto no numérico: '{segmento}'"
-
-            if puerto < 1 or puerto > 65535:
-                return False, [], f"Puerto fuera de rango (1-65535): {puerto}"
-
-            if puerto <= ultimo_puerto:
-                return (
-                    False,
-                    [],
-                    f"Los puertos no están en orden ascendente: {puerto} aparece después de {ultimo_puerto}",
-                )
-
-            # Añadir puerto individual a la lista
-            lista_puertos.append(puerto)
-            ultimo_puerto = puerto
-
-    return (
-        True,
-        lista_puertos,
-        f"Especificación válida con {len(lista_puertos)} puertos",
-    )
+    user_db = UserDBManager()
+    user = user_db.get_user_by_id(user_id)
+    nmap_manager = NmapScanManager(user)
+    nikto_manager = NiktoScanManager(user)
+    user_db.close_session()
+    return nmap_manager, nikto_manager
 
 
-def validar_ips_nmap(ips_str):
+# ============================================================================
+# DECORADOR DE AUTENTICACIÓN
+# ============================================================================
+
+def require_authentication(f):
     """
-    Valida que una cadena de IPs sea válida para Nmap y devuelve la lista expandida.
+    Decorador que verifica las credenciales del usuario en cada petición.
 
-    Formatos soportados:
-    - IP individual: "192.168.1.1"
-    - CIDR: "192.168.1.0/24"
-    - Rangos por octeto: "192.168.1.1-10" o "192.168.1-2.1-10"
-    - Lista separada por comas: "192.168.1.1,192.168.1.5"
-    - Wildcards: "192.168.1.*" (equivalente a 192.168.1.0-255)
+    Requiere headers:
+        - X-Username: Nombre de usuario
+        - X-Password: Contraseña del usuario
 
-    Args:
-        ips_str (str): String con especificación de IPs
-
-    Returns:
-        tuple: (bool, list, str) - (es_válido, lista_ips, mensaje)
+    El usuario autenticado se almacena en request.current_user y está
+    disponible durante toda la petición. Es un objeto User del ORM con
+    todos sus atributos (id, username, password, etc.)
     """
-
-    if not ips_str or not isinstance(ips_str, str):
-        return False, [], "El parámetro debe ser una cadena no vacía"
-
-    ips_str = ips_str.strip()
-
-    if not ips_str:
-        return False, [], "La cadena de IPs está vacía"
-
-    # Dividir por comas para procesar múltiples targets
-    segmentos = [s.strip() for s in ips_str.split(",")]
-
-    lista_ips = []
-
-    for segmento in segmentos:
-        if not segmento:
-            return False, [], "Segmento vacío encontrado"
-
-        # Caso 1: Notación CIDR (192.168.1.0/24)
-        if "/" in segmento:
-            try:
-                red = ipaddress.ip_network(segmento, strict=False)
-                # Expandir la red a todas las IPs
-                lista_ips.extend([str(ip) for ip in red.hosts()])
-                # Si es /32 o /31, hosts() puede estar vacío, incluir la IP de red
-                if not lista_ips or red.prefixlen >= 31:
-                    lista_ips.extend([str(ip) for ip in red])
-            except ValueError as e:
-                return False, [], f"Notación CIDR inválida '{segmento}': {str(e)}"
-
-        # Caso 2: Rangos por octeto o wildcards (192.168.1.1-10 o 192.168.1.*)
-        elif "-" in segmento or "*" in segmento:
-            try:
-                ips_expandidas = expandir_rango_octetos(segmento)
-                if ips_expandidas is None:
-                    return False, [], f"Formato de rango inválido: '{segmento}'"
-                lista_ips.extend(ips_expandidas)
-            except Exception as e:
-                return False, [], f"Error al procesar rango '{segmento}': {str(e)}"
-
-        # Caso 3: IP individual (192.168.1.1)
-        else:
-            try:
-                ip = ipaddress.ip_address(segmento)
-                lista_ips.append(str(ip))
-            except ValueError:
-                return False, [], f"Dirección IP inválida: '{segmento}'"
-
-    if not lista_ips:
-        return False, [], "No se generaron IPs válidas"
-
-    # Eliminar duplicados manteniendo el orden
-    lista_ips_unicas = list(dict.fromkeys(lista_ips))
-
-    return (
-        True,
-        lista_ips_unicas,
-        f"Especificación válida con {len(lista_ips_unicas)} IPs",
-    )
-
-
-def expandir_rango_octetos(rango_str):
-    """
-    Expande un rango de octetos al estilo Nmap.
-    Ejemplos:
-    - "192.168.1.1-10" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.1.10"]
-    - "192.168.1-2.1-5" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.2.5"]
-    - "192.168.1.*" -> ["192.168.1.0", "192.168.1.1", ..., "192.168.1.255"]
-    """
-
-    # Reemplazar wildcards por rangos completos
-    rango_str = rango_str.replace("*", "0-255")
-
-    # Dividir por puntos
-    octetos = rango_str.split(".")
-
-    if len(octetos) != 4:
-        return None
-
-    # Procesar cada octeto
-    rangos_octetos = []
-
-    for octeto in octetos:
-        if "-" in octeto:
-            # Es un rango: "1-10"
-            partes = octeto.split("-")
-            if len(partes) != 2:
-                return None
-
-            try:
-                inicio = int(partes[0])
-                fin = int(partes[1])
-            except ValueError:
-                return None
-
-            # Validar rango de octeto (0-255)
-            if inicio < 0 or inicio > 255 or fin < 0 or fin > 255:
-                return None
-
-            if inicio > fin:
-                return None
-
-            rangos_octetos.append(range(inicio, fin + 1))
-        else:
-            # Es un número fijo
-            try:
-                valor = int(octeto)
-            except ValueError:
-                return None
-
-            if valor < 0 or valor > 255:
-                return None
-
-            rangos_octetos.append([valor])
-
-    # Generar todas las combinaciones
-    lista_ips = []
-    for combinacion in itertools.product(*rangos_octetos):
-        ip_str = ".".join(map(str, combinacion))
-        # Validar que sea una IP válida
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
         try:
-            ipaddress.ip_address(ip_str)
-            lista_ips.append(ip_str)
-        except ValueError:
-            continue
+            # Obtener credenciales de los headers
+            username = request.headers.get("X-Username")
+            password = request.headers.get("X-Password")
 
-    return lista_ips if lista_ips else None
+            # Validar que existan ambos headers
+            if not username:
+                logger.warning("Intento de acceso sin header X-Username")
+                raise MissingParameterError("X-Username")
 
+            if not password:
+                logger.warning(f"Intento de acceso sin header X-Password para usuario: {username}")
+                raise MissingParameterError("X-Password")
+
+            # Verificar credenciales usando UserManager
+            is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
+            request.current_user_id = user_id # type: ignore
+            request.current_username = username # type: ignore
+
+            if not is_valid:
+                logger.warning(f"Credenciales inválidas para usuario: {username}")
+                raise InvalidCredentialsError()
+            
+            logger.info(f"Usuario autenticado: {username} (ID: {user_id})")
+
+            return f(*args, **kwargs)
+
+        except (MissingParameterError, InvalidCredentialsError) as e:
+            error_dict, status_code = create_error_response(e, include_debug_info=False)
+            return jsonify(error_dict), status_code
+        except Exception as e:
+            logger.error(f"Error en autenticación: {str(e)}", exc_info=True)
+            sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+            error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+            return jsonify(error_dict), status_code
+
+    return decorated_function
+
+
+# ============================================================================
+# FUNCIONES AUXILIARES
+# ============================================================================
 
 def build_pdf_creator(scan: Scan) -> PDFCreator:
-    # Generar el PDF según el tipo de escaneo
-    if scan.scan_type == "nmap":  # type: ignore
+    """
+    Construye el creador de PDF apropiado según el tipo de escaneo.
+
+    Args:
+        scan: Objeto Scan (Nmap o Nikto)
+
+    Returns:
+        PDFCreator configurado con la estrategia correcta
+
+    Raises:
+        ValidationError: Si el tipo de escaneo no es soportado
+    """
+    scan_type = scan.scan_type.lower() if hasattr(scan, "scan_type") else "unknown"
+
+    if scan_type == "nmap":
         strategy = NmapPrintingStrategy(scan=scan)
-    elif scan.scan_type == "nikto":  # type: ignore
+    elif scan_type == "nikto":
         strategy = NiktoPrintingStrategy(scan=scan)
     else:
-        logger.error(f"Tipo de escaneo no soportado: {scan.scan_type}")
-        return jsonify({"error": f"Tipo de escaneo no soportado: {scan.scan_type}"}), 400  # type: ignore
+        logger.error(f"Tipo de escaneo no soportado: {scan_type}")
+        raise ValidationError(
+            field="scan_type",
+            message=f"Tipo de escaneo '{scan_type}' no soportado",
+            expected="'nmap' o 'nikto'"
+        )
 
     return PDFCreator(strategy)
+
+
+def get_scan_by_id_for_user(
+    scan_id: int, 
+    nmap_manager: NmapScanManager, 
+    nikto_manager: NiktoScanManager
+) -> Tuple[Optional[Scan], str]:
+    """
+    Busca un escaneo por ID usando los managers del usuario.
+
+    Args:
+        scan_id: ID del escaneo a buscar
+        nmap_manager: Manager de Nmap del usuario
+        nikto_manager: Manager de Nikto del usuario
+
+    Returns:
+        Tupla (Scan, tipo) donde tipo es 'nmap' o 'nikto'. 
+        Retorna (None, '') si no se encuentra
+    """
+    # Buscar en Nmap
+    scan = nmap_manager.get_scan_by_id(scan_id)
+    if scan:
+        return scan, "nmap"
+
+    # Buscar en Nikto
+    scan = nikto_manager.get_scan_by_id(scan_id)
+    if scan:
+        return scan, "nikto"
+
+    return None, ""
 
 
 # ============================================================================
 # ENDPOINTS GENERALES
 # ============================================================================
 
-
 @app.route("/say-hello", methods=["GET"])
 def hello():
-    """Endpoint de prueba para verificar que la API está funcionando."""
-    logger.info("Endpoint /api/say-hello invocado")
-    return (
-        jsonify({"message": "You did it! You reached an endpoint!", "status": "ok"}),
-        200,
-    )
+    """
+    Endpoint de prueba para verificar que la API está funcionando.
+    No requiere autenticación.
+    """
+    logger.info("Endpoint /say-hello invocado")
+    return jsonify({
+        "message": "You did it! You reached an endpoint!", 
+        "status": "ok",
+        "version": "2.0-multiuser"
+    }), 200
 
 
 @app.route("/is-finished", methods=["GET"])
+@require_authentication
 def is_scan_finished():
+    """
+    Verifica si un escaneo ha finalizado.
+
+    Query Parameters:
+        id: ID del escaneo a verificar
+
+    Headers requeridos:
+        X-Username: Usuario autenticado
+        X-Password: Contraseña del usuario
+
+    Returns:
+        JSON indicando si el escaneo existe y si está finalizado
+    """
     try:
-        scan_id = int(request.args.get("id"))  # type: ignore
-        if not scan_id:
-            return (
-                jsonify({"message": f"No existe o no tienes acceso al id {scan_id}"}),
-                401,
+        # Obtener usuario autenticado
+        user_id = get_current_user_id()
+        nmap_manager, nikto_manager = get_user_managers(user_id)
+
+        # Obtener y validar el ID del escaneo
+        scan_id_str = request.args.get("id")
+
+        if not scan_id_str:
+            raise MissingParameterError("id")
+
+        try:
+            scan_id = int(scan_id_str)
+        except ValueError:
+            raise ValidationError(
+                field="id",
+                message="El ID debe ser un número entero",
+                value=scan_id_str
             )
 
-        # Intentar obtener el scan de Nmap
-        scan = NMAP_MANAGER.get_scan_by_id(scan_id)
-        manager = NMAP_MANAGER  # Usar el manager correcto
-        
-        # Si no existe en Nmap, buscar en Nikto
-        if not scan:
-            scan = NIKTO_MANAGER.get_scan_by_id(scan_id)
-            manager = NIKTO_MANAGER  # ← CRUCIAL: Cambiar al manager correcto
-            
-            if not scan:
-                return jsonify({
-                    "message": f"El escaneo con id {scan_id} no existe"
-                }), 404
+        # Buscar el escaneo usando los managers del usuario
+        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
 
-        # USAR EL MANAGER CORRECTO
+        if not scan or scan.user_id != user_id: #type: ignore
+            raise ScanNotFoundError(scan_id)
+
+        # Verificar si está finalizado usando el manager correcto
+        manager = nmap_manager if scan_type == "nmap" else nikto_manager
         scan_finished = manager.scan_is_finished(scan)
-        
+
         message = (
             f"El escaneo con id {scan_id} está terminado"
             if scan_finished
             else f"El escaneo con id {scan_id} no está terminado"
         )
 
-        return jsonify({"message": message, "existe": scan_finished})
-        
+        logger.info(f"Usuario {get_current_username()}: escaneo {scan_id} - {'finalizado' if scan_finished else 'en progreso'}")
+
+        return jsonify({
+            "message": message,
+            "scanId": scan_id,
+            "isFinished": scan_finished,
+            "scanType": scan_type
+        }), 200
+
+    except (MissingParameterError, ValidationError, ScanNotFoundError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
     except Exception as e:
         logger.error(f"Error en is-finished: {e}", exc_info=True)
-        return jsonify({"message": "Ha ocurrido un error interno del servidor"}), 500
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
 
 # ============================================================================
-# ENDPOINTS DE ESCANEO
+# ENDPOINTS DE ESCANEO NMAP
 # ============================================================================
-
 
 @app.route("/scans/nmap/start", methods=["POST"])
+@require_authentication
 def start_nmap_scan():
     """
-    Inicia un escaneo Nmap.
+    Inicia un escaneo Nmap para el usuario autenticado.
+
     Headers requeridos:
-    - host: Host o IP a escanear
-    - ports: Puertos a escanear (ej: "80,443" o "1-1000")
+        X-Target-Host: Host o IP a escanear (ej: "192.168.1.1", "192.168.1.0/24")
+        X-Target-Ports: Puertos a escanear (ej: "80,443", "1-1000")
+        X-Username: Usuario autenticado
+        X-Password: Contraseña del usuario
+
     Returns:
-    JSON con el ID del escaneo iniciado
+        JSON con el ID(s) del escaneo iniciado
     """
     try:
-        logger.info("Iniciando escaneo Nmap")
+        user_id = get_current_user_id()
+        nmap_manager, _ = get_user_managers(user_id)
+
         # Obtener parámetros de los headers
         host = request.headers.get("X-Target-Host")
         ports = request.headers.get("X-Target-Ports")
 
         # Validar parámetros requeridos
-        if not host or not ports:
-            logger.warning(
-                "Faltan parámetros requeridos en la solicitud de escaneo Nmap"
-            )
-            return (
-                jsonify(
-                    {
-                        "error": "Faltan cabeceras requeridas",
-                        "required_headers": ["X-Target-Host", "X-Target-Ports"],
-                    }
-                ),
-                400,
-            )
+        if not host:
+            raise MissingParameterError("X-Target-Host")
 
-        # Validar formato básico del host
+        if not ports:
+            raise MissingParameterError("X-Target-Ports")
+
+        # Validar formato del host
         if not host.strip():
-            logger.warning("Host vacío proporcionado")
-            return jsonify({"error": "El host no puede estar vacío"}), 400
+            raise ValidationError(
+                field="X-Target-Host",
+                message="El host no puede estar vacío"
+            )
 
-        # Validar formato básico de puertos
+        # Validar formato de puertos
         if not ports.strip():
-            logger.warning("Puertos vacíos proporcionados")
-            return jsonify({"error": "Los puertos no pueden estar vacíos"}), 400
-
-        valido, hosts, mensaje = validar_ips_nmap(host)
-
-        if not valido:
-            return (
-                jsonify({"error": "Error ingresando cabeceras", "message": mensaje}),
-                400,
+            raise ValidationError(
+                field="X-Target-Ports",
+                message="Los puertos no pueden estar vacíos"
             )
 
-        valido, puertos, mensaje = validar_puertos_nmap(ports)
-
+        # Validar formato de IP/host
+        valido, hosts, mensaje = IPValidator.validate(host)
         if not valido:
-            return (
-                jsonify({"error": "Error ingresando cabeceras", "message": mensaje}),
-                400,
+            raise ValidationError(
+                field="X-Target-Host",
+                message=mensaje,
+                value=host
             )
 
-        # Ejecutar el escaneo
-        ids = []
+        # Validar formato de puertos
+        valido, puertos, mensaje = PortValidator.validate(ports)
+        if not valido:
+            raise ValidationError(
+                field="X-Target-Ports",
+                message=mensaje,
+                value=ports
+            )
+
+        # Ejecutar el escaneo para cada host
+        scan_ids = []
         for target_host in hosts:
-            scan_id = NMAP_MANAGER.run_task(target_host, ports)
-            logger.info(
-                f"Escaneo Nmap iniciado correctamente con ID: {scan_id}, host: {target_host}, ports: {ports}"
-            )
-            ids.append(scan_id)
-            time.sleep(0.10)
+            try:
+                # Usar el manager del usuario autenticado
+                scan_id = nmap_manager.run_task(target_host, ports)
+                scan_ids.append(scan_id)
+                logger.info(
+                    f"Usuario {get_current_username()}: Escaneo Nmap ID={scan_id}, "
+                    f"host={target_host}, ports={ports}"
+                )
+                time.sleep(0.10)
+            except Exception as e:
+                logger.error(f"Error iniciando escaneo para {target_host}: {e}")
+                raise ScanExecutionError(
+                    scan_type="Nmap",
+                    target=target_host,
+                    reason=str(e)
+                )
 
-        return (
-            jsonify(
-                {
-                    "message": "Escaneo Nmap iniciado correctamente",
-                    "scanId": ids,
-                    "target": {"host": host, "ports": ports},
-                }
-            ),
-            201,
-        )
+        return jsonify({
+            "message": "Escaneo(s) Nmap iniciado(s) correctamente",
+            "scanIds": scan_ids,
+            "target": {
+                "hosts": hosts,
+                "ports": ports
+            },
+            "totalScans": len(scan_ids),
+            "user": get_current_username()
+        }), 201
 
+    except (MissingParameterError, ValidationError, ScanExecutionError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
     except Exception as e:
-        logger.error(f"Error al iniciar el escaneo Nmap: {str(e)}", exc_info=True)
-        return jsonify({"error": "Error al iniciar el escaneo", "details": str(e)}), 500
+        logger.error(f"Error al iniciar escaneo Nmap: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
 
+
+# ============================================================================
+# ENDPOINTS DE ESCANEO NIKTO
+# ============================================================================
 
 @app.route("/scans/nikto/start", methods=["POST"])
+@require_authentication
 def start_nikto_scan():
     """
-    Inicia un escaneo Nikto.
+    Inicia un escaneo Nikto para el usuario autenticado.
+
     Headers requeridos:
-    - target: URL objetivo del escaneo
+        X-Target: URL objetivo del escaneo (ej: "http://example.com")
+        X-Username: Usuario autenticado
+        X-Password: Contraseña del usuario
+
     Query Parameters opcionales:
-    - timeout: Tiempo máximo de ejecución en segundos (default: 180)
+        timeout: Tiempo máximo de ejecución en segundos (default: 180)
+
     Returns:
-    JSON con el ID del escaneo iniciado
+        JSON con el ID del escaneo iniciado
     """
     try:
-        logger.info("Iniciando escaneo Nikto")
+        # Obtener usuario autenticado
+        user_id = get_current_user_id()
+
+        # Crear manager específico para este usuario
+        _, nikto_manager = get_user_managers(user_id)
+
         # Obtener parámetros
         target = request.headers.get("X-Target")
         timeout = request.args.get("timeout", 180)
 
         # Validar target requerido
         if not target:
-            logger.warning("Falta la cabecera 'target' para iniciar escaneo Nikto")
-            return jsonify({"error": "Falta la cabecera requerida 'X-target'"}), 400
+            raise MissingParameterError("X-Target")
 
         # Validar que el target no esté vacío
         if not target.strip():
-            logger.warning("Target vacío proporcionado")
-            return jsonify({"error": "El target no puede estar vacío"}), 400
+            raise ValidationError(
+                field="X-Target",
+                message="El target no puede estar vacío"
+            )
 
         # Validar timeout
         try:
             timeout = int(timeout)
             if timeout <= 0:
-                logger.warning(f"Timeout inválido proporcionado: {timeout}")
-                return jsonify({"error": "El timeout debe ser un número positivo"}), 400
+                raise ValidationError(
+                    field="timeout",
+                    message="El timeout debe ser un número positivo",
+                    value=timeout
+                )
         except ValueError:
-            logger.warning(f"Formato de timeout inválido: {timeout}")
-            return (
-                jsonify({"error": "El timeout debe ser un número entero válido"}),
-                400,
+            raise ValidationError(
+                field="timeout",
+                message="El timeout debe ser un número entero válido",
+                value=timeout
             )
 
         # Ejecutar el escaneo
-        scan_id = NIKTO_MANAGER.run_task(target, timeout=timeout)
-        logger.info(
-            f"Escaneo Nikto iniciado correctamente con ID: {scan_id}, target: {target}, timeout: {timeout}"
-        )
+        try:
+            # Usar el manager del usuario autenticado
+            scan_id = nikto_manager.run_task(target, timeout=timeout)
+            logger.info(
+                f"Usuario {get_current_username}: Escaneo Nikto ID={scan_id}, "
+                f"target={target}, timeout={timeout}"
+            )
+        except Exception as e:
+            logger.error(f"Error ejecutando escaneo Nikto: {e}")
+            raise ScanExecutionError(
+                scan_type="Nikto",
+                target=target,
+                reason=str(e)
+            )
 
-        return (
-            jsonify(
-                {
-                    "message": "Escaneo Nikto iniciado correctamente",
-                    "scanId": scan_id,
-                    "target": target,
-                    "timeout": timeout,
-                }
-            ),
-            201,
-        )
+        return jsonify({
+            "message": "Escaneo Nikto iniciado correctamente",
+            "scanId": scan_id,
+            "target": target,
+            "timeout": timeout,
+            "user": get_current_username()
+        }), 201
 
+    except (MissingParameterError, ValidationError, ScanExecutionError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
     except Exception as e:
-        logger.error(f"Error al iniciar el escaneo Nikto: {str(e)}", exc_info=True)
-        return jsonify({"error": "Error al iniciar el escaneo", "details": str(e)}), 500
+        logger.error(f"Error al iniciar escaneo Nikto: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
 
 
 # ============================================================================
-# GENERAR PDFs
+# ENDPOINTS DE GENERACIÓN DE PDFs
 # ============================================================================
-
 
 @app.route("/scans/generate-pdf", methods=["GET"])
+@require_authentication
 def generate_pdf():
     """
-    Genera y descarga un PDF de un escaneo (Nmap o Nikto).
+    Genera y descarga un PDF de un escaneo del usuario autenticado.
+
     Query Parameters:
-    - id: ID del escaneo
+        id: ID del escaneo
+
+    Headers requeridos:
+        X-Username: Usuario autenticado
+        X-Password: Contraseña del usuario
 
     Returns:
-    Archivo PDF para descarga directa
+        Archivo PDF para descarga directa
     """
     try:
-        # Obtener el ID del query parameter
-        scan_id = request.args.get("id")
-        logger.info(f"Generando PDF para escaneo con ID: {scan_id}")
+        user_id = get_current_user_id()
+        nmap_manager, nikto_manager = get_user_managers(user_id)
 
-        # Validar que se proporcione el ID
-        if not scan_id:
-            logger.warning("Parámetro 'id' no proporcionado para generar PDF")
-            return jsonify({"error": "El parámetro 'id' es requerido"}), 400
+        scan_id_str = request.args.get("id")
 
-        # Validar formato del ID
+        if not scan_id_str:
+            raise MissingParameterError("id")
+
         try:
-            scan_id_int = int(scan_id)
+            scan_id = int(scan_id_str)
         except ValueError:
-            logger.warning(f"ID inválido proporcionado: {scan_id}")
-            return jsonify({"error": "El ID debe ser un número entero válido"}), 400
-
-        # Intentar obtener el escaneo primero como Nmap
-        scan = NMAP_MANAGER.get_scan_by_id(scan_id_int)
-        scan_type = "nmap"
-
-        # Si no existe en Nmap, buscar en Nikto
-        if not scan:
-            scan = NIKTO_MANAGER.get_scan_by_id(scan_id_int)
-            scan_type = "nikto"
-
-        # Validar que el escaneo existe
-        if not scan:
-            logger.warning(f"Escaneo con ID {scan_id} no encontrado en Nmap ni Nikto")
-            return (
-                jsonify({"error": f"No se encontró el escaneo con ID: {scan_id}"}),
-                404,
+            raise ValidationError(
+                field="id",
+                message="El ID debe ser un número entero válido",
+                value=scan_id_str
             )
 
-        escaneo_terminado = NIKTO_MANAGER.scan_is_finished(scan)
-        if not escaneo_terminado:
-            return (
-                jsonify({"error": f"El escaneo con el id {scan_id} no está terminado"}),
-                404,
+        logger.info(f"Usuario {get_current_username()} generando PDF para escaneo ID: {scan_id}")
+
+        # Buscar el escaneo usando los managers del usuario
+        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
+
+        # Validar que el escaneo exista y pertenezca al usuario
+        if not scan or scan.user_id != user_id: #type: ignore
+            raise ScanNotFoundError(scan_id)
+
+        # Verificar que el escaneo esté finalizado
+        manager = nmap_manager if scan_type == "nmap" else nikto_manager
+        if not manager.scan_is_finished(scan):
+            raise ValidationError(
+                field="scan_id",
+                message=f"El escaneo con ID {scan_id} no está finalizado aún",
+                value=scan_id
             )
 
-        # Verificar si el modelo tiene atributo scan_type y usarlo
-        if hasattr(scan, "scan_type"):
-            scan_type = scan.scan_type.lower()
-
-        logger.info(f"Escaneo identificado como tipo: {scan_type}")
-
-        PDF_CREATOR = build_pdf_creator(scan)
-        pdf_path = PDF_CREATOR.print_pdf()
+        # Generar el PDF
+        try:
+            pdf_creator = build_pdf_creator(scan)
+            pdf_path = pdf_creator.print_pdf()
+        except Exception as e:
+            logger.error(f"Error generando PDF: {e}")
+            raise ReportGenerationError(scan_id, str(e))
 
         # Validar que el archivo se creó correctamente
         if not pdf_path or not os.path.exists(pdf_path):
-            logger.error(f"Error al generar el archivo PDF para escaneo ID: {scan_id}")
-            return jsonify({"error": "Error al generar el archivo PDF"}), 500
+            raise ReportGenerationError(
+                scan_id,
+                "El archivo PDF no se generó correctamente"
+            )
 
-        logger.info(
-            f"PDF generado correctamente para escaneo {scan_type} ID: {scan_id}"
-        )
+        logger.info(f"Usuario {get_current_username()}: PDF generado - {pdf_path}")
 
         # Enviar el archivo PDF como respuesta
         return send_file(
             pdf_path,
             mimetype="application/pdf",
             as_attachment=True,
-            download_name=f"{scan_type}_scan_{scan_id}.pdf",
+            download_name=f"{scan_type}_scan_{scan_id}.pdf"
         )
 
+    except (MissingParameterError, ValidationError, ScanNotFoundError, ReportGenerationError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
     except Exception as e:
         logger.error(f"Error interno al generar PDF: {str(e)}", exc_info=True)
-        return jsonify({"error": "Error interno del servidor"}), 500
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
 
 
 @app.route("/scans/generate-pdf-base64", methods=["GET"])
+@require_authentication
 def generate_pdf_base64():
     """
-    Genera un PDF de un escaneo (Nmap o Nikto) y lo devuelve en base64.
-    Útil para mostrarlo directamente en el navegador.
+    Genera un PDF de un escaneo y lo devuelve en formato base64.
 
     Query Parameters:
-    - id: ID del escaneo
+        id: ID del escaneo
+
+    Headers requeridos:
+        X-Username: Usuario autenticado
+        X-Password: Contraseña del usuario
 
     Returns:
-    JSON con el PDF en base64 y metadata
+        JSON con el PDF en base64 y metadata
     """
     try:
-        # Obtener el ID del query parameter
-        scan_id = request.args.get("id")
-        logger.info(f"Generando PDF en base64 para escaneo con ID: {scan_id}")
+        # Obtener usuario autenticado
+        user_id = get_current_user_id()
+        nmap_manager, nikto_manager = get_user_managers(user_id)
 
-        if not scan_id:
-            logger.warning("Parámetro 'id' no proporcionado para generar PDF base64")
-            return jsonify({"error": "El parámetro 'id' es requerido"}), 400
+        # Obtener y validar el ID del escaneo
+        scan_id_str = request.args.get("id")
 
-        # Validar formato del ID
+        if not scan_id_str:
+            raise MissingParameterError("id")
+
         try:
-            scan_id_int = int(scan_id)
+            scan_id = int(scan_id_str)
         except ValueError:
-            logger.warning(f"ID inválido proporcionado: {scan_id}")
-            return jsonify({"error": "El ID debe ser un número entero válido"}), 400
-
-        # Intentar obtener el escaneo primero como Nmap
-        scan = NMAP_MANAGER.get_scan_by_id(scan_id_int)
-        scan_type = "nmap"
-
-        # Si no existe en Nmap, buscar en Nikto
-        if not scan:
-            scan = NIKTO_MANAGER.get_scan_by_id(scan_id_int)
-            scan_type = "nikto"
-
-        # Validar que el escaneo existe
-        if not scan:
-            logger.warning(
-                f"Escaneo con ID {scan_id} no encontrado en Nmap ni Nikto para PDF base64"
-            )
-            return (
-                jsonify({"error": f"No se encontró el escaneo con ID: {scan_id}"}),
-                404,
+            raise ValidationError(
+                field="id",
+                message="El ID debe ser un número entero válido",
+                value=scan_id_str
             )
 
-        # Verificar si el modelo tiene atributo scan_type y usarlo
-        if hasattr(scan, "scan_type"):
-            scan_type = scan.scan_type.lower()
+        logger.info(f"Usuario {get_current_username()} generando PDF base64 para escaneo ID: {scan_id}")
 
-        logger.info(f"Escaneo identificado como tipo: {scan_type}")
+        # Buscar el escaneo
+        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
 
-        PDF_CREATOR = build_pdf_creator(scan)
-        pdf_path = PDF_CREATOR.print_pdf()
+        if not scan or scan.user_id != user_id: #type: ignore
+            raise ScanNotFoundError(scan_id)
 
+        # Generar el PDF
+        try:
+            pdf_creator = build_pdf_creator(scan)
+            pdf_path = pdf_creator.print_pdf()
+        except Exception as e:
+            logger.error(f"Error generando PDF base64: {e}")
+            raise ReportGenerationError(scan_id, str(e))
+
+        # Validar que el archivo se creó
         if not pdf_path or not os.path.exists(pdf_path):
-            logger.error(
-                f"Error al generar el archivo PDF base64 para escaneo ID: {scan_id}"
+            raise ReportGenerationError(
+                scan_id,
+                "El archivo PDF no se generó correctamente"
             )
-            return jsonify({"error": "Error al generar el archivo PDF"}), 500
 
         # Leer el archivo y convertirlo a base64
         with open(pdf_path, "rb") as pdf_file:
             pdf_base64 = base64.b64encode(pdf_file.read()).decode("utf-8")
 
-        logger.info(
-            f"PDF base64 generado correctamente para escaneo {scan_type} ID: {scan_id}"
-        )
+        logger.info(f"Usuario {get_current_username()}: PDF base64 generado para escaneo {scan_id}")
 
-        return (
-            jsonify(
-                {
-                    "message": "PDF generado exitosamente",
-                    "scanId": scan_id,
-                    "scanType": scan_type,
-                    "filename": f"{scan_type}_scan_{scan_id}.pdf",
-                    "pdfBase64": pdf_base64,
-                    "contentType": "application/pdf",
-                }
-            ),
-            200,
-        )
+        return jsonify({
+            "message": "PDF generado exitosamente",
+            "scanId": scan_id,
+            "scanType": scan_type,
+            "filename": f"{scan_type}_scan_{scan_id}.pdf",
+            "pdfBase64": pdf_base64,
+            "contentType": "application/pdf",
+            "user": get_current_username()
+        }), 200
 
+    except (MissingParameterError, ValidationError, ScanNotFoundError, ReportGenerationError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
     except Exception as e:
         logger.error(f"Error interno al generar PDF base64: {str(e)}", exc_info=True)
-        return jsonify({"error": "Error interno del servidor", "details": str(e)}), 500
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
 
 
 # ============================================================================
-# GENERAR JSONs
+# ENDPOINTS DE CONSULTA DE RESULTADOS
 # ============================================================================
-
 
 @app.route("/scans/results", methods=["GET"])
+@require_authentication
 def retrieve_all_scans():
     """
-    Obtiene todos los escaneos del usuario (Nmap y Nikto).
+    Obtiene todos los escaneos del usuario autenticado.
 
-    Query Parameters (opcional):
-    - type: Tipo de escaneo ('nmap', 'nikto', o 'all'). Default: 'all'
+    Query Parameters opcionales:
+        type: Tipo de escaneo ('nmap', 'nikto', o 'all'). Default: 'all'
+
+    Headers requeridos:
+        X-Username: Usuario autenticado
+        X-Password: Contraseña del usuario
 
     Returns:
-    JSON con la lista de escaneos y sus resultados
+        JSON con la lista de escaneos del usuario
     """
     try:
+        scan_id = get_current_user_id()
+        nmap_manager, nikto_manager = get_user_managers(scan_id)
+
         scan_type = request.args.get("type", "all").lower()
-        logger.info(f"Obteniendo escaneos. Tipo: {scan_type}")
+        logger.info(f"Usuario {get_current_username()} obteniendo escaneos del tipo: {scan_type}")
 
         # Validar tipo de escaneo
         if scan_type not in ["nmap", "nikto", "all"]:
-            logger.warning(f"Tipo de escaneo inválido: {scan_type}")
-            return (
-                jsonify(
-                    {
-                        "error": "Tipo de escaneo inválido",
-                        "message": "Los tipos válidos son: 'nmap', 'nikto' o 'all'",
-                    }
-                ),
-                400,
+            raise ValidationError(
+                field="type",
+                message="Tipo de escaneo inválido",
+                value=scan_type,
+                expected="'nmap', 'nikto' o 'all'"
             )
 
         all_results = []
 
         # Obtener escaneos Nmap si aplica
         if scan_type in ["nmap", "all"]:
-            nmap_results = NMAP_MANAGER.get_scans_for_user()
-            formatted_nmap = [
-                {
-                    "id": result.id,
-                    "scanType": "nmap",
-                    "target": result.target,
-                    "targetedPorts": [
-                        f"{port.id}/{port.protocol}" for port in result.target_ports
-                    ],
-                    "startedAt": (
-                        result.started_at.isoformat()
-                        if hasattr(result.started_at, "isoformat")
-                        else str(result.started_at)
-                    ),
-                    "openPorts": [
-                        {
-                            "port": f"{open_port.port_id}/{open_port.port.protocol}",
-                            "reason": open_port.reason,
-                        }
-                        for open_port in result.open_ports_relation
-                    ],
-                    "totalOpenPorts": len(result.open_ports_relation),
-                }
-                for result in nmap_results
-            ]
-            all_results.extend(formatted_nmap)
-            logger.info(f"Se obtuvieron {len(formatted_nmap)} escaneos Nmap")
+            try:
+                # Obtener solo los escaneos de ESTE usuario
+                nmap_results = nmap_manager.get_scans_for_user()
+                formatted_nmap = [
+                    {
+                        "id": result.id,
+                        "scanType": "nmap",
+                        "target": result.target,
+                        "targetedPorts": [
+                            f"{port.id}/{port.protocol}" for port in result.target_ports
+                        ],
+                        "startedAt": (
+                            result.started_at.isoformat()
+                            if hasattr(result.started_at, "isoformat")
+                            else str(result.started_at)
+                        ),
+                        "openPorts": [
+                            {
+                                "port": f"{open_port.port_id}/{open_port.port.protocol}",
+                                "reason": open_port.reason
+                            }
+                            for open_port in result.open_ports_relation
+                        ],
+                        "totalOpenPorts": len(result.open_ports_relation)
+                    }
+                    for result in nmap_results
+                ]
+                all_results.extend(formatted_nmap)
+                logger.info(f"Usuario {get_current_username()}: {len(formatted_nmap)} escaneos Nmap")
+            except Exception as e:
+                logger.error(f"Error obteniendo escaneos Nmap: {str(e)}")
 
         # Obtener escaneos Nikto si aplica
         if scan_type in ["nikto", "all"]:
             try:
-                nikto_results = NIKTO_MANAGER.get_scans_for_user()
+                # Obtener solo los escaneos de ESTE usuario
+                nikto_results = nikto_manager.get_scans_for_user()
                 formatted_nikto = [
                     {
                         "id": result.id,
@@ -811,107 +766,98 @@ def retrieve_all_scans():
                             }
                             for incident in result.incidents
                         ],
-                        "totalIncidents": len(result.incidents),
+                        "totalIncidents": len(result.incidents)
                     }
                     for result in nikto_results
                 ]
                 all_results.extend(formatted_nikto)
-                logger.info(f"Se obtuvieron {len(formatted_nikto)} escaneos Nikto")
+                logger.info(f"Usuario {get_current_username()}: {len(formatted_nikto)} escaneos Nikto")
             except Exception as e:
-                logger.error(f"Error al obtener escaneos Nikto: {str(e)}")
+                logger.error(f"Error obteniendo escaneos Nikto: {str(e)}")
 
-        logger.info(f"Total de escaneos obtenidos: {len(all_results)}")
+        logger.info(f"Usuario {get_current_username()}: Total {len(all_results)} escaneos")
 
-        return (
-            jsonify(
-                {
-                    "message": "Escaneos obtenidos correctamente",
-                    "filter": scan_type,
-                    "count": len(all_results),
-                    "results": all_results,
-                }
-            ),
-            200,
-        )
+        return jsonify({
+            "message": "Escaneos obtenidos correctamente",
+            "filter": scan_type,
+            "count": len(all_results),
+            "results": all_results,
+            "user": get_current_username()
+        }), 200
 
+    except ValidationError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
     except Exception as e:
-        logger.error(f"Error al obtener los escaneos: {str(e)}", exc_info=True)
-        return (
-            jsonify({"error": "Error al obtener los escaneos", "details": str(e)}),
-            500,
-        )
+        logger.error(f"Error al obtener escaneos: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
 
 
 @app.route("/scans/results/<int:scan_id>", methods=["GET"])
-def retrieve_scan_by_id(scan_id):
+@require_authentication
+def retrieve_scan_by_id(scan_id: int):
     """
-    Obtiene un escaneo específico por ID (Nmap o Nikto).
+    Obtiene un escaneo específico del usuario autenticado.
 
-    Args:
-    scan_id: ID del escaneo
+    Path Parameters:
+        scan_id: ID del escaneo
+
+    Headers requeridos:
+        X-Username: Usuario autenticado
+        X-Password: Contraseña del usuario
 
     Returns:
-    JSON con los detalles del escaneo
+        JSON con los detalles del escaneo
     """
     try:
-        logger.info(f"Obteniendo escaneo con ID: {scan_id}")
+        # Obtener usuario autenticado
+        user_id = get_current_user_id()
 
-        # Intentar obtener el escaneo primero como Nmap
-        result = NMAP_MANAGER.get_scan_by_id(scan_id)
-        scan_type = "nmap"
+        # Crear managers para este usuario
+        nmap_manager, nikto_manager = get_user_managers(user_id)
 
-        # Si no existe en Nmap, buscar en Nikto
-        if not result:
-            result = NIKTO_MANAGER.get_scan_by_id(scan_id)
-            scan_type = "nikto"
+        logger.info(f"Usuario {get_current_username()} obteniendo escaneo ID: {scan_id}")
 
-        # Validar que el escaneo existe
-        if not result:
-            logger.warning(f"Escaneo con ID {scan_id} no encontrado en Nmap ni Nikto")
-            return (
-                jsonify({"error": f"No se encontró el escaneo con ID: {scan_id}"}),
-                404,
-            )
+        # Buscar el escaneo usando los managers del usuario
+        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
 
-        # Verificar si el modelo tiene atributo scan_type y usarlo
-        if hasattr(result, "scan_type"):
-            scan_type = result.scan_type.lower()
-
-        logger.info(f"Escaneo identificado como tipo: {scan_type}")
+        if not scan:
+            raise ScanNotFoundError(scan_id)
 
         # Formatear resultado según el tipo de escaneo
         if scan_type == "nmap":
             formatted_result = {
-                "id": result.id,
+                "id": scan.id,
                 "scanType": "nmap",
-                "target": result.target,
+                "target": scan.target,
                 "targetedPorts": [
-                    f"{port}/{port.protocol}" for port in result.target_ports
+                    f"{port.id}/{port.protocol}" for port in scan.target_ports
                 ],
                 "startedAt": (
-                    result.started_at.isoformat()
-                    if hasattr(result.started_at, "isoformat")
-                    else str(result.started_at)
+                    scan.started_at.isoformat()
+                    if hasattr(scan.started_at, "isoformat")
+                    else str(scan.started_at)
                 ),
                 "openPorts": [
                     {
-                        "port": f"{port.port}/{port.port.protocol}",
-                        "reason": port.reason,
+                        "port": f"{port.port_id}/{port.port.protocol}",
+                        "reason": port.reason
                     }
-                    for port in result.open_ports_relation
+                    for port in scan.open_ports_relation
                 ],
-                "totalOpenPorts": len(result.open_ports_relation),
+                "totalOpenPorts": len(scan.open_ports_relation)
             }
-
-        elif scan_type == "nikto":
+        else:  # nikto
             formatted_result = {
-                "id": result.id,
+                "id": scan.id,
                 "scanType": "nikto",
-                "target": result.target,
+                "target": scan.target,
                 "startedAt": (
-                    result.started_at.isoformat()
-                    if hasattr(result.started_at, "isoformat")
-                    else str(result.started_at)
+                    scan.started_at.isoformat()
+                    if hasattr(scan.started_at, "isoformat")
+                    else str(scan.started_at)
                 ),
                 "incidents": [
                     {
@@ -925,83 +871,63 @@ def retrieve_scan_by_id(scan_id):
                             else str(incident.discovered_at)
                         ),
                     }
-                    for incident in result.incidents
+                    for incident in scan.incidents
                 ],
-                "totalIncidents": len(result.incidents),
+                "totalIncidents": len(scan.incidents)
             }
 
-        else:
-            logger.error(f"Tipo de escaneo no soportado: {scan_type}")
-            return jsonify({"error": f"Tipo de escaneo no soportado: {scan_type}"}), 400
+        logger.info(f"Usuario {get_current_username()}: Escaneo {scan_type} ID {scan_id} obtenido")
 
-        logger.info(f"Escaneo {scan_type} con ID {scan_id} obtenido correctamente")
+        return jsonify({
+            "message": "Escaneo obtenido correctamente",
+            "result": formatted_result,
+            "user": get_current_username()
+        }), 200
 
-        return (
-            jsonify(
-                {
-                    "message": "Escaneo obtenido correctamente",
-                    "result": formatted_result,
-                }
-            ),
-            200,
-        )
-
+    except ScanNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
     except Exception as e:
-        logger.error(
-            f"Error al obtener el escaneo con ID {scan_id}: {str(e)}",
-            exc_info=True,
-        )
-        return jsonify({"error": "Error al obtener el escaneo", "details": str(e)}), 500
+        logger.error(f"Error al obtener escaneo ID {scan_id}: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
 
 
 # ============================================================================
 # MANEJO DE ERRORES GLOBALES
 # ============================================================================
 
-
 @app.errorhandler(404)
 def not_found(error):
     """Manejo de rutas no encontradas."""
     logger.warning(f"Endpoint no encontrado: {request.url}")
-    return (
-        jsonify(
-            {
-                "error": "Endpoint no encontrado",
-                "message": "La ruta solicitada no existe",
-            }
-        ),
-        404,
-    )
+    return jsonify({
+        "error": "Endpoint no encontrado",
+        "message": "La ruta solicitada no existe",
+        "path": request.path
+    }), 404
 
 
 @app.errorhandler(405)
 def method_not_allowed(error):
     """Manejo de métodos HTTP no permitidos."""
     logger.warning(f"Método no permitido: {request.method} en {request.url}")
-    return (
-        jsonify(
-            {
-                "error": "Método no permitido",
-                "message": "El método HTTP utilizado no está permitido para este endpoint",
-            }
-        ),
-        405,
-    )
+    return jsonify({
+        "error": "Método no permitido",
+        "message": f"El método {request.method} no está permitido para este endpoint",
+        "allowedMethods": list(error.valid_methods) if hasattr(error, 'valid_methods') else []
+    }), 405
 
 
 @app.errorhandler(500)
 def internal_error(error):
     """Manejo de errores internos del servidor."""
     logger.error(f"Error interno del servidor: {str(error)}", exc_info=True)
-    return (
-        jsonify(
-            {
-                "error": "Error interno del servidor",
-                "message": "Ha ocurrido un error inesperado",
-            }
-        ),
-        500,
-    )
+    return jsonify({
+        "error": "Error interno del servidor",
+        "message": "Ha ocurrido un error inesperado"
+    }), 500
 
 
 # ============================================================================
@@ -1009,26 +935,14 @@ def internal_error(error):
 # ============================================================================
 
 if __name__ == "__main__":
-    # Inicialización
-    try:
-        user_db = UserDBManager()
-        USER = user_db.get_user_by_id(1)
-        if USER:
-            # Obtener el ID inmediatamente para evitar lazy loading posterior
-            user_id = USER.id
-            logger.info(f"Usuario cargado: ID {user_id}")
-        else:
-            logger.error("No se pudo cargar el usuario con ID 1")
-            USER = None
-        user_db.close_session()
-    except Exception as e:
-        logger.error(f"Error al inicializar usuario: {e}")
-        USER = None
+    logger.info("=" * 80)
+    logger.info("Iniciando SecOps API v2.0 - Multiusuario")
+    logger.info("=" * 80)
+    logger.info("Características:")
+    logger.info("  - Autenticación por usuario (X-Username, X-Password)")
+    logger.info("  - Managers de escaneo por usuario")
+    logger.info("  - Manejo robusto de excepciones")
+    logger.info("  - Logs detallados por usuario")
+    logger.info("=" * 80)
 
-    if USER:
-        NMAP_MANAGER = NmapScanManager(USER)
-        NIKTO_MANAGER = NiktoScanManager(USER)
-    else:
-        logger.critical("No se pudieron inicializar los managers sin usuario válido")
-    logger.info("Iniciando aplicación Flask")
-    app.run(debug=True)
+    app.run(debug=True, host="0.0.0.0", port=5000)

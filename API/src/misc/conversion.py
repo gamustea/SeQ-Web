@@ -5,7 +5,7 @@ import xmltodict
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
-from src.model import NmapScan, NiktoScan
+from src.core.model import NmapScan, NiktoScan
 
 
 class JSONManager:
