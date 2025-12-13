@@ -102,7 +102,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(64), unique=True, nullable=False)
-    password = Column(String(128), nullable=False)
+    password_hash = Column(String(128), nullable=False)
+    password_salt = Column(String(128), nullable=False)
     person_id = Column(Integer, ForeignKey("Person.id"), nullable=False)
 
     # Relaciones

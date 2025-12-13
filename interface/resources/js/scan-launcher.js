@@ -144,7 +144,7 @@ async function checkScanStatus(scanId) {
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/is-finished?id=${scanId}`, {
+        const response = await fetch(`${API_BASE_URL}/scans/is-finished?id=${scanId}`, {
             headers: {
                 'X-Username': USERNAME,
                 'X-Password': PASSWORD

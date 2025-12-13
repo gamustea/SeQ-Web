@@ -65,6 +65,8 @@ class ErrorCode(Enum):
     INVALID_CREDENTIALS = 1602
     USER_NOT_FOUND = 1603
     TOKEN_EXPIRED = 1604
+    USER_ALREADY_EXISTS = 1605
+    UNBINDABLE_USER = 1606
 
     # Errores de parsing (1700-1799)
     PARSING_ERROR = 1700
@@ -552,6 +554,30 @@ class UserNotFoundError(AuthenticationError):
         )
 
 
+class UserBindingError(AuthenticationError):
+    """Error al vincular usuario con persona"""
+    default_code = ErrorCode.UNBINDABLE_USER
+
+    def __init__(self, username: str, email: str):
+        super().__init__(
+            message=f"No se pudo vincular el usuario '{username}' con una persona existente",
+            details={"username": username},
+            user_message=f"Error al crear el usuario debido a datos incompletos; no se tiene constancia de una persona con email {email}"
+        )
+
+
+class ExistingUserError(AuthenticationError):
+    """Usuario ya existe"""
+    default_code = ErrorCode.USER_ALREADY_EXISTS
+
+    def __init__(self, username: str):
+        super().__init__(
+            message=f"Usuario '{username}' ya existe",
+            details={"username": username},
+            user_message="El usuario ya existe."
+        )
+
+
 # ============================================================================
 # EXCEPCIONES DE PARSING
 # ============================================================================
@@ -795,6 +821,7 @@ __all__ = [
     'AuthorizationError',
     'InvalidCredentialsError',
     'UserNotFoundError',
+    'ExistingUserError',
 
     # Excepciones de parsing
     'ParsingError',

@@ -18,8 +18,6 @@ from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingSt
 from src.misc.logging import SecOpsLogger
 from src.misc.validation import PortValidator, IPValidator
 from src.core.model import Scan, User
-
-# Importar excepciones personalizadas
 from src.core.exceptions import (
     AuthenticationError,
     InvalidCredentialsError,
@@ -30,10 +28,11 @@ from src.core.exceptions import (
     ScanExecutionError,
     ReportGenerationError,
     create_error_response,
-    ExceptionHandler
+    ExceptionHandler,
+    ExistingUserError,
+    UserNotFoundError,
+    UserBindingError
 )
-
-# Importar UserManager para autenticación
 from src.logic.userutilities import UserManager
 
 # ============================================================================
@@ -43,11 +42,9 @@ from src.logic.userutilities import UserManager
 app = Flask(__name__)
 CORS(app)
 
-# Configurar logger
 logger_instance = SecOpsLogger(name="APIMain")
 logger = logger_instance.get_logger()
 
-# Manager de usuarios para autenticación
 USER_MANAGER = UserManager()
 
 # ============================================================================
@@ -218,7 +215,7 @@ def hello():
     }), 200
 
 
-@app.route("/is-finished", methods=["GET"])
+@app.route("/scans/is-finished", methods=["GET"])
 @require_authentication
 def is_scan_finished():
     """
@@ -288,6 +285,198 @@ def is_scan_finished():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+# ============================================================================
+# ENDPOINTS DE USUARIOS
+# ============================================================================
+
+@app.route("/users/sign-up", methods=["POST"])
+def sign_up_user():
+    """
+    Registra un nuevo usuario en el sistema.
+
+    Body Parameters (JSON):
+        username: Nombre de usuario
+        password: Contraseña del usuario
+        email: Email asociado a la persona
+    Returns:
+        JSON con los datos del usuario creado
+    """
+
+    try:
+        # Obtener credenciales de los headers
+        username = request.headers.get("X-Username")
+        password = request.headers.get("X-Password")
+        email = request.headers.get("X-Email")
+
+        # Validar parámetros requeridos
+        if not username:
+            raise MissingParameterError("X-Username")
+
+        if not password:
+            raise MissingParameterError("X-Password")
+
+        if not email:
+            raise MissingParameterError("X-Email")
+        
+        # Registrar el usuario usando UserManager
+        new_user = USER_MANAGER.sing_in_user(username, password, email)
+
+        logger.info(f"Nuevo usuario registrado: {username} (ID: {new_user.id})")
+
+        return jsonify({
+            "message": "Usuario registrado exitosamente",
+            "userId": new_user.id,
+            "username": new_user.username,
+            "email": email
+        }), 201
+
+    except (MissingParameterError, ExistingUserError, UserBindingError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en sign-up: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+@app.route("/users/sign-up-person", methods=["POST"])
+def sign_up_person():
+    """
+    Registra una nueva persona en el sistema.
+
+    Body Parameters (JSON):
+        X-First-Name: Nombre de la persona
+        X-Last-Name: Apellido de la persona
+        X-Email: Email de la persona
+    Returns:
+        JSON con los datos de la persona creada
+    """
+    try:
+        first_name = request.headers.get("X-First-Name")
+        last_name = request.headers.get("X-Last-Name")
+        email = request.headers.get("X-Email")
+
+        # Validar parámetros requeridos
+        if not first_name:
+            raise MissingParameterError("X-First-Name")
+
+        if not last_name:
+            raise MissingParameterError("X-Last-Name")
+
+        if not email:
+            raise MissingParameterError("X-Email")
+        
+        # Registrar la persona usando UserManager
+        new_person = USER_MANAGER.sign_in_person(first_name, last_name, email)
+
+        logger.info(f"Nueva persona registrada: {first_name} {last_name} (ID: {new_person.id})")
+
+        return jsonify({
+            "message": "Persona registrada exitosamente",
+            "personId": new_person.id,
+            "firstName": new_person.first_name,
+            "lastName": new_person.last_name,
+            "email": new_person.email
+        }), 201
+
+    except (MissingParameterError, ExistingUserError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en sign-up-person: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+@app.route("/users/check-credentials", methods=["GET"])
+def check_credentials():
+    """
+    Verifica si las credenciales enviadas son válidas.
+
+    Headers requeridos:
+        X-Username: Nombre de usuario
+        X-Password: Contraseña del usuario
+
+    Returns:
+        JSON indicando si las credenciales son válidas
+    """
+    try:
+        # Obtener credenciales de los headers
+        username = request.headers.get("X-Username")
+        password = request.headers.get("X-Password")
+
+        # Validar que existan ambos headers
+        if not username:
+            raise MissingParameterError("X-Username")
+
+        if not password:
+            raise MissingParameterError("X-Password")
+
+        # Verificar credenciales usando UserManager
+        is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
+
+        if not is_valid:
+            raise InvalidCredentialsError()
+
+        logger.info(f"Credenciales válidas para usuario: {username} (ID: {user_id})")
+
+        return jsonify({
+            "message": "Credenciales válidas",
+            "isValid": True,
+            "userId": user_id,
+            "username": username
+        }), 200
+
+    except (MissingParameterError, InvalidCredentialsError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en check-credentials: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+@app.route("/users/change-password", methods=["PUT"])
+@require_authentication
+def change_password():
+    """
+    Cambia la contraseña del usuario autenticado.
+
+    Headers requeridos:
+        X-New-Password: Nueva contraseña
+
+    Returns:
+        JSON confirmando el cambio de contraseña
+    """
+    try:
+        user_id = get_current_user_id()
+        username = get_current_username()
+
+        new_password = request.headers.get("X-New-Password")
+
+        if not new_password:
+            raise MissingParameterError("X-New-Password")
+
+        # Cambiar la contraseña
+        USER_MANAGER.update_user_password(user_id, new_password)
+
+        logger.info(f"Usuario {username} (ID: {user_id}) cambió su contraseña")
+
+        return jsonify({
+            "message": "Contraseña cambiada exitosamente",
+            "userId": user_id,
+            "username": username
+        }), 200
+
+    except (MissingParameterError, InvalidCredentialsError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en change-password: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
 
 # ============================================================================
 # ENDPOINTS DE ESCANEO NMAP

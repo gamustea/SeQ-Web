@@ -356,6 +356,20 @@ class UserDBManager(DBManager):
             self.logger.error(f"Error al obtener User por username: {err}")
             raise
 
+    def get_person_by_email(self, email: str) -> Optional[Person]:
+        self._check_session()
+        try:
+            person = (
+                self.session.query(Person).filter(Person.email == email).one_or_none()
+            )
+            self.logger.info(
+                f"Se obtuvo el Person con email '{email}' de la base de datos."
+            )
+            return person
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error al obtener Person por email: {err}")
+            raise
+
     def update_person(self, person: Person) -> None:
         self._check_session()
         try:
@@ -387,7 +401,7 @@ class UserDBManager(DBManager):
             )
             if existing_user:
                 existing_user.username = user.username
-                existing_user.password = user.password
+                existing_user.password_hash = user.password_hash
                 self._safe_commit()
                 self.logger.info(
                     f"Se actualizó la información del User con ID {user.id}."

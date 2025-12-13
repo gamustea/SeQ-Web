@@ -1,11 +1,13 @@
 
+from src.logic.secrets import Encoder
 from src.logic.userutilities import UserManager
 
-print("Probando UserManager...")
-user_manager = UserManager()
-print("Verificando credenciales para usuario 'testuser' con contraseña 'password123'...")
-is_valid = user_manager.verify_credentials("testuser", "password123")
-print(f"¿Credenciales válidas? {is_valid}")
-print("Verificando credenciales para usuario 'root' con contraseña 'root'...")
-is_valid = user_manager.verify_credentials("root", "root")
-print(f"¿Credenciales válidas? {is_valid}")
+manager = UserManager()
+
+manager.sign_in_person(
+    first_name="Gabriel",
+    last_name="Musteata",
+    email="gmiganescu@gmail.com"
+)
+
+manager.sing_in_user("gmusteata", "06No2004", "gmiganescu@gmail.com")
