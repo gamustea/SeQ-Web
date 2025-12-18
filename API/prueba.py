@@ -1,13 +1,11 @@
 
-from src.logic.secrets import Encoder
-from src.logic.userutilities import UserManager
+from src.misc.configread import ConfigReader
 
-manager = UserManager()
-
-manager.sign_in_person(
-    first_name="Gabriel",
-    last_name="Musteata",
-    email="gmiganescu@gmail.com"
-)
-
-manager.sing_in_user("gmusteata", "06No2004", "gmiganescu@gmail.com")
+print("Cargando configuración OAuth desde SecConfig.json...")
+config_reader = ConfigReader()
+oauth_configs = config_reader.get_oauth_config()
+if oauth_configs:
+    print("Configuración OAuth cargada correctamente.")
+    print(oauth_configs)
+else:
+    print("No se encontró configuración OAuth en SecConfig.json.")

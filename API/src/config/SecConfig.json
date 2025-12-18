@@ -1,4 +1,10 @@
 {
+    "oauth": {
+        "access_token_expiry_minutes": 15,
+        "refresh_token_expiry_days": 30,
+        "jwt_secret_key": "tu-clave-secreta-super-segura-cambiar-en-produccion",
+        "jwt_algorithm": "HS256"
+    },
     "directories": {
         "tempdir": "/var/tmp/secapp",
         "logdir": "API/log",

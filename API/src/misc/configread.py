@@ -46,3 +46,19 @@ class ConfigReader:
             raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
         
         return directories[dir_key]
+    
+    def get_oauth_config(self) -> tuple[float, float, str, str]:
+        """
+        Obtiene la configuración relacionada con OAuth desde el archivo de configuración.
+        
+        Args:
+            key: Clave de la configuración OAuth a obtener.
+        Returns:
+            tuple: Valores de configuración (access_token_expiry_minutes, refresh_token_expiry_days, jwt_secret_key, jwt_algorithm)
+        """
+        configs = self.read_configs()
+        oauth_configs = configs.get("oauth", {})
+        return (float(oauth_configs["access_token_expiry_minutes"]),
+                float(oauth_configs["refresh_token_expiry_days"]),
+                oauth_configs["jwt_secret_key"],
+                oauth_configs["jwt_algorithm"])

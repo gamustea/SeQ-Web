@@ -1,6 +1,8 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Text
 from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy import Boolean, Numeric, Enum as SQLEnum
+from enum import Enum
 
 
 Base = declarative_base()
@@ -109,6 +111,9 @@ class User(Base):
     # Relaciones
     person = relationship("Person", back_populates="user")
     scans = relationship("Scan", back_populates="user", cascade="all, delete-orphan")
+
+    tokens = relationship("AccessToken", back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
     def __str__(self):
         return f"User(id={self.id}, username='{self.username}', person_id={self.person_id})"
@@ -543,3 +548,50 @@ class OpenVASScan(Scan):
 
     def __repr__(self):
         return f"<OpenVASScan(id={self.id}, target='{self.target}')>"
+
+
+class AccessToken(Base):
+    """
+    Almacena tokens de acceso OAuth 2.0 emitidos a usuarios.
+    """
+    __tablename__ = "AccessToken"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String(512), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    revoked = Column(Integer, default=0)  # 0=activo, 1=revocado
+    
+    # Relación con User
+    user = relationship("User", back_populates="tokens")
+    
+    def is_valid(self) -> bool:
+        """Verifica si el token es válido (no revocado y no expirado)"""
+        return not self.revoked and datetime.utcnow() < self.expires_at #type: ignore  
+    
+    def __str__(self):
+        return f"AccessToken(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})"
+
+
+class RefreshToken(Base):
+    """
+    Almacena tokens de refresco para renovar access tokens.
+    """
+    __tablename__ = "RefreshToken"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String(512), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    revoked = Column(Integer, default=0)
+    
+    user = relationship("User", back_populates="refresh_tokens")
+    
+    def is_valid(self) -> bool:
+        return not self.revoked and datetime.utcnow() < self.expires_at #type: ignore   
+    
+    def __str__(self):
+        return f"RefreshToken(id={self.id}, user_id={self.user_id})"
+
