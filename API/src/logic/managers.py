@@ -272,7 +272,7 @@ def assign_severity_to_nikto_incident(incident):
     incident.severity = "MEDIUM"
 
 
-def initialize_engine(database_url: str = None):
+def initialize_engine(database_url: Optional[str] = None): 
     """
     Inicializa el engine y el session factory una sola vez.
     Debe ser llamado al inicio de la aplicación.
@@ -327,7 +327,7 @@ class BaseManager:
             self.session = session
             self._owns_session = False
         else:
-            self.session = _SESSION_FACTORY()
+            self.session = _SESSION_FACTORY() # type: ignore
             self._owns_session = True
         
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
@@ -342,7 +342,7 @@ class BaseManager:
         if self._owns_session and self.session is not None:
             try:
                 self.session.close()
-                _SESSION_FACTORY.remove()
+                _SESSION_FACTORY.remove() # type: ignore
             except Exception as e:
                 self.logger.warning(f"Error al cerrar sesión: {e}")
     
@@ -403,10 +403,7 @@ class ScanManager(BaseManager, ABC):
         """Verifica si un escaneo ha finalizado"""
         try:
             self._check_session()
-            
-            # Verificar existencia
-            self.logger.debug(f"Verificando estado de escaneo {scan_id}")
-            self.logger.debug(f"Existe: {self._scan_exists(scan_id)}")
+
             if not self._scan_exists(scan_id):
                 self.logger.warning(f"Escaneo {scan_id} no existe")
                 return None
@@ -433,11 +430,9 @@ class ScanManager(BaseManager, ABC):
     def _scan_exists(self, scan_id: int) -> bool:
         """Verifica si existe un escaneo"""
         self._check_session()
-        print(f"Verificando existencia de escaneo con ID {scan_id} (parametro)")
         numero_de_filas = self.session.query(Scan).filter(
             Scan.id == scan_id
         ).count()
-        print(f"Número de filas encontradas para scan_id {scan_id}: {numero_de_filas}")
         return numero_de_filas > 0
 
 
@@ -546,9 +541,9 @@ class NmapScanManager(ScanManager):
             ).one_or_none()
             
             if scan:
-                self.logger.info(f"Escaneo {scan_id} encontrado")
+                self.logger.info(f"Escaneo de nmap {scan_id} encontrado")
             else:
-                self.logger.warning(f"Escaneo {scan_id} no encontrado")
+                self.logger.warning(f"Escaneo de nmap {scan_id} no encontrado")
             
             return scan
         
@@ -810,9 +805,9 @@ class NiktoScanManager(ScanManager):
             ).one_or_none()
             
             if scan:
-                self.logger.info(f"Escaneo {scan_id} encontrado")
+                self.logger.info(f"Escaneo de Nikto {scan_id} encontrado")
             else:
-                self.logger.warning(f"Escaneo {scan_id} no encontrado")
+                self.logger.warning(f"Escaneo de Nikto {scan_id} no encontrado")
             
             return scan
         
