@@ -286,7 +286,7 @@ def oauth_token():
                 "error_description": "Request body must be JSON"
             }), 400
         
-        grant_type = data.get("X-Grant-Type")
+        grant_type = data.get("X-Grant-ype")
         
         if grant_type == "password":
             # Password Grant Flow
