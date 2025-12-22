@@ -1,39 +1,47 @@
 
+# Standard library
+import secrets
 import threading
-
-from datetime import datetime
-from typing import Dict, Optional, List
-from abc import abstractmethod, ABC
-
-from src.logic.tasking.tasks import NmapScanTask, NiktoScanTask, _Task
-from src.core.model import NmapScan, User, NiktoScan, NiktoIncident, Scan
-from src.misc.conversion import JSONManager
-from src.misc.logging import SecOpsLogger
-
-from sqlalchemy.orm import Session, scoped_session, sessionmaker
-from sqlalchemy import create_engine
-from sqlalchemy.exc import SQLAlchemyError
-from typing import Optional
 import urllib.parse
-from src.misc.logging import SecOpsLogger
-from src.misc.configread import ConfigReader
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
+from typing import Dict, Optional, List, Tuple
 
-from typing import Optional, List
+# Third party
+import jwt
+
+# SQLAlchemy
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
-from src.core.model import User, Person
+from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from datetime import datetime
-from typing import Dict, Optional, List
-from sqlalchemy import text
-from src.logic.tasking.tasks import NmapScanTask, _Task
-from src.core.model import NmapScan, User, Port, FinishedScan, OpenPort
-from src.misc.conversion import JSONManager
-
-from typing import Optional, Tuple
-from sqlalchemy.exc import SQLAlchemyError
-from src.core.model import User, Person
-from src.logic.secrets import Encoder
+# Local imports
 from src.core.exceptions import ExistingUserError, UserBindingError
+from src.core.model import (
+    AccessToken,
+    FinishedScan,
+    NiktoIncident,
+    NiktoScan,
+    NmapScan,
+    OpenPort,
+    Person,
+    Port,
+    RefreshToken,
+    Scan,
+    User,
+)
+from src.logic.secrets import Encoder
+from src.logic.tasking.tasks import NmapScanTask, NiktoScanTask, _Task, TaskStatus
+from src.misc.configread import ConfigReader
+from src.misc.conversion import JSONManager
+from src.misc.logging import SecOpsLogger
+
+
+config_reader = ConfigReader()
+(ACCESS_TOKEN_EXPIRE_MINUTES, 
+ REFRESH_TOKEN_EXPIRE_DAYS, 
+ JWT_SECRET_KEY, 
+ JWT_ALGORITHM) = config_reader.get_oauth_config()
 
 
 _ENGINE = None
@@ -388,6 +396,10 @@ class ScanManager(BaseManager, ABC):
     Clase base para gestores de escaneos.
     Define la interfaz común para todos los gestores de escaneos.
     """
+    def __init__(self, user: User, session: Optional[Session] = None):
+        super().__init__(session)
+        self.active_user = user
+        self.running_tasks: Dict[int, _Task] = {}
     
     @abstractmethod
     def run_scan(self, *args, **kwargs) -> int:
@@ -435,6 +447,20 @@ class ScanManager(BaseManager, ABC):
         ).count()
         return numero_de_filas > 0
 
+    def get_scan_status(self, scan_id: int) -> Optional[str]:
+        """Obtiene el estado de un escaneo en ejecución"""
+        if scan_id in self.running_tasks:
+            status = self.running_tasks[scan_id].status
+            self.logger.debug(f"Estado de escaneo {scan_id}: {status}")
+            return str(status)
+        
+        if self.is_scan_finished(scan_id):
+            self.logger.debug(f"Escaneo {scan_id} está COMPLETADO")
+            return str(TaskStatus.COMPLETED)
+        
+        self.logger.warning(f"Escaneo {scan_id} no está en ejecución")
+        return None
+
 
 class NmapScanManager(ScanManager):
     """
@@ -443,9 +469,7 @@ class NmapScanManager(ScanManager):
     """
     
     def __init__(self, user: User, session=None):
-        super().__init__(session)
-        self.running_tasks: Dict[int, _Task] = {}
-        self.active_user = user
+        super().__init__(user, session)
         self.logger.info(f"NmapScanManager inicializado para usuario: {user.id}")
     
     # =================================================================
@@ -462,8 +486,8 @@ class NmapScanManager(ScanManager):
         try:
             # Validar que no haya escaneo duplicado
             if any(task.target == target_host for task in self.running_tasks.values() 
-                   if hasattr(task, 'target')):
-                raise Exception(f"A scan is already running for target {target_host}")
+                if hasattr(task, 'target')):
+                    raise Exception(f"A scan is already running for target {target_host}")
             
             self.logger.info(f"Creando nuevo escaneo Nmap para {target_host}")
             
@@ -506,7 +530,6 @@ class NmapScanManager(ScanManager):
         self.logger.warning(f"Escaneo {scan_id} no está en ejecución")
         return None
 
-    
     # =================================================================
     # MÉTODOS DE PERSISTENCIA (integrados en el mismo manager)
     # =================================================================
@@ -537,7 +560,7 @@ class NmapScanManager(ScanManager):
             self.logger.info(f"Obteniendo escaneo Nmap {scan_id}")
             
             scan = self.session.query(NmapScan).filter(
-                NmapScan.id == scan_id
+                NmapScan.id == scan_id and NmapScan.user_id == self.active_user.id
             ).one_or_none()
             
             if scan:
@@ -609,7 +632,6 @@ class NmapScanManager(ScanManager):
             
             # Procesar y guardar resultados
             thread_manager._save_scan_results(scan, task.results) # type: ignore
-            
             thread_manager.logger.info(f"Escaneo {scan_id} guardado exitosamente")
         
         except Exception as e:
@@ -619,7 +641,6 @@ class NmapScanManager(ScanManager):
             try:
                 error_scan = thread_manager.get_scan_by_id(scan_id)
                 if error_scan:
-                    error_scan.status = "error"
                     error_scan.ended_at = datetime.now()
                     thread_manager.session.add(error_scan)
                     thread_manager._safe_commit()
@@ -708,9 +729,7 @@ class NiktoScanManager(ScanManager):
     """
     
     def __init__(self, user: User, session=None):
-        super().__init__(session)
-        self.running_tasks: Dict[int, _Task] = {}
-        self.active_user = user
+        super().__init__(user, session)
         self.logger.info(f"NiktoScanManager inicializado para usuario: {user.id}")
     
     # =================================================================
@@ -882,7 +901,6 @@ class NiktoScanManager(ScanManager):
             try:
                 error_scan = thread_manager.get_scan_by_id(scan_id)
                 if error_scan:
-                    error_scan.status = "error"
                     error_scan.ended_at = datetime.now()
                     thread_manager.session.add(error_scan)
                     thread_manager._safe_commit()
@@ -1498,3 +1516,143 @@ class UserManager(BaseManager):
             self._safe_rollback()
             self.logger.error(f"Error creando persona: {err}")
             raise
+
+
+class OAuthTokenManager(BaseManager):
+    """Gestor de tokens OAuth 2.0 usando JWT"""
+    
+    def create_access_token(self, user_id: int, username: str) -> str:
+        """Crea un JWT access token"""
+        expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        
+        payload = {
+            "sub": str(user_id),  # subject (user ID)
+            "username": username,
+            "exp": expires_at,  # expiration time
+            "iat": datetime.utcnow(),  # issued at
+            "type": "access"
+        }
+        
+        token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        
+        # Guardar en DB
+        access_token_record = AccessToken(
+            token=token,
+            user_id=user_id,
+            expires_at=expires_at
+        )
+        self.session.add(access_token_record)
+        self._safe_commit()
+        
+        return token
+    
+    def create_refresh_token(self, user_id: int) -> str:
+        """Crea un refresh token opaco (no JWT)"""
+        token = secrets.token_urlsafe(64)
+        expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        
+        refresh_token_record = RefreshToken(
+            token=token,
+            user_id=user_id,
+            expires_at=expires_at
+        )
+        self.session.add(refresh_token_record)
+        self._safe_commit()
+        
+        return token
+    
+    def verify_access_token(self, token: str) -> Optional[dict]:
+        """
+        Verifica y decodifica un access token.
+        Returns: Payload del token si es válido, None si no lo es
+        """
+        try:
+            # Decodificar JWT
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            
+            # Verificar tipo
+            if payload.get("type") != "access":
+                return None
+            
+            # Verificar si está revocado en DB
+            token_record = self.session.query(AccessToken).filter(
+                AccessToken.token == token
+            ).one_or_none()
+            
+            if not token_record or not token_record.is_valid():
+                return None
+            
+            return payload
+        
+        except jwt.ExpiredSignatureError:
+            return None  # Token expirado
+        except jwt.InvalidTokenError:
+            return None  # Token inválido
+        except Exception as e:
+            return None
+    
+    def verify_refresh_token(self, token: str) -> Optional[int]:
+        """
+        Verifica un refresh token.
+        Returns: user_id si es válido, None si no lo es
+        """
+        try:
+            token_record = self.session.query(RefreshToken).filter(
+                RefreshToken.token == token
+            ).one_or_none()
+            
+            if not token_record or not token_record.is_valid():
+                return None
+            
+            return token_record.user_id # type: ignore
+        
+        except Exception:
+            return None
+    
+    def revoke_access_token(self, token: str) -> bool:
+        """Revoca un access token"""
+        try:
+            token_record = self.session.query(AccessToken).filter(
+                AccessToken.token == token
+            ).one_or_none()
+            
+            if token_record:
+                token_record.revoked = 1 # type: ignore
+                self._safe_commit()
+                return True
+            return False
+        except Exception:
+            return False
+    
+    def revoke_all_user_tokens(self, user_id: int) -> None:
+        """Revoca todos los tokens de un usuario"""
+        try:
+            self.session.query(AccessToken).filter(
+                AccessToken.user_id == user_id
+            ).update({"revoked": 1})
+            
+            self.session.query(RefreshToken).filter(
+                RefreshToken.user_id == user_id
+            ).update({"revoked": 1})
+            
+            self._safe_commit()
+        except Exception as e:
+            self._safe_rollback()
+            raise
+    
+    def cleanup_expired_tokens(self) -> None:
+        """Elimina tokens expirados de la DB (ejecutar periódicamente)"""
+        try:
+            now = datetime.utcnow()
+            
+            self.session.query(AccessToken).filter(
+                AccessToken.expires_at < now
+            ).delete()
+            
+            self.session.query(RefreshToken).filter(
+                RefreshToken.expires_at < now
+            ).delete()
+            
+            self._safe_commit()
+        except Exception:
+            self._safe_rollback()

@@ -156,6 +156,7 @@ class Scan(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     target = Column(String(255), nullable=False)
     started_at = Column(DateTime, nullable=False, default=datetime.now())
+    status = Column(String(20), nullable=False, default="pending")
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type = Column(String(50))
 

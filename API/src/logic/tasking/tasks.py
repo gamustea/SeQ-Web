@@ -18,13 +18,16 @@ from src.misc.directorychecker import DirectoryChecker
 class TaskStatus(Enum):
     """
     Enum que representa los diferentes estados en los que puede estar una tarea de escaneo.
-    Se usa para controlar el ciclo de vida y el progreso del escaneo de forma consistente.
     """
-    NOT_STARTED = auto()     # La tarea todavía no ha empezado su ejecución.
-    RUNNING = auto()         # La tarea está actualmente en ejecución.
-    COMPLETED = auto()       # La tarea terminó exitosamente.
-    FAILED = auto()          # La tarea terminó con un error.
-    CANCELLED = auto()       # La tarea fue cancelada por el usuario o el sistema.
+    PENDING = "pending"       # Esperando para iniciar
+    RUNNING = "running"       # En ejecución activa
+    COMPLETED = "completed"   # Completado exitosamente
+    FAILED = "failed"         # Falló con error
+    CANCELLED = "cancelled"   # Cancelado por usuario/sistema
+    TIMEOUT = "timeout"       # Excedió tiempo límite
+    
+    def __str__(self):
+        return self.value
 
 
 class _Task(ABC):
@@ -39,24 +42,18 @@ class _Task(ABC):
     """
 
     def __init__(self, target: str, timeout: int = 20):
-        """
-        Inicializa la tarea de escaneo con el objetivo (host o dominio) a escanear.
-
-        Args:
-            target (str): Dirección IP, rango o dominio a escanear.
-        """
         self.timeout = timeout
-        self.status = TaskStatus.NOT_STARTED  # Estado inicial: no iniciado
-        self.results: Optional[Any]   # Resultados estructurados tras finalización
-        self.target: str = target             # Objetivo del escaneo
-        self.config_reader = ConfigReader()  # Para leer configuraciones externas
-        self.logger = SecOpsLogger(name=__name__).get_logger()  # Logger para eventos e info
-        self.progress: int = 0                # Progreso del escaneo (0-100%)
-        self._proc: Optional[subprocess.Popen] = None  # Proceso externo que ejecuta el escaneo
-        self._thread: Optional[threading.Thread] = None  # Hilo para lectura de salida del proceso
-        self._lock = threading.Lock()         # Lock para sincronización de progreso
-        self._finished = threading.Event()    # Evento que indica finalización de lectura de salida
-        self._output_file: Optional[Path] = None  # Archivo donde se guardan resultados (XML, etc)
+        self.status = TaskStatus.PENDING  # ✅ Cambiar de NOT_STARTED a PENDING
+        self.results: Optional[Any] = None
+        self.target: str = target
+        self.config_reader = ConfigReader()
+        self.logger = SecOpsLogger(name=__name__).get_logger()
+        self.progress: int = 0
+        self._proc: Optional[subprocess.Popen] = None
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._finished = threading.Event()
+        self._output_file: Optional[Path] = None
 
     @abstractmethod
     def _build_command(self) -> List[str]:
@@ -114,28 +111,19 @@ class _Task(ABC):
             if prog != -1:
                 with self._lock:
                     self.progress = prog
-        # Indica que ya terminó la lectura completa
+        
         self._finished.set()
 
     def scan(self) -> None:
-        """
-        Método principal para iniciar el escaneo.
-
-        - Construye el comando externo desde la subclase.
-        - Inicia el proceso externo capturando la salida.
-        - Inicia un hilo que lee el stdout para monitorear progreso.
-        - Cambia el estado a RUNNING.
-        - La ejecución es bloqueante hasta que el proceso y el hilo terminan.
-        """
+        """Inicia el escaneo."""
         if self._proc and self._proc.poll() is None:
             self.logger.warning("El escaneo ya está en ejecución")
             return
         try:
-            self.status = TaskStatus.RUNNING
+            self.status = TaskStatus.RUNNING  # ✅ Cambiar estado
             cmd = self._build_command()
             self.logger.info(f"Iniciando escaneo con comando: {' '.join(cmd)}")
 
-            # Ejecuta el proceso externo subshell
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -144,20 +132,42 @@ class _Task(ABC):
                 bufsize=1
             )
 
-            # Lanza hilo para leer la salida sin bloqueo
             self._thread = threading.Thread(target=self._read_output, daemon=True)
             self._thread.start()
-
-            # Espera a que termine el hilo de lectura (y con ello el proceso)
             self._thread.join()
 
             self.progress = 100
-            self.status = TaskStatus.COMPLETED
+            self.status = TaskStatus.COMPLETED  # ✅ Cambiar estado
             self.logger.info("Escaneo finalizado.")
 
         except Exception as e:
-            self.status = TaskStatus.FAILED
+            self.status = TaskStatus.FAILED  # ✅ Cambiar estado
             self.logger.error(f"Error iniciando escaneo: {e}")
+    
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        """Espera a que termine el escaneo."""
+        finished = self._finished.wait(timeout)
+        if finished:
+            try:
+                if self._proc:
+                    retcode = self._proc.poll()
+                    if retcode != 0:
+                        self.status = TaskStatus.FAILED  # ✅ Cambiar estado
+                        self.logger.error(f"El escaneo terminó con error: código {retcode}")
+                        return False
+
+                self._process_results()
+                self.status = TaskStatus.COMPLETED  # ✅ Cambiar estado
+                self.logger.info("Escaneo completado correctamente.")
+            except Exception as e:
+                self.status = TaskStatus.FAILED 
+                self.logger.error(f"Error procesando resultados: {e}")
+                return False
+        else:
+            self.status = TaskStatus.TIMEOUT
+            self.logger.error("Timeout agotado esperando al escaneo")
+
+        return finished
 
     def is_finished(self) -> bool:
         """
@@ -168,50 +178,17 @@ class _Task(ABC):
         """
         return self._finished.is_set()
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
-        """
-        Método para bloquear hasta que el escaneo termine o expire timeout.
-        Posteriormente procesa los resultados.
-
-        Args:
-            timeout (Optional[float]): Tiempo máximo a esperar (segundos).
-
-        Returns:
-            bool: True si terminó dentro del timeout, False si no.
-        """
-        finished = self._finished.wait(timeout)
-        if finished:
-            try:
-                if self._proc:
-                    retcode = self._proc.poll()
-                    if retcode != 0:
-                        self.status = TaskStatus.FAILED
-                        self.logger.error(f"El escaneo terminó con error: código {retcode}")
-                        return False
-
-                self._process_results()
-                self.status = TaskStatus.COMPLETED
-                self.logger.info("Escaneo completado correctamente.")
-            except Exception as e:
-                self.status = TaskStatus.FAILED
-                self.logger.error(f"Error procesando resultados: {e}")
-                return False
-        else:
-            self.status = TaskStatus.FAILED
-            self.logger.error("Timeout agotado esperando al escaneo")
-
-        return finished
-
     def cancel(self) -> None:
-        """
-        Cancela el escaneo si está en ejecución, terminando el proceso externo
-        y marcando la tarea como cancelada.
-        """
+        """Cancela el escaneo."""
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()
-            self.status = TaskStatus.CANCELLED
+            self.status = TaskStatus.CANCELLED  # ✅ Ya estaba bien
             self._finished.set()
             self.logger.info("Escaneo cancelado por el usuario")
+
+    def get_status_string(self) -> str:
+        """Obtiene el estado como string para guardar en BD."""
+        return self.status.value
 
 
 class NmapScanTask(_Task):

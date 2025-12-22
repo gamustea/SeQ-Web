@@ -12,8 +12,8 @@ from flask import send_file, request, jsonify, Flask
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.exceptions import BadRequest
 
-from src.persistence import UserDBManager
 from src.logic.managers import NmapScanManager, NiktoScanManager, UserManager
 from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
 from src.misc.logging import SecOpsLogger
@@ -35,7 +35,7 @@ from src.core.exceptions import (
     UserBindingError
 )
 
-from src.logic.secrets import OAuthTokenManager, ACCESS_TOKEN_EXPIRE_MINUTES
+from src.logic.managers import OAuthTokenManager, ACCESS_TOKEN_EXPIRE_MINUTES
 
 # ============================================================================
 # INICIALIZACIÓN DE LA APLICACIÓN
@@ -74,11 +74,11 @@ def get_user_managers(user_id: int) -> Tuple[NmapScanManager, NiktoScanManager]:
     Returns:
         Tupla (NmapScanManager, NiktoScanManager) configurados para el usuario
     """
-    user_db = UserDBManager()
-    user = user_db.get_user_by_id(user_id)
+
+    user = USER_MANAGER.get_user_by_id(user_id)
     nmap_manager = NmapScanManager(user)
     nikto_manager = NiktoScanManager(user)
-    user_db.close_session()
+    USER_MANAGER.close_session()
     return nmap_manager, nikto_manager
 
 # ============================================================================
@@ -263,18 +263,21 @@ def oauth_token():
     
     Body (JSON) para password grant:
     {
-        "grant_type": "password",
-        "username": "usuario",
-        "password": "contraseña"
+        "X-Grant-Type": "password",
+        "X-Username": "usuario",
+        "X-Password": "contraseña"
     }
     
     Body (JSON) para refresh_token grant:
     {
-        "grant_type": "refresh_token",
-        "refresh_token": "token_de_refresco"
+        "X-Grant-Type": "refresh_token",
+        "X-Refresh-Token": "token_de_refresco"
     }
     """
     try:
+        if not request.is_json:
+            return jsonify({"error": "El Content-Type debe ser application/json"}), 400
+
         data = request.get_json()
         
         if not data:
@@ -283,12 +286,12 @@ def oauth_token():
                 "error_description": "Request body must be JSON"
             }), 400
         
-        grant_type = data.get("grant_type")
+        grant_type = data.get("X-Grant-Type")
         
         if grant_type == "password":
             # Password Grant Flow
-            username = data.get("username")
-            password = data.get("password")
+            username = data.get("X-Username")
+            password = data.get("X-Password")
             
             if not username or not password:
                 return jsonify({
@@ -321,7 +324,7 @@ def oauth_token():
         
         elif grant_type == "refresh_token":
             # Refresh Token Grant Flow
-            refresh_token = data.get("refresh_token")
+            refresh_token = data.get("X-Refresh-Token")
             
             if not refresh_token:
                 return jsonify({
@@ -339,9 +342,8 @@ def oauth_token():
                 }), 401
             
             # Obtener username
-            user_db = UserDBManager()
-            user = user_db.get_user_by_id(user_id)
-            user_db.close_session()
+            user = USER_MANAGER.get_user_by_id(user_id)
+            USER_MANAGER.close_session()
             
             if not user:
                 return jsonify({
@@ -366,8 +368,13 @@ def oauth_token():
                 "error_description": "Supported grant types: password, refresh_token"
             }), 400
     
+    except BadRequest as e:
+        return jsonify({
+            "error": "invalid_request",
+            "error_description": "Malformed JSON in request body"
+        }), 400
+
     except Exception as e:
-        logger.error(f"Error en /oauth/token: {str(e)}", exc_info=True)
         return jsonify({
             "error": "server_error",
             "error_description": "Internal server error"
@@ -440,7 +447,7 @@ def hello():
         "version": "3.0-oauth"
     }), 200
 
-@app.route("/scans/is-finished", methods=["GET"])
+@app.route("/sentinel/is-finished", methods=["GET"])
 @require_oauth_token
 def is_scan_finished():
     """
@@ -503,6 +510,64 @@ def is_scan_finished():
     
     except Exception as e:
         logger.error(f"Error en is-finished: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+@app.route("/sentinel/scan-status", methods=["GET"])
+@require_oauth_token
+def get_scan_status():
+    """
+    Obtiene el estado actual de un escaneo.
+    
+    Query Parameters:
+        id: ID del escaneo a consultar
+    
+    Headers requeridos:
+        Authorization: Bearer <access_token>
+    """
+    try:
+        # Obtener usuario autenticado
+        user_id = get_current_user_id()
+        nmap_manager, nikto_manager = get_user_managers(user_id)
+        
+        # Obtener y validar el ID del escaneo
+        scan_id_str = request.args.get("id")
+        if not scan_id_str:
+            raise MissingParameterError("id")
+        
+        try:
+            scan_id = int(scan_id_str)
+        except ValueError:
+            raise ValidationError(
+                field="id",
+                message="El ID debe ser un número entero",
+                value=scan_id_str
+            )
+        
+        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
+        
+        if not scan or scan.user_id != user_id:  #type: ignore
+            raise ScanNotFoundError(scan_id)
+        
+        manager = nmap_manager if scan_type == "nmap" else nikto_manager
+        status = manager.get_scan_status(scan.id)  # type: ignore
+        
+        logger.info(f"Usuario {get_current_username()}: estado del escaneo {scan_id} - {status}")
+        
+        return jsonify({
+            "message": f"Estado del escaneo con id {scan_id}: {status}",
+            "scanId": scan_id,
+            "status": status,
+            "scanType": scan_type
+        }), 200
+    
+    except (MissingParameterError, ValidationError, ScanNotFoundError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    
+    except Exception as e:
+        logger.error(f"Error en scan-status: {e}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
@@ -705,7 +770,7 @@ def change_password():
 # ============================================================================
 # ENDPOINTS DE ESCANEO NMAP
 # ============================================================================
-@app.route("/scans/nmap/start", methods=["POST"])
+@app.route("/sentinel/nmap/start", methods=["POST"])
 @require_oauth_token
 def start_nmap_scan():
     """
@@ -809,7 +874,7 @@ def start_nmap_scan():
 # ============================================================================
 # ENDPOINTS DE ESCANEO NIKTO
 # ============================================================================
-@app.route("/scans/nikto/start", methods=["POST"])
+@app.route("/sentinel/nikto/start", methods=["POST"])
 @require_oauth_token
 def start_nikto_scan():
     """
@@ -900,7 +965,7 @@ def start_nikto_scan():
 # ============================================================================
 # ENDPOINTS DE GENERACIÓN DE PDFs
 # ============================================================================
-@app.route("/scans/generate-pdf", methods=["GET"])
+@app.route("/sentinel/generate-pdf", methods=["GET"])
 @require_oauth_token
 def generate_pdf():
     """
@@ -985,7 +1050,7 @@ def generate_pdf():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
-@app.route("/scans/generate-pdf-base64", methods=["GET"])
+@app.route("/sentinel/generate-pdf-base64", methods=["GET"])
 @require_oauth_token
 def generate_pdf_base64():
     """
@@ -1071,7 +1136,7 @@ def generate_pdf_base64():
 # ============================================================================
 # ENDPOINTS DE CONSULTA DE RESULTADOS
 # ============================================================================
-@app.route("/scans/results", methods=["GET"])
+@app.route("/sentinel/results", methods=["GET"])
 @require_oauth_token
 def retrieve_all_scans():
     """
@@ -1198,7 +1263,7 @@ def retrieve_all_scans():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
-@app.route("/scans/results/<int:scan_id>", methods=["GET"])
+@app.route("/sentinel/results/<int:scan_id>", methods=["GET"])
 @require_oauth_token
 def retrieve_scan_by_id(scan_id: int):
     """

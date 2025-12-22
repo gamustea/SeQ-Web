@@ -24,6 +24,7 @@ CREATE TABLE Scan (
 	`id` INTEGER PRIMARY KEY AUTO_INCREMENT,
 	`target` VARCHAR(255) NOT NULL,
 	`started_at` DATETIME NOT NULL,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'pending',
 	`user_id` INTEGER NOT NULL,
 	`scan_type` VARCHAR(50),
 	FOREIGN KEY (`user_id`) REFERENCES `User` (`id`)
@@ -116,41 +117,3 @@ CREATE TABLE RefreshToken (
     INDEX idx_user (user_id),
     FOREIGN KEY (user_id) REFERENCES User(id) ON DELETE CASCADE
 );
-
-CREATE TABLE Subscription (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL UNIQUE,
-    plan ENUM('FREE', 'BASIC', 'PREMIUM', 'ENTERPRISE') NOT NULL DEFAULT 'free',
-    status ENUM('ACTIVE', 'EXPIRED', 'CANCELLED', 'SUSPENDED', 'TRIAL') NOT NULL DEFAULT 'trial',
-    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at DATETIME NULL,
-    last_payment_at DATETIME NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    auto_renew TINYINT(1) DEFAULT 0,
-    max_scans_per_day INT DEFAULT 5,
-    max_concurrent_scans INT DEFAULT 1,
-    FOREIGN KEY (user_id) REFERENCES User(id) ON DELETE CASCADE,
-    INDEX idx_user (user_id),
-    INDEX idx_status (status),
-    INDEX idx_expires (expires_at)
-);
-
-CREATE TABLE Payment (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    subscription_id INT NOT NULL,
-    amount DECIMAL(10, 2) NOT NULL,
-    currency VARCHAR(3) NOT NULL DEFAULT 'USD',
-    payment_method VARCHAR(50) NULL,
-    transaction_id VARCHAR(255) UNIQUE NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
-    paid_at DATETIME NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES User(id) ON DELETE CASCADE,
-    FOREIGN KEY (subscription_id) REFERENCES Subscription(id) ON DELETE CASCADE,
-    INDEX idx_user (user_id),
-    INDEX idx_subscription (subscription_id),
-    INDEX idx_transaction (transaction_id)
-);
-
-    

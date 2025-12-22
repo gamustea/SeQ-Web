@@ -15,7 +15,6 @@ class JSONManager:
         xml_file = Path(xml_path)
 
         if not xml_file.is_file():
-            print(f"Archivo {xml_file} no existe.")
             return None
 
         try:
@@ -24,7 +23,6 @@ class JSONManager:
             matches = pattern.findall(content)
 
             if not matches:
-                print("No se encontraron bloques <niktoscan> válidos.")
                 return None
 
             results = []
@@ -35,7 +33,6 @@ class JSONManager:
             return results
 
         except Exception as e:
-            print("Error al convertir XML a dict:", e)
             return None
 
     @staticmethod
@@ -92,7 +89,6 @@ class JSONManager:
         incluyendo todos los campos que comienzan por '@'."""
         try:
             items = json_data['niktoscan']['scandetails']['item']
-            print(items)
 
             if isinstance(items, dict):
                 incidencia = {}
