@@ -32,7 +32,8 @@ from src.core.exceptions import (
     ExceptionHandler,
     ExistingUserError,
     UserNotFoundError,
-    UserBindingError
+    UserBindingError,
+    DatabaseError
 )
 
 from src.logic.managers import OAuthTokenManager, ACCESS_TOKEN_EXPIRE_MINUTES
@@ -286,7 +287,7 @@ def oauth_token():
                 "error_description": "Request body must be JSON"
             }), 400
         
-        grant_type = data.get("X-Grant-ype")
+        grant_type = data.get("X-Grant-Type")
         
         if grant_type == "password":
             # Password Grant Flow
@@ -593,6 +594,7 @@ def sign_up_user():
         username = request.headers.get("X-Username")
         password = request.headers.get("X-Password")
         email = request.headers.get("X-Email")
+        alias = request.headers.get("X-Alias")
         
         # Validar parámetros requeridos
         if not username:
@@ -601,9 +603,11 @@ def sign_up_user():
             raise MissingParameterError("X-Password")
         if not email:
             raise MissingParameterError("X-Email")
+        if not alias:
+            raise MissingParameterError("X-Alias")
         
         # Registrar el usuario usando UserManager
-        new_user = USER_MANAGER.sign_in_user(username, password, email)
+        new_user = USER_MANAGER.sign_in_user(username, password, email, alias)
         
         logger.info(f"Nuevo usuario registrado: {username} (ID: {new_user.id})")
         
@@ -614,6 +618,12 @@ def sign_up_user():
             "email": email
         }), 201
     
+    except DatabaseError as e:
+        return jsonify({
+            "code": e.status_code,
+            "message": "Revisa tus credenciales e intentálo de nuevo."
+        })
+
     except (MissingParameterError, ExistingUserError, UserBindingError) as e:
         error_dict, status_code = create_error_response(e, include_debug_info=False)
         return jsonify(error_dict), status_code
@@ -632,7 +642,7 @@ def sign_up_person():
     Headers:
         X-First-Name: Nombre de la persona
         X-Last-Name: Apellido de la persona
-        X-Email: Email de la persona
+        X-Alias: Alias único para la persona
     
     Returns:
         JSON con los datos de la persona creada
@@ -640,18 +650,18 @@ def sign_up_person():
     try:
         first_name = request.headers.get("X-First-Name")
         last_name = request.headers.get("X-Last-Name")
-        email = request.headers.get("X-Email")
+        alias = request.headers.get("X-Alias")
         
         # Validar parámetros requeridos
         if not first_name:
             raise MissingParameterError("X-First-Name")
         if not last_name:
             raise MissingParameterError("X-Last-Name")
-        if not email:
-            raise MissingParameterError("X-Email")
+        if not alias:
+            raise MissingParameterError("X-Alias")
         
         # Registrar la persona usando UserManager
-        new_person = USER_MANAGER.sign_in_person(first_name, last_name, email)
+        new_person = USER_MANAGER.sign_in_person(first_name, last_name, alias)
         
         logger.info(f"Nueva persona registrada: {first_name} {last_name} (ID: {new_person.id})")
         
@@ -659,8 +669,7 @@ def sign_up_person():
             "message": "Persona registrada exitosamente",
             "personId": new_person.id,
             "firstName": new_person.first_name,
-            "lastName": new_person.last_name,
-            "email": new_person.email
+            "lastName": new_person.last_name
         }), 201
     
     except (MissingParameterError, ExistingUserError) as e:
@@ -698,6 +707,7 @@ def check_credentials():
             raise MissingParameterError("X-Password")
         
         # Verificar credenciales usando UserManager
+        logger.debug(f"Verificando credenciales para usuario: {username} y password {password}")
         is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
         
         if not is_valid:

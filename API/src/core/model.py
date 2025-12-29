@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Text
 from sqlalchemy.orm import relationship, declarative_base
-from sqlalchemy import Boolean, Numeric, Enum as SQLEnum
+from sqlalchemy import Boolean, Numeric, Enum, BigInteger as SQLEnum
 from enum import Enum
 
 
@@ -42,7 +42,6 @@ class Person(Base):
     Campos obligatorios al crear:
         - first_name
         - last_name
-        - email
 
     Campos autogenerados (NO asignar):
         - id (autoincremental)
@@ -60,11 +59,10 @@ class Person(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     first_name = Column(String(64), nullable=False)
     last_name = Column(String(64), nullable=False)
-    email = Column(String(128), nullable=False)
+    alias = Column(String(64), nullable=False, unique=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    # Relación uno a uno con User
-    user = relationship("User", back_populates="person", uselist=False)
+    users = relationship("User", back_populates="person", uselist=False)
 
     def __str__(self):
         return f"Person(id={self.id}, nombre='{self.first_name} {self.last_name}', email='{self.email}')"
@@ -107,10 +105,13 @@ class User(Base):
     password_hash = Column(String(128), nullable=False)
     password_salt = Column(String(128), nullable=False)
     person_id = Column(Integer, ForeignKey("Person.id"), nullable=False)
+    rol_id = Column(Integer, ForeignKey("Rol.id"), nullable=False, default=1)
+    email = Column(String(128), nullable=False)
 
     # Relaciones
-    person = relationship("Person", back_populates="user")
+    person = relationship("Person", back_populates="users")
     scans = relationship("Scan", back_populates="user", cascade="all, delete-orphan")
+    rol = relationship("Rol")
 
     tokens = relationship("AccessToken", back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
@@ -120,6 +121,16 @@ class User(Base):
 
     def __repr__(self):
         return f"<User(id={self.id}, username='{self.username}')>"
+
+
+class Rol(Base):
+    
+    __tablename__ = "Rol"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(32), unique=True, nullable=False)
+    description = Column(String(128))
+    hierarchy_level = Column(Integer, nullable=False)
 
 
 class Scan(Base):
@@ -159,6 +170,7 @@ class Scan(Base):
     status = Column(String(20), nullable=False, default="pending")
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type = Column(String(50))
+    frecuent = Column(Boolean, nullable=False, default=True)
 
     # Relaciones
     user = relationship("User", back_populates="scans")
@@ -502,53 +514,6 @@ class NiktoIncident(Base):
 
     def __repr__(self):
         return f"<NiktoIncident(id={self.id}, osvdb='{self.osvdb_id}', severity='{self.severity}')>"
-
-
-class OpenVASScan(Scan):
-    """
-    Escaneo de vulnerabilidades utilizando la herramienta OpenVAS.
-    Hereda de Scan sin añadir columnas adicionales por el momento.
-
-    Columnas propias:
-        id (int): ID del escaneo (hereda de Scan).
-
-    Columnas heredadas de Scan:
-        - target, started_at, user_id, scan_type
-
-    Campos obligatorios al crear:
-        - target (heredado, dirección IP o rango a escanear)
-        - user_id (heredado)
-
-    Campos autogenerados (NO asignar):
-        - id (autoincremental)
-        - started_at (fecha actual)
-        - scan_type (se asigna automáticamente como 'openvas')
-
-    Campos a mostrar:
-        - id, target, started_at, user_id, scan_type
-
-    Relaciones:
-        - Ninguna adicional (hereda las de Scan)
-
-    Nota:
-        Esta clase probablemente se extenderá en el futuro para almacenar
-        resultados específicos de OpenVAS (vulnerabilidades, CVEs, etc.).
-    """
-
-    __tablename__ = "OpenVASScan"
-
-    id = Column(Integer, ForeignKey("Scan.id"), primary_key=True)
-
-    __mapper_args__ = {
-        "polymorphic_identity": "openvas",
-    }
-
-    def __str__(self):
-        started = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"  # type: ignore
-        return f"OpenVASScan(id={self.id}, target='{self.target}', inicio={started})"
-
-    def __repr__(self):
-        return f"<OpenVASScan(id={self.id}, target='{self.target}')>"
 
 
 class AccessToken(Base):

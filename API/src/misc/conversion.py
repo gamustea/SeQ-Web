@@ -1,5 +1,6 @@
 import json
 import re
+import os
 import xmltodict
 
 from typing import Any, Dict, List, Optional
@@ -29,7 +30,7 @@ class JSONManager:
             for match in matches:
                 doc_dict = xmltodict.parse(match)
                 results.append(doc_dict)
-
+                
             return results
 
         except Exception as e:

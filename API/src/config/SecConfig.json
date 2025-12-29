@@ -2,7 +2,7 @@
     "oauth": {
         "access_token_expiry_minutes": 15,
         "refresh_token_expiry_days": 30,
-        "jwt_secret_key": "tu-clave-secreta-super-segura-cambiar-en-produccion",
+        "jwt_secret_key": "WecppXLtJmA7oomcoGTKFI7VsG9J8lmA8i45m59308BOUqBT",
         "jwt_algorithm": "HS256"
     },
     "directories": {
@@ -17,19 +17,5 @@
         "dbname": "SecOps",
         "host": "127.0.0.1",
         "port": 3306
-    },
-    "scanconfig": {
-        "nikto": {
-            "timeout": 20,
-            "scheduled:targets": []
-        },
-        "openvas": {
-            "timeout": 20,
-            "scheduled:targets": []
-        },
-        "nmap": {
-            "timeout": 20,
-            "scheduled:targets": []
-        }
     }
 }

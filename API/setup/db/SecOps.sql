@@ -7,16 +7,27 @@ CREATE TABLE Person (
 	id INTEGER PRIMARY KEY AUTO_INCREMENT,
 	first_name VARCHAR(64) NOT NULL,
 	last_name VARCHAR(64) NOT NULL,
-	email VARCHAR(128) NOT NULL UNIQUE,
+    alias VARCHAR(64) NOT NULL UNIQUE,
 	created_at DATETIME NOT NULL
 );
+
+CREATE TABLE Rol (
+	id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(32) UNIQUE NOT NULL,
+    hierarchy_level INTEGER NOT NULL,
+    description VARCHAR(128)
+);
+
 
 CREATE TABLE User (
 	id INTEGER PRIMARY KEY AUTO_INCREMENT,
 	username VARCHAR(64) NOT NULL UNIQUE,
 	password_hash VARCHAR(128) NOT NULL,
     password_salt varchar(128) NOT NULL,
+    email VARCHAR(128) NOT NULL UNIQUE,
 	person_id INTEGER NOT NULL,
+    rol_id INTEGER NOT NULL,
+    FOREIGN KEY (rol_id) REFERENCES Rol (id),
 	FOREIGN KEY (person_id) REFERENCES Person (id)
 );
 
@@ -27,6 +38,7 @@ CREATE TABLE Scan (
     `status` VARCHAR(20) NOT NULL DEFAULT 'pending',
 	`user_id` INTEGER NOT NULL,
 	`scan_type` VARCHAR(50),
+    frecuent BOOLEAN NOT NULL DEFAULT false,
 	FOREIGN KEY (`user_id`) REFERENCES `User` (`id`)
 );
 
@@ -89,10 +101,45 @@ CREATE TABLE ScanIncident (
 	FOREIGN KEY (nikto_incident_id) REFERENCES NiktoIncident (id)
 );
 
-CREATE TABLE OpenVASScan (
-	id INTEGER PRIMARY KEY,
-	FOREIGN KEY (id) REFERENCES Scan (id)
-);
+CREATE TABLE `OpenVASScan` (
+  `id` INT NOT NULL,
+  `openvas_task_id` VARCHAR(64) NULL,
+  `openvas_report_id` VARCHAR(64) NULL,
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_openvas_scan_id`
+    FOREIGN KEY (`id`) REFERENCES `Scan` (`id`)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- “Incidentes” reutilizables estilo NiktoIncident (propuesto)
+CREATE TABLE `OpenVASVulnerability` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `nvt_oid` VARCHAR(64) NULL,
+  `name` VARCHAR(512) NOT NULL,
+  `severity` VARCHAR(32) NULL,
+  `host` VARCHAR(255) NULL,
+  `port` VARCHAR(32) NULL,
+  `description` MEDIUMTEXT NULL,
+  `solution` MEDIUMTEXT NULL,
+  `references` MEDIUMTEXT NULL,
+  `discovered_at` DATETIME NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_openvasvuln_nvt` (`nvt_oid`),
+  KEY `idx_openvasvuln_host_port` (`host`, `port`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Tabla many-to-many (equivalente a ScanIncident en Nikto) [file:2]
+CREATE TABLE `OpenVASScanVulnerability` (
+  `openvas_scan_id` INT NOT NULL,
+  `openvas_vulnerability_id` INT NOT NULL,
+  PRIMARY KEY (`openvas_scan_id`, `openvas_vulnerability_id`),
+  CONSTRAINT `fk_osv_scan`
+    FOREIGN KEY (`openvas_scan_id`) REFERENCES `OpenVASScan` (`id`)
+    ON DELETE CASCADE,
+  CONSTRAINT `fk_osv_vuln`
+    FOREIGN KEY (`openvas_vulnerability_id`) REFERENCES `OpenVASVulnerability` (`id`)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE AccessToken (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -117,3 +164,14 @@ CREATE TABLE RefreshToken (
     INDEX idx_user (user_id),
     FOREIGN KEY (user_id) REFERENCES User(id) ON DELETE CASCADE
 );
+
+INSERT INTO Rol (name, description, hierarchy_level)
+VALUES 
+	("ROOT_ACCOUNT", "Rol indispensable para el funcionamiento de la jerarquía", 0), 
+    ("BASIC_ACCOUNT", "Rol con los permisos mínimos para usar la APP", 5);
+
+INSERT INTO Person (first_name, last_name, alias, created_at)
+VALUES ("Gabriel", "Musteata", "artexian" curdate());
+
+INSERT INTO User (username, password_hash, email, password_salt, person_id, rol_id)
+VALUES ("root", "683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a", "gmiganescu@gmail.com", "c167837c1c2a860031d861164d69bd79", 1, 1);

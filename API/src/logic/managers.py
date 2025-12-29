@@ -1,11 +1,17 @@
 
+from __future__ import annotations
+
 # Standard library
 import secrets
 import threading
+import time
+from pathlib import Path
 import urllib.parse
+import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Iterable
+
 
 # Third party
 import jwt
@@ -14,9 +20,10 @@ import jwt
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
+from pymysql.err import IntegrityError
 
 # Local imports
-from src.core.exceptions import ExistingUserError, UserBindingError
+from src.core.exceptions import ExistingUserError, UserBindingError, DatabaseError
 from src.core.model import (
     AccessToken,
     FinishedScan,
@@ -31,10 +38,13 @@ from src.core.model import (
     User,
 )
 from src.logic.secrets import Encoder
-from src.logic.tasking.tasks import NmapScanTask, NiktoScanTask, _Task, TaskStatus
+from src.logic.tasks import NmapScanTask, NiktoScanTask, TaskStatus, _Task
 from src.misc.configread import ConfigReader
 from src.misc.conversion import JSONManager
 from src.misc.logging import SecOpsLogger
+
+
+
 
 
 config_reader = ConfigReader()
@@ -396,21 +406,84 @@ class ScanManager(BaseManager, ABC):
     Clase base para gestores de escaneos.
     Define la interfaz común para todos los gestores de escaneos.
     """
+    active_user: User
+    running_tasks: dict[int, _Task] = {}
+
     def __init__(self, user: User, session: Optional[Session] = None):
         super().__init__(session)
-        self.active_user = user
-        self.running_tasks: Dict[int, _Task] = {}
-    
-    @abstractmethod
-    def run_scan(self, *args, **kwargs) -> int:
-        """Inicia un nuevo escaneo y devuelve su ID"""
-        pass
-    
-    @abstractmethod
+        self.active_user = user      
+        
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
         """Obtiene el progreso de un escaneo en ejecución"""
-        pass
+        if scan_id in self.running_tasks:
+            progress = self.running_tasks[scan_id].progress
+            self.logger.debug(f"Progreso de escaneo {scan_id}: {progress}%")
+            return progress
+        
+        self.logger.warning(f"Escaneo {scan_id} no está en ejecución")
+        return None
     
+    def get_scans_for_user(self) -> List[Scan]:
+        """Obtiene todos los escaneos del usuario activo"""
+        user_id = self.active_user.id
+        try:
+            self._check_session()
+            self.logger.info(f"Obteniendo escaneos Nikto para usuario {user_id}")
+            
+            scans = self.session.query(Scan).filter(
+                Scan.user_id == user_id
+            ).all()
+            
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
+            return scans
+        
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error obteniendo escaneos: {str(e)}", exc_info=True)
+            raise
+    
+    def get_scan_by_id(self, scan_id: int) -> Optional[Scan]:
+        """Obtiene un escaneo específico por ID"""
+        try:
+            self._check_session()
+            self.logger.info(f"Obteniendo escaneo Nikto {scan_id}")
+            
+            scan = self.session.query(Scan).filter(
+                Scan.id == scan_id
+            ).one_or_none()
+            
+            if scan:
+                self.logger.info(f"Escaneo de Nikto {scan_id} encontrado")
+            else:
+                self.logger.warning(f"Escaneo de Nikto {scan_id} no encontrado")
+            
+            return scan
+        
+        except Exception as e:
+            self.logger.error(f"Error obteniendo escaneo {scan_id}: {e}", exc_info=True)
+            raise
+    
+    def delete_scan(self, scan_id: int) -> bool:
+        """Elimina un escaneo y sus relaciones"""
+        try:
+            self._check_session()
+            scan = self.get_scan_by_id(scan_id)
+            
+            if not scan:
+                self.logger.warning(f"Escaneo {scan_id} no existe")
+                return False
+            
+            self.session.delete(scan)
+            self._safe_commit()
+            
+            self.logger.info(f"Escaneo {scan_id} eliminado")
+            return True
+        
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error eliminando escaneo {scan_id}: {e}")
+            raise
+
     def is_scan_finished(self, scan_id: int) -> Optional[bool]:
         """Verifica si un escaneo ha finalizado"""
         try:
@@ -447,7 +520,7 @@ class ScanManager(BaseManager, ABC):
         ).count()
         return numero_de_filas > 0
 
-    def get_scan_status(self, scan_id: int) -> Optional[str]:
+    def get_scan_task_status(self, scan_id: int) -> Optional[str]:
         """Obtiene el estado de un escaneo en ejecución"""
         if scan_id in self.running_tasks:
             status = self.running_tasks[scan_id].status
@@ -471,11 +544,11 @@ class NmapScanManager(ScanManager):
     def __init__(self, user: User, session=None):
         super().__init__(user, session)
         self.logger.info(f"NmapScanManager inicializado para usuario: {user.id}")
-    
+
     # =================================================================
     # MÉTODOS DE GESTIÓN DE TAREAS (lógica de negocio)
     # =================================================================
-    
+
     def run_scan(self, target_host: str, target_ports: str, timeout: int = 20) -> int:
         """
         Inicia un nuevo escaneo Nmap de forma asíncrona.
@@ -504,14 +577,17 @@ class NmapScanManager(ScanManager):
             scan_id = nmap_scan.id
             self.logger.info(f"Escaneo Nmap {scan_id} creado, iniciando thread")
             
-            # Iniciar thread de escaneo
+            # ✅ CORRECCIÓN: daemon=False para que complete su trabajo
             thread = threading.Thread(
                 target=self._execute_scan_thread,
                 args=(scan_id, target_host, target_ports, timeout),
-                daemon=True,
+                daemon=False,  # ✅ CRÍTICO: No daemon
                 name=f"NmapScan-{scan_id}"
             )
             thread.start()
+            
+            # ✅ Pequeña pausa para que el thread arranque
+            time.sleep(0.2)
             
             self.logger.info(f"Thread de escaneo Nmap {scan_id} iniciado")
             return scan_id # type: ignore
@@ -519,82 +595,7 @@ class NmapScanManager(ScanManager):
         except Exception as e:
             self.logger.error(f"Error al iniciar escaneo Nmap: {str(e)}", exc_info=True)
             raise
-    
-    def get_scan_progress(self, scan_id: int) -> Optional[int]:
-        """Obtiene el progreso de un escaneo en ejecución"""
-        if scan_id in self.running_tasks:
-            progress = self.running_tasks[scan_id].progress
-            self.logger.debug(f"Progreso de escaneo {scan_id}: {progress}%")
-            return progress
-        
-        self.logger.warning(f"Escaneo {scan_id} no está en ejecución")
-        return None
 
-    # =================================================================
-    # MÉTODOS DE PERSISTENCIA (integrados en el mismo manager)
-    # =================================================================
-    
-    def get_scans_for_user(self) -> List[NmapScan]:
-        """Obtiene todos los escaneos del usuario activo"""
-        user_id = self.active_user.id
-        try:
-            self._check_session()
-            self.logger.info(f"Obteniendo escaneos Nmap para usuario {user_id}")
-            
-            scans = self.session.query(NmapScan).filter(
-                NmapScan.user_id == user_id
-            ).all()
-            
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
-            return scans
-        
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo escaneos: {str(e)}", exc_info=True)
-            raise
-    
-    def get_scan_by_id(self, scan_id: int) -> Optional[NmapScan]:
-        """Obtiene un escaneo específico por ID"""
-        try:
-            self._check_session()
-            self.logger.info(f"Obteniendo escaneo Nmap {scan_id}")
-            
-            scan = self.session.query(NmapScan).filter(
-                NmapScan.id == scan_id and NmapScan.user_id == self.active_user.id
-            ).one_or_none()
-            
-            if scan:
-                self.logger.info(f"Escaneo de nmap {scan_id} encontrado")
-            else:
-                self.logger.warning(f"Escaneo de nmap {scan_id} no encontrado")
-            
-            return scan
-        
-        except Exception as e:
-            self.logger.error(f"Error obteniendo escaneo {scan_id}: {e}", exc_info=True)
-            raise
-    
-    def delete_scan(self, scan_id: int) -> bool:
-        """Elimina un escaneo y sus relaciones"""
-        try:
-            self._check_session()
-            scan = self.get_scan_by_id(scan_id)
-            
-            if not scan:
-                self.logger.warning(f"Escaneo {scan_id} no existe")
-                return False
-            
-            self.session.delete(scan)
-            self._safe_commit()
-            
-            self.logger.info(f"Escaneo {scan_id} eliminado")
-            return True
-        
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error eliminando escaneo {scan_id}: {e}")
-            raise
-    
     # =================================================================
     # MÉTODOS PRIVADOS (implementación interna)
     # =================================================================
@@ -625,17 +626,47 @@ class NmapScanManager(ScanManager):
             task = NmapScanTask(target_host, target_ports, timeout=timeout)
             self.running_tasks[scan_id] = task
             
+            # ✅ CORRECCIÓN: scan() es NO bloqueante ahora
             task.scan()
-            task.wait()
             
-            thread_manager.logger.info(f"Escaneo {scan_id} completado, guardando resultados")
+            # ✅ CORRECCIÓN: wait() con timeout apropiado
+            # Debe ser mayor que el timeout del comando para dar margen
+            wait_timeout = timeout + 30
+            success = task.wait(timeout=wait_timeout)
+            
+            if not success:
+                thread_manager.logger.error(
+                    f"Escaneo {scan_id} falló o excedió timeout. Estado: {task.status}"
+                )
+                # Marcar como error en BD
+                scan.ended_at = datetime.now()
+                thread_manager.session.add(scan)
+                thread_manager._safe_commit()
+                return
+            
+            # ✅ CORRECCIÓN: Verificar que results no sea None
+            if task.results is None:
+                thread_manager.logger.error(
+                    f"Escaneo {scan_id} completó pero no tiene resultados"
+                )
+                scan.ended_at = datetime.now()
+                thread_manager.session.add(scan)
+                thread_manager._safe_commit()
+                return
+            
+            thread_manager.logger.info(
+                f"Escaneo {scan_id} completado, guardando resultados"
+            )
             
             # Procesar y guardar resultados
-            thread_manager._save_scan_results(scan, task.results) # type: ignore
+            thread_manager._save_scan_results(scan, task.results)
             thread_manager.logger.info(f"Escaneo {scan_id} guardado exitosamente")
         
         except Exception as e:
-            thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
+            thread_manager.logger.error(
+                f"Error en escaneo {scan_id}: {e}", 
+                exc_info=True
+            )
             
             # Marcar como error
             try:
@@ -645,7 +676,9 @@ class NmapScanManager(ScanManager):
                     thread_manager.session.add(error_scan)
                     thread_manager._safe_commit()
             except Exception as update_err:
-                thread_manager.logger.error(f"No se pudo actualizar estado de error: {update_err}")
+                thread_manager.logger.error(
+                    f"No se pudo actualizar estado de error: {update_err}"
+                )
         
         finally:
             # Limpiar
@@ -739,13 +772,6 @@ class NiktoScanManager(ScanManager):
     def run_scan(self, target_domain: str, timeout: int = 60) -> int:
         """
         Inicia un nuevo escaneo Nikto de forma asíncrona.
-        
-        Args:
-            target_domain: Dominio o URL a escanear
-            timeout: Tiempo máximo de escaneo en segundos
-        
-        Returns:
-            int: ID del escaneo creado
         """
         try:
             self.logger.info(f"Creando nuevo escaneo Nikto para {target_domain}")
@@ -763,14 +789,17 @@ class NiktoScanManager(ScanManager):
             scan_id = nikto_scan.id
             self.logger.info(f"Escaneo Nikto {scan_id} creado, iniciando thread")
             
-            # Iniciar thread de escaneo
+            # ✅ CORRECCIÓN: daemon=False
             thread = threading.Thread(
                 target=self._execute_scan_thread,
                 args=(scan_id, target_domain, timeout),
-                daemon=True,
+                daemon=False,  # ✅ CRÍTICO
                 name=f"NiktoScan-{scan_id}"
             )
             thread.start()
+            
+            # ✅ Pequeña pausa
+            time.sleep(0.2)
             
             self.logger.info(f"Thread de escaneo Nikto {scan_id} iniciado")
             return scan_id # type: ignore
@@ -778,82 +807,7 @@ class NiktoScanManager(ScanManager):
         except Exception as e:
             self.logger.error(f"Error al iniciar escaneo Nikto: {str(e)}", exc_info=True)
             raise
-    
-    def get_scan_progress(self, scan_id: int) -> Optional[int]:
-        """Obtiene el progreso de un escaneo en ejecución"""
-        if scan_id in self.running_tasks:
-            progress = self.running_tasks[scan_id].progress
-            self.logger.debug(f"Progreso de escaneo {scan_id}: {progress}%")
-            return progress
-        
-        self.logger.warning(f"Escaneo {scan_id} no está en ejecución")
-        return None
-    
-    
-    # =================================================================
-    # MÉTODOS DE PERSISTENCIA (integrados en el mismo manager)
-    # =================================================================
-    
-    def get_scans_for_user(self) -> List[NiktoScan]:
-        """Obtiene todos los escaneos del usuario activo"""
-        user_id = self.active_user.id
-        try:
-            self._check_session()
-            self.logger.info(f"Obteniendo escaneos Nikto para usuario {user_id}")
-            
-            scans = self.session.query(NiktoScan).filter(
-                NiktoScan.user_id == user_id
-            ).all()
-            
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
-            return scans
-        
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo escaneos: {str(e)}", exc_info=True)
-            raise
-    
-    def get_scan_by_id(self, scan_id: int) -> Optional[NiktoScan]:
-        """Obtiene un escaneo específico por ID"""
-        try:
-            self._check_session()
-            self.logger.info(f"Obteniendo escaneo Nikto {scan_id}")
-            
-            scan = self.session.query(NiktoScan).filter(
-                NiktoScan.id == scan_id
-            ).one_or_none()
-            
-            if scan:
-                self.logger.info(f"Escaneo de Nikto {scan_id} encontrado")
-            else:
-                self.logger.warning(f"Escaneo de Nikto {scan_id} no encontrado")
-            
-            return scan
-        
-        except Exception as e:
-            self.logger.error(f"Error obteniendo escaneo {scan_id}: {e}", exc_info=True)
-            raise
-    
-    def delete_scan(self, scan_id: int) -> bool:
-        """Elimina un escaneo y sus relaciones"""
-        try:
-            self._check_session()
-            scan = self.get_scan_by_id(scan_id)
-            
-            if not scan:
-                self.logger.warning(f"Escaneo {scan_id} no existe")
-                return False
-            
-            self.session.delete(scan)
-            self._safe_commit()
-            
-            self.logger.info(f"Escaneo {scan_id} eliminado")
-            return True
-        
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error eliminando escaneo {scan_id}: {e}")
-            raise
+
     
     # =================================================================
     # MÉTODOS PRIVADOS (implementación interna)
@@ -866,13 +820,11 @@ class NiktoScanManager(ScanManager):
         timeout: int
     ) -> None:
         """
-        Ejecuta el escaneo en un thread separado con su propia sesión de BD.
+        Ejecuta el escaneo en un thread separado.
         """
-        # Crear manager exclusivo para este thread
         thread_manager = NiktoScanManager(self.active_user)
         
         try:
-            # Recuperar el escaneo
             scan = thread_manager.get_scan_by_id(scan_id)
             if not scan:
                 thread_manager.logger.error(f"No se encontró escaneo {scan_id}")
@@ -880,24 +832,37 @@ class NiktoScanManager(ScanManager):
             
             thread_manager.logger.info(f"Iniciando escaneo Nikto {scan_id}")
             
-            # Ejecutar tarea de escaneo
+            # Ejecutar tarea
             task = NiktoScanTask(target_domain, timeout=timeout)
             self.running_tasks[scan_id] = task
             
+            # ✅ scan() no bloqueante
             task.scan()
-            task.wait()
             
-            thread_manager.logger.info(f"Escaneo {scan_id} completado, guardando resultados")
+            # ✅ wait() con timeout apropiado
+            wait_timeout = timeout + 30
+            success = task.wait(timeout=wait_timeout)
+            
+            if not success or task.results is None:
+                thread_manager.logger.error(
+                    f"Escaneo {scan_id} falló o no tiene resultados. Estado: {task.status}"
+                )
+                scan.ended_at = datetime.now()
+                thread_manager.session.add(scan)
+                thread_manager._safe_commit()
+                return
+            
+            thread_manager.logger.info(
+                f"Escaneo {scan_id} completado, guardando resultados"
+            )
             
             # Procesar y guardar resultados
-            thread_manager._save_scan_results(scan, task.results) # type: ignore
-            
+            thread_manager._save_scan_results(scan, task.results)
             thread_manager.logger.info(f"Escaneo {scan_id} guardado exitosamente")
         
         except Exception as e:
             thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
             
-            # Marcar como error
             try:
                 error_scan = thread_manager.get_scan_by_id(scan_id)
                 if error_scan:
@@ -905,10 +870,11 @@ class NiktoScanManager(ScanManager):
                     thread_manager.session.add(error_scan)
                     thread_manager._safe_commit()
             except Exception as update_err:
-                thread_manager.logger.error(f"No se pudo actualizar estado de error: {update_err}")
+                thread_manager.logger.error(
+                    f"No se pudo actualizar estado de error: {update_err}"
+                )
         
         finally:
-            # Limpiar
             thread_manager.close_session()
             if scan_id in self.running_tasks:
                 del self.running_tasks[scan_id]
@@ -1201,7 +1167,7 @@ class UserManager(BaseManager):
             self.logger.error(f"Error creando usuario: {err}")
             raise
     
-    def sign_in_user(self, username: str, password: str, email: str) -> User:
+    def sign_in_user(self, username: str, password: str, email: str, alias: str) -> User:
         """
         Registra un nuevo usuario vinculándolo a una persona existente.
         
@@ -1219,14 +1185,17 @@ class UserManager(BaseManager):
         """
         self._check_session()
         try:
-            # Verificar que no exista el usuario
+
             if self.user_exists(username):
-                raise ExistingUserError(username=username)
-            
-            # Verificar que exista la persona
-            existing_person = self.get_person_by_email(email)
-            if not existing_person:
-                raise UserBindingError(username=username, email=email)
+                raise ExistingUserError(username)
+
+            person = self.get_person_by_alias(alias)
+
+            if not person:
+                raise UserBindingError(
+                    username=username, 
+                    alias=alias
+                )           
             
             # Generar hash de contraseña con salt
             salt = Encoder.generate_salt()
@@ -1237,12 +1206,13 @@ class UserManager(BaseManager):
                 username=username,
                 password_hash=hashed_password,
                 password_salt=salt,
-                person_id=existing_person.id
+                email=email,
+                person_id=person.id
             )
             
             self.session.add(new_user)
             self._safe_commit()
-            
+
             # Desasociar para evitar conflictos
             self.session.expunge(new_user)
             
@@ -1250,11 +1220,12 @@ class UserManager(BaseManager):
             return new_user
         
         except (ExistingUserError, UserBindingError):
+            self._safe_rollback()
             raise
         except SQLAlchemyError as err:
             self._safe_rollback()
             self.logger.error(f"Error registrando usuario: {err}")
-            raise
+            raise DatabaseError("Hubo un problema con tus credenciales. Revísalas, y vuelve a intentarlo.")
     
     def get_user_by_username(self, username: str) -> Optional[User]:
         """Obtiene un usuario por su username"""
@@ -1345,7 +1316,10 @@ class UserManager(BaseManager):
         user = self.get_user_by_id(user_id)
         
         if not user:
-            raise UserBindingError(username=str(user_id), email="unknown")
+            raise UserBindingError(
+                username=str(user_id), 
+                alias="unknown"
+            )
         
         self.update_user_password(user, new_password)
     
@@ -1367,15 +1341,13 @@ class UserManager(BaseManager):
     # MÉTODOS DE GESTIÓN DE PERSONAS
     # ========================================================================
     
-    def sign_in_person(self, first_name: str, last_name: str, email: str) -> Person:
+    def sign_in_person(self, first_name: str, last_name: str, alias: str) -> Person:
         """
         Registra una nueva persona.
         
         Args:
             first_name: Nombre
-            last_name: Apellido
-            email: Email
-        
+            last_name: Apellido      
         Returns:
             Persona creada
         
@@ -1384,21 +1356,22 @@ class UserManager(BaseManager):
         """
         self._check_session()
         try:
-            # Verificar que no exista
-            existing_person = self.get_person_by_email(email)
-            if existing_person:
-                raise ExistingUserError(username=email)
-            
+
+            person = self.get_person_by_alias(alias)
+
+            if person:
+                raise ExistingUserError(f"El usuario {alias} ya está en la base de datos")
+           
             # Crear persona
             person = Person(
                 first_name=first_name,
                 last_name=last_name,
-                email=email
+                alias=alias
             )
             
             self._create_person(person)
             
-            self.logger.info(f"Persona registrada: {first_name} {last_name} ({email})")
+            self.logger.info(f"Persona registrada: {first_name} {last_name}")
             return person
         
         except ExistingUserError:
@@ -1407,8 +1380,28 @@ class UserManager(BaseManager):
             self._safe_rollback()
             self.logger.error(f"Error registrando persona: {err}")
             raise
-    
+
+    def get_person_by_alias(self, alias: str) -> Optional[Person]:
+        """Obtiene una persona por su email"""
+        self._check_session()
+        try:
+            person = self.session.query(Person).filter(
+                Person.alias == alias
+            ).one_or_none()
+            
+            if person:
+                self.logger.info(f"Persona con email '{alias}' obtenida")
+            else:
+                self.logger.info(f"Persona con email '{alias}' no encontrada")
+            
+            return person
+        
+        except SQLAlchemyError as err:
+            self.logger.error(f"Error obteniendo persona por email: {err}")
+            raise
+
     def get_person_by_email(self, email: str) -> Optional[Person]:
+        
         """Obtiene una persona por su email"""
         self._check_session()
         try:

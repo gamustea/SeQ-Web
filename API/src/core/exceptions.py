@@ -67,6 +67,7 @@ class ErrorCode(Enum):
     TOKEN_EXPIRED = 1604
     USER_ALREADY_EXISTS = 1605
     UNBINDABLE_USER = 1606
+    DUPLICATED_CREDENTIALS = 1607
 
     # Errores de parsing (1700-1799)
     PARSING_ERROR = 1700
@@ -558,11 +559,21 @@ class UserBindingError(AuthenticationError):
     """Error al vincular usuario con persona"""
     default_code = ErrorCode.UNBINDABLE_USER
 
-    def __init__(self, username: str, email: str):
+    def __init__(self, username: str, alias: str):
         super().__init__(
             message=f"No se pudo vincular el usuario '{username}' con una persona existente",
             details={"username": username},
-            user_message=f"Error al crear el usuario debido a datos incompletos; no se tiene constancia de una persona con email {email}"
+            user_message=f"Error al crear el usuario debido a datos incompletos; no se tiene constancia de una persona con alias '{alias}'"
+        )
+
+
+class DuplicatedUserCredentials(AuthenticationError):
+    default_code = ErrorCode.DUPLICATED_CREDENTIALS
+
+    def __init__(self, credentials: str):
+        super().__init__(
+            message=f"Se ha detectado una credencial duplicada para un usuario",
+            user_message=f"Se ha detectedo duplicidad de datos para el siguiente valor: {credentials}"
         )
 
 
