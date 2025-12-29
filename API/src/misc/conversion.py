@@ -65,22 +65,33 @@ class JSONManager:
                 "ports": []
             }
             
-        # Extraer hostname (con manejo de casos sin hostname)
         hostnames = result["scan"][scan.target]["hostnames"]
-        hostname = hostnames[0]["name"] if hostnames else ""
-        
-        # Extraer puertos TCP
+        name = hostnames[0]["name"] if hostnames else ""
+        type = hostnames[0]["type"] if hostnames else ""
+
+        addresses = result["scan"][scan.target]["addresses"]
+        ipv4 = addresses["ipv4"] if hostnames else ""
+        mac = addresses["mac"] if addresses else ""
+
+        vendor = result["scan"][scan.target]["vendor"][mac]
         ports = result["scan"][scan.target]["tcp"]
         
-        # Crear tuplas con (protocolo, estado, razón)
         result_ports = [
-            (f"{port}/tcp", ports[port]["state"], ports[port]["reason"]) 
+            (f"{port}/tcp", ports[port]["state"], ports[port]["reason"], ports[port]["product"], ports[port]["version"], ports[port]["name"]) 
             for port in ports.keys()
         ]
         
         return {
             "command": command,
-            "hostname": hostname,
+            "host": {
+                "vendor": vendor,
+                "name": name,
+                "type": type,
+                "addresses": {
+                    "ipv4": ipv4,
+                    "mac": mac
+                }
+            },
             "ports": result_ports
         }
 

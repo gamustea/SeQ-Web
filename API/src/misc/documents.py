@@ -148,28 +148,31 @@ class NmapPrintingStrategy(_PrintingStrategy):
         elements.append(info_table)
         elements.append(Spacer(1, 0.3 * inch))
 
-        # === SECCIÓN DE PUERTOS ABIERTOS ===
         subtitle = Paragraph("Puertos Abiertos Detectados", subtitle_style)
         elements.append(subtitle)
         elements.append(Spacer(1, 0.1 * inch))
 
-        # Preparar datos para la tabla de puertos
         if scan.open_ports_relation:
-            port_data = [["#", "Puerto", "Protocolo"]]
+            port_data = [["#", "Puerto", "Protocolo", "Software", "Versión del Software"]]
 
             for idx, port in enumerate(scan.open_ports_relation, 1):
-                # Separar puerto y protocolo (formato: "80/tcp")
-                protocol_str = str(port.port.protocol)
-                if "/" in protocol_str:
-                    port_num, protocol_type = protocol_str.split("/", 1)
-                else:
-                    port_num = protocol_str
-                    protocol_type = "N/A"
-
-                port_data.append([str(idx), port_num, protocol_type.upper()])
+                protocol = str(port.port.protocol)
+                given_use = str(port.given_use)
+                product_name = str(port.product)
+                product_version = str(port.version)
+                
+                port_data.append(
+                    [
+                        str(idx), 
+                        protocol.split("/")[0], 
+                        given_use.upper(), 
+                        product_name if not product_name == "" else "NO ENCONTRADO", 
+                        product_version if not product_version == "" else "N/A"
+                    ]
+                )
 
             # Crear tabla de puertos
-            port_table = Table(port_data, colWidths=[0.5 * inch, 2 * inch, 2 * inch])
+            port_table = Table(port_data, colWidths=[0.5 * inch, 0.75 * inch, 1.25 * inch, 2 * inch, 2 * inch])
             port_table.setStyle(
                 TableStyle(
                     [
@@ -473,8 +476,6 @@ class NiktoPrintingStrategy(_PrintingStrategy):
                     details.append(["Método:", str(incident.method)])
                 if incident.url:
                     details.append(["URL:", Paragraph(str(incident.url), url_style)])
-                if incident.ip_address:
-                    details.append(["IP:", str(incident.ip_address)])
                 if incident.port:
                     details.append(["Puerto:", str(incident.port)])
                 if incident.discovered_at:

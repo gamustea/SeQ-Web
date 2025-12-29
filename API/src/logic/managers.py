@@ -1,6 +1,3 @@
-
-from __future__ import annotations
-
 # Standard library
 import secrets
 import threading
@@ -36,6 +33,7 @@ from src.core.model import (
     RefreshToken,
     Scan,
     User,
+    Host
 )
 from src.logic.secrets import Encoder
 from src.logic.tasks import NmapScanTask, NiktoScanTask, TaskStatus, _Task
@@ -412,7 +410,19 @@ class ScanManager(BaseManager, ABC):
     def __init__(self, user: User, session: Optional[Session] = None):
         super().__init__(session)
         self.active_user = user      
+    
+    def get_host_by_hostname(self, hostname: str):   
+        try:
+            self._check_session()
+            host = self.session.query(Host).filter(
+                Host.hostname == hostname
+            ).one_or_none()
+
+            return host
         
+        except Exception:
+            raise
+  
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
         """Obtiene el progreso de un escaneo en ejecución"""
         if scan_id in self.running_tasks:
@@ -491,19 +501,15 @@ class ScanManager(BaseManager, ABC):
 
             if not self._scan_exists(scan_id):
                 self.logger.warning(f"Escaneo {scan_id} no existe")
-                return None
-        
-            # Verificar si está marcado como finalizado
-            self.session.commit()  # Cerrar transacción actual
+                return False
+
+            self.session.commit()
             
-            result = self.session.execute(
-                text("SELECT COUNT(*) FROM FinishedScan WHERE id = :scan_id"),
-                {"scan_id": scan_id}
-            )
-            
-            count = result.scalar()
-            is_finished = count > 0 # type: ignore
-            
+            is_finished = self.session.query(
+                FinishedScan.id == scan_id
+            ).count() > 0
+
+            self.session.commit()       
             self.logger.debug(f"Escaneo {scan_id} finalizado: {is_finished}")
             return is_finished
         
@@ -534,6 +540,10 @@ class ScanManager(BaseManager, ABC):
         self.logger.warning(f"Escaneo {scan_id} no está en ejecución")
         return None
 
+    @abstractmethod
+    def _save_scan_results(self, scan: Scan, results: dict) -> None:
+        pass
+
 
 class NmapScanManager(ScanManager):
     """
@@ -545,11 +555,7 @@ class NmapScanManager(ScanManager):
         super().__init__(user, session)
         self.logger.info(f"NmapScanManager inicializado para usuario: {user.id}")
 
-    # =================================================================
-    # MÉTODOS DE GESTIÓN DE TAREAS (lógica de negocio)
-    # =================================================================
-
-    def run_scan(self, target_host: str, target_ports: str, timeout: int = 20) -> int:
+    def run_scan(self, target_host: str, target_ports: str, timeout: int = 120) -> int:
         """
         Inicia un nuevo escaneo Nmap de forma asíncrona.
         
@@ -564,7 +570,6 @@ class NmapScanManager(ScanManager):
             
             self.logger.info(f"Creando nuevo escaneo Nmap para {target_host}")
             
-            # Crear registro en BD
             nmap_scan = NmapScan(
                 target=target_host,
                 user=self.active_user,
@@ -585,8 +590,6 @@ class NmapScanManager(ScanManager):
                 name=f"NmapScan-{scan_id}"
             )
             thread.start()
-            
-            # ✅ Pequeña pausa para que el thread arranque
             time.sleep(0.2)
             
             self.logger.info(f"Thread de escaneo Nmap {scan_id} iniciado")
@@ -595,10 +598,6 @@ class NmapScanManager(ScanManager):
         except Exception as e:
             self.logger.error(f"Error al iniciar escaneo Nmap: {str(e)}", exc_info=True)
             raise
-
-    # =================================================================
-    # MÉTODOS PRIVADOS (implementación interna)
-    # =================================================================
     
     def _execute_scan_thread(
         self, 
@@ -622,15 +621,10 @@ class NmapScanManager(ScanManager):
             
             thread_manager.logger.info(f"Iniciando escaneo Nmap {scan_id}")
             
-            # Ejecutar tarea de escaneo
             task = NmapScanTask(target_host, target_ports, timeout=timeout)
             self.running_tasks[scan_id] = task
             
-            # ✅ CORRECCIÓN: scan() es NO bloqueante ahora
             task.scan()
-            
-            # ✅ CORRECCIÓN: wait() con timeout apropiado
-            # Debe ser mayor que el timeout del comando para dar margen
             wait_timeout = timeout + 30
             success = task.wait(timeout=wait_timeout)
             
@@ -686,7 +680,7 @@ class NmapScanManager(ScanManager):
             if scan_id in self.running_tasks:
                 del self.running_tasks[scan_id]
     
-    def _save_scan_results(self, scan: NmapScan, results: dict) -> None:
+    def _save_scan_results(self, scan: Scan, results: dict) -> None:
         """Procesa y guarda los resultados del escaneo"""
         try:
             # Convertir resultados JSON
@@ -699,29 +693,40 @@ class NmapScanManager(ScanManager):
             
             # Guardar puertos
             for port_data in processed_results["ports"]:
-                port_protocol, _, port_reason = port_data
+                port_protocol, _, port_reason, port_product, port_product_version, given_use = port_data
                 
-                # Get or create port
                 port = self._get_or_create_port(port_protocol)
                 
-                # Agregar a target_ports
                 if port not in scan.target_ports:
                     scan.target_ports.append(port)
                 
-                # Crear OpenPort
                 open_port = OpenPort(
                     nmap_scan_id=scan.id,
                     port_id=port.id,
-                    reason=port_reason
+                    reason=port_reason,
+                    product=port_product,
+                    version=port_product_version,
+                    given_use=given_use
                 )
                 self.session.add(open_port)
+
+            host_info = processed_results["host"]
+            hostname = host_info["name"]
             
-            # Actualizar scan
-            scan.hostname = processed_results["hostname"]
-            scan.ended_at = datetime.now()
+
+            host = self.get_host_by_hostname(hostname=hostname)
+            if host is None:
+                host = Host(
+                hostname=host_info["name"],
+                vendor=host_info["vendor"],
+                ip_address=host_info["addresses"]["ipv4"],
+                mac_address=host_info["addresses"]["mac"]
+            )
+            
+            self.session.add(host)
+            scan.host_id = host.id
             self.session.add(scan)
             
-            # Marcar como finalizado
             finished_scan = FinishedScan(id=scan.id)
             finished_scan.finished_at = datetime.now() # type: ignore
             self.session.add(finished_scan)
@@ -765,10 +770,6 @@ class NiktoScanManager(ScanManager):
         super().__init__(user, session)
         self.logger.info(f"NiktoScanManager inicializado para usuario: {user.id}")
     
-    # =================================================================
-    # MÉTODOS DE GESTIÓN DE TAREAS (lógica de negocio)
-    # =================================================================
-    
     def run_scan(self, target_domain: str, timeout: int = 60) -> int:
         """
         Inicia un nuevo escaneo Nikto de forma asíncrona.
@@ -807,11 +808,6 @@ class NiktoScanManager(ScanManager):
         except Exception as e:
             self.logger.error(f"Error al iniciar escaneo Nikto: {str(e)}", exc_info=True)
             raise
-
-    
-    # =================================================================
-    # MÉTODOS PRIVADOS (implementación interna)
-    # =================================================================
     
     def _execute_scan_thread(
         self, 
@@ -836,10 +832,7 @@ class NiktoScanManager(ScanManager):
             task = NiktoScanTask(target_domain, timeout=timeout)
             self.running_tasks[scan_id] = task
             
-            # ✅ scan() no bloqueante
             task.scan()
-            
-            # ✅ wait() con timeout apropiado
             wait_timeout = timeout + 30
             success = task.wait(timeout=wait_timeout)
             
@@ -879,13 +872,15 @@ class NiktoScanManager(ScanManager):
             if scan_id in self.running_tasks:
                 del self.running_tasks[scan_id]
     
-    def _save_scan_results(self, scan: NiktoScan, results: list) -> None:
+    def _save_scan_results(self, scan: Scan, results: dict) -> None:
         """Procesa y guarda los resultados del escaneo Nikto"""
         try:
             # Convertir resultados JSON
             processed_results = JSONManager.convert_json_to_individual_nikto_data(
                 results[-1] if results else {}
             )
+
+            self.logger.debug(processed_results)
             
             incidents_count = len(processed_results)
             self.logger.info(f"Procesando {incidents_count} incidentes del escaneo {scan.id}")
@@ -913,12 +908,9 @@ class NiktoScanManager(ScanManager):
                 # Asociar al scan
                 if db_incident not in scan.incidents:
                     scan.incidents.append(db_incident)
-            
-            # Actualizar scan
-            scan.ended_at = datetime.now()
+
             self.session.add(scan)
             
-            # Marcar como finalizado
             finished_scan = FinishedScan(id=scan.id)
             finished_scan.finished_at = datetime.now() # type: ignore
             self.session.add(finished_scan)
@@ -939,12 +931,11 @@ class NiktoScanManager(ScanManager):
         
         # Buscar por descripción y OSVDB ID
         existing = self.session.query(NiktoIncident).filter(
-            NiktoIncident.description == incident.description,
-            NiktoIncident.osvdb_id == incident.osvdb_id
+            NiktoIncident.description == incident.description
         ).first()
         
         if existing:
-            self.logger.debug(f"Incidente ya existe: {incident.osvdb_id}")
+            self.logger.debug(f"Incidente ya existe: {incident.description}")
             return existing
         
         # Crear nuevo

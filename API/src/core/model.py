@@ -8,7 +8,6 @@ from enum import Enum
 Base = declarative_base()
 
 
-# Tabla de asociación simple para TargetPort (muchos a muchos)
 TargetPort = Table(
     "TargetPort",
     Base.metadata,
@@ -16,8 +15,6 @@ TargetPort = Table(
     Column("nmap_scan_id", Integer, ForeignKey("NmapScan.id"), primary_key=True),
 )
 
-
-# Tabla de asociación simple para ScanIncident (muchos a muchos)
 ScanIncident = Table(
     "ScanIncident",
     Base.metadata,
@@ -171,9 +168,10 @@ class Scan(Base):
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type = Column(String(50))
     frecuent = Column(Boolean, nullable=False, default=True)
+    host_id = Column(Integer, ForeignKey("Host.id"))
 
-    # Relaciones
     user = relationship("User", back_populates="scans")
+    host = relationship("Host")
     finished_scan = relationship(
         "FinishedScan",
         back_populates="scan",
@@ -296,6 +294,17 @@ class NmapScan(Scan):
         return f"<NmapScan(id={self.id}, target='{self.target}')>"
 
 
+class Host(Base):
+
+    __tablename__ = "Host"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    hostname = Column(String(64), unique=True, nullable=False)
+    ip_address = Column(String(15), nullable=False)
+    mac_address = Column(String(17), nullable=False)
+    vendor = Column(String(64))
+
+
 class Port(Base):
     """
     Representa un puerto de red con su protocolo.
@@ -374,6 +383,9 @@ class OpenPort(Base):
     port_id = Column(Integer, ForeignKey("Port.id"), primary_key=True)
     nmap_scan_id = Column(Integer, ForeignKey("NmapScan.id"), primary_key=True)
     reason = Column(String(255), nullable=False)
+    product = Column(String(255))
+    version = Column(String(64))
+    given_use = Column(String(255))
 
     # Relaciones
     port = relationship("Port", back_populates="open_port_entries")
@@ -490,7 +502,6 @@ class NiktoIncident(Base):
 
     # Clasificación y contexto
     severity = Column(String(20), nullable=True)  # low, medium, high, critical
-    ip_address = Column(String(45), nullable=True)
     port = Column(Integer, nullable=True)
 
     # Referencias y timestamp

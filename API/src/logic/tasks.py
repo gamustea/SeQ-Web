@@ -2,11 +2,13 @@ import subprocess
 import threading
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any, List, Dict
 from enum import Enum, auto
 from abc import ABC, abstractmethod
 from nmap import PortScanner
+from celery import shared_task
 
 from src.misc.configread import ConfigReader, DirectoryType
 from src.misc.logging import SecOpsLogger
@@ -33,15 +35,17 @@ class _Task(ABC):
     """
     Clase base abstracta para representar una tarea de escaneo.
     """
+    timout: int
+    statis: TaskStatus = TaskStatus.PENDING
+    target: str
+    config_reader: ConfigReader = ConfigReader()
+    logger = SecOpsLogger(name=__name__).get_logger()
+    progress: int = 0
 
     def __init__(self, target: str, timeout: int = 20):
         self.timeout = timeout
-        self.status = TaskStatus.PENDING
         self.results: Optional[Any] = None
         self.target: str = target
-        self.config_reader = ConfigReader()
-        self.logger = SecOpsLogger(name=__name__).get_logger()
-        self.progress: int = 0
         self._proc: Optional[subprocess.Popen] = None
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
@@ -268,7 +272,10 @@ class NmapScanTask(_Task):
     def _build_command(self) -> List[str]:
         """Construye el comando nmap."""
         return [
+            "sudo",
+            "-n",
             "nmap",
+            "-sV",
             "-sT",
             "-p", self.target_ports,
             "-oX", str(self._output_file),
@@ -299,8 +306,9 @@ class NmapScanTask(_Task):
                 self.results = None
                 return
             
+            
             self.results = self.scanner.analyse_nmap_xml_scan(xml_data)
-            self.logger.info(f"Resultados procesados: {self._output_file}")
+            self.logger.info(f"Resultados procesados: {self._output_file}") 
         
         except Exception as e:
             self.logger.error(f"Error procesando resultados: {e}", exc_info=True)
@@ -313,7 +321,7 @@ class NiktoScanTask(_Task):
     Implementación concreta para escaneos Nikto.
     """
 
-    def __init__(self, target_domain="http://testphp.vulnweb.com", timeout: int = 20):
+    def __init__(self, target_domain, timeout: int = 120):
         super().__init__(target_domain, timeout)
         
         # Nombre único
@@ -331,10 +339,6 @@ class NiktoScanTask(_Task):
             "-nointeractive",
             "-maxtime", str(self.timeout),
         ]
-
-    def _parse_progress(self, line: str) -> int:
-        """Nikto no ofrece progreso."""
-        return -1
 
     def _process_results(self) -> None:
         """Procesa el XML generado por Nikto."""
@@ -356,3 +360,4 @@ class NiktoScanTask(_Task):
             self.logger.error(f"Error procesando resultados Nikto: {e}", exc_info=True)
             self.results = None
             raise
+

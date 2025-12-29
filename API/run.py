@@ -1009,14 +1009,11 @@ def generate_pdf():
         
         logger.info(f"Usuario {get_current_username()} generando PDF para escaneo ID: {scan_id}")
         
-        # Buscar el escaneo usando los managers del usuario
         scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
         
-        # Validar que el escaneo exista y pertenezca al usuario
         if not scan or scan.user_id != user_id:  #type: ignore
             raise ScanNotFoundError(scan_id)
         
-        # Verificar que el escaneo esté finalizado
         manager = nmap_manager if scan_type == "nmap" else nikto_manager
         if not manager.is_scan_finished(scan.id): # type: ignore
             raise ValidationError(
@@ -1025,15 +1022,13 @@ def generate_pdf():
                 value=scan_id
             )
         
-        # Generar el PDF
         try:
             pdf_creator = build_pdf_creator(scan)
             pdf_path = pdf_creator.print_pdf()
         except Exception as e:
             logger.error(f"Error generando PDF: {e}")
             raise ReportGenerationError(scan_id, str(e))
-        
-        # Validar que el archivo se creó correctamente
+
         if not pdf_path or not os.path.exists(pdf_path):
             raise ReportGenerationError(
                 scan_id,
@@ -1041,8 +1036,7 @@ def generate_pdf():
             )
         
         logger.info(f"Usuario {get_current_username()}: PDF generado - {pdf_path}")
-        
-        # Enviar el archivo PDF como respuesta
+
         return send_file(
             pdf_path,
             mimetype="application/pdf",
