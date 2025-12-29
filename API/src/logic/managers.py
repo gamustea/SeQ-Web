@@ -909,6 +909,9 @@ class NiktoScanManager(ScanManager):
                 if db_incident not in scan.incidents:
                     scan.incidents.append(db_incident)
 
+            # TODO: TENGO QUE TERMINAR DE VER CÓMO CREAR EL HOST PARA QUE, AUNQUE NO HAYA INCIDENTES,
+            # PUEDE RELLENAR CON ALGO ALGÚN CAMPO DEL HOST
+            # - IDEA: HACER DNSLOOKUP PARA EL TARGET DEL SCAN
             self.session.add(scan)
             
             finished_scan = FinishedScan(id=scan.id)
