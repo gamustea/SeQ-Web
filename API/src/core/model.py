@@ -171,7 +171,7 @@ class Scan(Base):
     host_id = Column(Integer, ForeignKey("Host.id"))
 
     user = relationship("User", back_populates="scans")
-    host = relationship("Host")
+    host = relationship("Host", back_populates="scans")
     finished_scan = relationship(
         "FinishedScan",
         back_populates="scan",
@@ -303,6 +303,7 @@ class Host(Base):
     ip_address = Column(String(15), nullable=False)
     mac_address = Column(String(17), nullable=False)
     vendor = Column(String(64))
+    scans = relationship("Scan", back_populates="host", cascade="all, delete-orphan")
 
 
 class Port(Base):

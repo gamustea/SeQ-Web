@@ -254,16 +254,12 @@ class IPValidator:
         if not ips_str:
             return False, [], "La cadena de IPs estÃ¡ vacÃ­a"
 
-        # Dividir por comas para procesar mÃºltiples targets
         segmentos = [s.strip() for s in ips_str.split(",")]
-
         lista_ips = []
-
         for segmento in segmentos:
             if not segmento:
                 return False, [], "Segmento vacÃ­o encontrado"
 
-            # Caso 1: NotaciÃ³n CIDR (192.168.1.0/24)
             if "/" in segmento:
                 try:
                     red = ipaddress.ip_network(segmento, strict=False)
@@ -275,8 +271,7 @@ class IPValidator:
                 except ValueError as e:
                     return False, [], f"NotaciÃ³n CIDR invÃ¡lida '{segmento}': {str(e)}"
 
-            # Caso 2: Rangos por octeto o wildcards (192.168.1.1-10 o 192.168.1.*)
-            elif "-" in segmento or "*" in segmento:
+            elif "-" in segmento:
                 try:
                     ips_expandidas = expandir_rango_octetos(segmento)
                     if ips_expandidas is None:
@@ -285,7 +280,6 @@ class IPValidator:
                 except Exception as e:
                     return False, [], f"Error al procesar rango '{segmento}': {str(e)}"
 
-            # Caso 3: IP individual (192.168.1.1)
             else:
                 try:
                     ip = ipaddress.ip_address(segmento)

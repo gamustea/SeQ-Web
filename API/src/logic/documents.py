@@ -45,6 +45,7 @@ class _PrintingStrategy(ABC):
         self.color_palette: dict
         self.scan = scan
 
+
     @abstractmethod
     def append_body(self, scan, styles, elements):
         pass
@@ -118,10 +119,36 @@ class NmapPrintingStrategy(_PrintingStrategy):
         title = Paragraph("Informe de Escaneo Nmap", title_style)
         elements.append(title)
 
-        # Línea decorativa
         elements.append(Spacer(1, 0.1 * inch))
 
-        # Información del escaneo
+        if scan.host:
+            host_info = [
+                ["Host Analizado:", str(scan.host.ip_address)],
+                ["Nombre de Host:", str(scan.host.hostname)],
+                ["MAC Address:", str(scan.host.mac_address)],
+                ["Vendedor:", str(scan.host.vendor)],
+            ]
+
+            host_table = Table(host_info, colWidths=[2 * inch, 4 * inch])
+            host_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(WHITE_COLOR)),
+                        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor(MAIN_COLOR)),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 10),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                        ("TOPPADDING", (0, 0), (-1, -1), 8),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(WHITE_COLOR)),
+                    ]
+                )
+            )
+
+            elements.append(host_table)
+            elements.append(Spacer(1, 0.1 * inch))
+
         scan_info = [
             ["ID del Escaneo:", str(scan.id)],
             ["Fecha de inicio:", scan.started_at.strftime("%d/%m/%Y %H:%M:%S")],
@@ -291,10 +318,34 @@ class NiktoPrintingStrategy(_PrintingStrategy):
         # Línea decorativa
         elements.append(Spacer(1, 0.1 * inch))
 
-        # Información del escaneo
+        if scan.host:
+            host_info = [
+                ["Host Analizado:", str(scan.host.ip_address)],
+                ["Nombre de Host:", str(scan.host.hostname)],
+            ]
+
+            host_table = Table(host_info, colWidths=[2 * inch, 4 * inch])
+            host_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(WHITE_COLOR)),
+                        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor(MAIN_COLOR)),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 10),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                        ("TOPPADDING", (0, 0), (-1, -1), 8),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(DARK_COLOR)),
+                    ]
+                )
+            )
+
+            elements.append(host_table)
+            elements.append(Spacer(1, 0.1 * inch))
+
         scan_info = [
             ["ID del Escaneo:", str(scan.id)],
-            ["Objetivo:", str(scan.target)],
             ["Fecha de Inicio:", scan.started_at.strftime("%d/%m/%Y %H:%M:%S") if scan.started_at else "N/A"],  # type: ignore
             ["Total de Incidentes:", str(len(scan.incidents))],
         ]
@@ -420,11 +471,6 @@ class NiktoPrintingStrategy(_PrintingStrategy):
             )
             
             for idx, incident in enumerate(sorted_incidents, 1):
-                # ==========================================
-                # CLAVE: CondPageBreak ANTES de cada incidente
-                # ==========================================
-                # Verificar que hay al menos 2.5 pulgadas disponibles
-                # Si no, salta a la siguiente página
                 elements.append(CondPageBreak(2.5 * inch))
                 
                 severity = incident.severity if incident.severity else "unknown"

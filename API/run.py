@@ -15,7 +15,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import BadRequest
 
 from src.logic.managers import NmapScanManager, NiktoScanManager, UserManager
-from src.misc.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
+from src.logic.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
 from src.misc.logging import SecOpsLogger
 from src.misc.validation import PortValidator, IPValidator
 from src.core.model import Scan, User

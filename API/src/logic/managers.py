@@ -40,6 +40,7 @@ from src.logic.tasks import NmapScanTask, NiktoScanTask, TaskStatus, _Task
 from src.misc.configread import ConfigReader
 from src.misc.conversion import JSONManager
 from src.misc.logging import SecOpsLogger
+from src.misc.inetutils import normalize_target
 
 
 
@@ -503,13 +504,11 @@ class ScanManager(BaseManager, ABC):
                 self.logger.warning(f"Escaneo {scan_id} no existe")
                 return False
 
-            self.session.commit()
-            
-            is_finished = self.session.query(
+            numero = self.session.query(FinishedScan).filter(
                 FinishedScan.id == scan_id
-            ).count() > 0
-
-            self.session.commit()       
+            ).count()
+            is_finished = numero > 0
+   
             self.logger.debug(f"Escaneo {scan_id} finalizado: {is_finished}")
             return is_finished
         
@@ -713,15 +712,14 @@ class NmapScanManager(ScanManager):
             host_info = processed_results["host"]
             hostname = host_info["name"]
             
-
             host = self.get_host_by_hostname(hostname=hostname)
             if host is None:
                 host = Host(
-                hostname=host_info["name"],
-                vendor=host_info["vendor"],
-                ip_address=host_info["addresses"]["ipv4"],
-                mac_address=host_info["addresses"]["mac"]
-            )
+                    hostname=host_info["name"],
+                    vendor=host_info["vendor"],
+                    ip_address=host_info["addresses"]["ipv4"],
+                    mac_address=host_info["addresses"]["mac"]
+                )
             
             self.session.add(host)
             scan.host_id = host.id
@@ -790,11 +788,10 @@ class NiktoScanManager(ScanManager):
             scan_id = nikto_scan.id
             self.logger.info(f"Escaneo Nikto {scan_id} creado, iniciando thread")
             
-            # ✅ CORRECCIÓN: daemon=False
             thread = threading.Thread(
                 target=self._execute_scan_thread,
                 args=(scan_id, target_domain, timeout),
-                daemon=False,  # ✅ CRÍTICO
+                daemon=False,
                 name=f"NiktoScan-{scan_id}"
             )
             thread.start()
@@ -909,15 +906,26 @@ class NiktoScanManager(ScanManager):
                 if db_incident not in scan.incidents:
                     scan.incidents.append(db_incident)
 
-            # TODO: TENGO QUE TERMINAR DE VER CÓMO CREAR EL HOST PARA QUE, AUNQUE NO HAYA INCIDENTES,
-            # PUEDE RELLENAR CON ALGO ALGÚN CAMPO DEL HOST
-            # - IDEA: HACER DNSLOOKUP PARA EL TARGET DEL SCAN
+            ip, hostname = normalize_target(scan.target) #type: ignore
+            host = self.get_host_by_hostname(
+                hostname=hostname # type: ignore
+            )
+            if host is None:
+                host = Host(
+                    hostname=hostname,
+                    ip_address=ip
+                )
+                self.session.add(host)
+                self.session.flush()
+                self._safe_commit()
+
+            scan.host = host
             self.session.add(scan)
             
             finished_scan = FinishedScan(id=scan.id)
             finished_scan.finished_at = datetime.now() # type: ignore
-            self.session.add(finished_scan)
             
+            self.session.add(finished_scan)
             self.session.flush()
             self._safe_commit()
             

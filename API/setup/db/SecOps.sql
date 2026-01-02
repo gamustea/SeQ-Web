@@ -18,7 +18,6 @@ CREATE TABLE Rol (
     description VARCHAR(128)
 );
 
-
 CREATE TABLE User (
 	id INTEGER PRIMARY KEY AUTO_INCREMENT,
 	username VARCHAR(64) NOT NULL UNIQUE,
@@ -31,6 +30,14 @@ CREATE TABLE User (
 	FOREIGN KEY (person_id) REFERENCES Person (id)
 );
 
+CREATE TABLE Host (
+	id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    hostname VARCHAR(64) UNIQUE NOT NULL,
+    ip_address VARCHAR(15) NOT NULL,
+    mac_address VARCHAR(17),
+    vendor VARCHAR(64)
+);
+
 CREATE TABLE Scan (
 	`id` INTEGER PRIMARY KEY AUTO_INCREMENT,
 	`target` VARCHAR(255) NOT NULL,
@@ -39,7 +46,9 @@ CREATE TABLE Scan (
 	`user_id` INTEGER NOT NULL,
 	`scan_type` VARCHAR(50),
     frecuent BOOLEAN NOT NULL DEFAULT false,
-	FOREIGN KEY (`user_id`) REFERENCES `User` (`id`)
+    host_id INTEGER,
+	FOREIGN KEY (`user_id`) REFERENCES `User` (`id`),
+    FOREIGN KEY (host_id) REFERENCES Host (id)
 );
 
 CREATE TABLE FinishedScan (
@@ -55,7 +64,7 @@ CREATE TABLE NmapScan (
 
 CREATE TABLE Port (
 	id INTEGER PRIMARY KEY AUTO_INCREMENT,
-	protocol VARCHAR(255) UNIQUE
+	protocol VARCHAR(255) UNIQUE    
 );
 
 CREATE TABLE TargetPort (
@@ -70,6 +79,9 @@ CREATE TABLE OpenPort (
 	port_id INTEGER,
 	nmap_scan_id INTEGER,
 	reason VARCHAR(255) NOT NULL,
+    product Varchar(255),
+    version VARCHAR(64),
+    given_use VARCHAR(255),
 	PRIMARY KEY (port_id, nmap_scan_id),
 	FOREIGN KEY (port_id) REFERENCES Port (id),
 	FOREIGN KEY (nmap_scan_id) REFERENCES NmapScan (id)
@@ -87,7 +99,6 @@ CREATE TABLE `NiktoIncident` (
   `url` VARCHAR(512) NOT NULL,         -- URL completa del incidente
   `description` TEXT NOT NULL,         -- Descripción del incidente
   `severity` VARCHAR(20),              -- Severidad: low, medium, high, critical
-  `ip_address` VARCHAR(45),            -- IP del host afectado
   `port` INTEGER,                      -- Puerto donde se detectó
   `references` TEXT,                   -- Enlaces de referencia (CVE, etc.)
   `discovered_at` DATETIME NOT NULL   -- Momento del descubrimiento
@@ -100,46 +111,6 @@ CREATE TABLE ScanIncident (
 	FOREIGN KEY (nikto_scan_id) REFERENCES NiktoScan (id),
 	FOREIGN KEY (nikto_incident_id) REFERENCES NiktoIncident (id)
 );
-
-CREATE TABLE `OpenVASScan` (
-  `id` INT NOT NULL,
-  `openvas_task_id` VARCHAR(64) NULL,
-  `openvas_report_id` VARCHAR(64) NULL,
-  PRIMARY KEY (`id`),
-  CONSTRAINT `fk_openvas_scan_id`
-    FOREIGN KEY (`id`) REFERENCES `Scan` (`id`)
-    ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- “Incidentes” reutilizables estilo NiktoIncident (propuesto)
-CREATE TABLE `OpenVASVulnerability` (
-  `id` INT NOT NULL AUTO_INCREMENT,
-  `nvt_oid` VARCHAR(64) NULL,
-  `name` VARCHAR(512) NOT NULL,
-  `severity` VARCHAR(32) NULL,
-  `host` VARCHAR(255) NULL,
-  `port` VARCHAR(32) NULL,
-  `description` MEDIUMTEXT NULL,
-  `solution` MEDIUMTEXT NULL,
-  `references` MEDIUMTEXT NULL,
-  `discovered_at` DATETIME NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_openvasvuln_nvt` (`nvt_oid`),
-  KEY `idx_openvasvuln_host_port` (`host`, `port`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Tabla many-to-many (equivalente a ScanIncident en Nikto) [file:2]
-CREATE TABLE `OpenVASScanVulnerability` (
-  `openvas_scan_id` INT NOT NULL,
-  `openvas_vulnerability_id` INT NOT NULL,
-  PRIMARY KEY (`openvas_scan_id`, `openvas_vulnerability_id`),
-  CONSTRAINT `fk_osv_scan`
-    FOREIGN KEY (`openvas_scan_id`) REFERENCES `OpenVASScan` (`id`)
-    ON DELETE CASCADE,
-  CONSTRAINT `fk_osv_vuln`
-    FOREIGN KEY (`openvas_vulnerability_id`) REFERENCES `OpenVASVulnerability` (`id`)
-    ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE AccessToken (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -171,7 +142,7 @@ VALUES
     ("BASIC_ACCOUNT", "Rol con los permisos mínimos para usar la APP", 5);
 
 INSERT INTO Person (first_name, last_name, alias, created_at)
-VALUES ("Gabriel", "Musteata", "artexian" curdate());
+VALUES ("Gabriel", "Musteata", "artexian", curdate());
 
 INSERT INTO User (username, password_hash, email, password_salt, person_id, rol_id)
 VALUES ("root", "683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a", "gmiganescu@gmail.com", "c167837c1c2a860031d861164d69bd79", 1, 1);
