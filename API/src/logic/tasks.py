@@ -8,7 +8,6 @@ from typing import Optional, Any, List, Dict
 from enum import Enum, auto
 from abc import ABC, abstractmethod
 from nmap import PortScanner
-from celery import shared_task
 
 from src.misc.configread import ConfigReader, DirectoryType
 from src.misc.logging import SecOpsLogger

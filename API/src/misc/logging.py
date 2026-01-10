@@ -17,7 +17,7 @@ class SecOpsLogger:
 
         if not self.logger.hasHandlers():
             formatter = logging.Formatter(
-                "[+] (%(asctime)s) %(message)s [%(levelname)s]"
+                "[+] [%(levelname)s] (%(asctime)s) %(message)s"
             )
 
             console_handler = logging.StreamHandler()

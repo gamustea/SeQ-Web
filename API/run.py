@@ -276,6 +276,13 @@ def oauth_token():
     }
     """
     try:
+        # ⬇️ AÑADE ESTO PARA DEBUG
+        print("Content-Type:", request.content_type)
+        print("is_json:", request.is_json)
+        print("Raw data:", request.data)
+        print("JSON parsed:", request.get_json(force=True, silent=True))
+        # ⬆️ FIN DEBUG
+
         if not request.is_json:
             return jsonify({"error": "El Content-Type debe ser application/json"}), 400
 
@@ -310,9 +317,24 @@ def oauth_token():
                     "error_description": "Invalid username or password"
                 }), 401
             
-            # Generar tokens
-            access_token = OAUTH_MANAGER.create_access_token(user_id, username) # type: ignore
-            refresh_token = OAUTH_MANAGER.create_refresh_token(user_id) # type: ignore
+            # ⬇️ AÑADE ESTO
+            print(f"✅ Credenciales válidas: user_id={user_id}, username={username}")
+            try:
+                print("🔑 Generando access_token...")
+                access_token = OAUTH_MANAGER.create_access_token(user_id, username)
+                print(f"   Access token generado: {access_token[:50]}..." if access_token else "   ❌ Token es None!")
+                
+                print("🔄 Generando refresh_token...")
+                refresh_token = OAUTH_MANAGER.create_refresh_token(user_id)
+                print(f"   Refresh token generado: {refresh_token[:50]}..." if refresh_token else "   ❌ Token es None!")
+                
+                print(f"📤 Enviando respuesta con expires_in={ACCESS_TOKEN_EXPIRE_MINUTES * 60}")
+            except Exception as e:
+                print(f"💥 ERROR generando tokens: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+            # ⬆️ FIN DEBUG
             
             logger.info(f"Tokens OAuth generados para usuario: {username}")
             
@@ -1398,15 +1420,4 @@ def internal_error(error):
 # EJECUCIÓN
 # ============================================================================
 if __name__ == "__main__":
-    logger.info("=" * 80)
-    logger.info("Iniciando SecOps API v3.0 - OAuth 2.0")
-    logger.info("=" * 80)
-    logger.info("Características:")
-    logger.info("  - Autenticación OAuth 2.0 con JWT")
-    logger.info("  - Access tokens (30 min) y refresh tokens (30 días)")
-    logger.info("  - Managers de escaneo por usuario")
-    logger.info("  - Manejo robusto de excepciones")
-    logger.info("  - Logs detallados por usuario")
-    logger.info("  - Rate limiting en endpoints sensibles")
-    logger.info("=" * 80)
     app.run(debug=True, host="0.0.0.0", port=5000)

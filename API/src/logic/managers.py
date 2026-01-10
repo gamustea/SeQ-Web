@@ -47,10 +47,12 @@ from src.misc.inetutils import normalize_target
 
 
 config_reader = ConfigReader()
-(ACCESS_TOKEN_EXPIRE_MINUTES, 
- REFRESH_TOKEN_EXPIRE_DAYS, 
- JWT_SECRET_KEY, 
- JWT_ALGORITHM) = config_reader.get_oauth_config()
+(   
+    ACCESS_TOKEN_EXPIRE_MINUTES, 
+    REFRESH_TOKEN_EXPIRE_DAYS, 
+    JWT_SECRET_KEY, 
+    JWT_ALGORITHM
+) = config_reader.get_oauth_config()
 
 
 _ENGINE = None
