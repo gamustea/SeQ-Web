@@ -1,8 +1,6 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Text, Boolean, UniqueConstraint, Float
 from sqlalchemy.orm import relationship, declarative_base
-from sqlalchemy import Boolean, Numeric, Enum, BigInteger as SQLEnum
-from enum import Enum
 
 
 Base = declarative_base()
@@ -180,7 +178,10 @@ class Scan(Base):
     )
 
     # Configuración de herencia con polimorfismo
-    __mapper_args__ = {"polymorphic_identity": "scan", "polymorphic_on": scan_type}
+    __mapper_args__ = {
+        "polymorphic_identity": "scan", 
+        "polymorphic_on": scan_type
+    }
 
     def __str__(self):
         started = (
@@ -526,6 +527,104 @@ class NiktoIncident(Base):
 
     def __repr__(self):
         return f"<NiktoIncident(id={self.id}, osvdb='{self.osvdb_id}', severity='{self.severity}')>"
+
+
+class OpenVASScan(Scan):
+    __tablename__ = 'OpenVASScan'
+    
+    id = Column(Integer, ForeignKey('Scan.id'), primary_key=True)
+    task_id = Column(String(255), nullable=False)
+    report_id = Column(String(255), nullable=False)
+    scan_config_name = Column(String(255))
+    scanner_name = Column(String(255))
+    
+    results = relationship('OpenVASScanResult', back_populates='openvas_scan', cascade='all, delete-orphan')
+    
+    __mapper_args__ = {
+        'polymorphic_identity': 'openvas',
+    }
+
+    __table_args__ = (
+        UniqueConstraint('task_id', 'report_id', name='unique_task_report'),
+    )  # ⭐ FALTABA ESTO
+    
+
+class OpenVASVulnerability(Base):
+    """Catálogo de vulnerabilidades"""
+    __tablename__ = 'OpenVASVulnerability'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nvt_oid = Column(String(255), unique=True, nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    
+    # Severidad
+    severity_score = Column(Float(3, 1))
+    severity_class = Column(String(20), index=True)
+    cvss_base_score = Column(Float(3, 1))
+    cvss_vector = Column(String(255))
+    
+    # Referencias (JSON strings o CSV)
+    cve_ids = Column(Text)
+    cert_refs = Column(Text)
+    bugtraq_ids = Column(Text)
+    other_refs = Column(Text)
+    
+    # Descripción
+    summary = Column(Text)
+    description = Column(Text)
+    impact = Column(Text)
+    insight = Column(Text)
+    affected_software = Column(Text)
+    
+    # Solución
+    solution_type = Column(String(50))
+    solution = Column(Text)
+    
+    # Quality of Detection
+    qod_value = Column(Integer)
+    qod_type = Column(String(100))
+    
+    # Categorización
+    family = Column(String(255))
+    category = Column(String(255))
+    
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relaciones
+    scan_results = relationship('OpenVASScanResult', back_populates='vulnerability')
+
+
+class OpenVASScanResult(Base):
+    """Resultados específicos de vulnerabilidades encontradas"""
+    __tablename__ = 'OpenVASScanResult'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    openvas_scan_id = Column(Integer, ForeignKey('OpenVASScan.id', ondelete='CASCADE'), nullable=False, index=True)
+    vulnerability_id = Column(Integer, ForeignKey('OpenVASVulnerability.id'), nullable=False, index=True)
+    host_id = Column(Integer, ForeignKey('Host.id'), nullable=False, index=True)
+    
+    # Detalles del puerto/servicio
+    port = Column(String(20))
+    protocol = Column(String(10))
+    
+    # Resultados específicos
+    specific_result = Column(Text)
+    detection_details = Column(Text)
+    
+    # Timestamp
+    detected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    # Relaciones
+    openvas_scan = relationship('OpenVASScan', back_populates='results')
+    vulnerability = relationship('OpenVASVulnerability', back_populates='scan_results')
+    host = relationship('Host')
+    
+    __table_args__ = (
+        UniqueConstraint('openvas_scan_id', 'vulnerability_id', 'host_id', 'port', 
+                        name='unique_detection'),
+    )
 
 
 class AccessToken(Base):

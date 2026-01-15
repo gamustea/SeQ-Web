@@ -1,12 +1,10 @@
-from src.logic.secrets import Encoder
-from src.logic.managers import UserManager, NiktoScanManager, NmapScanManager
+from src.core.model import OpenVASScan
+from src.logic.managers import UserManager, OpenVASScanManager
+from datetime import datetime
+from gvm.connections import TLSConnection
+from gvm.protocols.gmp import Gmp
+from gvm.transforms import EtreeTransform
 
 user = UserManager().get_user_by_id(1)
-nmap_manager = NmapScanManager(user)
-nikto_manager = NiktoScanManager(user)
-
-id = nmap_manager.run_scan("192.168.1.1", "1-1024")
-is_finished = nmap_manager.is_scan_finished(id)
-print(f"Escaneo Nmap finalizado: {is_finished}")
-
-
+manager = OpenVASScanManager(user)
+manager.run_scan("192.168.1.1")

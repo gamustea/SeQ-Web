@@ -11,6 +11,7 @@ class DirectoryType(Enum):
     RESULT = "resultdir"
     RESOURCE = "resourcedir"
 
+
 class ConfigReader:
     def __init__(self, configs_file: str = "API/src/config/SecConfig.json") -> None:
         self.configs_path = Path(configs_file).resolve()
@@ -62,3 +63,7 @@ class ConfigReader:
                 float(oauth_configs["refresh_token_expiry_days"]),
                 oauth_configs["jwt_secret_key"],
                 oauth_configs["jwt_algorithm"])
+
+    def get_openvas_config(self) -> dict[str, str]:
+        configs = self.read_configs()
+        return configs["openvas"]

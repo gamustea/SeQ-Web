@@ -9,6 +9,14 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Iterable
 
+from gvm.connections import TLSConnection
+from gvm.protocols.gmp import Gmp
+from gvm.transforms import EtreeTransform
+from sqlalchemy.orm import Session
+from datetime import datetime
+from typing import Optional, Dict
+import time
+
 
 # Third party
 import jwt
@@ -33,7 +41,10 @@ from src.core.model import (
     RefreshToken,
     Scan,
     User,
-    Host
+    Host,
+    OpenVASScan,
+    OpenVASVulnerability,
+    OpenVASScanResult
 )
 from src.logic.secrets import Encoder
 from src.logic.tasks import NmapScanTask, NiktoScanTask, TaskStatus, _Task
@@ -545,6 +556,28 @@ class ScanManager(BaseManager, ABC):
     def _save_scan_results(self, scan: Scan, results: dict) -> None:
         pass
 
+
+class OpenVASScanManager(ScanManager):
+
+    username: str
+    password: str
+    hostname: str
+    port: str
+    
+    def __init__(self, user: User):
+        super().__init__(user)
+        
+        reader = ConfigReader()
+        openvas_access_credentials = reader.get_openvas_config()["access"]
+        self.username = openvas_access_credentials["username"]
+        self.password = openvas_access_credentials["password"]
+        self.hostname = openvas_access_credentials["hostname"]
+        self.port = openvas_access_credentials["port"]
+
+        self.logger.info("Se ha creado el un escaner para OpenVas")
+
+    def _save_scan_results(self, scan, results):
+        pass
 
 class NmapScanManager(ScanManager):
     """

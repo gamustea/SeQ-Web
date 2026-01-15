@@ -17,5 +17,13 @@
         "dbname": "SecOps",
         "host": "127.0.0.1",
         "port": 3306
+    },
+    "openvas": {
+        "access": {
+            "username": "SecOps",
+            "password": "djn38qudOdu89ADU)SA(=HDd9831ydhg219hde19",
+            "hostname": "localhost",
+            "port": 9390
+        }
     }
 }

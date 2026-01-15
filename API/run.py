@@ -317,24 +317,9 @@ def oauth_token():
                     "error_description": "Invalid username or password"
                 }), 401
             
-            # ⬇️ AÑADE ESTO
-            print(f"✅ Credenciales válidas: user_id={user_id}, username={username}")
-            try:
-                print("🔑 Generando access_token...")
-                access_token = OAUTH_MANAGER.create_access_token(user_id, username)
-                print(f"   Access token generado: {access_token[:50]}..." if access_token else "   ❌ Token es None!")
-                
-                print("🔄 Generando refresh_token...")
-                refresh_token = OAUTH_MANAGER.create_refresh_token(user_id)
-                print(f"   Refresh token generado: {refresh_token[:50]}..." if refresh_token else "   ❌ Token es None!")
-                
-                print(f"📤 Enviando respuesta con expires_in={ACCESS_TOKEN_EXPIRE_MINUTES * 60}")
-            except Exception as e:
-                print(f"💥 ERROR generando tokens: {e}")
-                import traceback
-                traceback.print_exc()
-                raise
-            # ⬆️ FIN DEBUG
+            # Generar tokens
+            access_token = OAUTH_MANAGER.create_access_token(user_id, username) # type: ignore
+            refresh_token = OAUTH_MANAGER.create_refresh_token(user_id) # type: ignore
             
             logger.info(f"Tokens OAuth generados para usuario: {username}")
             
@@ -392,12 +377,16 @@ def oauth_token():
             }), 400
     
     except BadRequest as e:
+        import traceback
+        logger.error(traceback.print_stack())
         return jsonify({
             "error": "invalid_request",
             "error_description": "Malformed JSON in request body"
         }), 400
 
     except Exception as e:
+        import traceback
+        logger.error(traceback.print_stack())
         return jsonify({
             "error": "server_error",
             "error_description": "Internal server error"
