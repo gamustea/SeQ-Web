@@ -1,5 +1,4 @@
 version: '3.9'
-
 services:
   openvas:
     image: immauss/openvas:latest
@@ -12,13 +11,23 @@ services:
       - openvas-data:/data
     environment:
       - PASSWORD=admin123
-      - SKIPSYNC=true  # Desactiva sincronización automática inicial
+      - SKIPSYNC=true
     dns:
-      - 8.8.8.8        # Google DNS
-      - 1.1.1.1        # Cloudflare DNS
-      - 208.67.222.222 # OpenDNS
+      - 8.8.8.8
+      - 1.1.1.1
+      - 208.67.222.222
     cap_add:
       - NET_ADMIN
+      - NET_RAW           # ⭐ AÑADIR ESTA LÍNEA (permite ICMP)
+      - SYS_PTRACE        # ⭐ AÑADIR ESTA LÍNEA (para debugging)
+    # ⭐ AÑADIR ESTAS LÍNEAS PARA RECURSOS:
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+        reservations:
+          memory: 3G
+    shm_size: 1gb
 
 volumes:
   openvas-data:

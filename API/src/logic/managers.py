@@ -301,7 +301,6 @@ def assign_severity_to_nikto_incident(incident):
     # Por defecto, asignar MEDIUM como nivel conservador
     incident.severity = "MEDIUM"
 
-
 def initialize_engine(database_url: Optional[str] = None): 
     """
     Inicializa el engine y el session factory una sola vez.
@@ -436,7 +435,20 @@ class ScanManager(BaseManager, ABC):
         
         except Exception:
             raise
-  
+
+    def get_or_create_host(self, target_ip: str):
+        _, hostname = normalize_target(target_ip)
+
+        host = self.get_host_by_hostname(hostname)
+        if not host:
+            host = Host(
+                hostname    = hostname,
+                ip_address  = target_ip
+            )
+            self.session.add(host)
+            self.session.flush()  
+            self.logger.info(f"Se ha creado un host con id {host.id}")     
+
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
         """Obtiene el progreso de un escaneo en ejecución"""
         if scan_id in self.running_tasks:
@@ -477,9 +489,9 @@ class ScanManager(BaseManager, ABC):
             ).one_or_none()
             
             if scan:
-                self.logger.info(f"Escaneo de Nikto {scan_id} encontrado")
+                self.logger.info(f"Escaneo {scan_id} encontrado")
             else:
-                self.logger.warning(f"Escaneo de Nikto {scan_id} no encontrado")
+                self.logger.warning(f"Escaneo {scan_id} no encontrado")
             
             return scan
         
@@ -575,9 +587,392 @@ class OpenVASScanManager(ScanManager):
         self.port = openvas_access_credentials["port"]
 
         self.logger.info("Se ha creado el un escaner para OpenVas")
+    
+    def _launch_scan(self,
+                    target_ip: str,
+                    target_name: Optional[str] = None, 
+                    scan_config: str='daba56c8-73ec-11df-a475-002264764cea', 
+                    port_list_id: str='33d0cd82-57c6-11e1-8ed1-406186ea4fc5', 
+                    reuse_target: str=True):
+        """
+        Lanza un escaneo en OpenVAS hacia un objetivo específico.
+        
+        Args:
+            target_ip (str): Dirección IP o rango a escanear (ej: '192.168.1.1' o '192.168.1.0/24')
+            target_name (str, optional): Nombre descriptivo del objetivo
+            scan_config (str, optional): UUID de la configuración de escaneo
+                - 'daba56c8-73ec-11df-a475-002264764cea': Full and fast
+                - '8715c877-47a0-438d-98a3-27c7a6ab2196': Full and very deep
+                - '085569ce-73ed-11df-83c3-002264764cea': Full and very deep ultimate
+            port_list_id (str, optional): UUID de la lista de puertos
+                - '33d0cd82-57c6-11e1-8ed1-406186ea4fc5': All IANA assigned TCP (default)
+                - '4a4717fe-57d2-11e1-9a26-406186ea4fc5': All IANA assigned TCP and UDP
+                - '730ef368-57e2-11e1-a90f-406186ea4fc5': All TCP and Nmap top 100 UDP
+            reuse_target (bool, optional): Si True, reutiliza el target si existe. Si False, crea uno nuevo con timestamp
+        
+        Returns:
+            dict: Diccionario con información del escaneo (IDs de target, task y report)
+        """
+        if target_name is None:
+            target_name = f"Target_{target_ip}"
+        
+        # Si no se quiere reutilizar, agregar timestamp al nombre
+        if not reuse_target:
+            target_name = f"{target_name}_{int(time.time())}"
+        
+        try:
+            # Establecer conexión TLS
+            connection = TLSConnection(hostname=self.hostname, port=self.port)
+            
+            with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
+                # Autenticación
+                gmp.authenticate(self.username, self.password)
+                self.logger.info(f"✓ Autenticado correctamente en {self.hostname}:{self.port}")
+                
+                # Intentar obtener el target existente si reuse_target es True
+                target_id = None
+                if reuse_target:
+                    targets = gmp.get_targets(filter_string=f'name="{target_name}"')
+                    target_list = targets.xpath('target')
+                    if target_list:
+                        target_id = target_list[0].attrib.get('id')
+                        self.logger.info(f"✓ Target existente encontrado con ID: {target_id}")
+                
+                if not target_id:
+                    target_response = gmp.create_target(
+                        name=target_name,
+                        hosts=[target_ip],
+                        port_list_id=port_list_id,
+                        comment=f"Target creado para escanear {target_ip}"
+                    )
+                    
+                    # Extraer el target_id de la respuesta XML
+                    target_id = target_response.attrib.get('id') or target_response.get('id')
+                    
+                    if not target_id:
+                        raise Exception(f"No se pudo obtener el target_id. Atributos: {target_response.attrib}")
+                    
+                    self.logger.info(f"✓ Target creado con ID: {target_id}")
+                
+                # Obtener el scanner por defecto (OpenVAS Default)
+                scanners = gmp.get_scanners()
+                scanner_id = None
+                for scanner in scanners.xpath('scanner'):
+                    if scanner.find('name').text == 'OpenVAS Default':
+                        scanner_id = scanner.get('id')
+                        break
+                
+                if not scanner_id:
+                    raise Exception("No se encontró el scanner OpenVAS Default")
+                
+                self.logger.info(f"✓ Scanner ID: {scanner_id}")
+                
+                # Crear tarea de escaneo
+                task_name = f"Scan_{target_name}_{int(time.time())}"
+                task_response = gmp.create_task(
+                    name=task_name,
+                    config_id=scan_config,
+                    target_id=target_id,
+                    scanner_id=scanner_id,
+                    comment=f"Escaneo automático de {target_ip}"
+                )
+                
+                # Extraer el task_id de la respuesta XML
+                task_id = task_response.attrib.get('id') or task_response.get('id')
+                
+                if not task_id:
+                    raise Exception(f"No se pudo obtener el task_id. Atributos: {task_response.attrib}")
+                
+                self.logger.info(f"✓ Tarea creada con ID: {task_id}")
+                
+                # Iniciar el escaneo
+                start_response = gmp.start_task(task_id)
+                report_id = start_response.xpath('report_id')[0].text
+                self.logger.info(f"✓ Escaneo iniciado")
+                self.logger.info(f"✓ Report ID: {report_id}")
 
-    def _save_scan_results(self, scan, results):
-        pass
+                host = self.get_or_create_host(target_ip)
+                
+                scan = OpenVASScan(
+                    target=target_ip,
+                    user_id = self.active_user.id,
+                    task_id = task_id,
+                    report_id = report_id,
+                    host_id = host.id
+                )
+
+                self.logger.info(f"Se ha creado un escaneo de OpenVAS con id {scan.id}")
+                self.session.add(scan)
+                self._safe_commit()
+                
+                return {
+                    'success': True,
+                    'scan': scan
+                }
+                
+        except Exception as e:
+            self.logger.info(f"✗ Error al lanzar el escaneo: {str(e)}")
+            self._safe_rollback()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _get_scan_report_xml(self, task_id, wait_for_completion=False, check_interval=10):
+        """
+        Obtiene el reporte XML de un escaneo. Opcionalmente espera a que termine.
+        
+        Args:
+            task_id (str): ID de la tarea
+            wait_for_completion (bool): Si True, espera hasta que el escaneo termine
+            check_interval (int): Segundos entre verificaciones de estado (solo si wait_for_completion=True)
+            
+        Returns:
+            dict: Contiene el XML del reporte y metadata
+        """
+        try:
+            connection = TLSConnection(hostname=self.hostname, port=self.port)
+            
+            with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
+                gmp.authenticate(self.username, self.password)
+                
+                # Obtener información de la tarea
+                task = gmp.get_task(task_id)
+                status = task.xpath('task/status')[0].text
+                progress = task.xpath('task/progress')[0].text
+                
+                # Si se requiere esperar a que termine
+                if wait_for_completion:
+                    self.logger.info(f"⏳ Esperando a que termine el escaneo...")
+                    while status not in ['Done', 'Stopped', 'Interrupted']:
+                        self.logger.info(f"   Estado: {status} - Progreso: {progress}%")
+                        time.sleep(check_interval)
+                        
+                        task = gmp.get_task(task_id)
+                        status = task.xpath('task/status')[0].text
+                        progress = task.xpath('task/progress')[0].text
+                    
+                    self.logger.info(f"✓ Escaneo finalizado con estado: {status}")
+                
+                # Verificar si el escaneo ha terminado
+                if status not in ['Done', 'Stopped', 'Interrupted']:
+                    return {
+                        'success': False,
+                        'completed': False,
+                        'status': status,
+                        'progress': f"{progress}%",
+                        'message': f"El escaneo aún está en progreso ({progress}%)"
+                    }
+                
+                # Obtener el report_id del último reporte
+                last_report = task.xpath('task/last_report/report')[0]
+                report_id = last_report.get('id')
+                
+                if not report_id:
+                    return {
+                        'success': False,
+                        'completed': True,
+                        'status': status,
+                        'message': 'No se encontró ningún reporte asociado'
+                    }
+                
+                self.logger.info(f"✓ Obteniendo reporte con ID: {report_id}")
+                
+                # Obtener el reporte completo en formato XML
+                report_response = gmp.get_report(
+                    report_id=report_id,
+                    report_format_id='a994b278-1f62-11e1-96ac-406186ea4fc5',  # XML format
+                    ignore_pagination=True,
+                    details=True
+                )
+                
+                # Convertir el reporte a string XML
+                from lxml import etree
+                report_xml = etree.tostring(report_response, encoding='unicode', pretty_print=True)
+                
+                # Extraer información básica del reporte
+                severity = task.xpath('task/last_report/report/severity/text()')
+                severity_value = severity[0] if severity else 'N/A'
+                
+                return {
+                    'success': True,
+                    'completed': True,
+                    'status': status,
+                    'report_id': report_id,
+                    'task_id': task_id,
+                    'severity': severity_value,
+                    'report_xml': report_xml,
+                    'message': 'Reporte obtenido exitosamente'
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _save_scan_results(self, scan: OpenVASScan, results: str) -> None:
+        try:
+            json = JSONManager.openvas_xml_to_json(results)
+            temp_vulnerabilities = {}
+
+            for vulnerability_info in json["vulnerabilities"]:
+                vulnerability = self._get_or_create_vulnerability(vulnerability_info)
+                temp_vulnerabilities[vulnerability.nvt_oid] = vulnerability
+
+            for scan_result in json["scan_results"]:
+                nvt_oid = scan_result["nvt_oid"]
+                vulnerability = temp_vulnerabilities[nvt_oid]
+                ip = scan_result["host_ip"]
+                ip, hostname = normalize_target(ip)
+
+                host = self.get_host_by_hostname(hostname)
+                if not host:
+                    host = Host(
+                        hostname    = hostname,
+                        ip_address  = ip
+                    )
+                    self.session.add(host)
+                    self.session.flush()
+                scan.host_id = host.id
+
+                openvas_result = OpenVASScanResult(
+                    openvas_scan_id     = scan.id,
+                    vulnerability_id    = vulnerability.id,
+                    host_id             = host.id
+                )
+
+                self.session.add(openvas_result)
+                self.session.flush()
+                scan.results.append(openvas_result)
+                
+
+            self._safe_commit()
+        except SQLAlchemyError as e:
+            self.logger.warning(e._message)
+            raise
+
+    def _get_or_create_vulnerability(self, vulnerability_info: dict[str]) -> OpenVASVulnerability:
+        self._check_session()
+        nvt_oid = vulnerability_info["nvt_oid"]
+
+        vulnerability = self.session.query(
+            OpenVASVulnerability
+        ).filter(
+            OpenVASVulnerability.nvt_oid == nvt_oid
+        ).one_or_none()
+
+        if not vulnerability:
+            name                = vulnerability_info["name"]
+            severity_score      = vulnerability_info["severity_score"]
+            severity_class      = vulnerability_info["severity_class"]
+            cvss_base_score     = vulnerability_info["cvss_base_score"]
+            cvss_vector         = vulnerability_info["cvss_vector"]
+            
+            # Referencias (JSON strings o CSV)
+            cve_ids             = vulnerability_info["cve_ids"]
+            cert_refs           = vulnerability_info["cert_refs"]
+            bugtraq_ids         = vulnerability_info["bugtraq_ids"]
+            other_refs          = vulnerability_info["other_refs"]
+            
+            # Descripción
+            summary             = vulnerability_info["summary"]
+            description         = vulnerability_info["description"]
+            impact              = vulnerability_info["impact"]
+            insight             = vulnerability_info["insight"]
+            affected_software   = vulnerability_info["affected_software"]
+            
+            # Solución
+            solution_type       = vulnerability_info["solution_type"]
+            solution            = vulnerability_info["solution"]
+
+            # Quality of Detection
+            qod_value           = vulnerability_info["qod_value"]
+            qod_type            = vulnerability_info["qod_type"]
+            
+            # Categorización
+            family              = vulnerability_info["family"]
+            category            = vulnerability_info["category"]
+
+            vulnerability = OpenVASVulnerability(
+                nvt_oid             = nvt_oid,
+                name                = name,
+                severity_score      = severity_score,
+                severity_class      = severity_class,
+                cvss_base_score     = cvss_base_score,
+                cvss_vector         = cvss_vector,
+                cve_ids             = cve_ids,
+                cert_refs           = cert_refs,
+                bugtraq_ids         = bugtraq_ids,
+                other_refs          = other_refs,
+                summary             = summary,
+                description         = description,
+                impact              = impact,
+                insight             = insight,
+                affected_software   = affected_software,
+                solution_type       = solution_type,
+                solution            = solution,
+                qod_value           = qod_value,
+                qod_type            = qod_type,
+                family              = family,
+                category            = category
+            )
+
+            self.session.add(vulnerability)
+            self.session.flush()
+            self.logger.info(
+                f"La vulnerabilidad f{vulnerability.nvt_oid} " +
+                "no existía, y se ha creado"
+            )
+        
+        return vulnerability
+
+    def run_scan(self, target_ip: str) -> None:
+        result = self._launch_scan(target_ip)
+        success = result["success"]
+        
+        if success:
+            scan = result["scan"]
+            xml = self._get_scan_report_xml(
+                task_id=scan.task_id,
+                wait_for_completion=True
+            )["report_xml"]
+            self._save_scan_results(scan, xml)
+        else:
+            self.logger.error(f"Hubo un error durante el lanzamiento del escaneo: {result["error"]}")
+
+    def get_scan_status(self, task_id):
+        """
+        Obtiene el estado actual de un escaneo.
+        
+        Args:
+            task_id (str): ID de la tarea a consultar
+            
+        Returns:
+            dict: Estado del escaneo y progreso
+        """
+        try:
+            connection = TLSConnection(hostname=self.hostname, port=self.port)
+            
+            with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
+                gmp.authenticate(self.username, self.password)
+                
+                task = gmp.get_task(task_id)
+                status = task.xpath('task/status')[0].text
+                progress = task.xpath('task/progress')[0].text
+                
+                return {
+                    'success': True,
+                    'status': status,
+                    'progress': f"{progress}%"
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
 
 class NmapScanManager(ScanManager):
     """
@@ -784,7 +1179,6 @@ class NmapScanManager(ScanManager):
             self.logger.debug(f"Puerto '{protocol}' ya existe")
             return port
         
-        # Crear nuevo
         new_port = Port(protocol=protocol)
         self.session.add(new_port)
         self.session.flush()

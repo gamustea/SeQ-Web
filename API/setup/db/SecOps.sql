@@ -136,6 +136,77 @@ CREATE TABLE RefreshToken (
     FOREIGN KEY (user_id) REFERENCES User(id) ON DELETE CASCADE
 );
 
+-- Tabla OpenVASScan (sin cambios, hereda de Scan)
+CREATE TABLE OpenVASScan (
+    id INTEGER PRIMARY KEY,
+    task_id VARCHAR(255) NOT NULL,
+    report_id VARCHAR(255) NOT NULL,
+    scan_config_name VARCHAR(255),
+    scanner_name VARCHAR(255),
+    
+    FOREIGN KEY (id) REFERENCES Scan (id),
+    UNIQUE(task_id, report_id)
+);
+
+-- OpenVASVulnerability (sin cambios)
+CREATE TABLE OpenVASVulnerability (
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    nvt_oid VARCHAR(255) UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+
+    severity_score DECIMAL(3,1),
+    severity_class VARCHAR(20),
+    cvss_base_score DECIMAL(3,1),
+    cvss_vector VARCHAR(255),
+    
+    cve_ids TEXT,
+    cert_refs TEXT,
+    bugtraq_ids TEXT,
+    other_refs TEXT,
+    
+    summary TEXT,
+    description TEXT,
+    impact TEXT,
+    insight TEXT,
+    affected_software TEXT,
+    
+    solution_type VARCHAR(50),
+    solution TEXT,
+    
+    qod_value INTEGER,
+    qod_type VARCHAR(100),
+    
+    family VARCHAR(255),
+    category VARCHAR(255),
+    
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    INDEX idx_nvt_oid (nvt_oid),
+    INDEX idx_severity_class (severity_class)
+);
+
+CREATE TABLE OpenVASScanResult (
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    openvas_scan_id INTEGER NOT NULL,
+    vulnerability_id INTEGER NOT NULL,
+    host_id INTEGER NOT NULL,
+    
+    -- Información específica del puerto/servicio
+    port VARCHAR(20),
+    protocol VARCHAR(10),
+    detected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (openvas_scan_id) REFERENCES OpenVASScan (id) ON DELETE CASCADE,
+    FOREIGN KEY (vulnerability_id) REFERENCES OpenVASVulnerability (id),
+    FOREIGN KEY (host_id) REFERENCES Host (id),              
+    
+    UNIQUE KEY unique_detection (openvas_scan_id, vulnerability_id, host_id, port),
+    INDEX idx_scan_id (openvas_scan_id),
+    INDEX idx_vuln_id (vulnerability_id),
+    INDEX idx_host_id (host_id)
+);
+
 INSERT INTO Rol (name, description, hierarchy_level)
 VALUES 
 	("ROOT_ACCOUNT", "Rol indispensable para el funcionamiento de la jerarquía", 0), 
@@ -146,3 +217,10 @@ VALUES ("Gabriel", "Musteata", "artexian", curdate());
 
 INSERT INTO User (username, password_hash, email, password_salt, person_id, rol_id)
 VALUES ("root", "683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a", "gmiganescu@gmail.com", "c167837c1c2a860031d861164d69bd79", 1, 1);
+
+SELECT *
+FROM Person AS P
+	JOIN User AS U ON P.id = U.person_id;
+    
+SELECT *
+FROM AccessToken;

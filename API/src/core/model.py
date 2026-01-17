@@ -486,7 +486,7 @@ class NiktoIncident(Base):
 
     Campos a mostrar:
         - id, osvdb_id, method, url, description,
-          severity, ip_address, port, references, discovered_at
+        - severity, ip_address, port, references, discovered_at
 
     Relaciones:
         - nikto_scans: Lista de escaneos Nikto que detectaron este incidente
@@ -595,6 +595,9 @@ class OpenVASVulnerability(Base):
     # Relaciones
     scan_results = relationship('OpenVASScanResult', back_populates='vulnerability')
 
+    def __str__(self):
+        return f"OpenVAS Vulnerability: {self.nvt_oid}\n\t - Description: {self.description}"
+
 
 class OpenVASScanResult(Base):
     """Resultados específicos de vulnerabilidades encontradas"""
@@ -604,16 +607,6 @@ class OpenVASScanResult(Base):
     openvas_scan_id = Column(Integer, ForeignKey('OpenVASScan.id', ondelete='CASCADE'), nullable=False, index=True)
     vulnerability_id = Column(Integer, ForeignKey('OpenVASVulnerability.id'), nullable=False, index=True)
     host_id = Column(Integer, ForeignKey('Host.id'), nullable=False, index=True)
-    
-    # Detalles del puerto/servicio
-    port = Column(String(20))
-    protocol = Column(String(10))
-    
-    # Resultados específicos
-    specific_result = Column(Text)
-    detection_details = Column(Text)
-    
-    # Timestamp
     detected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     
     # Relaciones
@@ -621,10 +614,6 @@ class OpenVASScanResult(Base):
     vulnerability = relationship('OpenVASVulnerability', back_populates='scan_results')
     host = relationship('Host')
     
-    __table_args__ = (
-        UniqueConstraint('openvas_scan_id', 'vulnerability_id', 'host_id', 'port', 
-                        name='unique_detection'),
-    )
 
 
 class AccessToken(Base):
