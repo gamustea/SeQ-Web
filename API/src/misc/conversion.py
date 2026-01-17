@@ -184,7 +184,7 @@ class JSONManager:
                 
                 # Información de la vulnerabilidad (NVT)
                 nvt = result.xpath('nvt')[0] if result.xpath('nvt') else None
-                if not nvt:
+                if nvt is None:
                     continue
                 
                 nvt_oid = nvt.get('oid')

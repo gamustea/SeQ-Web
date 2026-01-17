@@ -447,7 +447,9 @@ class ScanManager(BaseManager, ABC):
             )
             self.session.add(host)
             self.session.flush()  
-            self.logger.info(f"Se ha creado un host con id {host.id}")     
+            self.logger.info(f"Se ha creado un host con id {host.id}")
+
+        return host  
 
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
         """Obtiene el progreso de un escaneo en ejecución"""
@@ -550,7 +552,7 @@ class ScanManager(BaseManager, ABC):
         ).count()
         return numero_de_filas > 0
 
-    def get_scan_task_status(self, scan_id: int) -> Optional[str]:
+    def get_scan_status(self, scan_id: int) -> Optional[str]:
         """Obtiene el estado de un escaneo en ejecución"""
         if scan_id in self.running_tasks:
             status = self.running_tasks[scan_id].status
@@ -627,7 +629,7 @@ class OpenVASScanManager(ScanManager):
             with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
                 # Autenticación
                 gmp.authenticate(self.username, self.password)
-                self.logger.info(f"✓ Autenticado correctamente en {self.hostname}:{self.port}")
+                self.logger.info(f"Autenticado correctamente en {self.hostname}:{self.port}")
                 
                 # Intentar obtener el target existente si reuse_target es True
                 target_id = None
@@ -636,7 +638,7 @@ class OpenVASScanManager(ScanManager):
                     target_list = targets.xpath('target')
                     if target_list:
                         target_id = target_list[0].attrib.get('id')
-                        self.logger.info(f"✓ Target existente encontrado con ID: {target_id}")
+                        self.logger.info(f"Target existente encontrado con ID: {target_id}")
                 
                 if not target_id:
                     target_response = gmp.create_target(
@@ -652,7 +654,7 @@ class OpenVASScanManager(ScanManager):
                     if not target_id:
                         raise Exception(f"No se pudo obtener el target_id. Atributos: {target_response.attrib}")
                     
-                    self.logger.info(f"✓ Target creado con ID: {target_id}")
+                    self.logger.info(f"Target creado con ID: {target_id}")
                 
                 # Obtener el scanner por defecto (OpenVAS Default)
                 scanners = gmp.get_scanners()
@@ -664,8 +666,8 @@ class OpenVASScanManager(ScanManager):
                 
                 if not scanner_id:
                     raise Exception("No se encontró el scanner OpenVAS Default")
-                
-                self.logger.info(f"✓ Scanner ID: {scanner_id}")
+            
+                self.logger.info(f"Scanner ID: {scanner_id}")
                 
                 # Crear tarea de escaneo
                 task_name = f"Scan_{target_name}_{int(time.time())}"
@@ -683,27 +685,22 @@ class OpenVASScanManager(ScanManager):
                 if not task_id:
                     raise Exception(f"No se pudo obtener el task_id. Atributos: {task_response.attrib}")
                 
-                self.logger.info(f"✓ Tarea creada con ID: {task_id}")
+                self.logger.info(f"Tarea creada con ID: {task_id}")
                 
                 # Iniciar el escaneo
                 start_response = gmp.start_task(task_id)
                 report_id = start_response.xpath('report_id')[0].text
-                self.logger.info(f"✓ Escaneo iniciado")
-                self.logger.info(f"✓ Report ID: {report_id}")
-
-                host = self.get_or_create_host(target_ip)
+                self.logger.info(f"Escaneo iniciado")
                 
                 scan = OpenVASScan(
                     target=target_ip,
                     user_id = self.active_user.id,
                     task_id = task_id,
-                    report_id = report_id,
-                    host_id = host.id
+                    report_id = report_id
                 )
 
                 self.logger.info(f"Se ha creado un escaneo de OpenVAS con id {scan.id}")
                 self.session.add(scan)
-                self._safe_commit()
                 
                 return {
                     'success': True,
@@ -711,7 +708,7 @@ class OpenVASScanManager(ScanManager):
                 }
                 
         except Exception as e:
-            self.logger.info(f"✗ Error al lanzar el escaneo: {str(e)}")
+            self.logger.info(f"Error al lanzar el escaneo: {str(e)}")
             self._safe_rollback()
             return {
                 'success': False,
@@ -743,7 +740,7 @@ class OpenVASScanManager(ScanManager):
                 
                 # Si se requiere esperar a que termine
                 if wait_for_completion:
-                    self.logger.info(f"⏳ Esperando a que termine el escaneo...")
+                    self.logger.info(f"Esperando a que termine el escaneo...")
                     while status not in ['Done', 'Stopped', 'Interrupted']:
                         self.logger.info(f"   Estado: {status} - Progreso: {progress}%")
                         time.sleep(check_interval)
@@ -752,7 +749,7 @@ class OpenVASScanManager(ScanManager):
                         status = task.xpath('task/status')[0].text
                         progress = task.xpath('task/progress')[0].text
                     
-                    self.logger.info(f"✓ Escaneo finalizado con estado: {status}")
+                    self.logger.info(f"Escaneo finalizado con estado: {status}")
                 
                 # Verificar si el escaneo ha terminado
                 if status not in ['Done', 'Stopped', 'Interrupted']:
@@ -776,7 +773,7 @@ class OpenVASScanManager(ScanManager):
                         'message': 'No se encontró ningún reporte asociado'
                     }
                 
-                self.logger.info(f"✓ Obteniendo reporte con ID: {report_id}")
+                self.logger.info(f"Obteniendo reporte con ID: {report_id}")
                 
                 # Obtener el reporte completo en formato XML
                 report_response = gmp.get_report(
@@ -811,10 +808,26 @@ class OpenVASScanManager(ScanManager):
                 'error': str(e)
             }
 
-    def _save_scan_results(self, scan: OpenVASScan, results: str) -> None:
+    def _save_scan_results(self, scan: OpenVASScan) -> None:
         try:
-            json = JSONManager.openvas_xml_to_json(results)
+            xml = self._get_scan_report_xml(
+                task_id=scan.task_id,
+                wait_for_completion=True
+            )["report_xml"]
+            json = JSONManager.openvas_xml_to_json(xml)
             temp_vulnerabilities = {}
+
+            ip, hostname = normalize_target(scan.target)
+
+            host = self.get_host_by_hostname(hostname)
+            if not host:
+                host = Host(
+                    hostname    = hostname,
+                    ip_address  = ip
+                )
+                self.session.add(host)
+                self.session.flush()
+            scan.host_id = host.id
 
             for vulnerability_info in json["vulnerabilities"]:
                 vulnerability = self._get_or_create_vulnerability(vulnerability_info)
@@ -824,17 +837,8 @@ class OpenVASScanManager(ScanManager):
                 nvt_oid = scan_result["nvt_oid"]
                 vulnerability = temp_vulnerabilities[nvt_oid]
                 ip = scan_result["host_ip"]
-                ip, hostname = normalize_target(ip)
 
-                host = self.get_host_by_hostname(hostname)
-                if not host:
-                    host = Host(
-                        hostname    = hostname,
-                        ip_address  = ip
-                    )
-                    self.session.add(host)
-                    self.session.flush()
-                scan.host_id = host.id
+                host = self.get_or_create_host(ip)
 
                 openvas_result = OpenVASScanResult(
                     openvas_scan_id     = scan.id,
@@ -846,7 +850,6 @@ class OpenVASScanManager(ScanManager):
                 self.session.flush()
                 scan.results.append(openvas_result)
                 
-
             self._safe_commit()
         except SQLAlchemyError as e:
             self.logger.warning(e._message)
@@ -941,7 +944,11 @@ class OpenVASScanManager(ScanManager):
         else:
             self.logger.error(f"Hubo un error durante el lanzamiento del escaneo: {result["error"]}")
 
-    def get_scan_status(self, task_id):
+    def get_scan_status(self, scan_id: int):
+        scan = self.get_scan_by_id(scan_id)
+        return self.get_scan_status(scan.task_id)
+
+    def get_scan_status(self, task_id: str):
         """
         Obtiene el estado actual de un escaneo.
         
@@ -1011,11 +1018,10 @@ class NmapScanManager(ScanManager):
             scan_id = nmap_scan.id
             self.logger.info(f"Escaneo Nmap {scan_id} creado, iniciando thread")
             
-            # ✅ CORRECCIÓN: daemon=False para que complete su trabajo
             thread = threading.Thread(
                 target=self._execute_scan_thread,
                 args=(scan_id, target_host, target_ports, timeout),
-                daemon=False,  # ✅ CRÍTICO: No daemon
+                daemon=False,
                 name=f"NmapScan-{scan_id}"
             )
             thread.start()
@@ -1061,13 +1067,11 @@ class NmapScanManager(ScanManager):
                 thread_manager.logger.error(
                     f"Escaneo {scan_id} falló o excedió timeout. Estado: {task.status}"
                 )
-                # Marcar como error en BD
                 scan.ended_at = datetime.now()
                 thread_manager.session.add(scan)
                 thread_manager._safe_commit()
                 return
             
-            # ✅ CORRECCIÓN: Verificar que results no sea None
             if task.results is None:
                 thread_manager.logger.error(
                     f"Escaneo {scan_id} completó pero no tiene resultados"
@@ -1080,8 +1084,7 @@ class NmapScanManager(ScanManager):
             thread_manager.logger.info(
                 f"Escaneo {scan_id} completado, guardando resultados"
             )
-            
-            # Procesar y guardar resultados
+
             thread_manager._save_scan_results(scan, task.results)
             thread_manager.logger.info(f"Escaneo {scan_id} guardado exitosamente")
         
