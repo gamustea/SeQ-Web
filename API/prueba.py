@@ -12,9 +12,9 @@ from gvm.transforms import EtreeTransform
 user = UserManager().get_user_by_id(1)
 
 manager = OpenVASScanManager(user)
+manager.run_scan("testphp.vulnweb.com")
 
-scan = manager.get_scan_by_id(1)
-
+scan = manager.get_scan_by_id(4)
 pdf_creator = PDFCreator(OpenVASPrintingStrategy(scan))
 pdf_creator.print_pdf()
 

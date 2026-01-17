@@ -572,160 +572,177 @@ class ScanManager(BaseManager, ABC):
 
 
 class OpenVASScanManager(ScanManager):
-
-    username: str
-    password: str
-    hostname: str
-    port: str
+    """
+    Gestor de escaneos OpenVAS que maneja la ejecución, monitoreo y 
+    persistencia de análisis de vulnerabilidades.
+    
+    Attributes:
+        username (str): Usuario para autenticación en OpenVAS
+        password (str): Contraseña para autenticación
+        hostname (str): Host del servidor OpenVAS
+        port (str): Puerto del servidor OpenVAS
+    """
+    
+    # Configuraciones predefinidas de escaneo
+    SCAN_CONFIGS = {
+        'full_fast': 'daba56c8-73ec-11df-a475-002264764cea',
+        'full_deep': '8715c877-47a0-438d-98a3-27c7a6ab2196',
+        'full_ultimate': '085569ce-73ed-11df-83c3-002264764cea'
+    }
+    
+    PORT_LISTS = {
+        'tcp_all': '33d0cd82-57c6-11e1-8ed1-406186ea4fc5',
+        'tcp_udp_all': '4a4717fe-57d2-11e1-9a26-406186ea4fc5',
+        'tcp_all_udp_top100': '730ef368-57e2-11e1-a90f-406186ea4fc5'
+    }
     
     def __init__(self, user: User):
-        super().__init__(user)
-        
-        reader = ConfigReader()
-        openvas_access_credentials = reader.get_openvas_config()["access"]
-        self.username = openvas_access_credentials["username"]
-        self.password = openvas_access_credentials["password"]
-        self.hostname = openvas_access_credentials["hostname"]
-        self.port = openvas_access_credentials["port"]
-
-        self.logger.info("Se ha creado el un escaner para OpenVas")
-    
-    def _launch_scan(self,
-                    target_ip: str,
-                    target_name: Optional[str] = None, 
-                    scan_config: str='daba56c8-73ec-11df-a475-002264764cea', 
-                    port_list_id: str='33d0cd82-57c6-11e1-8ed1-406186ea4fc5', 
-                    reuse_target: str=True):
         """
-        Lanza un escaneo en OpenVAS hacia un objetivo específico.
+        Inicializa el gestor de escaneos OpenVAS.
         
         Args:
-            target_ip (str): Dirección IP o rango a escanear (ej: '192.168.1.1' o '192.168.1.0/24')
-            target_name (str, optional): Nombre descriptivo del objetivo
-            scan_config (str, optional): UUID de la configuración de escaneo
-                - 'daba56c8-73ec-11df-a475-002264764cea': Full and fast
-                - '8715c877-47a0-438d-98a3-27c7a6ab2196': Full and very deep
-                - '085569ce-73ed-11df-83c3-002264764cea': Full and very deep ultimate
-            port_list_id (str, optional): UUID de la lista de puertos
-                - '33d0cd82-57c6-11e1-8ed1-406186ea4fc5': All IANA assigned TCP (default)
-                - '4a4717fe-57d2-11e1-9a26-406186ea4fc5': All IANA assigned TCP and UDP
-                - '730ef368-57e2-11e1-a90f-406186ea4fc5': All TCP and Nmap top 100 UDP
-            reuse_target (bool, optional): Si True, reutiliza el target si existe. Si False, crea uno nuevo con timestamp
+            user (User): Usuario que ejecutará los escaneos
+        """
+        super().__init__(user)
+        
+        config = ConfigReader().get_openvas_config()["access"]
+        self.username = config["username"]
+        self.password = config["password"]
+        self.hostname = config["hostname"]
+        self.port = config["port"]
+        
+        self.logger.info("OpenVASScanManager inicializado")
+    
+    def run_scan(self, target: str, scan_config: str = 'full_fast') -> dict:
+        """
+        Ejecuta un escaneo OpenVAS completo de forma síncrona.
+        
+        Args:
+            target_ip (str): IP o rango a escanear (ej: '192.168.1.1' o '192.168.1.0/24')
+            scan_config (str): Tipo de configuración ('full_fast', 'full_deep', 'full_ultimate')
         
         Returns:
-            dict: Diccionario con información del escaneo (IDs de target, task y report)
+            dict: Resultado con 'success' (bool), 'scan' (OpenVASScan) o 'error' (str)
         """
-        if target_name is None:
-            target_name = f"Target_{target_ip}"
+        target_ip, _ = normalize_target(target)
+        config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
+        result = self._launch_scan(target_ip, scan_config=config_id)
         
-        # Si no se quiere reutilizar, agregar timestamp al nombre
+        if not result["success"]:
+            self.logger.error(f"Error lanzando escaneo: {result.get('error')}")
+            return result
+        
+        scan = result["scan"]
+        
+        try:
+            report_data = self._get_scan_report_xml(
+                task_id=scan.task_id,
+                wait_for_completion=True
+            )
+            
+            if not report_data["success"]:
+                self.logger.error(f"Error obteniendo reporte: {report_data.get('message')}")
+                return {"success": False, "error": report_data.get("message")}
+            
+            self._save_scan_results(scan)
+            
+            return {
+                "success": True,
+                "scan": scan,
+                "message": "Escaneo completado exitosamente"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error durante el escaneo: {str(e)}", exc_info=True)
+            self._safe_rollback()
+            return {"success": False, "error": str(e)}
+    
+    def get_scan_status(self, scan_id: int) -> Optional[dict]:
+        """
+        Obtiene el estado actual de un escaneo por ID.
+        
+        Args:
+            scan_id (int): ID del escaneo en la base de datos
+        
+        Returns:
+            Optional[dict]: Estado del escaneo con 'status' y 'progress', o None si no existe
+        """
+        scan = self.get_scan_by_id(scan_id)
+        if not scan or not isinstance(scan, OpenVASScan):
+            return None
+        
+        return self._get_task_status(scan.task_id)
+    
+    def _launch_scan(self, 
+                    target_ip: str,
+                    target_name: Optional[str] = None,
+                    scan_config: str = 'daba56c8-73ec-11df-a475-002264764cea',
+                    port_list_id: str = '33d0cd82-57c6-11e1-8ed1-406186ea4fc5',
+                    reuse_target: bool = True) -> dict:
+        """
+        Lanza un escaneo en OpenVAS creando target y task necesarios.
+        
+        Args:
+            target_ip: Dirección IP o rango a escanear
+            target_name: Nombre descriptivo del objetivo (opcional)
+            scan_config: UUID de la configuración de escaneo
+            port_list_id: UUID de la lista de puertos
+            reuse_target: Si True, reutiliza targets existentes
+        
+        Returns:
+            dict: {'success': bool, 'scan': OpenVASScan} o {'success': bool, 'error': str}
+        
+        Raises:
+            Exception: Si hay errores en la comunicación con OpenVAS
+        """
+        target_name = target_name or f"Target_{target_ip}"
         if not reuse_target:
             target_name = f"{target_name}_{int(time.time())}"
         
         try:
-            # Establecer conexión TLS
             connection = TLSConnection(hostname=self.hostname, port=self.port)
             
             with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
-                # Autenticación
                 gmp.authenticate(self.username, self.password)
-                self.logger.info(f"Autenticado correctamente en {self.hostname}:{self.port}")
+                self.logger.info(f"Autenticado en OpenVAS {self.hostname}:{self.port}")
                 
-                # Intentar obtener el target existente si reuse_target es True
-                target_id = None
-                if reuse_target:
-                    targets = gmp.get_targets(filter_string=f'name="{target_name}"')
-                    target_list = targets.xpath('target')
-                    if target_list:
-                        target_id = target_list[0].attrib.get('id')
-                        self.logger.info(f"Target existente encontrado con ID: {target_id}")
-                
-                if not target_id:
-                    target_response = gmp.create_target(
-                        name=target_name,
-                        hosts=[target_ip],
-                        port_list_id=port_list_id,
-                        comment=f"Target creado para escanear {target_ip}"
-                    )
-                    
-                    # Extraer el target_id de la respuesta XML
-                    target_id = target_response.attrib.get('id') or target_response.get('id')
-                    
-                    if not target_id:
-                        raise Exception(f"No se pudo obtener el target_id. Atributos: {target_response.attrib}")
-                    
-                    self.logger.info(f"Target creado con ID: {target_id}")
-                
-                # Obtener el scanner por defecto (OpenVAS Default)
-                scanners = gmp.get_scanners()
-                scanner_id = None
-                for scanner in scanners.xpath('scanner'):
-                    if scanner.find('name').text == 'OpenVAS Default':
-                        scanner_id = scanner.get('id')
-                        break
-                
-                if not scanner_id:
-                    raise Exception("No se encontró el scanner OpenVAS Default")
-            
-                self.logger.info(f"Scanner ID: {scanner_id}")
-                
-                # Crear tarea de escaneo
-                task_name = f"Scan_{target_name}_{int(time.time())}"
-                task_response = gmp.create_task(
-                    name=task_name,
-                    config_id=scan_config,
-                    target_id=target_id,
-                    scanner_id=scanner_id,
-                    comment=f"Escaneo automático de {target_ip}"
+                # Obtener o crear target
+                target_id = self._get_or_create_target(
+                    gmp, target_name, target_ip, port_list_id, reuse_target
                 )
                 
-                # Extraer el task_id de la respuesta XML
-                task_id = task_response.attrib.get('id') or task_response.get('id')
+                # Obtener scanner por defecto
+                scanner_id = self._get_default_scanner(gmp)
                 
-                if not task_id:
-                    raise Exception(f"No se pudo obtener el task_id. Atributos: {task_response.attrib}")
-                
-                self.logger.info(f"Tarea creada con ID: {task_id}")
-                
-                # Iniciar el escaneo
-                start_response = gmp.start_task(task_id)
-                report_id = start_response.xpath('report_id')[0].text
-                self.logger.info(f"Escaneo iniciado")
-                
-                scan = OpenVASScan(
-                    target=target_ip,
-                    user_id = self.active_user.id,
-                    task_id = task_id,
-                    report_id = report_id
+                # Crear y ejecutar tarea
+                task_id, report_id = self._create_and_start_task(
+                    gmp, target_name, target_ip, scan_config, target_id, scanner_id
                 )
-
-                self.logger.info(f"Se ha creado un escaneo de OpenVAS con id {scan.id}")
-                self.session.add(scan)
                 
-                return {
-                    'success': True,
-                    'scan': scan
-                }
+                # Crear registro en BD
+                scan = self._create_scan_record(target_ip, task_id, report_id)
+                
+                return {'success': True, 'scan': scan}
                 
         except Exception as e:
-            self.logger.info(f"Error al lanzar el escaneo: {str(e)}")
+            self.logger.error(f"Error en _launch_scan: {str(e)}", exc_info=True)
             self._safe_rollback()
-            return {
-                'success': False,
-                'error': str(e)
-            }
-
-    def _get_scan_report_xml(self, task_id, wait_for_completion=False, check_interval=10):
+            return {'success': False, 'error': str(e)}
+    
+    def _get_scan_report_xml(self, 
+                            task_id: str, 
+                            wait_for_completion: bool = False,
+                            check_interval: int = 10) -> dict:
         """
-        Obtiene el reporte XML de un escaneo. Opcionalmente espera a que termine.
+        Obtiene el reporte XML de un escaneo OpenVAS.
         
         Args:
-            task_id (str): ID de la tarea
-            wait_for_completion (bool): Si True, espera hasta que el escaneo termine
-            check_interval (int): Segundos entre verificaciones de estado (solo si wait_for_completion=True)
-            
+            task_id: ID de la tarea en OpenVAS
+            wait_for_completion: Si True, espera hasta que termine el escaneo
+            check_interval: Segundos entre verificaciones (solo si wait_for_completion=True)
+        
         Returns:
-            dict: Contiene el XML del reporte y metadata
+            dict: Contiene 'success', 'report_xml', 'status', 'progress', etc.
         """
         try:
             connection = TLSConnection(hostname=self.hostname, port=self.port)
@@ -733,230 +750,297 @@ class OpenVASScanManager(ScanManager):
             with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
                 gmp.authenticate(self.username, self.password)
                 
-                # Obtener información de la tarea
-                task = gmp.get_task(task_id)
-                status = task.xpath('task/status')[0].text
-                progress = task.xpath('task/progress')[0].text
-                
-                # Si se requiere esperar a que termine
+                # Esperar finalización si se solicita
                 if wait_for_completion:
-                    self.logger.info(f"Esperando a que termine el escaneo...")
-                    while status not in ['Done', 'Stopped', 'Interrupted']:
-                        self.logger.info(f"   Estado: {status} - Progreso: {progress}%")
-                        time.sleep(check_interval)
-                        
-                        task = gmp.get_task(task_id)
-                        status = task.xpath('task/status')[0].text
-                        progress = task.xpath('task/progress')[0].text
+                    task_info = self._wait_for_completion(gmp, task_id, check_interval)
+                    if not task_info['completed']:
+                        return task_info
+                else:
+                    task = gmp.get_task(task_id)
+                    status = task.xpath('task/status')[0].text
+                    progress = task.xpath('task/progress')[0].text
                     
-                    self.logger.info(f"Escaneo finalizado con estado: {status}")
+                    if status not in ['Done', 'Stopped', 'Interrupted']:
+                        return {
+                            'success': False,
+                            'completed': False,
+                            'status': status,
+                            'progress': f"{progress}%",
+                            'message': f"Escaneo en progreso ({progress}%)"
+                        }
                 
-                # Verificar si el escaneo ha terminado
-                if status not in ['Done', 'Stopped', 'Interrupted']:
-                    return {
-                        'success': False,
-                        'completed': False,
-                        'status': status,
-                        'progress': f"{progress}%",
-                        'message': f"El escaneo aún está en progreso ({progress}%)"
-                    }
-                
-                # Obtener el report_id del último reporte
-                last_report = task.xpath('task/last_report/report')[0]
-                report_id = last_report.get('id')
-                
-                if not report_id:
-                    return {
-                        'success': False,
-                        'completed': True,
-                        'status': status,
-                        'message': 'No se encontró ningún reporte asociado'
-                    }
-                
-                self.logger.info(f"Obteniendo reporte con ID: {report_id}")
-                
-                # Obtener el reporte completo en formato XML
-                report_response = gmp.get_report(
-                    report_id=report_id,
-                    report_format_id='a994b278-1f62-11e1-96ac-406186ea4fc5',  # XML format
-                    ignore_pagination=True,
-                    details=True
-                )
-                
-                # Convertir el reporte a string XML
-                from lxml import etree
-                report_xml = etree.tostring(report_response, encoding='unicode', pretty_print=True)
-                
-                # Extraer información básica del reporte
-                severity = task.xpath('task/last_report/report/severity/text()')
-                severity_value = severity[0] if severity else 'N/A'
-                
-                return {
-                    'success': True,
-                    'completed': True,
-                    'status': status,
-                    'report_id': report_id,
-                    'task_id': task_id,
-                    'severity': severity_value,
-                    'report_xml': report_xml,
-                    'message': 'Reporte obtenido exitosamente'
-                }
+                # Obtener reporte
+                return self._extract_report(gmp, task_id)
                 
         except Exception as e:
-            return {
-                'success': False,
-                'error': str(e)
-            }
-
+            self.logger.error(f"Error obteniendo reporte: {str(e)}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+    
     def _save_scan_results(self, scan: OpenVASScan) -> None:
-        try:
-            xml = self._get_scan_report_xml(
-                task_id=scan.task_id,
-                wait_for_completion=True
-            )["report_xml"]
-            json = JSONManager.openvas_xml_to_json(xml)
-            temp_vulnerabilities = {}
-
-            ip, hostname = normalize_target(scan.target)
-
-            host = self.get_host_by_hostname(hostname)
-            if not host:
-                host = Host(
-                    hostname    = hostname,
-                    ip_address  = ip
-                )
-                self.session.add(host)
-                self.session.flush()
-            scan.host_id = host.id
-
-            for vulnerability_info in json["vulnerabilities"]:
-                vulnerability = self._get_or_create_vulnerability(vulnerability_info)
-                temp_vulnerabilities[vulnerability.nvt_oid] = vulnerability
-
-            for scan_result in json["scan_results"]:
-                nvt_oid = scan_result["nvt_oid"]
-                vulnerability = temp_vulnerabilities[nvt_oid]
-                ip = scan_result["host_ip"]
-
-                host = self.get_or_create_host(ip)
-
-                openvas_result = OpenVASScanResult(
-                    openvas_scan_id     = scan.id,
-                    vulnerability_id    = vulnerability.id,
-                    host_id             = host.id
-                )
-
-                self.session.add(openvas_result)
-                self.session.flush()
-                scan.results.append(openvas_result)
-                
-            self._safe_commit()
-        except SQLAlchemyError as e:
-            self.logger.warning(e._message)
-            raise
-
-    def _get_or_create_vulnerability(self, vulnerability_info: dict[str]) -> OpenVASVulnerability:
-        self._check_session()
-        nvt_oid = vulnerability_info["nvt_oid"]
-
-        vulnerability = self.session.query(
-            OpenVASVulnerability
-        ).filter(
-            OpenVASVulnerability.nvt_oid == nvt_oid
-        ).one_or_none()
-
-        if not vulnerability:
-            name                = vulnerability_info["name"]
-            severity_score      = vulnerability_info["severity_score"]
-            severity_class      = vulnerability_info["severity_class"]
-            cvss_base_score     = vulnerability_info["cvss_base_score"]
-            cvss_vector         = vulnerability_info["cvss_vector"]
-            
-            # Referencias (JSON strings o CSV)
-            cve_ids             = vulnerability_info["cve_ids"]
-            cert_refs           = vulnerability_info["cert_refs"]
-            bugtraq_ids         = vulnerability_info["bugtraq_ids"]
-            other_refs          = vulnerability_info["other_refs"]
-            
-            # Descripción
-            summary             = vulnerability_info["summary"]
-            description         = vulnerability_info["description"]
-            impact              = vulnerability_info["impact"]
-            insight             = vulnerability_info["insight"]
-            affected_software   = vulnerability_info["affected_software"]
-            
-            # Solución
-            solution_type       = vulnerability_info["solution_type"]
-            solution            = vulnerability_info["solution"]
-
-            # Quality of Detection
-            qod_value           = vulnerability_info["qod_value"]
-            qod_type            = vulnerability_info["qod_type"]
-            
-            # Categorización
-            family              = vulnerability_info["family"]
-            category            = vulnerability_info["category"]
-
-            vulnerability = OpenVASVulnerability(
-                nvt_oid             = nvt_oid,
-                name                = name,
-                severity_score      = severity_score,
-                severity_class      = severity_class,
-                cvss_base_score     = cvss_base_score,
-                cvss_vector         = cvss_vector,
-                cve_ids             = cve_ids,
-                cert_refs           = cert_refs,
-                bugtraq_ids         = bugtraq_ids,
-                other_refs          = other_refs,
-                summary             = summary,
-                description         = description,
-                impact              = impact,
-                insight             = insight,
-                affected_software   = affected_software,
-                solution_type       = solution_type,
-                solution            = solution,
-                qod_value           = qod_value,
-                qod_type            = qod_type,
-                family              = family,
-                category            = category
-            )
-
-            self.session.add(vulnerability)
-            self.session.flush()
-            self.logger.info(
-                f"La vulnerabilidad f{vulnerability.nvt_oid} " +
-                "no existía, y se ha creado"
-            )
-        
-        return vulnerability
-
-    def run_scan(self, target_ip: str) -> None:
-        result = self._launch_scan(target_ip)
-        success = result["success"]
-        
-        if success:
-            scan = result["scan"]
-            xml = self._get_scan_report_xml(
-                task_id=scan.task_id,
-                wait_for_completion=True
-            )["report_xml"]
-            self._save_scan_results(scan, xml)
-        else:
-            self.logger.error(f"Hubo un error durante el lanzamiento del escaneo: {result["error"]}")
-
-    def get_scan_status(self, scan_id: int):
-        scan = self.get_scan_by_id(scan_id)
-        return self.get_scan_status(scan.task_id)
-
-    def get_scan_status(self, task_id: str):
         """
-        Obtiene el estado actual de un escaneo.
+        Procesa y guarda los resultados de un escaneo en la base de datos.
         
         Args:
-            task_id (str): ID de la tarea a consultar
+            scan: Objeto OpenVASScan con task_id y report_id válidos
+        
+        Raises:
+            SQLAlchemyError: Si hay errores de base de datos
+        """
+        try:
+            # Obtener reporte XML
+            report_data = self._get_scan_report_xml(
+                task_id=scan.task_id,
+                wait_for_completion=True
+            )
             
+            if not report_data.get("success"):
+                raise Exception(f"No se pudo obtener reporte: {report_data.get('message')}")
+            
+            json_data = JSONManager.openvas_xml_to_json(report_data["report_xml"])
+            vulnerability_map = self._process_vulnerabilities(json_data["vulnerabilities"])
+            
+            self._associate_host_to_scan(scan)
+            self._create_scan_results(scan, json_data["scan_results"], vulnerability_map)
+            self._mark_scan_finished(scan)
+            
+            self.logger.info(f"Escaneo {scan.id} guardado con {len(scan.results)} resultados")
+            
+        except Exception as e:
+            self.logger.error(f"Error guardando resultados: {str(e)}", exc_info=True)
+            self._safe_rollback()
+            raise
+    
+    def _get_or_create_target(self, 
+                              gmp: Gmp,
+                              target_name: str,
+                              target_ip: str,
+                              port_list_id: str,
+                              reuse: bool) -> str:
+        """
+        Obtiene un target existente o crea uno nuevo en OpenVAS.
+        
+        Args:
+            gmp: Conexión GMP autenticada
+            target_name: Nombre del target
+            target_ip: IP del target
+            port_list_id: ID de la lista de puertos
+            reuse: Si True, intenta reutilizar target existente
+        
         Returns:
-            dict: Estado del escaneo y progreso
+            str: ID del target
+        
+        Raises:
+            Exception: Si no se puede obtener o crear el target
+        """
+        target_id = None
+        
+        # Intentar reutilizar target existente
+        if reuse:
+            targets = gmp.get_targets(filter_string=f'name="{target_name}"')
+            target_list = targets.xpath('target')
+            if target_list:
+                target_id = target_list[0].attrib.get('id')
+                self.logger.info(f"Target reutilizado: {target_id}")
+                return target_id
+        
+        # Crear nuevo target
+        target_response = gmp.create_target(
+            name=target_name,
+            hosts=[target_ip],
+            port_list_id=port_list_id,
+            comment=f"Target creado para {target_ip}"
+        )
+        
+        target_id = target_response.attrib.get('id') or target_response.get('id')
+        
+        if not target_id:
+            raise Exception(f"No se pudo crear target. Response: {target_response.attrib}")
+        
+        self.logger.info(f"Target creado: {target_id}")
+        return target_id
+    
+    def _get_default_scanner(self, gmp: Gmp) -> str:
+        """
+        Obtiene el ID del scanner OpenVAS por defecto.
+        
+        Args:
+            gmp: Conexión GMP autenticada
+        
+        Returns:
+            str: ID del scanner
+        
+        Raises:
+            Exception: Si no se encuentra el scanner por defecto
+        """
+        scanners = gmp.get_scanners()
+        
+        for scanner in scanners.xpath('scanner'):
+            if scanner.find('name').text == 'OpenVAS Default':
+                scanner_id = scanner.get('id')
+                self.logger.info(f"Scanner encontrado: {scanner_id}")
+                return scanner_id
+        
+        raise Exception("No se encontró el scanner 'OpenVAS Default'")
+    
+    def _create_and_start_task(self,
+                               gmp: Gmp,
+                               target_name: str,
+                               target_ip: str,
+                               scan_config: str,
+                               target_id: str,
+                               scanner_id: str) -> Tuple[str, str]:
+        """
+        Crea una tarea de escaneo y la inicia inmediatamente.
+        
+        Args:
+            gmp: Conexión GMP autenticada
+            target_name: Nombre base para la tarea
+            target_ip: IP objetivo
+            scan_config: ID de configuración de escaneo
+            target_id: ID del target
+            scanner_id: ID del scanner
+        
+        Returns:
+            Tuple[str, str]: (task_id, report_id)
+        
+        Raises:
+            Exception: Si no se puede crear o iniciar la tarea
+        """
+        task_name = f"Scan_{target_name}_{int(time.time())}"
+        
+        task_response = gmp.create_task(
+            name=task_name,
+            config_id=scan_config,
+            target_id=target_id,
+            scanner_id=scanner_id,
+            comment=f"Escaneo automático de {target_ip}"
+        )
+        
+        task_id = task_response.attrib.get('id') or task_response.get('id')
+        
+        if not task_id:
+            raise Exception(f"No se pudo crear tarea. Response: {task_response.attrib}")
+        
+        self.logger.info(f"Tarea creada: {task_id}")
+        
+        # Iniciar escaneo
+        start_response = gmp.start_task(task_id)
+        report_id = start_response.xpath('report_id')[0].text
+        
+        self.logger.info(f"Escaneo iniciado. Report ID: {report_id}")
+        
+        return task_id, report_id
+    
+    def _create_scan_record(self, target_ip: str, task_id: str, report_id: str) -> OpenVASScan:
+        """
+        Crea el registro del escaneo en la base de datos.
+        
+        Args:
+            target_ip: IP objetivo del escaneo
+            task_id: ID de la tarea en OpenVAS
+            report_id: ID del reporte en OpenVAS
+        
+        Returns:
+            OpenVASScan: Objeto de escaneo creado y persistido
+        """
+        scan = OpenVASScan(
+            target=target_ip,
+            user_id=self.active_user.id,
+            task_id=task_id,
+            report_id=report_id
+        )
+        
+        self.session.add(scan)
+        self.session.flush()
+        
+        self.logger.info(f"Registro de escaneo creado: {scan.id}")
+        return scan
+    
+    def _wait_for_completion(self, 
+                            gmp: Gmp,
+                            task_id: str,
+                            check_interval: int) -> dict:
+        """
+        Espera a que un escaneo complete, mostrando progreso.
+        
+        Args:
+            gmp: Conexión GMP autenticada
+            task_id: ID de la tarea
+            check_interval: Segundos entre verificaciones
+        
+        Returns:
+            dict: Información de finalización con 'completed', 'status', etc.
+        """
+        self.logger.info("Esperando finalización del escaneo...")
+        
+        while True:
+            task = gmp.get_task(task_id)
+            status = task.xpath('task/status')[0].text
+            progress = task.xpath('task/progress')[0].text
+            
+            if status in ['Done', 'Stopped', 'Interrupted']:
+                self.logger.info(f"Escaneo finalizado: {status}")
+                return {'completed': True, 'status': status}
+            
+            self.logger.info(f"Estado: {status} - Progreso: {progress}%")
+            time.sleep(check_interval)
+    
+    def _extract_report(self, gmp: Gmp, task_id: str) -> dict:
+        """
+        Extrae el reporte XML de un escaneo completado.
+        
+        Args:
+            gmp: Conexión GMP autenticada
+            task_id: ID de la tarea
+        
+        Returns:
+            dict: Datos del reporte incluyendo 'report_xml', 'severity', etc.
+        
+        Raises:
+            Exception: Si no se encuentra el reporte
+        """
+        task = gmp.get_task(task_id)
+        last_report = task.xpath('task/last_report/report')[0]
+        report_id = last_report.get('id')
+        
+        if not report_id:
+            raise Exception("No se encontró reporte asociado")
+        
+        self.logger.info(f"Obteniendo reporte: {report_id}")
+        
+        # Obtener reporte completo
+        report_response = gmp.get_report(
+            report_id=report_id,
+            report_format_id='a994b278-1f62-11e1-96ac-406186ea4fc5',  # XML format
+            ignore_pagination=True,
+            details=True
+        )
+        
+        from lxml import etree
+        report_xml = etree.tostring(report_response, encoding='unicode', pretty_print=True)
+        
+        severity = task.xpath('task/last_report/report/severity/text()')
+        severity_value = severity[0] if severity else 'N/A'
+        
+        return {
+            'success': True,
+            'completed': True,
+            'report_id': report_id,
+            'task_id': task_id,
+            'severity': severity_value,
+            'report_xml': report_xml,
+            'message': 'Reporte obtenido exitosamente'
+        }
+    
+    def _get_task_status(self, task_id: str) -> Optional[dict]:
+        """
+        Consulta el estado de una tarea en OpenVAS.
+        
+        Args:
+            task_id: ID de la tarea
+        
+        Returns:
+            Optional[dict]: Estado con 'status' y 'progress', o None si hay error
         """
         try:
             connection = TLSConnection(hostname=self.hostname, port=self.port)
@@ -975,10 +1059,146 @@ class OpenVASScanManager(ScanManager):
                 }
                 
         except Exception as e:
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            self.logger.error(f"Error obteniendo estado: {str(e)}")
+            return None
+    
+    def _process_vulnerabilities(self, vulnerabilities_data: List[dict]) -> dict:
+        """
+        Procesa vulnerabilidades del reporte y las guarda en BD.
+        
+        Args:
+            vulnerabilities_data: Lista de diccionarios con datos de vulnerabilidades
+        
+        Returns:
+            dict: Mapeo de nvt_oid -> OpenVASVulnerability
+        """
+        vulnerability_map = {}
+        
+        for vuln_info in vulnerabilities_data:
+            vuln = self._get_or_create_vulnerability(vuln_info)
+            vulnerability_map[vuln.nvt_oid] = vuln
+        
+        return vulnerability_map
+    
+    def _get_or_create_vulnerability(self, vuln_data: dict) -> OpenVASVulnerability:
+        """
+        Obtiene una vulnerabilidad existente o crea una nueva.
+        
+        Args:
+            vuln_data: Diccionario con datos de la vulnerabilidad
+        
+        Returns:
+            OpenVASVulnerability: Objeto de vulnerabilidad
+        """
+        self._check_session()
+        nvt_oid = vuln_data["nvt_oid"]
+        
+        # Buscar existente
+        vuln = self.session.query(OpenVASVulnerability).filter(
+            OpenVASVulnerability.nvt_oid == nvt_oid
+        ).one_or_none()
+        
+        if vuln:
+            return vuln
+        
+        # Crear nueva
+        vuln = OpenVASVulnerability(
+            nvt_oid=nvt_oid,
+            name=vuln_data["name"],
+            severity_score=vuln_data["severity_score"],
+            severity_class=vuln_data["severity_class"],
+            cvss_base_score=vuln_data["cvss_base_score"],
+            cvss_vector=vuln_data["cvss_vector"],
+            cve_ids=vuln_data["cve_ids"],
+            cert_refs=vuln_data["cert_refs"],
+            bugtraq_ids=vuln_data["bugtraq_ids"],
+            other_refs=vuln_data["other_refs"],
+            summary=vuln_data["summary"],
+            description=vuln_data["description"],
+            impact=vuln_data["impact"],
+            insight=vuln_data["insight"],
+            affected_software=vuln_data["affected_software"],
+            solution_type=vuln_data["solution_type"],
+            solution=vuln_data["solution"],
+            qod_value=vuln_data["qod_value"],
+            qod_type=vuln_data["qod_type"],
+            family=vuln_data["family"],
+            category=vuln_data["category"]
+        )
+        
+        self.session.add(vuln)
+        self.session.flush()
+        
+        self.logger.info(f"Vulnerabilidad creada: {nvt_oid}")
+        return vuln
+    
+    def _associate_host_to_scan(self, scan: OpenVASScan) -> None:
+        """
+        Asocia un host al escaneo, creándolo si no existe.
+        
+        Args:
+            scan: Objeto OpenVASScan a asociar
+        """
+        ip, hostname = normalize_target(scan.target)
+        host = self.get_host_by_hostname(hostname)
+        
+        if not host:
+            host = Host(
+                hostname=hostname,
+                ip_address=ip,
+                mac_address="",  # OpenVAS puede no tener esta info
+                vendor=""
+            )
+            self.session.add(host)
+            self.session.flush()
+        
+        scan.host_id = host.id
+        self.session.add(scan)
+    
+    def _create_scan_results(self,
+                            scan: OpenVASScan,
+                            results_data: List[dict],
+                            vulnerability_map: dict) -> None:
+        """
+        Crea registros de resultados de escaneo asociando vulnerabilidades con hosts.
+        
+        Args:
+            scan: Escaneo al que pertenecen los resultados
+            results_data: Lista de resultados del escaneo
+            vulnerability_map: Mapeo nvt_oid -> OpenVASVulnerability
+        """
+        for result in results_data:
+            nvt_oid = result["nvt_oid"]
+            host_ip = result["host_ip"]
+            
+            vulnerability = vulnerability_map[nvt_oid]
+            host = self.get_or_create_host(host_ip)
+            
+            scan_result = OpenVASScanResult(
+                openvas_scan_id=scan.id,
+                vulnerability_id=vulnerability.id,
+                host_id=host.id
+            )
+            
+            self.session.add(scan_result)
+        
+        self.session.flush()
+    
+    def _mark_scan_finished(self, scan: OpenVASScan) -> None:
+        """
+        Marca un escaneo como finalizado en la base de datos.
+        
+        Args:
+            scan: Escaneo a marcar como finalizado
+        """
+        finished = FinishedScan(
+            id=scan.id,
+            finished_at=datetime.now()
+        )
+        
+        self.session.add(finished)
+        self.session.flush()
+        self._safe_commit()
 
 
 class NmapScanManager(ScanManager):
@@ -1478,112 +1698,78 @@ class NiktoScanManager(ScanManager):
 
 class UserManager(BaseManager):
     """
-    Gestor completo para usuarios y personas.
-    Integra funcionalidad de UserDBManager y UserUtilities.
-    """
+    Gestor completo para usuarios y personas con autenticación y gestión de tokens.
     
-    # ========================================================================
-    # MÉTODOS DE AUTENTICACIÓN Y VALIDACIÓN
-    # ========================================================================
+    Características:
+        - Autenticación con salt y hash
+        - Gestión de usuarios y personas
+        - Validación de credenciales
+        - CRUD completo thread-safe
+    """
     
     def verify_credentials(self, username: str, password: str) -> Tuple[bool, Optional[int]]:
         """
         Verifica las credenciales de un usuario.
         
         Args:
-            username: Nombre de usuario
-            password: Contraseña en texto plano
+            username (str): Nombre de usuario
+            password (str): Contraseña en texto plano
         
         Returns:
-            Tupla (es_válido, user_id)
-            - (True, user_id) si las credenciales son válidas
-            - (False, None) si son inválidas
+            Tuple[bool, Optional[int]]: (es_válido, user_id)
         """
         self._check_session()
+        
         try:
-            user = self.session.query(User).filter(
-                User.username == username
-            ).one_or_none()
+            user = self._get_by_field(User, "username", username)
             
             if not user:
                 self.logger.info(f"Usuario '{username}' no encontrado")
                 return False, None
             
-            # Verificar contraseña con salt
             valid_password = Encoder.verify_password(
-                stored_hash=user.password_hash, # type: ignore
+                stored_hash=user.password_hash,
                 password=password,
-                salt=user.password_salt # type: ignore
+                salt=user.password_salt
             )
             
             if not valid_password:
-                self.logger.warning(f"Contraseña incorrecta para usuario '{username}'")
+                self.logger.warning(f"Contraseña incorrecta para '{username}'")
                 return False, None
             
             user_id = user.id
-            
-            # Desasociar el objeto de la sesión para evitar conflictos
             self.session.expunge(user)
             
-            self.logger.info(f"Credenciales válidas para usuario '{username}' (ID: {user_id})")
-            return True, user_id # type: ignore
+            self.logger.info(f"Credenciales válidas para '{username}' (ID: {user_id})")
+            return True, user_id
         
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error al validar credenciales: {err}")
+        except Exception as e:
+            self.logger.error(f"Error verificando credenciales: {e}")
             raise
     
     def validate_credentials_simple(self, username: str, password: str) -> bool:
-        """
-        Valida credenciales sin devolver el user_id (para compatibilidad).
-        
-        Args:
-            username: Nombre de usuario
-            password: Contraseña en texto plano
-        
-        Returns:
-            True si las credenciales son válidas, False si no
-        """
+        """Validación simple de credenciales sin devolver user_id."""
         is_valid, _ = self.verify_credentials(username, password)
         return is_valid
     
-    # ========================================================================
-    # MÉTODOS DE GESTIÓN DE USUARIOS
-    # ========================================================================
-    
-    def user_exists(self, username: str) -> bool:
-        """Verifica si existe un usuario"""
-        self._check_session()
-        try:
-            exists = self.session.query(User).filter(
-                User.username == username
-            ).count() > 0
-            
-            self.logger.info(f"Usuario '{username}' existe: {exists}")
-            return exists
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error verificando existencia de usuario: {err}")
-            raise
-    
     def create_user(self, user: User) -> None:
         """
-        Crea un nuevo usuario (y su persona si no existe).
+        Crea un nuevo usuario.
         
         Args:
-            user: Objeto User a crear
+            user (User): Usuario a crear
         
         Raises:
             ExistingUserError: Si el usuario ya existe
         """
         self._check_session()
+        
         try:
-            # Verificar si ya existe
-            if self.user_exists(user.username): # type: ignore
-                raise ExistingUserError(username=user.username) # type: ignore
+            if self._exists(User, "username", user.username):
+                raise ExistingUserError(username=user.username)
             
-            # Verificar/crear persona si es necesario
-            if user.person_id: # type: ignore
-                if not self._person_exists(user.person_id): # type: ignore
+            if user.person_id:
+                if not self._exists(Person, "id", user.person_id):
                     if user.person:
                         self._create_person(user.person)
             elif user.person:
@@ -1596,46 +1782,42 @@ class UserManager(BaseManager):
         
         except ExistingUserError:
             raise
-        except SQLAlchemyError as err:
+        except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error creando usuario: {err}")
+            self.logger.error(f"Error creando usuario: {e}")
             raise
     
     def sign_in_user(self, username: str, password: str, email: str, alias: str) -> User:
         """
-        Registra un nuevo usuario vinculándolo a una persona existente.
+        Registra un nuevo usuario vinculándolo a una persona.
         
         Args:
-            username: Nombre de usuario
-            password: Contraseña en texto plano
-            email: Email de la persona existente
+            username (str): Nombre de usuario
+            password (str): Contraseña en texto plano
+            email (str): Email del usuario
+            alias (str): Alias de la persona existente
         
         Returns:
-            Usuario creado
+            User: Usuario creado
         
         Raises:
             ExistingUserError: Si el usuario ya existe
-            UserBindingError: Si no existe una persona con ese email
+            UserBindingError: Si no existe la persona
         """
         self._check_session()
+        
         try:
-
-            if self.user_exists(username):
+            if self._exists(User, "username", username):
                 raise ExistingUserError(username)
-
-            person = self.get_person_by_alias(alias)
-
-            if not person:
-                raise UserBindingError(
-                    username=username, 
-                    alias=alias
-                )           
             
-            # Generar hash de contraseña con salt
+            person = self._get_by_field(Person, "alias", alias)
+            
+            if not person:
+                raise UserBindingError(username=username, alias=alias)
+            
             salt = Encoder.generate_salt()
             hashed_password = Encoder.hash_password_with_salt(password, salt)
             
-            # Crear usuario
             new_user = User(
                 username=username,
                 password_hash=hashed_password,
@@ -1646,8 +1828,6 @@ class UserManager(BaseManager):
             
             self.session.add(new_user)
             self._safe_commit()
-
-            # Desasociar para evitar conflictos
             self.session.expunge(new_user)
             
             self.logger.info(f"Usuario '{username}' registrado exitosamente")
@@ -1656,147 +1836,84 @@ class UserManager(BaseManager):
         except (ExistingUserError, UserBindingError):
             self._safe_rollback()
             raise
-        except SQLAlchemyError as err:
+        except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error registrando usuario: {err}")
-            raise DatabaseError("Hubo un problema con tus credenciales. Revísalas, y vuelve a intentarlo.")
+            self.logger.error(f"Error registrando usuario: {e}")
+            raise DatabaseError("Error con credenciales. Revísalas e inténtalo de nuevo.")
     
     def get_user_by_username(self, username: str) -> Optional[User]:
-        """Obtiene un usuario por su username"""
-        self._check_session()
-        try:
-            user = self.session.query(User).filter(
-                User.username == username
-            ).one_or_none()
-            
-            if user:
-                self.logger.info(f"Usuario '{username}' obtenido")
-            else:
-                self.logger.info(f"Usuario '{username}' no encontrado")
-            
-            return user
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error obteniendo usuario: {err}")
-            raise
+        """Obtiene un usuario por su username."""
+        return self._get_by_field(User, "username", username)
     
     def get_user_by_id(self, user_id: int) -> Optional[User]:
-        """Obtiene un usuario por ID"""
-        self._check_session()
-        try:
-            user = self.session.query(User).filter(User.id == user_id).one_or_none()
-            
-            if user:
-                self.logger.debug(f"Usuario con ID {user_id} obtenido")
-            else:
-                self.logger.warning(f"Usuario con ID {user_id} no encontrado")
-            
-            return user
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error obteniendo usuario por ID: {err}")
-            raise
+        """Obtiene un usuario por ID."""
+        return self._get_by_field(User, "id", user_id)
     
-    def get_all_users(self) -> list[User]:
-        """Obtiene todos los usuarios"""
-        self._check_session()
-        try:
-            users = self.session.query(User).all()
-            self.logger.info(f"Se obtuvieron {len(users)} usuarios")
-            return users
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error obteniendo todos los usuarios: {err}")
-            raise
+    def get_all_users(self) -> List[User]:
+        """Obtiene todos los usuarios."""
+        return self._get_all(User)
     
     def update_user_password(self, user: User, new_password: str) -> None:
         """
-        Actualiza la contraseña de un usuario (generando nuevo salt).
+        Actualiza la contraseña de un usuario.
         
         Args:
-            user: Usuario a actualizar
-            new_password: Nueva contraseña en texto plano
+            user (User): Usuario a actualizar
+            new_password (str): Nueva contraseña
         """
         self._check_session()
+        
         try:
-            # Generar nuevo salt y hash
             new_salt = Encoder.generate_salt()
-            new_hashed_password = Encoder.hash_password_with_salt(new_password, new_salt)
+            new_hash = Encoder.hash_password_with_salt(new_password, new_salt)
             
-            user.password_salt = new_salt # type: ignore
-            user.password_hash = new_hashed_password # type: ignore
+            user.password_salt = new_salt
+            user.password_hash = new_hash
             
             self.session.add(user)
             self._safe_commit()
             
             self.logger.info(f"Contraseña actualizada para usuario {user.id}")
         
-        except SQLAlchemyError as err:
+        except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error actualizando contraseña: {err}")
+            self.logger.error(f"Error actualizando contraseña: {e}")
             raise
     
     def update_user_password_by_id(self, user_id: int, new_password: str) -> None:
-        """
-        Actualiza la contraseña de un usuario por ID.
-        
-        Args:
-            user_id: ID del usuario
-            new_password: Nueva contraseña en texto plano
-        
-        Raises:
-            UserBindingError: Si no existe el usuario
-        """
+        """Actualiza la contraseña de un usuario por ID."""
         user = self.get_user_by_id(user_id)
         
         if not user:
-            raise UserBindingError(
-                username=str(user_id), 
-                alias="unknown"
-            )
+            raise UserBindingError(username=str(user_id), alias="unknown")
         
         self.update_user_password(user, new_password)
     
     def delete_user(self, user: User) -> None:
-        """Elimina un usuario"""
-        self._check_session()
-        try:
-            self.session.delete(user)
-            self._safe_commit()
-            
-            self.logger.info(f"Usuario {user.id} eliminado")
-        
-        except SQLAlchemyError as err:
-            self._safe_rollback()
-            self.logger.error(f"Error eliminando usuario: {err}")
-            raise
-    
-    # ========================================================================
-    # MÉTODOS DE GESTIÓN DE PERSONAS
-    # ========================================================================
+        """Elimina un usuario."""
+        self._delete(user, "Usuario")
     
     def sign_in_person(self, first_name: str, last_name: str, alias: str) -> Person:
         """
         Registra una nueva persona.
         
         Args:
-            first_name: Nombre
-            last_name: Apellido      
+            first_name (str): Nombre
+            last_name (str): Apellido
+            alias (str): Alias único
+        
         Returns:
-            Persona creada
+            Person: Persona creada
         
         Raises:
-            ExistingUserError: Si ya existe una persona con ese email
+            ExistingUserError: Si ya existe
         """
         self._check_session()
+        
         try:
-
-            person = self.get_person_by_alias(alias)
-
-            if person:
-                raise ExistingUserError(f"El usuario {alias} ya está en la base de datos")
-           
-            # Crear persona
+            if self._exists(Person, "alias", alias):
+                raise ExistingUserError(f"El alias {alias} ya está en uso")
+            
             person = Person(
                 first_name=first_name,
                 last_name=last_name,
@@ -1810,138 +1927,143 @@ class UserManager(BaseManager):
         
         except ExistingUserError:
             raise
-        except SQLAlchemyError as err:
+        except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error registrando persona: {err}")
+            self.logger.error(f"Error registrando persona: {e}")
             raise
-
+    
     def get_person_by_alias(self, alias: str) -> Optional[Person]:
-        """Obtiene una persona por su email"""
-        self._check_session()
-        try:
-            person = self.session.query(Person).filter(
-                Person.alias == alias
-            ).one_or_none()
-            
-            if person:
-                self.logger.info(f"Persona con email '{alias}' obtenida")
-            else:
-                self.logger.info(f"Persona con email '{alias}' no encontrada")
-            
-            return person
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error obteniendo persona por email: {err}")
-            raise
-
+        """Obtiene una persona por alias."""
+        return self._get_by_field(Person, "alias", alias)
+    
     def get_person_by_email(self, email: str) -> Optional[Person]:
-        
-        """Obtiene una persona por su email"""
-        self._check_session()
-        try:
-            person = self.session.query(Person).filter(
-                Person.email == email
-            ).one_or_none()
-            
-            if person:
-                self.logger.info(f"Persona con email '{email}' obtenida")
-            else:
-                self.logger.info(f"Persona con email '{email}' no encontrada")
-            
-            return person
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error obteniendo persona por email: {err}")
-            raise
+        """Obtiene una persona por email."""
+        return self._get_by_field(Person, "email", email)
     
     def get_person_by_id(self, person_id: int) -> Optional[Person]:
-        """Obtiene una persona por ID"""
-        self._check_session()
-        try:
-            person = self.session.query(Person).filter(
-                Person.id == person_id
-            ).one_or_none()
-            
-            if person:
-                self.logger.debug(f"Persona con ID {person_id} obtenida")
-            
-            return person
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error obteniendo persona por ID: {err}")
-            raise
+        """Obtiene una persona por ID."""
+        return self._get_by_field(Person, "id", person_id)
     
-    def get_all_people(self) -> list[Person]:
-        """Obtiene todas las personas"""
-        self._check_session()
-        try:
-            people = self.session.query(Person).all()
-            self.logger.info(f"Se obtuvieron {len(people)} personas")
-            return people
-        
-        except SQLAlchemyError as err:
-            self.logger.error(f"Error obteniendo todas las personas: {err}")
-            raise
+    def get_all_people(self) -> List[Person]:
+        """Obtiene todas las personas."""
+        return self._get_all(Person)
     
     def update_person(self, person: Person) -> None:
-        """Actualiza la información de una persona"""
+        """Actualiza la información de una persona."""
         self._check_session()
+        
         try:
-            existing_person = self.session.query(Person).filter(
-                Person.id == person.id
-            ).one_or_none()
+            existing = self.get_person_by_id(person.id)
             
-            if existing_person:
-                existing_person.first_name = person.first_name
-                existing_person.last_name = person.last_name
-                existing_person.email = person.email
+            if existing:
+                existing.first_name = person.first_name
+                existing.last_name = person.last_name
+                existing.email = person.email
                 
                 self._safe_commit()
-                self.logger.info(f"Persona con ID {person.id} actualizada")
+                self.logger.info(f"Persona {person.id} actualizada")
             else:
-                self.logger.warning(f"Persona con ID {person.id} no encontrada")
+                self.logger.warning(f"Persona {person.id} no encontrada")
         
-        except SQLAlchemyError as err:
+        except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error actualizando persona: {err}")
+            self.logger.error(f"Error actualizando persona: {e}")
             raise
     
     def delete_person(self, person: Person) -> None:
-        """Elimina una persona"""
-        self._check_session()
-        try:
-            self.session.delete(person)
-            self._safe_commit()
-            
-            self.logger.info(f"Persona con ID {person.id} eliminada")
+        """Elimina una persona."""
+        self._delete(person, "Persona")
+    
+    # Métodos privados genéricos
+    
+    def _get_by_field(self, model, field: str, value: Any) -> Optional[Any]:
+        """
+        Obtiene un objeto por un campo específico.
         
-        except SQLAlchemyError as err:
-            self._safe_rollback()
-            self.logger.error(f"Error eliminando persona: {err}")
+        Args:
+            model: Clase del modelo
+            field (str): Nombre del campo
+            value: Valor a buscar
+        
+        Returns:
+            Optional[Any]: Objeto encontrado o None
+        """
+        self._check_session()
+        
+        try:
+            obj = self.session.query(model).filter(
+                getattr(model, field) == value
+            ).one_or_none()
+            
+            if obj:
+                self.logger.debug(f"{model.__name__} con {field}='{value}' encontrado")
+            else:
+                self.logger.debug(f"{model.__name__} con {field}='{value}' no encontrado")
+            
+            return obj
+        
+        except Exception as e:
+            self.logger.error(f"Error obteniendo {model.__name__}: {e}")
             raise
     
-    # ========================================================================
-    # MÉTODOS PRIVADOS
-    # ========================================================================
-    
-    def _person_exists(self, person_id: int) -> bool:
-        """Verifica si existe una persona por ID"""
+    def _get_all(self, model) -> List[Any]:
+        """Obtiene todos los objetos de un modelo."""
         self._check_session()
-        return self.session.query(Person).filter(
-            Person.id == person_id
+        
+        try:
+            objects = self.session.query(model).all()
+            self.logger.info(f"Se obtuvieron {len(objects)} {model.__name__}s")
+            return objects
+        
+        except Exception as e:
+            self.logger.error(f"Error obteniendo {model.__name__}s: {e}")
+            raise
+    
+    def _exists(self, model, field: str, value: Any) -> bool:
+        """Verifica si existe un objeto con el campo especificado."""
+        self._check_session()
+        
+        exists = self.session.query(model).filter(
+            getattr(model, field) == value
         ).count() > 0
+        
+        return exists
+    
+    def _delete(self, obj: Any, obj_type: str) -> None:
+        """
+        Elimina un objeto genérico.
+        
+        Args:
+            obj: Objeto a eliminar
+            obj_type (str): Tipo de objeto (para logging)
+        """
+        self._check_session()
+        
+        try:
+            self.session.delete(obj)
+            self._safe_commit()
+            
+            self.logger.info(f"{obj_type} eliminado")
+        
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error eliminando {obj_type}: {e}")
+            raise
     
     def _create_person(self, person: Person) -> None:
-        """Crea una nueva persona (método interno)"""
+        """Crea una nueva persona (método interno)."""
         self._check_session()
+        
         try:
             self.session.add(person)
             self.session.flush()
-            self.logger.info(f"Persona creada: {person.first_name} {person.last_name} (ID: {person.id})")
+            self.logger.info(
+                f"Persona creada: {person.first_name} {person.last_name} (ID: {person.id})"
+            )
         
-        except SQLAlchemyError as err:
+        except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error creando persona: {err}")
+            self.logger.error(f"Error creando persona: {e}")
             raise
 
 
