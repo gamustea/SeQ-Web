@@ -14,8 +14,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import BadRequest
 
-from src.logic.managers import NmapScanManager, NiktoScanManager, UserManager
-from src.logic.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy
+from src.logic.managers import NmapScanManager, NiktoScanManager, UserManager, OpenVASScanManager
+from src.logic.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy
 from src.misc.logging import SecOpsLogger
 from src.misc.validation import PortValidator, IPValidator
 from src.core.model import Scan, User
@@ -65,7 +65,7 @@ def get_current_user_id() -> int:
 def get_current_username() -> str:
     return request.current_username  # type: ignore
 
-def get_user_managers(user_id: int) -> Tuple[NmapScanManager, NiktoScanManager]:
+def get_user_managers(user_id: int) -> Tuple[NmapScanManager, NiktoScanManager, OpenVASScanManager]:
     """
     Crea managers de escaneo para un usuario específico.
     
@@ -73,14 +73,16 @@ def get_user_managers(user_id: int) -> Tuple[NmapScanManager, NiktoScanManager]:
         user_id: ID del usuario del ORM para el cual crear los managers
     
     Returns:
-        Tupla (NmapScanManager, NiktoScanManager) configurados para el usuario
+        Tupla (NmapScanManager, NiktoScanManager, OpenVASScanManager) configurados para el usuario
     """
-
     user = USER_MANAGER.get_user_by_id(user_id)
     nmap_manager = NmapScanManager(user)
     nikto_manager = NiktoScanManager(user)
+    openvas_manager = OpenVASScanManager(user)  # ✅ NUEVO
     USER_MANAGER.close_session()
-    return nmap_manager, nikto_manager
+    return nmap_manager, nikto_manager, openvas_manager
+
+
 
 # ============================================================================
 # DECORADORES DE AUTENTICACIÓN
@@ -188,6 +190,8 @@ def require_authentication(f):
     
     return decorated_function
 
+
+
 # ============================================================================
 # FUNCIONES AUXILIARES
 # ============================================================================
@@ -196,7 +200,7 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
     Construye el creador de PDF apropiado según el tipo de escaneo.
     
     Args:
-        scan: Objeto Scan (Nmap o Nikto)
+        scan: Objeto Scan (Nmap, Nikto u OpenVAS)
     
     Returns:
         PDFCreator configurado con la estrategia correcta
@@ -210,12 +214,14 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
         strategy = NmapPrintingStrategy(scan=scan)
     elif scan_type == "nikto":
         strategy = NiktoPrintingStrategy(scan=scan)
+    elif scan_type == "openvas":  # ✅ NUEVO
+        strategy = OpenVASPrintingStrategy(scan=scan)
     else:
         logger.error(f"Tipo de escaneo no soportado: {scan_type}")
         raise ValidationError(
             field="scan_type",
             message=f"Tipo de escaneo '{scan_type}' no soportado",
-            expected="'nmap' o 'nikto'"
+            expected="'nmap', 'nikto' u 'openvas'"
         )
     
     return PDFCreator(strategy)
@@ -223,7 +229,8 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
 def get_scan_by_id_for_user(
     scan_id: int,
     nmap_manager: NmapScanManager,
-    nikto_manager: NiktoScanManager
+    nikto_manager: NiktoScanManager,
+    openvas_manager: OpenVASScanManager
 ) -> Tuple[Optional[Scan], str]:
     """
     Busca un escaneo por ID usando los managers del usuario.
@@ -232,9 +239,10 @@ def get_scan_by_id_for_user(
         scan_id: ID del escaneo a buscar
         nmap_manager: Manager de Nmap del usuario
         nikto_manager: Manager de Nikto del usuario
+        openvas_manager: Manager de OpenVAS del usuario
     
     Returns:
-        Tupla (Scan, tipo) donde tipo es 'nmap' o 'nikto'.
+        Tupla (Scan, tipo) donde tipo es 'nmap', 'nikto' u 'openvas'.
         Retorna (None, '') si no se encuentra
     """
     # Buscar en Nmap
@@ -247,7 +255,14 @@ def get_scan_by_id_for_user(
     if scan:
         return scan, "nikto"
     
+    # Buscar en OpenVAS
+    scan = openvas_manager.get_scan_by_id(scan_id)
+    if scan:
+        return scan, "openvas"
+    
     return None, ""
+
+
 
 # ============================================================================
 # ENDPOINTS OAUTH 2.0
@@ -443,6 +458,7 @@ def oauth_revoke_all():
             "error": "server_error"
         }), 500
 
+
 # ============================================================================
 # ENDPOINTS GENERALES
 # ============================================================================
@@ -475,11 +491,9 @@ def is_scan_finished():
         JSON indicando si el escaneo existe y si está finalizado
     """
     try:
-        # Obtener usuario autenticado
         user_id = get_current_user_id()
-        nmap_manager, nikto_manager = get_user_managers(user_id)
+        nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)  # ✅ ACTUALIZADO
         
-        # Obtener y validar el ID del escaneo
         scan_id_str = request.args.get("id")
         if not scan_id_str:
             raise MissingParameterError("id")
@@ -493,13 +507,22 @@ def is_scan_finished():
                 value=scan_id_str
             )
         
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
+        scan, scan_type = get_scan_by_id_for_user(
+            scan_id, nmap_manager, nikto_manager, openvas_manager  # ✅ ACTUALIZADO
+        )
         
-        if not scan or scan.user_id != user_id:  #type: ignore
+        if not scan or scan.user_id != user_id:
             raise ScanNotFoundError(scan_id)
         
-        manager = nmap_manager if scan_type == "nmap" else nikto_manager
-        scan_finished = manager.is_scan_finished(scan.id)  # type: ignore
+        # Seleccionar manager apropiado
+        if scan_type == "nmap":
+            manager = nmap_manager
+        elif scan_type == "nikto":
+            manager = nikto_manager
+        else:  # openvas
+            manager = openvas_manager
+        
+        scan_finished = manager.is_scan_finished(scan.id)
         
         message = (
             f"El escaneo con id {scan_id} está terminado"
@@ -507,7 +530,10 @@ def is_scan_finished():
             else f"El escaneo con id {scan_id} no está terminado"
         )
         
-        logger.info(f"Usuario {get_current_username()}: escaneo {scan_id} - {'finalizado' if scan_finished else 'en progreso'}")
+        logger.info(
+            f"Usuario {get_current_username()}: escaneo {scan_id} ({scan_type}) - "
+            f"{'finalizado' if scan_finished else 'en progreso'}"
+        )
         
         return jsonify({
             "message": message,
@@ -539,11 +565,9 @@ def get_scan_status():
         Authorization: Bearer <access_token>
     """
     try:
-        # Obtener usuario autenticado
         user_id = get_current_user_id()
-        nmap_manager, nikto_manager = get_user_managers(user_id)
+        nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)  # ✅ ACTUALIZADO
         
-        # Obtener y validar el ID del escaneo
         scan_id_str = request.args.get("id")
         if not scan_id_str:
             raise MissingParameterError("id")
@@ -557,22 +581,40 @@ def get_scan_status():
                 value=scan_id_str
             )
         
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
+        scan, scan_type = get_scan_by_id_for_user(
+            scan_id, nmap_manager, nikto_manager, openvas_manager  # ✅ ACTUALIZADO
+        )
         
-        if not scan or scan.user_id != user_id:  #type: ignore
+        if not scan or scan.user_id != user_id:
             raise ScanNotFoundError(scan_id)
         
-        manager = nmap_manager if scan_type == "nmap" else nikto_manager
-        status = manager.get_scan_status(scan.id)  # type: ignore
+        # Seleccionar manager apropiado
+        if scan_type == "nmap":
+            manager = nmap_manager
+        elif scan_type == "nikto":
+            manager = nikto_manager
+        else:  # openvas
+            manager = openvas_manager
         
-        logger.info(f"Usuario {get_current_username()}: estado del escaneo {scan_id} - {status}")
+        status = manager.get_scan_status(scan.id)
+        progress = manager.get_scan_progress(scan.id)  # Puede ser None
         
-        return jsonify({
+        logger.info(
+            f"Usuario {get_current_username()}: estado del escaneo {scan_id} ({scan_type}) - {status}"
+        )
+        
+        response = {
             "message": f"Estado del escaneo con id {scan_id}: {status}",
             "scanId": scan_id,
             "status": status,
             "scanType": scan_type
-        }), 200
+        }
+        
+        # Añadir progreso si está disponible
+        if progress is not None:
+            response["progress"] = progress
+        
+        return jsonify(response), 200
     
     except (MissingParameterError, ValidationError, ScanNotFoundError) as e:
         error_dict, status_code = create_error_response(e, include_debug_info=False)
@@ -583,6 +625,8 @@ def get_scan_status():
         sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
+
+
 
 # ============================================================================
 # ENDPOINTS DE USUARIOS
@@ -788,6 +832,8 @@ def change_password():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
 # ============================================================================
 # ENDPOINTS DE ESCANEO NMAP
 # ============================================================================
@@ -807,7 +853,7 @@ def start_nmap_scan():
     """
     try:
         user_id = get_current_user_id()
-        nmap_manager, _ = get_user_managers(user_id)
+        nmap_manager, _, _ = get_user_managers(user_id)
         
         # Obtener parámetros de los headers
         host = request.headers.get("X-Target-Host")
@@ -892,6 +938,8 @@ def start_nmap_scan():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
 # ============================================================================
 # ENDPOINTS DE ESCANEO NIKTO
 # ============================================================================
@@ -916,7 +964,7 @@ def start_nikto_scan():
         user_id = get_current_user_id()
         
         # Crear manager específico para este usuario
-        _, nikto_manager = get_user_managers(user_id)
+        _, nikto_manager, _ = get_user_managers(user_id)
         
         # Obtener parámetros
         target = request.headers.get("X-Target")
@@ -983,6 +1031,116 @@ def start_nikto_scan():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
+# ============================================================================
+# ENDPOINTS DE ESCANEO OPENVAS
+# ============================================================================
+@app.route("/sentinel/openvas/start", methods=["POST"])
+@require_oauth_token
+def start_openvas_scan():
+    """
+    Inicia un escaneo OpenVAS para el usuario autenticado.
+    
+    Headers requeridos:
+        Authorization: Bearer <access_token>
+        X-Target: IP o hostname a escanear (ej: "192.168.1.1", "example.com")
+    
+    Query Parameters opcionales:
+        scan_config: Tipo de configuración de escaneo
+                     - 'full_fast' (default): Escaneo rápido y completo
+                     - 'full_deep': Escaneo profundo (más lento)
+                     - 'full_ultimate': Escaneo exhaustivo (muy lento)
+    
+    Returns:
+        JSON con el ID del escaneo iniciado
+    """
+    try:
+        # Obtener usuario autenticado
+        user_id = get_current_user_id()
+        _, _, openvas_manager = get_user_managers(user_id)
+        
+        # Obtener parámetros
+        target = request.headers.get("X-Target")
+        scan_config = request.args.get("scan_config", "full_fast")
+        
+        # Validar target requerido
+        if not target:
+            raise MissingParameterError("X-Target")
+        
+        # Validar que el target no esté vacío
+        if not target.strip():
+            raise ValidationError(
+                field="X-Target",
+                message="El target no puede estar vacío"
+            )
+        
+        # Validar configuración de escaneo
+        valid_configs = ["full_fast", "full_deep", "full_ultimate"]
+        if scan_config not in valid_configs:
+            raise ValidationError(
+                field="scan_config",
+                message="Configuración de escaneo inválida",
+                value=scan_config,
+                expected=f"Una de: {', '.join(valid_configs)}"
+            )
+        
+        # Validar formato de IP/hostname
+        valido, hosts, mensaje = IPValidator.validate(target)
+        if not valido:
+            raise ValidationError(
+                field="X-Target",
+                message=mensaje,
+                value=target
+            )
+        
+        # OpenVAS solo escanea un host a la vez
+        if len(hosts) > 1:
+            raise ValidationError(
+                field="X-Target",
+                message="OpenVAS solo puede escanear un host a la vez",
+                value=target,
+                expected="Una sola IP o hostname"
+            )
+        
+        target_host = hosts[0]
+        
+        # Ejecutar el escaneo
+        try:
+            scan_id = openvas_manager.run_scan(target_host, scan_config=scan_config)
+            logger.info(
+                f"Usuario {get_current_username()}: Escaneo OpenVAS ID={scan_id}, "
+                f"target={target_host}, config={scan_config}"
+            )
+        except Exception as e:
+            logger.error(f"Error ejecutando escaneo OpenVAS: {e}", exc_info=True)
+            raise ScanExecutionError(
+                scan_type="OpenVAS",
+                target=target_host,
+                reason=str(e)
+            )
+        
+        return jsonify({
+            "message": "Escaneo OpenVAS iniciado correctamente",
+            "scanId": scan_id,
+            "target": target_host,
+            "scanConfig": scan_config,
+            "user": get_current_username(),
+            "note": "Los escaneos OpenVAS pueden tardar varios minutos. Use /sentinel/scan-status para verificar el progreso."
+        }), 201
+    
+    except (MissingParameterError, ValidationError, ScanExecutionError) as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    
+    except Exception as e:
+        logger.error(f"Error al iniciar escaneo OpenVAS: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+
+
 # ============================================================================
 # ENDPOINTS DE GENERACIÓN DE PDFs
 # ============================================================================
@@ -1003,7 +1161,7 @@ def generate_pdf():
     """
     try:
         user_id = get_current_user_id()
-        nmap_manager, nikto_manager = get_user_managers(user_id)
+        nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)
         
         scan_id_str = request.args.get("id")
         if not scan_id_str:
@@ -1020,7 +1178,7 @@ def generate_pdf():
         
         logger.info(f"Usuario {get_current_username()} generando PDF para escaneo ID: {scan_id}")
         
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
+        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager, openvas_manager)
         
         if not scan or scan.user_id != user_id:  #type: ignore
             raise ScanNotFoundError(scan_id)
@@ -1148,6 +1306,8 @@ def generate_pdf_base64():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
 # ============================================================================
 # ENDPOINTS DE CONSULTA DE RESULTADOS
 # ============================================================================
@@ -1158,7 +1318,7 @@ def retrieve_all_scans():
     Obtiene todos los escaneos del usuario autenticado.
     
     Query Parameters opcionales:
-        type: Tipo de escaneo ('nmap', 'nikto', o 'all'). Default: 'all'
+        type: Tipo de escaneo ('nmap', 'nikto', 'openvas', o 'all'). Default: 'all'
     
     Headers requeridos:
         Authorization: Bearer <access_token>
@@ -1168,19 +1328,19 @@ def retrieve_all_scans():
     """
     try:
         user_id = get_current_user_id()
-        nmap_manager, nikto_manager = get_user_managers(user_id)
+        nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)  # ✅ ACTUALIZADO
         
         scan_type = request.args.get("type", "all").lower()
         
         logger.info(f"Usuario {get_current_username()} obteniendo escaneos del tipo: {scan_type}")
         
         # Validar tipo de escaneo
-        if scan_type not in ["nmap", "nikto", "all"]:
+        if scan_type not in ["nmap", "nikto", "openvas", "all"]:  # ✅ ACTUALIZADO
             raise ValidationError(
                 field="type",
                 message="Tipo de escaneo inválido",
                 value=scan_type,
-                expected="'nmap', 'nikto' o 'all'"
+                expected="'nmap', 'nikto', 'openvas' o 'all'"
             )
         
         all_results = []
@@ -1188,7 +1348,6 @@ def retrieve_all_scans():
         # Obtener escaneos Nmap si aplica
         if scan_type in ["nmap", "all"]:
             try:
-                # Obtener solo los escaneos de ESTE usuario
                 nmap_results = nmap_manager.get_scans_for_user()
                 
                 formatted_nmap = [
@@ -1221,7 +1380,6 @@ def retrieve_all_scans():
         # Obtener escaneos Nikto si aplica
         if scan_type in ["nikto", "all"]:
             try:
-                # Obtener solo los escaneos de ESTE usuario
                 nikto_results = nikto_manager.get_scans_for_user()
                 
                 formatted_nikto = [
@@ -1240,6 +1398,7 @@ def retrieve_all_scans():
                                 "method": incident.method,
                                 "url": incident.url,
                                 "description": incident.description,
+                                "severity": getattr(incident, "severity", "UNKNOWN"),
                                 "discoveredAt": (
                                     incident.discovered_at.isoformat()
                                     if hasattr(incident.discovered_at, "isoformat")
@@ -1257,6 +1416,52 @@ def retrieve_all_scans():
                 logger.info(f"Usuario {get_current_username()}: {len(formatted_nikto)} escaneos Nikto")
             except Exception as e:
                 logger.error(f"Error obteniendo escaneos Nikto: {str(e)}")
+        
+        # ✅ NUEVO: Obtener escaneos OpenVAS si aplica
+        if scan_type in ["openvas", "all"]:
+            try:
+                openvas_results = openvas_manager.get_scans_for_user()
+                
+                formatted_openvas = [
+                    {
+                        "id": result.id,
+                        "scanType": "openvas",
+                        "target": result.target,
+                        "taskId": result.task_id,
+                        "reportId": result.report_id,
+                        "startedAt": (
+                            result.started_at.isoformat()
+                            if hasattr(result.started_at, "isoformat")
+                            else str(result.started_at)
+                        ),
+                        "vulnerabilities": [
+                            {
+                                "nvtOid": vuln_result.vulnerability.nvt_oid,
+                                "name": vuln_result.vulnerability.name,
+                                "severityScore": vuln_result.vulnerability.severity_score,
+                                "severityClass": vuln_result.vulnerability.severity_class,
+                                "cveIds": vuln_result.vulnerability.cve_ids,
+                                "hostIp": vuln_result.host.ip_address if vuln_result.host else None
+                            }
+                            for vuln_result in result.results[:10]  # Limitar a 10 para resumen
+                        ],
+                        "totalVulnerabilities": len(result.results),
+                        "criticalCount": sum(
+                            1 for r in result.results 
+                            if r.vulnerability.severity_class == "Critical"
+                        ),
+                        "highCount": sum(
+                            1 for r in result.results 
+                            if r.vulnerability.severity_class == "High"
+                        )
+                    }
+                    for result in openvas_results
+                ]
+                
+                all_results.extend(formatted_openvas)
+                logger.info(f"Usuario {get_current_username()}: {len(formatted_openvas)} escaneos OpenVAS")
+            except Exception as e:
+                logger.error(f"Error obteniendo escaneos OpenVAS: {str(e)}", exc_info=True)
         
         logger.info(f"Usuario {get_current_username()}: Total {len(all_results)} escaneos")
         
@@ -1294,16 +1499,14 @@ def retrieve_scan_by_id(scan_id: int):
         JSON con los detalles del escaneo
     """
     try:
-        # Obtener usuario autenticado
         user_id = get_current_user_id()
-        
-        # Crear managers para este usuario
-        nmap_manager, nikto_manager = get_user_managers(user_id)
+        nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)  # ✅ ACTUALIZADO
         
         logger.info(f"Usuario {get_current_username()} obteniendo escaneo ID: {scan_id}")
         
-        # Buscar el escaneo usando los managers del usuario
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager)
+        scan, scan_type = get_scan_by_id_for_user(
+            scan_id, nmap_manager, nikto_manager, openvas_manager  # ✅ ACTUALIZADO
+        )
         
         if not scan:
             raise ScanNotFoundError(scan_id)
@@ -1322,13 +1525,15 @@ def retrieve_scan_by_id(scan_id: int):
                 "openPorts": [
                     {
                         "port": f"{port.port_id}/{port.port.protocol}",
-                        "reason": port.reason
+                        "reason": port.reason,
+                        "product": port.product,
+                        "version": port.version
                     }
                     for port in scan.open_ports_relation
                 ],
                 "totalOpenPorts": len(scan.open_ports_relation)
             }
-        else:  # nikto
+        elif scan_type == "nikto":
             formatted_result = {
                 "id": scan.id,
                 "scanType": "nikto",
@@ -1344,6 +1549,7 @@ def retrieve_scan_by_id(scan_id: int):
                         "method": incident.method,
                         "url": incident.url,
                         "description": incident.description,
+                        "severity": getattr(incident, "severity", "UNKNOWN"),
                         "discoveredAt": (
                             incident.discovered_at.isoformat()
                             if hasattr(incident.discovered_at, "isoformat")
@@ -1353,6 +1559,45 @@ def retrieve_scan_by_id(scan_id: int):
                     for incident in scan.incidents
                 ],
                 "totalIncidents": len(scan.incidents)
+            }
+        else:  # ✅ NUEVO: openvas
+            formatted_result = {
+                "id": scan.id,
+                "scanType": "openvas",
+                "target": scan.target,
+                "taskId": scan.task_id,
+                "reportId": scan.report_id,
+                "startedAt": (
+                    scan.started_at.isoformat()
+                    if hasattr(scan.started_at, "isoformat")
+                    else str(scan.started_at)
+                ),
+                "vulnerabilities": [
+                    {
+                        "nvtOid": vuln_result.vulnerability.nvt_oid,
+                        "name": vuln_result.vulnerability.name,
+                        "severityScore": vuln_result.vulnerability.severity_score,
+                        "severityClass": vuln_result.vulnerability.severity_class,
+                        "cvssBaseScore": vuln_result.vulnerability.cvss_base_score,
+                        "cvssVector": vuln_result.vulnerability.cvss_vector,
+                        "cveIds": vuln_result.vulnerability.cve_ids,
+                        "description": vuln_result.vulnerability.description,
+                        "solution": vuln_result.vulnerability.solution,
+                        "solutionType": vuln_result.vulnerability.solution_type,
+                        "affectedSoftware": vuln_result.vulnerability.affected_software,
+                        "hostIp": vuln_result.host.ip_address if vuln_result.host else None,
+                        "hostName": vuln_result.host.hostname if vuln_result.host else None
+                    }
+                    for vuln_result in scan.results
+                ],
+                "totalVulnerabilities": len(scan.results),
+                "severityBreakdown": {
+                    "critical": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
+                    "high": sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
+                    "medium": sum(1 for r in scan.results if r.vulnerability.severity_class == "Medium"),
+                    "low": sum(1 for r in scan.results if r.vulnerability.severity_class == "Low"),
+                    "info": sum(1 for r in scan.results if r.vulnerability.severity_class == "Log")
+                }
             }
         
         logger.info(f"Usuario {get_current_username()}: Escaneo {scan_type} ID {scan_id} obtenido")
@@ -1372,6 +1617,7 @@ def retrieve_scan_by_id(scan_id: int):
         sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
+
 
 # ============================================================================
 # MANEJO DE ERRORES GLOBALES

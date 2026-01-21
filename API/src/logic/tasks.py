@@ -14,6 +14,11 @@ from src.misc.logging import SecOpsLogger
 from src.misc.conversion import JSONManager
 from src.misc.directorychecker import DirectoryChecker
 
+import xml.etree.ElementTree as ET
+from gvm.connections import TLSConnection
+from gvm.protocols.gmp import Gmp
+from gvm.transforms import EtreeTransform
+
 
 class TaskStatus(Enum):
     """
@@ -120,10 +125,7 @@ class _Task(ABC):
             self._finished.set()
 
     def scan(self) -> None:
-        """
-        Inicia el escaneo de forma ASÍNCRONA.
-        NO bloquea - retorna inmediatamente después de iniciar.
-        """
+        """Inicia el escaneo de forma ASÍNCRONA."""
         if self._proc and self._proc.poll() is None:
             self.logger.warning("El escaneo ya está en ejecución")
             return
@@ -133,11 +135,9 @@ class _Task(ABC):
             cmd = self._build_command()
             self.logger.info(f"Iniciando escaneo con comando: {' '.join(cmd)}")
             
-            # Asegurar que el directorio de salida existe
             if self._output_file and not self._output_file.parent.exists():
                 self._output_file.parent.mkdir(parents=True, exist_ok=True)
             
-            # Iniciar proceso
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -148,15 +148,21 @@ class _Task(ABC):
             
             # Verificar que el proceso inició
             time.sleep(0.1)
-            if self._proc.poll() is not None:
-                self.status = TaskStatus.FAILED
-                raise RuntimeError(f"Proceso falló al iniciar (código {self._proc.returncode})")
+            returncode = self._proc.poll()
             
-            # Iniciar thread de lectura (NO bloqueante)
+            # ✅ MEJORADO: Solo fallar si hay código de error real
+            if returncode is not None and returncode != 0:
+                self.status = TaskStatus.FAILED
+                raise RuntimeError(f"Proceso falló al iniciar (código {returncode})")
+            
+            # ⚠️ Si terminó con código 0, dejar que wait() lo maneje
+            if returncode == 0:
+                self.logger.warning(f"Proceso terminó inmediatamente con código 0. Puede que el target no sea alcanzable.")
+            
+            # Iniciar thread de lectura
             self._thread = threading.Thread(target=self._read_output, daemon=True)
             self._thread.start()
             
-            # Esperar solo a que el thread INICIE (no a que termine)
             if not self._started.wait(timeout=5):
                 raise RuntimeError("Thread de lectura no inició")
             
@@ -360,3 +366,190 @@ class NiktoScanTask(_Task):
             self.results = None
             raise
 
+
+class OpenVASTask(_Task):
+    """
+    Tarea de escaneo OpenVAS que maneja la conexión con el servidor GVM.
+    A diferencia de Nmap/Nikto, esta tarea NO ejecuta comandos CLI sino que
+    usa la API de OpenVAS mediante GMP.
+    """
+    
+    def __init__(
+        self, 
+        target: str,
+        hostname: str,
+        port: str,
+        username: str,
+        password: str,
+        scan_config: str = 'daba56c8-73ec-11df-a475-002264764cea',
+        port_list_id: str = '33d0cd82-57c6-11e1-8ed1-406186ea4fc5',
+        timeout: int = 300
+    ):
+        super().__init__(target, timeout)
+        self.hostname = hostname
+        self.port = port
+        self.username = username
+        self.password = password
+        self.scan_config = scan_config
+        self.port_list_id = port_list_id
+        
+        self.task_id: Optional[str] = None
+        self.report_id: Optional[str] = None
+        self._report_xml: Optional[str] = None
+    
+    def _build_command(self) -> List[str]:
+        """OpenVAS no usa comandos CLI, retorna lista vacía"""
+        return []
+    
+    def scan(self) -> None:
+        """
+        Inicia el escaneo OpenVAS de forma asíncrona.
+        Override del método base porque OpenVAS funciona diferente.
+        """
+        try:
+            self.status = TaskStatus.RUNNING
+            self._started.set()
+            
+            # Lanzar escaneo en thread separado
+            self._thread = threading.Thread(target=self._execute_openvas_scan, daemon=True)
+            self._thread.start()
+            
+            self.logger.info(f"Escaneo OpenVAS iniciado para {self.target}")
+        
+        except Exception as e:
+            self.status = TaskStatus.FAILED
+            self.logger.error(f"Error iniciando escaneo OpenVAS: {e}")
+            raise
+    
+    def _execute_openvas_scan(self) -> None:
+        """Ejecuta el escaneo completo de OpenVAS"""
+        try:
+            connection = TLSConnection(hostname=self.hostname, port=self.port)
+            
+            with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
+                gmp.authenticate(self.username, self.password)
+                
+                # Crear/obtener target
+                target_id = self._get_or_create_target(gmp)
+                
+                # Obtener scanner
+                scanner_id = self._get_default_scanner(gmp)
+                
+                # Crear y ejecutar tarea
+                self._create_and_start_task(gmp, target_id, scanner_id)
+                
+                # Esperar finalización
+                self._wait_for_completion(gmp)
+                
+                # Obtener reporte
+                self._fetch_report(gmp)
+                
+            self._finished.set()
+        
+        except Exception as e:
+            self.status = TaskStatus.FAILED
+            self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
+            self._finished.set()
+    
+    def _get_or_create_target(self, gmp: Gmp) -> str:
+        """Crea o reutiliza un target en OpenVAS"""
+        target_name = f"Target_{self.target}"
+        
+        # Buscar target existente
+        targets = gmp.get_targets(filter_string=f'name="{target_name}"')
+        target_list = targets.xpath('target')
+        
+        if target_list:
+            target_id = target_list[0].attrib.get('id')
+            self.logger.info(f"Reutilizando target: {target_id}")
+            return target_id
+        
+        # Crear nuevo target
+        target_response = gmp.create_target(
+            name=target_name,
+            hosts=[self.target],
+            port_list_id=self.port_list_id,
+            comment=f"Target para {self.target}"
+        )
+        
+        target_id = target_response.attrib.get('id') or target_response.get('id')
+        self.logger.info(f"Target creado: {target_id}")
+        return target_id
+    
+    def _get_default_scanner(self, gmp: Gmp) -> str:
+        """Obtiene el scanner por defecto de OpenVAS"""
+        scanners = gmp.get_scanners()
+        
+        for scanner in scanners.xpath('scanner'):
+            if scanner.find('name').text == 'OpenVAS Default':
+                scanner_id = scanner.get('id')
+                self.logger.info(f"Scanner encontrado: {scanner_id}")
+                return scanner_id
+        
+        raise RuntimeError("No se encontró el scanner 'OpenVAS Default'")
+    
+    def _create_and_start_task(self, gmp: Gmp, target_id: str, scanner_id: str) -> None:
+        """Crea la tarea de escaneo y la inicia"""
+        task_name = f"Scan_{self.target}_{int(time.time())}"
+        
+        task_response = gmp.create_task(
+            name=task_name,
+            config_id=self.scan_config,
+            target_id=target_id,
+            scanner_id=scanner_id,
+            comment=f"Escaneo de {self.target}"
+        )
+        
+        self.task_id = task_response.attrib.get('id') or task_response.get('id')
+        self.logger.info(f"Tarea creada: {self.task_id}")
+        
+        # Iniciar escaneo
+        start_response = gmp.start_task(self.task_id)
+        self.report_id = start_response.xpath('report_id')[0].text
+        self.logger.info(f"Escaneo iniciado. Report ID: {self.report_id}")
+    
+    def _wait_for_completion(self, gmp: Gmp, check_interval: int = 10) -> None:
+        """Espera a que el escaneo complete"""
+        while True:
+            task = gmp.get_task(self.task_id)
+            status = task.xpath('task/status')[0].text
+            progress = task.xpath('task/progress')[0].text
+            
+            # Actualizar progreso
+            with self._lock:
+                self.progress = int(float(progress))
+            
+            self.logger.info(f"Estado: {status} - Progreso: {progress}%")
+            
+            if status in ['Done', 'Stopped', 'Interrupted']:
+                self.logger.info(f"Escaneo finalizado: {status}")
+                break
+            
+            time.sleep(check_interval)
+    
+    def _fetch_report(self, gmp: Gmp) -> None:
+        """Obtiene el reporte XML del escaneo"""
+        report_response = gmp.get_report(
+            report_id=self.report_id,
+            report_format_id='a994b278-1f62-11e1-96ac-406186ea4fc5',  # XML
+            ignore_pagination=True,
+            details=True
+        )
+        
+        from lxml import etree
+        self._report_xml = etree.tostring(report_response, encoding='unicode', pretty_print=True)
+        self.logger.info("Reporte XML obtenido")
+    
+    def _process_results(self) -> None:
+        """Procesa el XML del reporte y lo convierte a JSON"""
+        try:
+            if not self._report_xml:
+                raise RuntimeError("No hay reporte XML disponible")
+            
+            self.results = JSONManager.openvas_xml_to_json(self._report_xml)
+            self.logger.info("Resultados OpenVAS procesados")
+        
+        except Exception as e:
+            self.logger.error(f"Error procesando resultados OpenVAS: {e}", exc_info=True)
+            self.results = None
+            raise

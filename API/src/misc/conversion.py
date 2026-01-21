@@ -39,56 +39,119 @@ class JSONManager:
             return None
 
     @staticmethod
-    def convert_json_to_individual_nmap_data(json_data: str, scan: NmapScan) -> Dict:
+    def convert_json_to_individual_nmap_data(json_data: str, scan: NmapScan, logger=None) -> Dict:
         """
-        Extrae información del resultado JSON de Nmap y lo estructura para el ORM.
+        Versión con logging detallado para debugging.
+        """
+        if logger:
+            logger.debug(f"Tipo de json_data: {type(json_data)}")
+            if isinstance(json_data, dict):
+                logger.debug(f"Claves en json_data: {list(json_data.keys())}")
         
-        Args:
-            json_data: String JSON con los resultados del escaneo Nmap
-            scan: Instancia de NmapScan del ORM
-        """
+        # Normalizar input a dict
         if isinstance(json_data, str):
             try:
                 result = json.loads(json_data)
+                if logger:
+                    logger.debug(f"JSON parseado exitosamente. Claves: {list(result.keys())}")
             except json.JSONDecodeError as e:
+                if logger:
+                    logger.error(f"Error parseando JSON: {e}")
                 raise ValueError(f"JSON inválido: {e}")
         elif isinstance(json_data, dict):
             result = json_data
+            if logger:
+                logger.debug(f"json_data ya es dict. Claves: {list(result.keys())}")
         else:
             raise TypeError(f"json_data debe ser str o dict, recibido: {type(json_data)}")
         
-        # Extraer información básica
-        command = result["nmap"]["command_line"]
-
+        # Validar estructura básica
+        if "nmap" not in result:
+            if logger:
+                logger.error(f"JSON no contiene 'nmap'. Claves disponibles: {list(result.keys())}")
+            raise ValueError("JSON no contiene clave 'nmap'")
+        
+        if "scan" not in result:
+            if logger:
+                logger.error(f"JSON no contiene 'scan'. Claves disponibles: {list(result.keys())}")
+            raise ValueError("JSON no contiene clave 'scan'")
+        
+        command = result.get("nmap", {}).get("command_line", "")
+        
+        # Verificar target
+        scan_targets = list(result["scan"].keys())
+        if logger:
+            logger.debug(f"Target buscado: {scan.target}")
+            logger.debug(f"Targets disponibles en scan: {scan_targets}")
+        
         if scan.target not in result["scan"]:
-            return {
-                "command": command,
-                "hostname": "",
-                "ports": []
-            }
+            if not scan_targets:
+                if logger:
+                    logger.warning("No hay targets en el resultado del escaneo")
+                return {
+                    "command": command,
+                    "host": {
+                        "vendor": "",
+                        "name": "",
+                        "type": "",
+                        "addresses": {"ipv4": "", "mac": ""}
+                    },
+                    "ports": []
+                }
             
-        hostnames = result["scan"][scan.target]["hostnames"]
-        name = hostnames[0]["name"] if hostnames else ""
-        type = hostnames[0]["type"] if hostnames else ""
-
-        addresses = result["scan"][scan.target]["addresses"]
-        ipv4 = addresses["ipv4"] if hostnames else ""
-        mac = addresses["mac"] if addresses else ""
-
-        vendor = result["scan"][scan.target]["vendor"][mac]
-        ports = result["scan"][scan.target]["tcp"]
+            target_key = scan_targets[0]
+            if logger:
+                logger.warning(f"Target {scan.target} no encontrado. Usando {target_key}")
+        else:
+            target_key = scan.target
+            if logger:
+                logger.debug(f"Target encontrado: {target_key}")
         
-        result_ports = [
-            (f"{port}/tcp", ports[port]["state"], ports[port]["reason"], ports[port]["product"], ports[port]["version"], ports[port]["name"]) 
-            for port in ports.keys()
-        ]
+        scan_data = result["scan"][target_key]
         
-        return {
+        # Extraer datos con logging
+        hostnames = scan_data.get("hostnames", [])
+        if logger:
+            logger.debug(f"Hostnames: {hostnames}")
+        
+        hostname = hostnames[0].get("name", "") if hostnames else ""
+        hostname_type = hostnames[0].get("type", "") if hostnames else ""
+        
+        addresses = scan_data.get("addresses", {})
+        if logger:
+            logger.debug(f"Addresses: {addresses}")
+        
+        ipv4 = addresses.get("ipv4", "")
+        mac = addresses.get("mac", "")
+        
+        vendor_dict = scan_data.get("vendor", {})
+        vendor = vendor_dict.get(mac, "") if mac and vendor_dict else ""
+        
+        tcp_ports = scan_data.get("tcp", {})
+        if logger:
+            logger.debug(f"Puertos TCP encontrados: {len(tcp_ports)}")
+        
+        result_ports = []
+        for port_number, port_info in tcp_ports.items():
+            port_tuple = (
+                f"{port_number}/tcp",
+                port_info.get("state", "unknown"),
+                port_info.get("reason", ""),
+                port_info.get("product", ""),
+                port_info.get("version", ""),
+                port_info.get("name", "")
+            )
+            result_ports.append(port_tuple)
+        
+        if logger:
+            logger.debug(f"Total puertos procesados: {len(result_ports)}")
+        
+        final_result = {
             "command": command,
             "host": {
                 "vendor": vendor,
-                "name": name,
-                "type": type,
+                "name": hostname,
+                "type": hostname_type,
                 "addresses": {
                     "ipv4": ipv4,
                     "mac": mac
@@ -96,6 +159,11 @@ class JSONManager:
             },
             "ports": result_ports
         }
+        
+        if logger:
+            logger.debug(f"Resultado final: {final_result}")
+        
+        return final_result
 
     @staticmethod
     def convert_json_to_individual_nikto_data(json_data: dict) -> List:
