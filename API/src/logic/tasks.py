@@ -55,6 +55,7 @@ class _Task(ABC):
         self._lock = threading.Lock()
         self._finished = threading.Event()
         self._started = threading.Event()
+        self._cancel_event = threading.Event()
         self._output_file: Optional[Path] = None
 
     @abstractmethod
@@ -183,10 +184,9 @@ class _Task(ABC):
             if not self._started.is_set():
                 self.logger.error("wait() llamado pero scan() nunca se ejecutó")
                 return False
-            
+
             # Esperar a que termine
             finished = self._finished.wait(timeout)
-            
             if not finished:
                 self.status = TaskStatus.TIMEOUT
                 self.logger.error("Timeout agotado")
@@ -194,40 +194,53 @@ class _Task(ABC):
                     self._proc.kill()
                     self._proc.wait()
                 return False
-            
-            # Verificar código de retorno
-            if self._proc and self._proc.returncode != 0:
-                self.status = TaskStatus.FAILED
-                self.logger.error(f"Proceso terminó con error: código {self._proc.returncode}")
-                return False
-            
+
+            # Si alguien (cancel(), OpenVASTask, etc.) ya fijó un estado final,
+            # NO lo toquemos.
+            if self.status in (TaskStatus.CANCELLED,
+                            TaskStatus.TIMEOUT,
+                            TaskStatus.FAILED):
+                self.logger.info(f"wait() termina con estado {self.status.value}")
+                return self.status == TaskStatus.COMPLETED
+
+            # ---------------------------
+            # A partir de aquí, solo tareas basadas en proceso que siguen RUNNING
+            # ---------------------------
+            if self._proc:
+                if self._proc.returncode != 0:
+                    self.status = TaskStatus.FAILED
+                    self.logger.error(
+                        f"Proceso terminó con error: código {self._proc.returncode}"
+                    )
+                    return False
+
             # Verificar que existe el archivo de salida
             if self._output_file and not self._output_file.exists():
                 self.status = TaskStatus.FAILED
                 self.logger.error(f"Archivo de salida no existe: {self._output_file}")
                 return False
-            
+
             # Verificar que el archivo no está vacío
             if self._output_file and self._output_file.stat().st_size == 0:
                 self.status = TaskStatus.FAILED
                 self.logger.error(f"Archivo de salida está vacío: {self._output_file}")
                 return False
-            
+
             # Procesar resultados
             self._process_results()
-            
+
             # Verificar que se obtuvieron resultados
             if self.results is None:
                 self.status = TaskStatus.FAILED
                 self.logger.error("No se pudieron procesar los resultados")
                 return False
-            
+
             # Todo OK
             self.status = TaskStatus.COMPLETED
             self.progress = 100
             self.logger.info("Escaneo completado correctamente")
             return True
-        
+
         except Exception as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error en wait: {e}", exc_info=True)
@@ -239,14 +252,23 @@ class _Task(ABC):
 
     def cancel(self) -> None:
         """Cancela el escaneo."""
+        # Marcar que se ha solicitado cancelación (lo usará OpenVAS, etc.)
+        self._cancel_event.set()
+
+        # Si es un escaneo basado en proceso, terminarlo
         if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
-            time.sleep(0.5)
-            if self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.logger.warning("terminate() no fue suficiente, haciendo kill()")
                 self._proc.kill()
-            self.status = TaskStatus.CANCELLED
-            self._finished.set()
-            self.logger.info("Escaneo cancelado")
+                self._proc.wait()
+
+        # Estado final de cancelación
+        self.status = TaskStatus.CANCELLED
+        self._finished.set()
+        self.logger.info("Escaneo cancelado")
 
     def get_status_string(self) -> str:
         """Obtiene el estado como string."""
@@ -425,27 +447,32 @@ class OpenVASTask(_Task):
         """Ejecuta el escaneo completo de OpenVAS"""
         try:
             connection = TLSConnection(hostname=self.hostname, port=self.port)
-            
             with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
                 gmp.authenticate(self.username, self.password)
-                
+
                 # Crear/obtener target
                 target_id = self._get_or_create_target(gmp)
-                
+
                 # Obtener scanner
                 scanner_id = self._get_default_scanner(gmp)
-                
+
                 # Crear y ejecutar tarea
                 self._create_and_start_task(gmp, target_id, scanner_id)
-                
-                # Esperar finalización
+
+                # Esperar finalización o cancelación
                 self._wait_for_completion(gmp)
-                
+
+                # Si está cancelado, no intentamos obtener reporte
+                if self.status == TaskStatus.CANCELLED:
+                    self.logger.info("Escaneo OpenVAS cancelado; no se obtiene reporte")
+                    self._finished.set()
+                    return
+
                 # Obtener reporte
                 self._fetch_report(gmp)
-                
+
             self._finished.set()
-        
+
         except Exception as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
@@ -511,21 +538,42 @@ class OpenVASTask(_Task):
     def _wait_for_completion(self, gmp: Gmp, check_interval: int = 10) -> None:
         """Espera a que el escaneo complete"""
         while True:
+            # ¿Se ha solicitado cancelación desde fuera?
+            if self._cancel_event.is_set():
+                self.logger.info("Cancelación solicitada para tarea OpenVAS")
+                if self.task_id:
+                    try:
+                        gmp.stop_task(self.task_id)
+                        self.logger.info(f"Tarea OpenVAS detenida: {self.task_id}")
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error al detener tarea OpenVAS {self.task_id}: {e}",
+                            exc_info=True
+                        )
+                self.status = TaskStatus.CANCELLED
+                break
+
             task = gmp.get_task(self.task_id)
             status = task.xpath('task/status')[0].text
             progress = task.xpath('task/progress')[0].text
-            
+
             # Actualizar progreso
             with self._lock:
                 self.progress = int(float(progress))
-            
+
             self.logger.info(f"Estado: {status} - Progreso: {progress}%")
-            
+
             if status in ['Done', 'Stopped', 'Interrupted']:
-                self.logger.info(f"Escaneo finalizado: {status}")
+                # 'Stopped' / 'Interrupted' vienen normalmente de un stop remoto
+                if status == 'Done':
+                    self.logger.info(f"Escaneo finalizado correctamente: {status}")
+                    # Dejamos que wait() procese resultados y marque COMPLETED
+                else:
+                    self.logger.info(f"Escaneo OpenVAS detenido: {status}")
+                    self.status = TaskStatus.CANCELLED
                 break
-            
-            time.sleep(check_interval)
+
+        time.sleep(check_interval)
     
     def _fetch_report(self, gmp: Gmp) -> None:
         """Obtiene el reporte XML del escaneo"""

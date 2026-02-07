@@ -18,9 +18,9 @@ services:
       - 208.67.222.222
     cap_add:
       - NET_ADMIN
-      - NET_RAW           # ⭐ AÑADIR ESTA LÍNEA (permite ICMP)
-      - SYS_PTRACE        # ⭐ AÑADIR ESTA LÍNEA (para debugging)
-    # ⭐ AÑADIR ESTAS LÍNEAS PARA RECURSOS:
+      - NET_RAW
+      - SYS_PTRACE
+
     deploy:
       resources:
         limits:

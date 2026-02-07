@@ -538,6 +538,125 @@ def get_scan_status():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+@app.route("/sentinel/scans/<int:scan_id>/cancel", methods=["POST"])
+@require_oauth_token
+def cancel_scan(scan_id: int):
+    """
+    Cancela un escaneo en ejecución.
+    
+    Path Parameters:
+        scan_id: ID del escaneo a cancelar
+    
+    Headers requeridos:
+        Authorization: Bearer <token>
+    
+    Returns:
+        JSON con el resultado de la cancelación
+        
+    Response codes:
+        200: Escaneo cancelado exitosamente
+        400: El escaneo no se puede cancelar (ya finalizó o estado inválido)
+        401: No autorizado
+        403: El escaneo no pertenece al usuario
+        404: Escaneo no encontrado
+        500: Error interno
+    """
+    try:
+        user_id = get_current_user_id()
+        nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)
+        
+        logger.info(f"Usuario {get_current_username()} intentando cancelar escaneo ID: {scan_id}")
+        
+        # Buscar el escaneo en los diferentes managers
+        scan = None
+        manager = None
+        scan_type = None
+        
+        # Intentar con Nmap
+        scan = nmap_manager.get_scan_by_id(scan_id)
+        if scan:
+            manager = nmap_manager
+            scan_type = "nmap"
+        
+        # Intentar con Nikto
+        if not scan:
+            scan = nikto_manager.get_scan_by_id(scan_id)
+            if scan:
+                manager = nikto_manager
+                scan_type = "nikto"
+        
+        # Intentar con OpenVAS
+        if not scan:
+            scan = openvas_manager.get_scan_by_id(scan_id)
+            if scan:
+                manager = openvas_manager
+                scan_type = "openvas"
+        
+        # Verificar que se encontró el escaneo
+        if not scan or not manager:
+            logger.warning(f"Escaneo {scan_id} no encontrado")
+            raise ScanNotFoundError(scan_id)
+        
+        # Verificar que pertenece al usuario
+        if scan.user_id != user_id:
+            logger.warning(
+                f"Usuario {get_current_username()} no autorizado para cancelar escaneo {scan_id}"
+            )
+            return jsonify({
+                "error": "forbidden",
+                "message": "No tienes permiso para cancelar este escaneo",
+                "scanId": scan_id
+            }), 403
+        
+        # Verificar que el escaneo está en un estado cancelable
+        if scan.status not in ['pending', 'running']:
+            logger.warning(
+                f"Escaneo {scan_id} no se puede cancelar (estado: {scan.status})"
+            )
+            return jsonify({
+                "error": "invalid_state",
+                "message": f"El escaneo no se puede cancelar en su estado actual: {scan.status}",
+                "scanId": scan_id,
+                "currentStatus": scan.status,
+                "cancellableStates": ["pending", "running"]
+            }), 400
+        
+        # Intentar cancelar
+        success = manager.cancel_scan(scan_id)
+        
+        if success:
+            logger.info(
+                f"Usuario {get_current_username()}: Escaneo {scan_type} ID {scan_id} cancelado"
+            )
+            
+            # Obtener estado actualizado
+            scan = manager.get_scan_by_id(scan_id)
+            
+            return jsonify({
+                "message": "Escaneo cancelado exitosamente",
+                "scanId": scan_id,
+                "scanType": scan_type,
+                "status": scan.status,
+                "user": get_current_username()
+            }), 200
+        else:
+            logger.error(f"No se pudo cancelar el escaneo {scan_id}")
+            return jsonify({
+                "error": "cancellation_failed",
+                "message": "No se pudo cancelar el escaneo",
+                "scanId": scan_id
+            }), 500
+    
+    except ScanNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    
+    except Exception as e:
+        logger.error(f"Error cancelando escaneo {scan_id}: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
 # ============================================================================
 # ENDPOINTS DE USUARIOS
 # ============================================================================
@@ -1591,6 +1710,8 @@ def internal_error(error):
         "error": "Error interno del servidor",
         "message": "Ha ocurrido un error inesperado"
     }), 500
+
+
 
 # ============================================================================
 # EJECUCIÓN

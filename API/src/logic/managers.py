@@ -192,11 +192,30 @@ class ScanManager(BaseManager, ABC):
     Clase base para gestores de escaneos.
     Responsabilidad: Coordinar la ejecución de tareas y la persistencia de resultados.
     """
-    
+
+    _running_tasks: Dict[int, _Task] = {}
+    _running_tasks_lock = threading.RLock()
+
     def __init__(self, user: User, session: Optional[Session] = None):
         super().__init__(session)
         self.active_user = user
-        self.running_tasks: Dict[int, _Task] = {}
+
+    # ------------ Helpers de clase para el registro global ------------
+
+    @classmethod
+    def _register_task(cls, scan_id: int, task: _Task) -> None:
+        with cls._running_tasks_lock:
+            cls._running_tasks[scan_id] = task
+
+    @classmethod
+    def _get_task(cls, scan_id: int) -> Optional[_Task]:
+        with cls._running_tasks_lock:
+            return cls._running_tasks.get(scan_id)
+
+    @classmethod
+    def _unregister_task(cls, scan_id: int) -> None:
+        with cls._running_tasks_lock:
+            cls._running_tasks.pop(scan_id, None)
     
     def get_scan_by_id(self, scan_id: int) -> Optional[Scan]:
         """Obtiene un escaneo por ID"""
@@ -253,28 +272,87 @@ class ScanManager(BaseManager, ABC):
     
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
         """Obtiene el progreso de un escaneo en ejecución"""
-        if scan_id in self.running_tasks:
-            progress = self.running_tasks[scan_id].progress
+        task = self._get_task(scan_id)
+        if task:
+            progress = task.progress
             self.logger.debug(f"Progreso de escaneo {scan_id}: {progress}%")
             return progress
-        
         return None
     
     def get_scan_status(self, scan_id: int) -> Optional[str]:
         """Obtiene el estado de un escaneo"""
-        if scan_id in self.running_tasks:
-            status = self.running_tasks[scan_id].status
-            return str(status)
-        
+        task = self._get_task(scan_id)
+        if task:
+            return str(task.status)
         if self._is_scan_finished(scan_id):
             return str(TaskStatus.COMPLETED)
-        
         return None
     
     def is_scan_finished(self, scan_id: int) -> Optional[bool]:
         """Verifica si un escaneo ha finalizado"""
         return self._is_scan_finished(scan_id)
     
+    def cancel_scan(self, scan_id: int) -> bool:
+        """
+        Cancela un escaneo en ejecución.
+        
+        Validaciones:
+        - Verifica que el escaneo existe
+        - Verifica que pertenece al usuario activo
+        - Solo permite cancelar escaneos en estado 'pending' o 'running'
+        
+        Args:
+            scan_id: ID del escaneo a cancelar
+        
+        Returns:
+            bool: True si se canceló correctamente, False en caso contrario
+        """
+        try:
+            # Verificar que el escaneo existe
+            scan = self.get_scan_by_id(scan_id)
+            if not scan:
+                self.logger.warning(f"Escaneo {scan_id} no encontrado, no se puede cancelar")
+                return False
+            
+            # Verificar que el escaneo pertenece al usuario activo
+            if scan.user_id != self.active_user.id:
+                self.logger.warning(
+                    f"El usuario {self.active_user.username} no tiene permisos para cancelar el escaneo {scan_id}"
+                )
+                return False
+            
+            # Verificar que el escaneo está en un estado cancelable
+            if scan.status not in ['pending', 'running']:
+                self.logger.warning(
+                    f"El escaneo {scan_id} no se puede cancelar (estado actual: {scan.status})"
+                )
+                return False
+            
+            # Intentar cancelar la tarea en ejecución
+            task = self._get_task(scan_id)
+            if task:
+                try:
+                    task.cancel()
+                    self.logger.info(f"Tarea del escaneo {scan_id} cancelada")
+                except Exception as e:
+                    self.logger.error(f"Error cancelando tarea del escaneo {scan_id}: {e}")
+                finally:
+                    self._unregister_task(scan_id)
+            else:
+                self.logger.warning(f"No se encontró tarea en ejecución para el escaneo {scan_id}")
+                return False
+            
+            # Actualizar estado en la base de datos
+            self._update_scan_status(scan_id, 'cancelled')
+            
+            self.logger.info(f"Escaneo {scan_id} cancelado exitosamente")
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
+            return False
+    
+
     @abstractmethod
     def run_scan(self, **kwargs) -> int:
         """
@@ -316,9 +394,8 @@ class ScanManager(BaseManager, ABC):
             
             thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
             
-            # Registrar tarea
-            self.running_tasks[scan_id] = task
-            
+            self._register_task(scan_id, task)
+
             # Ejecutar escaneo
             task.scan()
             success = task.wait(timeout=task.timeout + 30)
@@ -329,6 +406,8 @@ class ScanManager(BaseManager, ABC):
                 )
                 thread_manager._mark_scan_as_failed(scan)
                 return
+            
+            scan.status = "finished"
             
             # Procesar y guardar resultados
             thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")
@@ -350,8 +429,7 @@ class ScanManager(BaseManager, ABC):
         
         finally:
             thread_manager.close_session()
-            if scan_id in self.running_tasks:
-                del self.running_tasks[scan_id]
+            self._unregister_task(scan_id)
     
     def _mark_scan_as_failed(self, scan: Scan) -> None:
         """Marca un escaneo como fallido"""
@@ -371,6 +449,73 @@ class ScanManager(BaseManager, ABC):
         except Exception as e:
             self.logger.error(f"Error verificando estado: {e}")
             return False
+
+    def _update_scan_status(self, scan_id: int, status: str) -> bool:
+        """
+        Actualiza el estado de un escaneo en la base de datos.
+        
+        Args:
+            scan_id: ID del escaneo
+            status: Nuevo estado ('pending', 'running', 'completed', 'failed', 'cancelled')
+        
+        Returns:
+            bool: True si se actualizó correctamente, False en caso contrario
+        """
+        try:
+            self._check_session()
+            scan = self.get_scan_by_id(scan_id)
+            
+            if not scan:
+                self.logger.warning(f"No se puede actualizar estado: escaneo {scan_id} no encontrado")
+                return False
+            
+            old_status = scan.status
+            scan.status = status
+            self._safe_commit()
+            
+            self.logger.info(f"Estado del escaneo {scan_id} actualizado: {old_status} -> {status}")
+            return True
+        
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error actualizando estado del escaneo {scan_id}: {e}")
+            return False
+    
+    def _setup_task_callbacks(self, task: _Task, scan_id: int):
+        """
+        Configura callbacks para actualizar el estado cuando la tarea finalice.
+        
+        Args:
+            task: Tarea a la que añadir el callback
+            scan_id: ID del escaneo asociado
+        """
+        original_wait = task.wait
+        
+        def wait_with_callback(timeout: Optional[float] = None) -> bool:
+            """Wrapper de wait que actualiza el estado al finalizar"""
+            result = original_wait(timeout)
+            
+            try:
+                # Actualizar estado según el resultado
+                if task.status == TaskStatus.COMPLETED:
+                    self._update_scan_status(scan_id, 'completed')
+                elif task.status == TaskStatus.FAILED:
+                    self._update_scan_status(scan_id, 'failed')
+                elif task.status == TaskStatus.CANCELLED:
+                    self._update_scan_status(scan_id, 'cancelled')
+                elif task.status == TaskStatus.TIMEOUT:
+                    self._update_scan_status(scan_id, 'failed')
+                
+                # Eliminar de tareas en ejecución
+                if scan_id in self.running_tasks:
+                    del self.running_tasks[scan_id]
+            
+            except Exception as e:
+                self.logger.error(f"Error en callback de finalización: {e}")
+            
+            return result
+        
+        task.wait = wait_with_callback
 
 
 class OpenVASScanManager(ScanManager):
@@ -423,6 +568,8 @@ class OpenVASScanManager(ScanManager):
             )
             thread.start()
             time.sleep(0.2)
+
+            self._register_task(scan_id, task)
             
             self.logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
             return scan_id
@@ -480,7 +627,7 @@ class OpenVASScanManager(ScanManager):
             thread_manager.logger.info(f"Iniciando escaneo OpenVAS {scan_id}")
             
             # Registrar tarea
-            self.running_tasks[scan_id] = task
+            self._register_task(scan_id, task)
             
             # Ejecutar escaneo
             task.scan()
@@ -546,6 +693,9 @@ class NmapScanManager(ScanManager):
                 daemon=False,
                 name=f"NmapScan-{scan_id}"
             )
+
+            self._register_task(scan_id, task)
+
             thread.start()
             time.sleep(0.2)
             
@@ -598,6 +748,8 @@ class NiktoScanManager(ScanManager):
             )
             thread.start()
             time.sleep(0.2)
+
+            self._register_task(scan_id, task)
             
             self.logger.info(f"Escaneo Nikto {scan_id} iniciado")
             return scan_id

@@ -49,7 +49,7 @@ echo "Solicitando tokens OAuth para el usuario: $USERNAME"
 
 RESPONSE=$(curl -s -X POST "$API_URL" \
   -H "Content-Type: application/json" \
-  -d "{\"X-Grant-Type\":\"password\",\"X-Username\":\"$USERNAME\",\"X-Password\":\"$PASSWORD\"}")
+  -d "{\"grantType\":\"password\",\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}")
 
 # Verificar si la petición fue exitosa
 if [ $? -ne 0 ]; then
