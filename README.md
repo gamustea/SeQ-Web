@@ -23,7 +23,7 @@
 - **OpenVAS**: Evaluación completa de vulnerabilidades con GMP
 
 ### 📊 Gestión de Resultados
-- Almacenamiento en base de datos MySQL/MariaDB
+- Almacenamiento en base de datos MySQL
 - Clasificación automática de severidad (CRITICAL, HIGH, MEDIUM, LOW, INFO)
 - Seguimiento del progreso de escaneos en tiempo real
 - Historial completo de escaneos por usuario
@@ -56,7 +56,7 @@ SecOps-API/
 │   │   ├── configread.py      # Lectura de configuración
 │   │   └── conversion.py      # Conversión JSON/XML
 │   └── run.py                 # API Flask y endpoints
-└── config.ini                 # Configuración de la aplicación
+
 ```
 
 ---
@@ -66,7 +66,7 @@ SecOps-API/
 ### Requisitos Previos
 
 - **Python 3.9+**
-- **MySQL/MariaDB**
+- **MySQL**
 - **Nmap** (instalado en el sistema)
 - **Nikto** (instalado en el sistema)
 - **OpenVAS/GVM** (servidor configurado)
@@ -99,45 +99,6 @@ CREATE DATABASE secops_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'secops_user'@'localhost' IDENTIFIED BY 'tu_contraseña_segura';
 GRANT ALL PRIVILEGES ON secops_db.* TO 'secops_user'@'localhost';
 FLUSH PRIVILEGES;
-```
-
-### Configuración de `config.ini`
-
-```ini
-[database]
-username = secops_user
-password = tu_contraseña_segura
-host = localhost
-db_name = secops_db
-
-[oauth]
-access_token_expire_minutes = 30
-refresh_token_expire_days = 7
-jwt_secret_key = tu_clave_secreta_muy_larga_y_aleatoria
-jwt_algorithm = HS256
-
-[openvas]
-hostname = localhost
-port = 9390
-username = admin
-password = admin
-scan_config = daba56c8-73ec-11df-a475-002264764cea
-port_list_id = 33d0cd82-57c6-11e1-8ed1-406186ea4fc5
-
-[directories]
-temp = /tmp/secops
-reports = /var/secops/reports
-logs = /var/log/secops
-```
-
-### Ejecutar la Aplicación
-
-```bash
-# Modo desarrollo
-python run.py
-
-# Modo producción con Gunicorn
-gunicorn -w 4 -b 0.0.0.0:5000 run:app
 ```
 
 ---
