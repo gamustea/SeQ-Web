@@ -1,0 +1,80 @@
+package com.seq.acheron.secrets.symmetric;
+
+import de.mkammerer.argon2.Argon2Advanced;
+import de.mkammerer.argon2.Argon2Factory;
+
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.GeneralSecurityException;
+import java.util.Base64;
+
+/**
+ * AES-based encryption strategy using Argon2 to derive a key
+ * from the user's master password.
+ * <p>
+ * This strategy:
+ * <ul>
+ *     <li>Derives {@link #derivedKey} from a master password + salt using Argon2.</li>
+ *     <li>Generates or accepts a random {@link #vaultKey} used with AES-GCM.</li>
+ *     <li>Allows exporting and importing the {@link #vaultKey} wrapped
+ *     (encrypted) with {@link #derivedKey} via the base class.</li>
+ * </ul>
+ */
+public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
+
+    /**
+     * Creates a new strategy instance that:
+     * <ul>
+     *     <li>Derives {@link #derivedKey} from the given master password and salt
+     *     using Argon2.</li>
+     *     <li>Generates a new random {@link #vaultKey} internally if {@code generateVaultKey} is
+     *     set to true; otherwise, it will remain null</li>
+     * </ul>
+     *
+     * @param masterPassword    the user's master password
+     * @param saltBase64        Base64-encoded salt used for Argon2
+     * @param generateVaultKey  Whether the constructor builds a random {@link #vaultKey} or not
+     * @throws GeneralSecurityException if key generation fails
+     */
+    public AESVaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey) throws GeneralSecurityException {
+        super("AES/GCM/NoPadding", generateVaultKey);
+
+        Argon2Advanced argon2 = Argon2Factory.createAdvanced();
+        char[] passwordChars = masterPassword.toCharArray();
+
+        try {
+            byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
+            byte[] keyBytes = argon2.rawHash(3, 65536, 1, passwordChars, saltBytes);
+            derivedKey = new SecretKeySpec(keyBytes, "AES");
+        } finally {
+            argon2.wipeArray(passwordChars);
+        }
+    }
+
+    /**
+     * Creates a new strategy instance using an existing {@link #vaultKey}.
+     * <p>
+     * This constructor is typically used when reopening an existing vault:
+     * the vault key is first unwrapped using {@link #derivedKey}, and then
+     * passed here to be reused.
+     *
+     * @param masterPassword the user's master password
+     * @param saltBase64     Base64-encoded salt used for Argon2
+     * @param vaultKey       an existing vault key to reuse
+     */
+    public AESVaultEncryptingStrategy(String masterPassword, String saltBase64, SecretKey vaultKey) {
+        super("AES/GCM/NoPadding", vaultKey);
+
+        Argon2Advanced argon2 = Argon2Factory.createAdvanced();
+        char[] passwordChars = masterPassword.toCharArray();
+
+        try {
+            byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
+            byte[] keyBytes = argon2.rawHash(3, 65536, 1, passwordChars, saltBytes);
+            derivedKey = new SecretKeySpec(keyBytes, "AES");
+        } finally {
+            argon2.wipeArray(passwordChars);
+        }
+    }
+
+}
