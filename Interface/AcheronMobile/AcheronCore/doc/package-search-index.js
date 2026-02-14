@@ -1,1 +1,0 @@
-packageSearchIndex = [{"l":"All Packages","u":"allpackages-index.html","k":"18"},{"l":"com.seq.acheron"},{"l":"com.seq.acheron.agents"},{"l":"com.seq.acheron.secrets.asymmetric"},{"l":"com.seq.acheron.secrets.symmetric"},{"l":"com.seq.acheron.vault"},{"l":"com.seq.acheron.vault.storables"}];updateSearchResults();

@@ -1,6 +1,0 @@
-com.seq.acheron
-com.seq.acheron.agents
-com.seq.acheron.secrets.asymmetric
-com.seq.acheron.secrets.symmetric
-com.seq.acheron.vault
-com.seq.acheron.vault.storables
