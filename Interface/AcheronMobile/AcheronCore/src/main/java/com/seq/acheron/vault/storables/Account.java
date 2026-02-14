@@ -3,6 +3,10 @@ package com.seq.acheron.vault.storables;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
 import lombok.Getter;
 import lombok.Setter;
+import org.jetbrains.annotations.NotNull;
+
+import java.security.GeneralSecurityException;
+import java.security.PublicKey;
 
 /**
  * Represents a user account stored in the vault,
@@ -10,7 +14,7 @@ import lombok.Setter;
  */
 @Getter
 @Setter
-public class Account implements Storable {
+public class Account extends VaultObject {
 
     /**
      * Username used to log in.
@@ -33,26 +37,63 @@ public class Account implements Storable {
     private String password;
 
     /**
-     * Creates a new account with plain-text data.
+     * Creates a new account.
      *
      * @param username the username (login)
      * @param domain   the domain or service
      * @param password the account password in plain text
+     * @param isEncrypted {@code true} if the fields being passed are already
+     *                    encrypted (e.g., when loading from storage);
+     *                    {@code false} if they are plain-text
      */
-    public Account(String username, String domain, String password) {
+    public Account(
+            @NotNull String username,
+            @NotNull String domain,
+            @NotNull String password,
+            boolean isEncrypted
+    ) {
+        super("ACC", isEncrypted);
         this.username = username;
         this.domain = domain;
         this.password = password;
     }
 
     @Override
-    public String encrypt(VaultEncryptingStrategy encryptor) {
-        return "";
+    String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
+        Account oldAccount = (Account) copy();
+
+        try {
+            username = encrypt ?
+                    encryptor.encrypt(username) :
+                    encryptor.decrypt(username);
+            domain = encrypt ?
+                    encryptor.encrypt(domain)
+                    : encryptor.decrypt(domain);
+            password = encrypt ?
+                    encryptor.encrypt(password) :
+                    encryptor.decrypt(password);
+
+            isEncrypted = encrypt;
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException("Error transforming account fields", e);
+        }
+
+        return oldAccount.toString();
     }
 
     @Override
-    public String decrypt(VaultEncryptingStrategy encryptor) {
-        return "";
+    public boolean share(PublicKey publicKey, VaultEncryptingStrategy vaultEncryptingStrategy) {
+        return false;
+    }
+
+    @Override
+    VaultObject copy() {
+        return new Account(
+                username,
+                domain,
+                password,
+                isEncrypted
+        );
     }
 
     @Override

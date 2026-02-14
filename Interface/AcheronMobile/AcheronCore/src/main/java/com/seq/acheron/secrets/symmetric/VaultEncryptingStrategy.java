@@ -139,7 +139,7 @@ public abstract class VaultEncryptingStrategy {
         byte[] plainTextBytes = plainText.getBytes(StandardCharsets.UTF_8);
         Cipher cipher = Cipher.getInstance(transformation);
 
-        byte[] iv = new byte[12]; // 96-bit IV recommended for GCM
+        byte[] iv = new byte[12];
         SecureRandom.getInstanceStrong().nextBytes(iv);
 
         GCMParameterSpec spec = new GCMParameterSpec(128, iv);

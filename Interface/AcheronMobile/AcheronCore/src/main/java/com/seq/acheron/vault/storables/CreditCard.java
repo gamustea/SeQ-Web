@@ -3,13 +3,17 @@ package com.seq.acheron.vault.storables;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
 import lombok.Getter;
 import lombok.Setter;
+import org.jetbrains.annotations.NotNull;
+
+import java.security.GeneralSecurityException;
+import java.security.PublicKey;
 
 /**
  * Represents a credit or debit card stored in the vault.
  */
 @Getter
 @Setter
-public class CreditCard implements Storable {
+public class CreditCard extends VaultObject {
 
     /**
      * Cardholder name printed on the card.
@@ -34,25 +38,30 @@ public class CreditCard implements Storable {
     /**
      * Billing ZIP/postal code.
      */
-    private Integer postalCode;
+    private String postalCode;
+
 
     /**
-     * Creates a new credit card with plain-text data.
+     * Creates a new credit card.
      *
-     * @param cardHolderName name of the card holder
-     * @param cardNumber     card number (PAN)
-     * @param expirationDate expiration date (e.g. "12/29")
-     * @param cvv            CVV/CVC code
-     * @param postalCode     billing postal code
-     * @param password       extra secret (e.g. PIN) in plain text
+     * @param cardHolderName    name of the cardholder
+     * @param cardNumber        card number (PAN)
+     * @param expirationDate    expiration date (e.g. "12/29")
+     * @param cvv               CVV/CVC code
+     * @param postalCode        billing postal code
+     * @param isEncrypted {@code true} if the fields being passed are already
+     *                    encrypted (e.g., when loading from storage);
+     *                    {@code false} if they are plain-text
      */
     public CreditCard(
-            String cardHolderName,
-            String cardNumber,
-            String expirationDate,
-            String cvv,
-            Integer postalCode,
-            String password) {
+            @NotNull String cardHolderName,
+            @NotNull String cardNumber,
+            @NotNull String expirationDate,
+            @NotNull String cvv,
+            @NotNull String postalCode,
+            boolean isEncrypted
+    ) {
+        super("CDC", isEncrypted);
 
         this.cardHolderName = cardHolderName;
         this.cardNumber = cardNumber;
@@ -61,14 +70,55 @@ public class CreditCard implements Storable {
         this.postalCode = postalCode;
     }
 
+
     @Override
-    public String encrypt(VaultEncryptingStrategy encryptor) {
-        return "";
+    public String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
+        CreditCard oldCreditCard = (CreditCard) this.copy();
+
+        try {
+            cardHolderName = encrypt
+                    ? encryptor.encrypt(cardHolderName)
+                    : encryptor.decrypt(cardHolderName);
+
+            cardNumber = encrypt
+                    ? encryptor.encrypt(cardNumber)
+                    : encryptor.decrypt(cardNumber);
+
+            expirationDate = encrypt
+                    ? encryptor.encrypt(expirationDate)
+                    : encryptor.decrypt(expirationDate);
+
+            cvv = encrypt
+                    ? encryptor.encrypt(cvv)
+                    : encryptor.decrypt(cvv);
+
+            postalCode = encrypt
+                    ? encryptor.encrypt(postalCode)
+                    : encryptor.decrypt(postalCode);
+
+            isEncrypted = encrypt;
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException("Error transforming credit card fields", e);
+        }
+
+        return oldCreditCard.toString();
     }
 
     @Override
-    public String decrypt(VaultEncryptingStrategy encryptor) {
-        return "";
+    public boolean share(PublicKey publicKey, VaultEncryptingStrategy vaultEncryptingStrategy) {
+        return false;
+    }
+
+    @Override
+    public VaultObject copy() {
+        return new CreditCard(
+                cardHolderName,
+                cardNumber,
+                expirationDate,
+                cvv,
+                postalCode,
+                isEncrypted
+        );
     }
 
     @Override

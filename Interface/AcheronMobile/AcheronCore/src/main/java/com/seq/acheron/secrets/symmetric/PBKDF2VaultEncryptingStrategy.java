@@ -35,6 +35,24 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
      */
     private static final int KEY_LENGTH_BITS = 256;
 
+    public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey)
+            throws GeneralSecurityException {
+
+        super("AES/GCM/NoPadding", generateVaultKey);
+
+        char[] passwordChars = masterPassword.toCharArray();
+        try {
+            byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
+
+            KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, ITERATIONS, KEY_LENGTH_BITS);
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            SecretKey tmp = factory.generateSecret(spec);
+            this.derivedKey = new SecretKeySpec(tmp.getEncoded(), "AES");
+        } finally {
+            java.util.Arrays.fill(passwordChars, '\0');
+        }
+    }
+
     /**
      * Creates a new PBKDF2-based strategy instance using an existing vault key.
      * <p>
