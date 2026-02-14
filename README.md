@@ -1,401 +1,321 @@
-# SecOps API - Sistema de Escaneo de Vulnerabilidades
+# SeQ - Secure Vault Manager
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Java](https://img.shields.io/badge/Java-17%2B-orange)
+![Maven](https://img.shields.io/badge/Maven-3.8%2B-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-**SecOps API** es una API REST construida con Flask que integra herramientas de seguridad como **Nmap**, **Nikto** y **OpenVAS** para realizar análisis de vulnerabilidades automatizados. Proporciona autenticación OAuth 2.0, gestión de usuarios y generación de reportes en PDF.
+SeQ is a **secure password manager and vault system** built in Java that implements industry-standard cryptographic practices to protect sensitive data such as passwords, credit cards, and other secrets.
 
----
+## 🔐 Features
 
-## 📋 Características
+- **Military-Grade Encryption**: AES-256-GCM with authenticated encryption
+- **Dual KDF Support**: Choose between Argon2id (recommended) or PBKDF2 for key derivation
+- **Layered Security Architecture**: Master password → Derived key → Vault key → Encrypted data
+- **Multi-Entity Support**: Store accounts, credit cards, and custom secret types
+- **Asymmetric Cryptography**: RSA and EC key pair management for advanced use cases
+- **Encryption State Tracking**: Built-in flag system to prevent double encryption/decryption errors
+- **Zero-Knowledge Architecture**: Your master password never leaves your device
+- **Comprehensive Testing**: Full JUnit 5 test coverage with encryption cycle validation
 
-### 🔒 Seguridad y Autenticación
-- **OAuth 2.0** con JWT para autenticación
-- Tokens de acceso y refresco
-- Hashing seguro de contraseñas con SHA-256 + salt
-- Rate limiting para prevenir ataques de fuerza bruta
-- Sistema de roles y permisos
-
-### 🛡️ Herramientas de Escaneo Integradas
-- **Nmap**: Escaneo de puertos y detección de servicios
-- **Nikto**: Análisis de vulnerabilidades web
-- **OpenVAS**: Evaluación completa de vulnerabilidades con GMP
-
-### 📊 Gestión de Resultados
-- Almacenamiento en base de datos MySQL
-- Clasificación automática de severidad (CRITICAL, HIGH, MEDIUM, LOW, INFO)
-- Seguimiento del progreso de escaneos en tiempo real
-- Historial completo de escaneos por usuario
-
-### 📄 Generación de Reportes
-- Exportación de resultados en PDF profesional
-- Reportes personalizados según tipo de escaneo
-- Paleta de colores específica por herramienta
-- Información detallada de vulnerabilidades con CVE, CVSS y soluciones
-
----
-
-## 🏗️ Arquitectura del Proyecto
+## 🏗 Architecture
 
 ```
-SecOps-API/
+SeQ/
 ├── src/
-│   ├── core/
-│   │   ├── model.py           # Modelos ORM (SQLAlchemy)
-│   │   └── exceptions.py      # Sistema de excepciones personalizado
-│   ├── logic/
-│   │   ├── managers.py        # Gestores de escaneo y usuarios
-│   │   ├── tasks.py           # Tareas asíncronas de escaneo
-│   │   ├── processors.py      # Procesadores de resultados
-│   │   ├── documents.py       # Generación de reportes PDF
-│   │   └── secrets.py         # Utilidades criptográficas
-│   ├── misc/
-│   │   ├── validation.py      # Validación de IPs, puertos, URLs
-│   │   ├── logging.py         # Sistema de logging
-│   │   ├── configread.py      # Lectura de configuración
-│   │   └── conversion.py      # Conversión JSON/XML
-│   └── run.py                 # API Flask y endpoints
-
+│   ├── main/java/com/seq/acheron/
+│   │   ├── crypto/                    # Asymmetric cryptography
+│   │   │   ├── AbstractKeyPair.java   # Base key pair class
+│   │   │   ├── RsaKeyPair.java        # RSA implementation
+│   │   │   └── EcKeyPair.java         # Elliptic Curve implementation
+│   │   ├── secrets/
+│   │   │   └── symmetric/             # Symmetric encryption strategies
+│   │   │       ├── VaultEncryptingStrategy.java      # Base encryption class
+│   │   │       ├── AESVaultEncryptingStrategy.java   # Argon2 + AES-GCM
+│   │   │       └── PBKDF2VaultEncryptingStrategy.java # PBKDF2 + AES-GCM
+│   │   ├── vault/
+│   │   │   └── storables/             # Vault entities
+│   │   │       ├── Storable.java      # Base interface
+│   │   │       ├── Sharable.java      # Sharing capabilities
+│   │   │       ├── VaultObject.java   # Abstract base class
+│   │   │       ├── Account.java       # Login credentials
+│   │   │       └── CreditCard.java    # Payment cards
+│   │   └── agents/
+│   │       └── User.java              # User management
+│   └── test/java/                     # Comprehensive test suite
+└── pom.xml
 ```
 
----
+## 🔑 How It Works
 
-## 🚀 Instalación
+### Encryption Flow
 
-### Requisitos Previos
+1. **Master Password**: User provides a master password
+2. **Key Derivation**: Argon2id/PBKDF2 derives a 256-bit key from master + salt
+3. **Vault Key Generation**: A random 256-bit AES key is generated for the vault
+4. **Key Wrapping**: The vault key is encrypted using the derived key
+5. **Data Encryption**: Vault contents are encrypted with the vault key using AES-256-GCM
 
-- **Python 3.9+**
-- **MySQL**
-- **Nmap** (instalado en el sistema)
-- **Nikto** (instalado en el sistema)
-- **OpenVAS/GVM** (servidor configurado)
+### Security Benefits
 
-### Instalación de Dependencias
+- **Password Rotation**: Change your master password without re-encrypting the entire vault
+- **Multi-User Support**: Share vault keys securely using asymmetric encryption
+- **Forward Secrecy**: Each encryption operation uses a unique random IV
+- **Authentication**: GCM mode provides both encryption and authentication
+
+## 📦 Prerequisites
+
+- **Java**: 17 or higher (LTS recommended)
+- **Maven**: 3.8 or higher
+- **Dependencies** (managed by Maven):
+  - Argon2-jvm (de.mkammerer)
+  - JUnit 5 (testing)
+  - Lombok (boilerplate reduction)
+
+## 🚀 Installation
+
+### 1. Clone the Repository
 
 ```bash
-# Clonar el repositorio
-git clone https://github.com/tu-usuario/secops-api.git
-cd secops-api
-
-# Crear entorno virtual
-python3 -m venv venv
-source venv/bin/activate  # En Windows: venv\Scripts\activate
-
-# Instalar dependencias
-pip install -r requirements.txt
+git clone https://github.com/gamustea/SeQ.git
+cd SeQ
 ```
 
-### Configuración de la Base de Datos
+### 2. Build with Maven
 
 ```bash
-# Acceder a MySQL
-mysql -u root -p
-
-# Crear base de datos
-CREATE DATABASE secops_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-# Crear usuario (recomendado)
-CREATE USER 'secops_user'@'localhost' IDENTIFIED BY 'tu_contraseña_segura';
-GRANT ALL PRIVILEGES ON secops_db.* TO 'secops_user'@'localhost';
-FLUSH PRIVILEGES;
+mvn clean install
 ```
 
----
-
-## 📖 Uso de la API
-
-### Autenticación
-
-#### Obtener Token de Acceso
+### 3. Run Tests
 
 ```bash
-curl -X POST http://localhost:5000/oauth/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "X-Grant-Type": "password",
-    "X-Username": "usuario",
-    "X-Password": "contraseña"
-  }'
+mvn test
 ```
 
-**Respuesta:**
+All tests should pass, confirming encryption/decryption cycles work correctly.
 
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "Bearer",
-  "expires_in": 1800,
-  "refresh_token": "dGhpc19pc19hX3JlZnJlc2hfdG9rZW4..."
-}
+## 💻 Usage Examples
+
+### Creating a Vault with Argon2
+
+```java
+import com.seq.acheron.secrets.symmetric.*;
+import com.seq.acheron.vault.storables.*;
+import java.util.Base64;
+
+// 1. Generate a salt for the user (store this!)
+SecureRandom random = new SecureRandom();
+byte[] salt = new byte[16];
+random.nextBytes(salt);
+String saltBase64 = Base64.getEncoder().encodeToString(salt);
+
+// 2. Create encryption strategy with master password
+String masterPassword = "MySecurePassword123!";
+AESVaultEncryptingStrategy strategy = 
+    new AESVaultEncryptingStrategy(masterPassword, saltBase64);
+
+// 3. Export encrypted vault key (store this!)
+String encryptedVaultKey = strategy.exportVaultKey();
+
+// 4. Create and encrypt vault objects
+Account githubAccount = new Account("user@example.com", "github.com", "MyGitHubPass", false);
+githubAccount.encrypt(strategy);
+
+// Now githubAccount.getPassword() contains encrypted data
 ```
 
-#### Renovar Token
+### Reopening an Existing Vault
 
-```bash
-curl -X POST http://localhost:5000/oauth/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "X-Grant-Type": "refresh_token",
-    "X-Refresh-Token": "tu_refresh_token"
-  }'
+```java
+// 1. User provides master password again
+String masterPassword = "MySecurePassword123!";
+String saltBase64 = // ... retrieve from storage
+String encryptedVaultKey = // ... retrieve from storage
+
+// 2. Recreate strategy to derive key
+AESVaultEncryptingStrategy tempStrategy = 
+    new AESVaultEncryptingStrategy(masterPassword, saltBase64);
+
+// 3. Unwrap vault key
+SecretKey vaultKey = tempStrategy.importVaultKey(encryptedVaultKey);
+
+// 4. Create strategy with imported vault key
+AESVaultEncryptingStrategy strategy = 
+    new AESVaultEncryptingStrategy(masterPassword, saltBase64, vaultKey);
+
+// 5. Load and decrypt vault objects
+Account githubAccount = // ... load from storage (with encrypted password)
+githubAccount.decrypt(strategy);
+
+// Now githubAccount.getPassword() contains plain-text password
 ```
 
----
+### Working with Credit Cards
 
-### Gestión de Usuarios
+```java
+CreditCard myCard = new CreditCard(
+    "John Doe",
+    "4111111111111111",
+    "12/29",
+    "123",
+    "28001",
+    false  // isEncrypted = false (plain-text)
+);
 
-#### Registrar Usuario
+// Encrypt all sensitive fields
+myCard.encrypt(strategy);
 
-```bash
-curl -X POST http://localhost:5000/sentinel/user \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "nuevo_usuario",
-    "password": "contraseña_segura",
-    "first_name": "Nombre",
-    "last_name": "Apellido",
-    "alias": "alias_unico",
-    "email": "usuario@ejemplo.com"
-  }'
+// Card data is now encrypted
+assertTrue(myCard.isEncrypted());
+
+// Decrypt when needed
+myCard.decrypt(strategy);
+assertEquals("4111111111111111", myCard.getCardNumber());
 ```
 
----
+## 🔬 Cryptographic Details
 
-### Escaneos
+### Key Derivation Functions
 
-Todos los endpoints de escaneo requieren el header `Authorization: Bearer <access_token>`.
+#### Argon2id (Recommended)
+- **Algorithm**: Argon2id (hybrid mode)
+- **Parameters**: 3 iterations, 64 MB memory, 1 parallelism
+- **Output**: 256-bit key
+- **Resistance**: Memory-hard, GPU-resistant
 
-#### Escaneo Nmap
+#### PBKDF2
+- **Algorithm**: PBKDF2-HMAC-SHA256
+- **Iterations**: 600,000 (OWASP recommendation)
+- **Output**: 256-bit key
+- **Use case**: Legacy compatibility
 
-```bash
-curl -X POST http://localhost:5000/sentinel/nmap-scan \
-  -H "Authorization: Bearer tu_access_token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "target": "192.168.1.1",
-    "ports": "1-1000"
-  }'
-```
+### Symmetric Encryption
 
-**Respuesta:**
+- **Algorithm**: AES-256-GCM
+- **Key size**: 256 bits
+- **IV size**: 96 bits (12 bytes), randomly generated per encryption
+- **Tag size**: 128 bits (provides authentication)
+- **Mode**: Galois/Counter Mode (authenticated encryption)
 
-```json
-{
-  "message": "Escaneo Nmap iniciado exitosamente",
-  "scanId": 42,
-  "target": "192.168.1.1",
-  "ports": "1-1000"
-}
-```
+### Asymmetric Cryptography
 
-#### Escaneo Nikto
+#### RSA
+- **Key sizes**: 2048, 3072, or 4096 bits
+- **Format**: PKCS#8 (private), X.509 (public)
+- **Use case**: Vault key sharing, digital signatures
 
-```bash
-curl -X POST http://localhost:5000/sentinel/nikto-scan \
-  -H "Authorization: Bearer tu_access_token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "target": "http://ejemplo.com"
-  }'
-```
-
-#### Escaneo OpenVAS
-
-```bash
-curl -X POST http://localhost:5000/sentinel/openvas-scan \
-  -H "Authorization: Bearer tu_access_token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "target": "192.168.1.100"
-  }'
-```
-
----
-
-### Consultar Estado de Escaneo
-
-```bash
-curl -X GET "http://localhost:5000/sentinel/scan-status?id=42" \
-  -H "Authorization: Bearer tu_access_token"
-```
-
-**Respuesta:**
-
-```json
-{
-  "message": "Estado del escaneo con id 42: running",
-  "scanId": 42,
-  "status": "running",
-  "scanType": "nmap",
-  "progress": 65
-}
-```
-
----
-
-### Obtener Resultados
-
-```bash
-curl -X GET "http://localhost:5000/sentinel/scan-results?id=42" \
-  -H "Authorization: Bearer tu_access_token"
-```
-
----
-
-### Generar Reporte PDF
-
-```bash
-curl -X GET "http://localhost:5000/sentinel/generate-report?id=42" \
-  -H "Authorization: Bearer tu_access_token" \
-  --output reporte_42.pdf
-```
-
----
-
-## 🗄️ Modelo de Datos
-
-### Entidades Principales
-
-- **User**: Usuarios del sistema con credenciales OAuth
-- **Person**: Información personal de usuarios
-- **Scan**: Clase base polimórfica para escaneos
-  - **NmapScan**: Escaneos de puertos
-  - **NiktoScan**: Escaneos web
-  - **OpenVASScan**: Evaluaciones de vulnerabilidades
-- **Host**: Información de hosts escaneados
-- **Port**: Puertos y servicios detectados
-- **OpenPort**: Relación entre escaneos Nmap y puertos abiertos
-- **NiktoIncident**: Incidentes detectados por Nikto
-- **OpenVASVulnerability**: Vulnerabilidades de OpenVAS con CVSS
-- **FinishedScan**: Registro de finalización de escaneos
-
----
-
-## 🔧 Características Técnicas
-
-### Manejo de Errores
-
-El sistema utiliza excepciones personalizadas con códigos de error estructurados:
-
-- **1000-1099**: Errores generales
-- **1100-1199**: Errores de validación
-- **1200-1299**: Errores de base de datos
-- **1300-1399**: Errores de escaneo
-- **1400-1499**: Errores de reportes
-- **1600-1699**: Errores de autenticación
-
-### Logging
-
-Sistema de logging multinivel con rotación automática:
-
-```python
-from src.misc.logging import SecOpsLogger
-
-logger = SecOpsLogger(name="MiModulo").get_logger()
-logger.info("Mensaje informativo")
-logger.error("Error crítico", exc_info=True)
-```
-
-### Validación de Entrada
-
-```python
-from src.misc.validation import PortValidator, IPValidator
-
-# Validar puertos
-PortValidator.validate("80,443,8000-9000")
-
-# Validar IPs
-IPValidator.validate("192.168.1.1")
-IPValidator.validate("192.168.1.0/24")
-```
-
----
+#### Elliptic Curve
+- **Curves**: secp256r1 (NIST P-256) by default
+- **Format**: PKCS#8 (private), X.509 (public)
+- **Use case**: Efficient key exchange (ECDH)
 
 ## 🧪 Testing
 
-```bash
-# Ejecutar tests unitarios
-python -m pytest tests/
+### Running All Tests
 
-# Con cobertura
-python -m pytest --cov=src tests/
+```bash
+mvn test
 ```
 
+### Test Coverage
+
+- **Encryption Strategies**: AES (Argon2) and PBKDF2 full encryption/decryption cycles
+- **Vault Objects**: Account and CreditCard field encryption validation
+- **State Management**: `isEncrypted` flag correctness
+- **Error Cases**: Double encryption/decryption prevention
+- **Key Management**: Vault key export/import cycles
+
+### Sample Test Output
+
+```
+[OK] AESEncryptingStrategy.encryptThenDecrypt_returnsOriginalPlaintext
+[OK] AESEncryptingStrategy.exportAndImportVaultKey_reopenWithSameMaster_canDecryptOldData
+[OK] Account.encryptThenDecrypt_restoresOriginalFields
+[OK] Account.idsHaveAccPrefixAndIncrementPerInstance
+[OK] Account.isEncryptedFlag_becomesTrue_afterEncryption
+[OK] CreditCard.encryptTwice_throwsIllegalStateException
+```
+
+## 🛡 Security Best Practices
+
+### When Using This Library
+
+1. **Never hardcode passwords**: Always prompt users for their master password
+2. **Use secure random**: Generate salts with `SecureRandom`
+3. **Store safely**: Keep encrypted vault keys and salts in secure storage
+4. **Wipe sensitive data**: Clear password char arrays after use
+5. **Validate input**: Check master password strength before use
+6. **Use Argon2**: Prefer `AESVaultEncryptingStrategy` over PBKDF2 when possible
+
+### What This Library Does NOT Do
+
+- **Network communication**: No built-in sync or cloud backup
+- **Password generation**: Use a separate library for password generation
+- **Biometric auth**: Integrate with platform-specific APIs separately
+- **Auto-fill**: UI/UX integration is application-specific
+
+## 📚 API Documentation
+
+### Core Interfaces
+
+#### `Storable`
+```java
+public interface Storable {
+    String getId();
+    String encrypt(VaultEncryptingStrategy strategy);
+    String decrypt(VaultEncryptingStrategy strategy);
+}
+```
+
+#### `VaultEncryptingStrategy`
+```java
+public abstract class VaultEncryptingStrategy {
+    public String encrypt(String plainText) throws GeneralSecurityException;
+    public String decrypt(String ciphertext) throws GeneralSecurityException;
+    public String exportVaultKey() throws GeneralSecurityException;
+    public SecretKey importVaultKey(String encryptedVaultKey) throws GeneralSecurityException;
+}
+```
+
+### Vault Objects
+
+#### `Account`
+- `username`: Login username
+- `domain`: Service domain (e.g., "github.com")
+- `password`: Encrypted/plain-text password
+
+#### `CreditCard`
+- `cardHolderName`: Name on card
+- `cardNumber`: Card PAN (encrypted)
+- `expirationDate`: MM/YY format
+- `cvv`: Security code (encrypted)
+- `postalCode`: Billing ZIP
+
+## 🤝 Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/new-entity-type`)
+3. Write tests for new functionality
+4. Ensure all tests pass (`mvn test`)
+5. Follow existing code style (Javadoc in English)
+6. Submit a pull request
+
+## 📝 License
+
+This project is licensed under the MIT License.
+
+## 👨‍💻 Author
+
+**Gabriel Musteata** - [@gamustea](https://github.com/gamustea)
+
+## 🙏 Acknowledgments
+
+- **Argon2**: Password-hashing function winner of the Password Hashing Competition
+- **JCA/JCE**: Java Cryptography Architecture for robust encryption primitives
+- **Project Lombok**: Reducing boilerplate in Java
+
 ---
 
-## 🛡️ Consideraciones de Seguridad
-
-1. **Nunca expongas la API directamente a Internet sin un proxy reverso (Nginx, Apache)**
-2. **Usa HTTPS en producción** con certificados válidos
-3. **Cambia las claves secretas** en `config.ini` a valores aleatorios largos
-4. **Configura firewall** para restringir acceso a puertos de escaneo
-5. **Ejecuta escaneos solo en redes autorizadas**
-6. **Implementa rate limiting** adicional a nivel de proxy
-7. **Revisa permisos de archivos** especialmente en directorios de reportes
-
----
-
-## 📝 Notas Legales
-
-⚠️ **IMPORTANTE**: Esta herramienta debe usarse **únicamente** en entornos autorizados. El escaneo no autorizado de sistemas es **ilegal** en la mayoría de jurisdicciones.
-
-- Obtén **permiso por escrito** antes de escanear cualquier red
-- Usa sitios de prueba legales como:
-  - `scanme.nmap.org`
-  - `testphp.vulnweb.com`
-  - Plataformas de bug bounty autorizadas
-
-El autor no se hace responsable del mal uso de esta herramienta.
-
----
-
-## 🤝 Contribuciones
-
-Las contribuciones son bienvenidas. Por favor:
-
-1. Fork el proyecto
-2. Crea una rama de características (`git checkout -b feature/nueva-funcionalidad`)
-3. Commit tus cambios (`git commit -m 'Añade nueva funcionalidad'`)
-4. Push a la rama (`git push origin feature/nueva-funcionalidad`)
-5. Abre un Pull Request
-
----
-
-## 📄 Licencia
-
-Este proyecto está bajo la Licencia MIT. Consulta el archivo `LICENSE` para más detalles.
-
----
-
-## 👤 Autor
-
-**Gabriel** - Ingeniero en Informática especializado en Ciberseguridad
-
-- GitHub: [@tu-usuario](https://github.com/tu-usuario)
-- LinkedIn: [Tu Perfil](https://linkedin.com/in/tu-perfil)
-
----
-
-## 🙏 Agradecimientos
-
-- **Nmap Project** - https://nmap.org
-- **Nikto** - https://github.com/sullo/nikto
-- **OpenVAS/Greenbone** - https://www.greenbone.net
-- **Flask Team** - https://flask.palletsprojects.com
-- **SQLAlchemy** - https://www.sqlalchemy.org
-
----
-
-## 📚 Documentación Adicional
-
-- [Guía de Instalación Detallada](docs/INSTALLATION.md)
-- [API Reference Completa](docs/API.md)
-- [Arquitectura del Sistema](docs/ARCHITECTURE.md)
-- [Guía de Contribución](CONTRIBUTING.md)
-
----
-
-**¿Encontraste un bug?** Por favor abre un [issue](https://github.com/tu-usuario/secops-api/issues) con detalles sobre cómo reproducirlo.
-
-**¿Tienes preguntas?** Revisa la sección [FAQ](docs/FAQ.md) o contacta al equipo de desarrollo.
+**⚠️ Disclaimer**: This library is provided as-is for educational and production use. While it implements industry-standard cryptographic practices, users are responsible for secure key management, proper salt generation, and overall system security. Always conduct security audits before using in critical applications.
