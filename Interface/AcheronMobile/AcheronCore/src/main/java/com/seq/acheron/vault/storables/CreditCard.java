@@ -7,6 +7,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.security.GeneralSecurityException;
 import java.security.PublicKey;
+import java.util.Date;
 
 /**
  * Represents a credit or debit card stored in the vault.
@@ -71,6 +72,26 @@ public class CreditCard extends VaultObject {
     }
 
 
+    public CreditCard(
+            @NotNull String cardHolderName,
+            @NotNull String cardNumber,
+            @NotNull String expirationDate,
+            @NotNull String cvv,
+            @NotNull String postalCode,
+            @NotNull Date createdAt,
+            @NotNull Date updatedAt,
+            boolean isEncrypted
+    ) {
+        super("CDC", isEncrypted, createdAt, updatedAt);
+
+        this.cardHolderName = cardHolderName;
+        this.cardNumber = cardNumber;
+        this.expirationDate = expirationDate;
+        this.cvv = cvv;
+        this.postalCode = postalCode;
+    }
+
+
     @Override
     public String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
         CreditCard oldCreditCard = (CreditCard) this.copy();
@@ -111,25 +132,38 @@ public class CreditCard extends VaultObject {
 
     @Override
     public VaultObject copy() {
+        VaultObject.setObjectCounter(VaultObject.getObjectCounter() - 1);
+
         return new CreditCard(
                 cardHolderName,
                 cardNumber,
                 expirationDate,
                 cvv,
                 postalCode,
+                getCreatedAt(),
+                getUpdatedAt(),
                 isEncrypted
         );
     }
 
     @Override
-    public String toString() {
-        return "CreditCard{" +
-                "cardHolderName='" + cardHolderName + '\'' +
+    public String toJSON() {
+        String cardNumber = isEncrypted ?
+                this.cardNumber :
+                "****" + this.cardNumber.substring(this.cardNumber.length() - 4);
+
+        String cvv = isEncrypted ?
+                this.cvv :
+                "***";
+
+        return "{" +
+                super.toJSON() +
+                "'cardHolderName': '" + cardHolderName + "'" +
                 // Never log full card number or CVV:
-                ", cardNumber='****" + (cardNumber != null && cardNumber.length() >= 4
-                ? cardNumber.substring(cardNumber.length() - 4) : "") + '\'' +
-                ", expirationDate='" + expirationDate + '\'' +
-                ", postalCode=" + postalCode +
+                ", 'cardNumber': '" + cardNumber + "'" +
+                ", 'expirationDate': '" + expirationDate + '\'' +
+                ", 'postalCode': " + postalCode +
+                ", 'cvv': " + cvv +
                 '}';
     }
 }

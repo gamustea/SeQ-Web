@@ -1,6 +1,7 @@
 package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.spec.SecretKeySpec;
@@ -19,6 +20,13 @@ public class CreditCardTest {
             SecureRandom.getInstanceStrong().nextBytes(dk);
             this.derivedKey = new SecretKeySpec(dk, "AES");
         }
+    }
+
+    private CreditCard card;
+
+    @BeforeEach
+    void setUp() {
+        card = new CreditCard("Juan Pérez", "1234567812345678", "12/29", "123", "28001", false);
     }
 
     @Test
@@ -189,5 +197,18 @@ public class CreditCardTest {
         assertEquals(original.getPostalCode(), copy.getPostalCode());
 
         System.out.println("[OK] CreditCard.copy_preservesIsEncryptedFlag");
+    }
+
+    @Test
+    void testToJSON_SensitiveMasking() {
+        String json = card.toJSON();
+        // Base VaultObject
+        assertTrue(json.contains("'id'"));
+        assertTrue(json.contains("'createdAt'"));
+        // Campos específicos con masking de cardNumber
+        assertTrue(json.contains("'cardHolderName': 'Juan Pérez'"));
+        assertTrue(json.contains("'cardNumber': '****5678'")); // Últimos 4 dígitos
+        assertTrue(json.contains("'expirationDate': '12/29'"));
+        assertTrue(json.contains("'postalCode': 28001"));
     }
 }

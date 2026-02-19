@@ -7,6 +7,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.security.GeneralSecurityException;
 import java.security.PublicKey;
+import java.util.Date;
 
 /**
  * Represents a user account stored in the vault,
@@ -58,6 +59,20 @@ public class Account extends VaultObject {
         this.password = password;
     }
 
+    public Account(
+            @NotNull String username,
+            @NotNull String domain,
+            @NotNull String password,
+            @NotNull Date createdAt,
+            @NotNull Date updatedAt,
+            boolean isEncrypted
+    ) {
+        super("ACC", isEncrypted, createdAt, updatedAt);
+        this.username = username;
+        this.domain = domain;
+        this.password = password;
+    }
+
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
         Account oldAccount = (Account) copy();
@@ -87,20 +102,24 @@ public class Account extends VaultObject {
     }
 
     @Override
-    VaultObject copy() {
+    public VaultObject copy() {
+        VaultObject.setObjectCounter(getObjectCounter() - 1);
         return new Account(
                 username,
                 domain,
                 password,
+                getCreatedAt(),
+                getUpdatedAt(),
                 isEncrypted
         );
     }
 
     @Override
-    public String toString() {
-        return "Account{" +
-                "username='" + username + '\'' +
-                ", domain='" + domain + '\'' +
+    public String toJSON() {
+        return "{" +
+                super.toJSON() +
+                "username:'" + username + "'," +
+                "domain:'" + domain + "'," +
                 '}';
     }
 }

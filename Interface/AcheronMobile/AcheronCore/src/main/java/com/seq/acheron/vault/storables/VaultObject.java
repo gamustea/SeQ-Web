@@ -2,11 +2,17 @@ package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.agents.User;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.util.Pair;
 import lombok.Getter;
 import lombok.Setter;
+import org.jetbrains.annotations.NotNull;
 
+import java.util.Date;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Abstract base class representing an object stored in the vault.
@@ -23,7 +29,7 @@ import java.util.Set;
  * @see Storable
  * @see Sharable
  */
-public abstract class VaultObject implements Sharable, Storable {
+public abstract class VaultObject implements Sharable, Storable, Comparable<VaultObject> {
 
     /**
      * Unique identifier for this vault object.
@@ -62,6 +68,14 @@ public abstract class VaultObject implements Sharable, Storable {
     @Getter
     protected boolean isEncrypted;
 
+    @Getter
+    private final Date createdAt;
+
+    @Getter
+    @Setter
+    private Date updatedAt;
+
+
     /**
      * Creates a new vault object with a unique identifier.
      *
@@ -74,6 +88,17 @@ public abstract class VaultObject implements Sharable, Storable {
         this.id = code + objectCounter;
         this.allowedUsers = new HashSet<>();
         this.isEncrypted = isEncrypted;
+        this.createdAt = new Date();
+        this.updatedAt = new Date();
+        objectCounter++;
+    }
+
+    public VaultObject(String code, boolean isEncrypted, Date createdAt, Date updatedAt) {
+        this.id = code + objectCounter;
+        this.allowedUsers = new HashSet<>();
+        this.isEncrypted = isEncrypted;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
         objectCounter++;
     }
 
@@ -173,6 +198,73 @@ public abstract class VaultObject implements Sharable, Storable {
     public int hashCode() {
         return id.hashCode();
     }
+
+    public Pair<String, String> sliceCode() {
+        StringBuilder letras = new StringBuilder();
+        StringBuilder numeros = new StringBuilder();
+        String code = this.id;
+
+        for (int i = 0; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (Character.isDigit(c)) {
+                break;
+            }
+            letras.append(c);
+        }
+
+        for (char c : code.toCharArray()) {
+            if (Character.isDigit(c)) {
+                numeros.append(c);
+            }
+        }
+
+        return new Pair<>(letras.toString(), numeros.toString());
+    }
+
+    @Override
+    public int compareTo(@NotNull VaultObject other) {
+        Pair<String, String> otherCode = other.sliceCode();
+        Pair<String, String> thisCode = this.sliceCode();
+
+        if (!thisCode.left.equals(otherCode.left)) {
+            return thisCode.left.compareTo(otherCode.left);
+        }
+
+        Integer thisInt = Integer.parseInt(thisCode.right);
+        Integer otherInt = Integer.parseInt(otherCode.right);
+
+        return thisInt.compareTo(otherInt);
+    }
+
+    @Override
+    public String toString() {
+        return this.toJSON();
+    }
+
+    @Override
+    public String toJSON() {
+        StringBuilder userList = new StringBuilder();
+
+        List<User> users = this.getAllowedUsers()
+                .stream()
+                .sorted()
+                .toList();
+        for (int i = 0; i < users.size(); i++) {
+            userList.append('"');
+            userList.append(users.get(i).getId());
+            userList.append('"');
+
+            if (i != allowedUsers.size() - 1) {
+                userList.append(", ");
+            }
+        }
+
+        return  "'id': " + "'" + this.id + "', "
+                + "'createdAt': " + "'" + this.createdAt.toString() + "', "
+                + "'updatedAt': " + "'" + this.updatedAt.toString() + "', "
+                + "'allowedUsers': [" + userList + "], ";
+    }
+
 
     /**
      * Transforms (encrypts or decrypts) all sensitive fields of this object.

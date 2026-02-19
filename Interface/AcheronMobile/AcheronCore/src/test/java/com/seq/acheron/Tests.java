@@ -5,6 +5,7 @@ import com.seq.acheron.secrets.symmetric.PBKDF2VaultEncryptingStrategyTest;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategyPerformanceTest;
 import com.seq.acheron.vault.storables.AccountTest;
 import com.seq.acheron.vault.storables.CreditCardTest;
+import com.seq.acheron.vault.storables.VaultObjectCompareToTest;
 import org.junit.platform.suite.api.SelectClasses;
 import org.junit.platform.suite.api.Suite;
 
@@ -13,6 +14,7 @@ import org.junit.platform.suite.api.Suite;
         AESVaultEncryptingStrategyTest.class,
         PBKDF2VaultEncryptingStrategyTest.class,
         VaultEncryptingStrategyPerformanceTest.class,
+        VaultObjectCompareToTest.class,
         AccountTest.class,
         CreditCardTest.class,
 })

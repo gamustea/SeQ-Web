@@ -1,6 +1,7 @@
 package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.Vault;
 
 /**
  * Represents an entity that contains one or more secrets which can be
@@ -60,4 +61,6 @@ public interface Storable {
      * @return True if it's encrypted and false otherwise.
      */
     boolean isEncrypted();
+
+    String toJSON();
 }
