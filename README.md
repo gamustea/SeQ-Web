@@ -1,355 +1,337 @@
-# SeQ - Scanning API & Secure Vault Manager
+# SeQ — Security Operations Platform
 
-![Java](https://img.shields.io/badge/Java-17%2B-orange)
-![Maven](https://img.shields.io/badge/Maven-3.8%2B-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
+**SeQ** es una plataforma de operaciones de seguridad compuesta por dos módulos principales:
 
-SeQ is a **comprehensive security toolkit** built in Java that provides two main functionalities:
-1. **Port & Vulnerability Scanning API** - Production-ready scanning system with multi-threaded capabilities
-2. **Secure Vault Manager** (Work-in-Progress) - Password manager implementing industry-standard cryptographic practices
+- **Sentinel** — API REST de escaneo de vulnerabilidades (operativo).
+- **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (en desarrollo).
 
 ---
 
-## 🔍 Port & Vulnerability Scanning API
+## Índice
 
-### Overview
+- [Requisitos previos](#requisitos-previos)
+- [Instalación](#instalación)
+- [Módulo Sentinel — Escaneo de Vulnerabilidades](#módulo-sentinel--escaneo-de-vulnerabilidades)
+  - [Autenticación OAuth 2.0](#autenticación-oauth-20)
+  - [Gestión de usuarios](#gestión-de-usuarios)
+  - [Escaneo con Nmap](#escaneo-con-nmap)
+  - [Escaneo con Nikto](#escaneo-con-nikto)
+  - [Escaneo con OpenVAS](#escaneo-con-openvas)
+  - [Consulta de resultados](#consulta-de-resultados)
+  - [Generación de informes PDF](#generación-de-informes-pdf)
+- [Módulo Acheron — Vault (En desarrollo)](#módulo-acheron--vault-en-desarrollo)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Stack tecnológico](#stack-tecnológico)
 
-SeQ provides a robust and flexible API for network reconnaissance, port scanning, and vulnerability detection. The scanning system is designed with performance, reliability, and ease of use in mind.
+---
 
-### Key Features
+## Requisitos previos
 
-- **Multi-threaded Port Scanning**: Efficient concurrent scanning using Java's ExecutorService
-- **Multiple Scan Types**:
-  - **TCP Connect Scan**: Full TCP handshake for reliable port detection
-  - **SYN Scan**: Stealthy half-open scanning (requires elevated privileges)
-  - **UDP Scan**: UDP port discovery
-  - **Comprehensive Scan**: Combined TCP/UDP scanning
-- **Service Detection**: Automatic service identification on open ports
-- **Banner Grabbing**: Capture service banners for version detection
-- **Vulnerability Scanning**: Built-in CVE database integration
-- **Configurable Timeouts**: Adjust scan speed vs accuracy trade-offs
-- **Progress Tracking**: Real-time scan progress callbacks
-- **Result Export**: JSON, XML, and CSV output formats
+Antes de ejecutar el proyecto, asegúrate de tener instalado:
 
-### Architecture
+- Python 3.10+
+- PostgreSQL
+- Nmap (`sudo apt install nmap`)
+- Nikto (`sudo apt install nikto`)
+- OpenVAS / Greenbone Vulnerability Manager (GVM)
 
-```
-SeQ/
-├── src/
-│   ├── main/java/com/seq/acheron/
-│   │   ├── scanner/
-│   │   │   ├── PortScanner.java           # Main scanner interface
-│   │   │   ├── ScanType.java              # Scan type enum (TCP, SYN, UDP)
-│   │   │   ├── ScanResult.java            # Scan result wrapper
-│   │   │   ├── PortStatus.java            # Port state enum (OPEN, CLOSED, FILTERED)
-│   │   │   └── engines/
-│   │   │       ├── TcpScanner.java        # TCP connect implementation
-│   │   │       ├── SynScanner.java        # SYN scan implementation
-│   │   │       └── UdpScanner.java        # UDP scan implementation
-│   │   ├── services/
-│   │   │   ├── ServiceDetector.java       # Service fingerprinting
-│   │   │   ├── BannerGrabber.java         # Banner extraction
-│   │   │   └── ServiceDatabase.java       # Known service signatures
-│   │   ├── vuln/
-│   │   │   ├── VulnerabilityScanner.java  # CVE detection engine
-│   │   │   ├── CveDatabase.java           # CVE database handler
-│   │   │   └── VulnerabilityReport.java   # Vulnerability result
-│   │   └── export/
-│   │       ├── ResultExporter.java        # Export interface
-│   │       ├── JsonExporter.java          # JSON output
-│   │       ├── XmlExporter.java           # XML output
-│   │       └── CsvExporter.java           # CSV output
-│   └── test/java/com/seq/acheron/scanner/
-│       └── PortScannerTest.java           # Comprehensive test suite
-```
-
-### Usage Examples
-
-#### Basic Port Scan
-
-```java
-import com.seq.acheron.scanner.PortScanner;
-import com.seq.acheron.scanner.ScanType;
-import com.seq.acheron.scanner.ScanResult;
-
-// Create scanner instance
-PortScanner scanner = new PortScanner("192.168.1.1");
-
-// Scan common ports (1-1024)
-ScanResult result = scanner.scan(1, 1024, ScanType.TCP_CONNECT);
-
-// Print open ports
-result.getOpenPorts().forEach(port -> {
-    System.out.println("Port " + port + " is open");
-    System.out.println("Service: " + result.getService(port));
-});
-```
-
-#### Advanced Scan with Service Detection
-
-```java
-import com.seq.acheron.scanner.PortScanner;
-import com.seq.acheron.services.ServiceDetector;
-import com.seq.acheron.services.BannerGrabber;
-
-PortScanner scanner = new PortScanner("example.com");
-scanner.setTimeout(2000); // 2 second timeout
-scanner.setThreads(50);   // Use 50 concurrent threads
-
-// Scan with service detection
-ScanResult result = scanner.scanWithServices(1, 65535, ScanType.TCP_CONNECT);
-
-result.getOpenPorts().forEach(port -> {
-    String service = result.getService(port);
-    String banner = result.getBanner(port);
-    
-    System.out.printf("Port %d: %s - %s%n", port, service, banner);
-});
-```
-
-#### Vulnerability Scanning
-
-```java
-import com.seq.acheron.scanner.PortScanner;
-import com.seq.acheron.vuln.VulnerabilityScanner;
-import com.seq.acheron.vuln.VulnerabilityReport;
-
-// Perform port scan
-PortScanner portScanner = new PortScanner("target.com");
-ScanResult scanResult = portScanner.scanWithServices(1, 1024);
-
-// Check for vulnerabilities
-VulnerabilityScanner vulnScanner = new VulnerabilityScanner();
-VulnerabilityReport report = vulnScanner.scan(scanResult);
-
-// Print vulnerabilities
-report.getVulnerabilities().forEach(vuln -> {
-    System.out.println("[" + vuln.getSeverity() + "] " + vuln.getTitle());
-    System.out.println("CVE: " + vuln.getCveId());
-    System.out.println("Description: " + vuln.getDescription());
-    System.out.println("---");
-});
-```
-
-#### Export Results
-
-```java
-import com.seq.acheron.export.JsonExporter;
-import com.seq.acheron.export.XmlExporter;
-
-ScanResult result = scanner.scan(1, 1024, ScanType.TCP_CONNECT);
-
-// Export to JSON
-JsonExporter jsonExporter = new JsonExporter();
-jsonExporter.export(result, "scan_results.json");
-
-// Export to XML
-XmlExporter xmlExporter = new XmlExporter();
-xmlExporter.export(result, "scan_results.xml");
-```
-
-### Performance Considerations
-
-- **Thread Pool Size**: Adjust based on target responsiveness and network bandwidth
-- **Timeout Values**: Balance between scan speed and accuracy
-- **Scan Type Selection**:
-  - TCP Connect: Most reliable, but slower and easily detected
-  - SYN Scan: Faster and stealthier, requires root/admin privileges
-  - UDP Scan: Slower due to protocol characteristics
-
-### Testing
-
-Comprehensive test suite with JUnit 5:
+Instala las dependencias de Python:
 
 ```bash
-mvn test
-```
-
-Test coverage includes:
-- Port scanning accuracy
-- Service detection validation
-- Timeout handling
-- Thread pool management
-- Export format verification
-
----
-
-## 🚧 Work-in-Progress: Secure Vault Manager
-
-### Status: Under Development
-
-The Secure Vault Manager is currently being developed to provide a robust password management solution. While the core cryptographic components are implemented, the vault system is not yet production-ready.
-
-### Planned Features
-
-- **Military-Grade Encryption**: AES-256-GCM with authenticated encryption
-- **Dual KDF Support**: Argon2id (recommended) or PBKDF2 for key derivation
-- **Layered Security Architecture**: Master password → Derived key → Vault key → Encrypted data
-- **Multi-Entity Support**: Store accounts, credit cards, and custom secret types
-- **Asymmetric Cryptography**: RSA and EC key pair management for advanced use cases
-- **Zero-Knowledge Architecture**: Master password never leaves your device
-- **Encryption State Tracking**: Built-in flag system to prevent double encryption/decryption errors
-
-### Current Implementation Status
-
-#### ✅ Completed Components
-
-- **Cryptographic Core**:
-  - `AbstractKeyPair.java` - Base key pair class
-  - `RsaKeyPair.java` - RSA implementation
-  - `EcKeyPair.java` - Elliptic Curve implementation
-  - `VaultEncryptingStrategy.java` - Base encryption class
-  - `AESVaultEncryptingStrategy.java` - Argon2 + AES-GCM
-  - `PBKDF2VaultEncryptingStrategy.java` - PBKDF2 + AES-GCM
-
-- **Entity Models**:
-  - `Storable.java` - Base interface
-  - `Sharable.java` - Sharing capabilities
-  - `VaultObject.java` - Abstract base class
-  - `Account.java` - Login credentials
-  - `CreditCard.java` - Payment cards
-
-- **User Management**:
-  - `User.java` - User management with vault association
-
-#### 🔄 In Progress
-
-- Vault persistence layer (database/file storage)
-- User interface (CLI and/or GUI)
-- Vault synchronization across devices
-- Secure sharing mechanisms
-- Password generator
-- Audit logging
-
-#### 📋 Planned
-
-- Browser extensions
-- Mobile applications
-- Auto-fill capabilities
-- Biometric authentication
-- Emergency access protocols
-
-### Architecture Preview
-
-```
-SeQ/
-├── src/
-│   ├── main/java/com/seq/acheron/
-│   │   ├── crypto/                    # ✅ Completed
-│   │   │   ├── AbstractKeyPair.java
-│   │   │   ├── RsaKeyPair.java
-│   │   │   └── EcKeyPair.java
-│   │   ├── secrets/                   # ✅ Completed
-│   │   │   └── symmetric/
-│   │   │       ├── VaultEncryptingStrategy.java
-│   │   │       ├── AESVaultEncryptingStrategy.java
-│   │   │       └── PBKDF2VaultEncryptingStrategy.java
-│   │   ├── vault/                     # 🔄 In Progress
-│   │   │   ├── Vault.java             # 🔄 Under development
-│   │   │   ├── VaultManager.java      # 🔄 Under development
-│   │   │   └── storables/             # ✅ Completed
-│   │   │       ├── Storable.java
-│   │   │       ├── Sharable.java
-│   │   │       ├── VaultObject.java
-│   │   │       ├── Account.java
-│   │   │       └── CreditCard.java
-│   │   ├── agents/                    # ✅ Completed
-│   │   │   └── User.java
-│   │   └── persistence/               # 📋 Planned
-│   │       ├── VaultRepository.java   # Not yet implemented
-│   │       └── DatabaseHandler.java   # Not yet implemented
+pip install -r REQUIREMENTS.txt
 ```
 
 ---
 
-## 📦 Installation
-
-### Prerequisites
-
-- **Java**: 17 or higher (LTS recommended)
-- **Maven**: 3.8 or higher
-
-### Dependencies (managed by Maven)
-
-- Argon2-jvm (de.mkammerer)
-- JUnit 5 (testing)
-- Lombok (boilerplate reduction)
-
-### Clone the Repository
+## Instalación
 
 ```bash
 git clone https://github.com/gamustea/SeQ.git
-cd SeQ
+cd SeQ/API
+python run.py
 ```
 
-### Build with Maven
+La API arranca en `http://0.0.0.0:5000` por defecto.
 
-```bash
-mvn clean install
+---
+
+## Módulo Sentinel — Escaneo de Vulnerabilidades
+
+Sentinel es la API REST central del proyecto. Permite lanzar y gestionar escaneos de seguridad sobre hosts y redes, consultar sus resultados y exportarlos como informes PDF. Todos los endpoints (salvo registro y autenticación) requieren un token OAuth 2.0 válido.
+
+### Autenticación OAuth 2.0
+
+El sistema implementa el flujo OAuth 2.0 con `grant_type: password` y soporte de refresh tokens (JWT firmados con PyJWT).
+
+#### Obtener token de acceso
+
+```http
+POST /oauth/token
+Content-Type: application/json
+
+{
+  "grantType": "password",
+  "username": "usuario",
+  "password": "contraseña"
+}
 ```
 
-### Run Tests
+**Respuesta:**
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "Bearer",
+  "expires_in": 1800,
+  "refresh_token": "<token>"
+}
+```
 
-```bash
-mvn test
+#### Renovar token
+
+```http
+POST /oauth/token
+Content-Type: application/json
+
+{
+  "grantType": "refresh_token",
+  "refresh_token": "<token>"
+}
+```
+
+#### Revocar tokens
+
+| Endpoint | Descripción |
+|---|---|
+| `POST /oauth/revoke` | Revoca el token actual |
+| `POST /oauth/revoke-all` | Revoca todos los tokens del usuario (cierre de sesión global) |
+
+> ⚠️ Todos los endpoints protegidos requieren el header: `Authorization: Bearer <access_token>`
+
+---
+
+### Gestión de usuarios
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/users/sign-up` | Registro de nuevo usuario (username, password, email, alias) |
+| `POST` | `/users/sign-up-person` | Registro de persona sin credenciales (firstName, lastName, alias) |
+| `PUT` | `/users/change-password` | Cambio de contraseña (invalida todos los tokens activos) |
+
+---
+
+### Escaneo con Nmap
+
+Nmap realiza descubrimiento de puertos abiertos en hosts o rangos de red. Soporta múltiples hosts simultáneos (CIDR o lista).
+
+#### Iniciar escaneo
+
+```http
+POST /sentinel/nmap/start
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "target": "192.168.1.0/24",
+  "ports": "80,443,22,8080"
+}
+```
+
+**Respuesta:**
+```json
+{
+  "message": "Escaneo(s) Nmap iniciado(s) correctamente",
+  "scanIds": [1, 2, 3],
+  "target": { "hosts": ["192.168.1.1", "..."], "ports": "80,443,22,8080" },
+  "totalScans": 3
+}
+```
+
+**Resultado de un escaneo Nmap:**
+```json
+{
+  "id": 1,
+  "scanType": "nmap",
+  "target": "192.168.1.1",
+  "startedAt": "2025-11-01T10:00:00",
+  "openPorts": [
+    { "port": "80/tcp", "reason": "syn-ack", "product": "nginx", "version": "1.18" }
+  ],
+  "totalOpenPorts": 1
+}
 ```
 
 ---
 
-## 🎯 Use Cases
+### Escaneo con Nikto
 
-### Scanning API
+Nikto realiza análisis de vulnerabilidades web sobre servidores HTTP/HTTPS, detectando configuraciones inseguras, cabeceras faltantes y rutas sensibles expuestas.
 
-- **Network Security Audits**: Discover open ports and services in your infrastructure
-- **Vulnerability Assessment**: Identify potential security weaknesses
-- **Penetration Testing**: Reconnaissance phase of security testing
-- **Network Inventory**: Maintain up-to-date service catalogs
-- **Compliance Monitoring**: Regular scans for security standards
+#### Iniciar escaneo
 
-### Vault Manager (When Complete)
+```http
+POST /sentinel/nikto/start
+Authorization: Bearer <token>
+Content-Type: application/json
 
-- **Personal Password Management**: Secure storage for login credentials
-- **Team Secrets Sharing**: Encrypted sharing of sensitive information
-- **Payment Card Storage**: Secure credit card information management
-- **Development Secrets**: Store API keys and tokens securely
+{
+  "target": "http://example.com",
+  "timeout": 180
+}
+```
 
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/new-scan-type`)
-3. Write tests for new functionality
-4. Ensure all tests pass (`mvn test`)
-5. Follow existing code style (Javadoc in English)
-6. Submit a pull request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
-
-## 👤 Author
-
-Gabriel Musteata - [@gamustea](https://github.com/gamustea)
+**Resultado de un escaneo Nikto:**
+```json
+{
+  "id": 5,
+  "scanType": "nikto",
+  "target": "http://example.com",
+  "incidents": [
+    {
+      "osvdbId": "OSVDB-3268",
+      "method": "GET",
+      "url": "/images/",
+      "description": "Directory indexing found",
+      "severity": "MEDIUM",
+      "discoveredAt": "2025-11-01T10:05:00"
+    }
+  ],
+  "totalIncidents": 1
+}
+```
 
 ---
 
-## 🙏 Acknowledgments
+### Escaneo con OpenVAS
 
-- **Argon2**: Password-hashing function winner of the Password Hashing Competition
-- **JCA/JCE**: Java Cryptography Architecture for robust encryption primitives
-- **Project Lombok**: Reducing boilerplate in Java
+OpenVAS realiza análisis completos de vulnerabilidades con base en la base de datos NVT (Network Vulnerability Tests) de Greenbone, asignando puntuaciones CVSS a cada hallazgo.
+
+#### Iniciar escaneo
+
+```http
+POST /sentinel/openvas/start
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "target": "192.168.1.100",
+  "scanConfig": "full_fast"
+}
+```
+
+> Configuraciones disponibles: `full_fast`, `full_deep`, `full_ultimate`.  
+> OpenVAS solo acepta **un host** por escaneo.
+
+**Resultado de un escaneo OpenVAS:**
+```json
+{
+  "id": 10,
+  "scanType": "openvas",
+  "target": "192.168.1.100",
+  "totalVulnerabilities": 12,
+  "severityBreakdown": {
+    "critical": 1,
+    "high": 3,
+    "medium": 5,
+    "low": 2,
+    "info": 1
+  },
+  "vulnerabilities": [
+    {
+      "nvtOid": "1.3.6.1.4.1.25623.1.0.10330",
+      "name": "OpenSSL < 1.1.1",
+      "severityScore": 9.8,
+      "severityClass": "Critical",
+      "cveIds": ["CVE-2020-1967"],
+      "solution": "Actualizar OpenSSL a la última versión estable."
+    }
+  ]
+}
+```
 
 ---
 
-## ⚠️ Disclaimer
+### Consulta de resultados
 
-**Scanning API**: This tool is intended for legitimate security testing on networks and systems you own or have explicit permission to test. Unauthorized port scanning or vulnerability assessment may be illegal in your jurisdiction. Always obtain proper authorization before scanning.
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/sentinel/results?type=all` | Lista todos los escaneos del usuario (filtrable por `nmap`, `nikto`, `openvas`) |
+| `GET` | `/sentinel/results/<id>` | Detalle completo de un escaneo por ID |
+| `GET` | `/sentinel/scan-status?id=<id>` | Estado actual del escaneo (`pending`, `running`, `done`, `cancelled`) |
+| `GET` | `/sentinel/is-finished?id=<id>` | Comprobación rápida de si el escaneo ha finalizado |
+| `POST` | `/sentinel/scans/<id>/cancel` | Cancela un escaneo en estado `pending` o `running` |
 
-**Vault Manager**: The vault system is currently under development and NOT recommended for production use. While it implements industry-standard cryptographic practices, the system lacks complete testing, audit, and security review. Use at your own risk for educational purposes only.
+---
+
+### Generación de informes PDF
+
+Una vez finalizado un escaneo, se puede exportar como informe PDF estructurado.
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/sentinel/generate-pdf?id=<id>` | Descarga directa del PDF |
+| `GET` | `/sentinel/generate-pdf-base64?id=<id>` | Devuelve el PDF codificado en Base64 (útil para apps móviles) |
+
+Los informes adaptan su formato al tipo de escaneo (Nmap, Nikto u OpenVAS) mediante el patrón Strategy.
+
+---
+
+## Módulo Acheron — Vault (En desarrollo)
+
+> 🚧 **Este módulo está actualmente en desarrollo activo.**
+
+**Acheron** es el sistema de gestión de secretos cifrados de SeQ. Su objetivo es proporcionar a los usuarios un almacén seguro (Vault) donde guardar credenciales, tarjetas de crédito y otros datos sensibles, con cifrado en cliente antes de almacenarse.
+
+### Componentes planificados
+
+| Componente | Tecnología | Estado |
+|---|---|---|
+| `AcheronCore` | Java (lógica de cifrado y modelo de dominio) | 🔨 En desarrollo |
+| `AcheronMobile` | Android / Kotlin + Jetpack Compose | 🔨 En desarrollo |
+| `AcheronWeb` | Web (interfaz de escritorio) | 🔨 En desarrollo |
+
+### Funcionalidades previstas
+
+- **Vault cifrado**: Almacén de objetos sensibles (`Account`, `CreditCard`, etc.) cifrados mediante estrategias de cifrado simétricas (`VaultEncryptingStrategy`).
+- **Control de acceso**: Compartición de objetos del vault con otros usuarios del sistema mediante listas de control de acceso (ACL).
+- **Identificación única**: Cada objeto del vault recibe un ID compuesto por un código de tipo (e.g., `ACC`, `CDC`) y un número secuencial.
+- **Integración con la API**: Los vaults se conectarán con el backend de Sentinel para autenticación unificada vía OAuth 2.0.
+
+---
+
+## Estructura del proyecto
+
+```
+SeQ/
+├── API/                        # API REST Flask (Sentinel)
+│   ├── run.py                  # Punto de entrada y definición de endpoints
+│   └── src/
+│       ├── core/               # Modelos ORM y excepciones
+│       ├── logic/              # Managers (Nmap, Nikto, OpenVAS), documentos y procesadores
+│       ├── config/             # Configuración de la aplicación
+│       └── misc/               # Logging y validación
+├── Interface/
+│   ├── AcheronMobile/          # App Android (Kotlin) — Vault
+│   │   └── AcheronCore/        # Lógica de dominio del vault (Java)
+│   ├── AcheronWeb/             # Interfaz web del vault
+│   └── index.html              # Portal de entrada
+├── shared/
+│   └── resources/              # Recursos compartidos
+└── REQUIREMENTS.txt
+```
+
+---
+
+## Stack tecnológico
+
+| Capa | Tecnología |
+|---|---|
+| API Backend | Python 3, Flask 3.0, SQLAlchemy 2.0 |
+| Base de datos | PostgreSQL (psycopg2) |
+| Autenticación | OAuth 2.0 + JWT (PyJWT) |
+| Escaneo de puertos | Nmap + python-nmap |
+| Escaneo web | Nikto |
+| Análisis de vulnerabilidades | OpenVAS / GVM |
+| Generación de PDFs | ReportLab + Pillow |
+| App móvil | Android / Kotlin |
+| Lógica de vault | Java + Lombok |
+| Rate limiting | Flask-Limiter |
