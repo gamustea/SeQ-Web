@@ -11,8 +11,6 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Abstract base class representing an object stored in the vault.
@@ -226,12 +224,12 @@ public abstract class VaultObject implements Sharable, Storable, Comparable<Vaul
         Pair<String, String> otherCode = other.sliceCode();
         Pair<String, String> thisCode = this.sliceCode();
 
-        if (!thisCode.left.equals(otherCode.left)) {
-            return thisCode.left.compareTo(otherCode.left);
+        if (!thisCode.left().equals(otherCode.left())) {
+            return thisCode.left().compareTo(otherCode.left());
         }
 
-        Integer thisInt = Integer.parseInt(thisCode.right);
-        Integer otherInt = Integer.parseInt(otherCode.right);
+        Integer thisInt = Integer.parseInt(thisCode.right());
+        Integer otherInt = Integer.parseInt(otherCode.right());
 
         return thisInt.compareTo(otherInt);
     }

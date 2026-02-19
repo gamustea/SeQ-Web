@@ -35,6 +35,23 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
      */
     private static final int KEY_LENGTH_BITS = 256;
 
+    /**
+     * Creates a new PBKDF2-based strategy instance.
+     * <p>
+     * Derives {@link #derivedKey} from the master password and salt using
+     * {@code PBKDF2WithHmacSHA256} with {@value #ITERATIONS} iterations and a
+     * {@value #KEY_LENGTH_BITS}-bit output key.
+     * If {@code generateVaultKey} is {@code true}, a new random 256-bit AES
+     * {@link #vaultKey} is generated automatically; otherwise {@link #vaultKey}
+     * remains {@code null} until {@link VaultEncryptingStrategy#importVaultKey(String)}
+     * is called.
+     *
+     * @param masterPassword   the user's master password; wiped from memory after use
+     * @param saltBase64       Base64-encoded salt used for PBKDF2
+     * @param generateVaultKey {@code true} to generate a fresh random vault key;
+     *                         {@code false} to defer key assignment
+     * @throws GeneralSecurityException if key derivation or key generation fails
+     */
     public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey)
             throws GeneralSecurityException {
 
