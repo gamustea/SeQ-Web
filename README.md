@@ -30,7 +30,7 @@
 Antes de ejecutar el proyecto, asegúrate de tener instalado:
 
 - Python 3.10+
-- PostgreSQL
+- MySQL
 - Nmap (`sudo apt install nmap`)
 - Nikto (`sudo apt install nikto`)
 - OpenVAS / Greenbone Vulnerability Manager (GVM)
