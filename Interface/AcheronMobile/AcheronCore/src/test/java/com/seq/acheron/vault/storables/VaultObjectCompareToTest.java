@@ -30,7 +30,7 @@ public class VaultObjectCompareToTest {
         }
 
         @Override
-        public String toJSON() {
+        public String toJson() {
             return "";
         }
     }

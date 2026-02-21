@@ -144,11 +144,11 @@ public class Account extends VaultObject {
     }
 
     @Override
-    public String toJSON() {
+    public String toJson() {
         String safePassword = isEncrypted ? password : "***";
 
         return "{" +
-                super.toJSON() +
+                super.toJson() +
                 "\"username\":\"" + username + "\", " +
                 "\"domain\":\"" + domain + "\", " +
                 "\"password\":\"" + safePassword + "\"" +

@@ -31,7 +31,7 @@ public class Main {
         System.out.println("VAULT: " + mockVault);
 
         Vault vault = factory.fromJSON(
-                mockVault.toJSON(),
+                mockVault.toJson(),
                 "CONTRASEÑA"
         );
         System.out.println(vault);

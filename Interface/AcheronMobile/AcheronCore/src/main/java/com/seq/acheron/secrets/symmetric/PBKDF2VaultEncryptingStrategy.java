@@ -105,7 +105,7 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
         }
     }
 
-    public String toJSON() {
+    public String toJson() {
         return "{"
                 + "\"transformation\": \"" + transformation + "\","
                 + "\"kdf\": \"PBKDF2\","

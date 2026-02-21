@@ -3,6 +3,7 @@ package com.seq.acheron.vault.storables;
 import com.seq.acheron.agents.User;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.Pair;
+import com.seq.acheron.vault.JsonSerializable;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
@@ -29,7 +30,7 @@ import java.util.Set;
  * @see Storable
  * @see Sharable
  */
-public abstract class VaultObject implements Sharable, Storable, Comparable<VaultObject> {
+public abstract class VaultObject implements Sharable, Storable, JsonSerializable, Comparable<VaultObject> {
 
     /**
      * Unique identifier for this vault object.
@@ -238,11 +239,11 @@ public abstract class VaultObject implements Sharable, Storable, Comparable<Vaul
 
     @Override
     public String toString() {
-        return this.toJSON();
+        return this.toJson();
     }
 
     @Override
-    public String toJSON() {
+    public String toJson() {
         StringBuilder userList = new StringBuilder();
 
         String createdAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(

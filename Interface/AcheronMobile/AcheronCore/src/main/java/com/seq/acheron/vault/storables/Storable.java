@@ -82,7 +82,7 @@ public interface Storable {
      *
      * @return a JSON string representing this entry's current state
      */
-    String toJSON();
+    String toJson();
 
     default String category() {
         return getClass().getSimpleName().toLowerCase() + "s";

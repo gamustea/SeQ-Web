@@ -185,7 +185,7 @@ public class CreditCard extends VaultObject {
     }
 
     @Override
-    public String toJSON() {
+    public String toJson() {
         String cardNumber = isEncrypted ?
                 this.cardNumber :
                 "****" + this.cardNumber.substring(this.cardNumber.length() - 4);
@@ -195,7 +195,7 @@ public class CreditCard extends VaultObject {
                 "***";
 
         return "{" +
-                super.toJSON() +
+                super.toJson() +
                 "\"cardHolderName\": \"" + cardHolderName + "\"" +
                 // Never log full card number or CVV:
                 ", \"cardNumber\": \"" + cardNumber + "\"" +

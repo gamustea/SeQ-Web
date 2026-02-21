@@ -115,7 +115,7 @@ public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
      *   "salt": "base64..."
      * }
      */
-    public String toJSON() {
+    public String toJson() {
         StringBuilder sb = new StringBuilder();
         sb.append("{");
         sb.append("\"transformation\": \"").append(transformation).append("\", ");

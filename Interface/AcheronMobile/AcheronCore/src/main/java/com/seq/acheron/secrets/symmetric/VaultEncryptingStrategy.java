@@ -223,7 +223,7 @@ public abstract class VaultEncryptingStrategy {
         return decryptWithKey(text, derivedKey);
     }
 
-    public abstract String toJSON();
+    public abstract String toJson();
 
     /**
      * Generates a new random 256-bit AES key that can be used as a

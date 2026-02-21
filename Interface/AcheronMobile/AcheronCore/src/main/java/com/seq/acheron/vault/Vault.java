@@ -54,7 +54,7 @@ import java.util.TreeMap;
  * @see VaultEncryptingStrategy
  */
 @Getter
-public class Vault {
+public class Vault implements JsonSerializable {
 
     /* ═══════════════════════════════════════
      *                FIELDS
@@ -297,7 +297,7 @@ public class Vault {
      * @return JSON representation of this vault
      * @throws GeneralSecurityException if exporting the vault key fails
      */
-    public String toJSON() throws GeneralSecurityException {
+    public String toJson() throws GeneralSecurityException {
         String isoDate = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(
                 Instant.now().atZone(java.time.ZoneId.systemDefault())
         );
@@ -307,7 +307,7 @@ public class Vault {
 
         sb.append("\"checker\": \"").append(checker).append("\", ");
         sb.append("\"vaultKey\": \"").append(strategy.exportVaultKey()).append("\", ");
-        sb.append("\"algorithm\": ").append(strategy.toJSON()).append(", ");
+        sb.append("\"algorithm\": ").append(strategy.toJson()).append(", ");
 
 
         Map<String, List<Storable>> map = classifyStorables();
@@ -323,7 +323,7 @@ public class Vault {
 
             List<Storable> group = entry.getValue();
             for (int i = 0; i < group.size(); i++) {
-                sb.append(group.get(i).toJSON());
+                sb.append(group.get(i).toJson());
                 if (i < group.size() - 1) {
                     sb.append(", ");
                 }
@@ -337,13 +337,13 @@ public class Vault {
     }
 
     /**
-     * Delegates to {@link #toJSON()} and wraps any {@link GeneralSecurityException}
+     * Delegates to {@link #toJson()} and wraps any {@link GeneralSecurityException}
      * into a {@link RuntimeException}.
      */
     @Override
     public String toString() {
         try {
-            return toJSON();
+            return toJson();
         } catch (GeneralSecurityException e) {
             throw new RuntimeException("Failed to serialise vault to JSON", e);
         }

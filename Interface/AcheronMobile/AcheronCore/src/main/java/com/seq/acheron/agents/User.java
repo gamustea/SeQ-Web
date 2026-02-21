@@ -65,7 +65,7 @@ public class User implements Comparable<User> {
 
 
 
-    public String toJSON() {
+    public String toJson() {
         return "\"user\": {" +
                 "\"id\": \"" + id + "\", " +
                 "\"name\": \"" + name + "\", " +
@@ -115,6 +115,6 @@ public class User implements Comparable<User> {
 
     @Override
     public String toString() {
-        return this.toJSON();
+        return this.toJson();
     }
 }

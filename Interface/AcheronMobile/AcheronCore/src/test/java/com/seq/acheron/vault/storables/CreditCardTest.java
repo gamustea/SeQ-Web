@@ -200,8 +200,8 @@ public class CreditCardTest {
     }
 
     @Test
-    void testToJSON_SensitiveMasking() {
-        String json = card.toJSON();
+    void testtoJson_SensitiveMasking() {
+        String json = card.toJson();
         // Base VaultObject
         assertTrue(json.contains("id"));
         assertTrue(json.contains("createdAt"));
