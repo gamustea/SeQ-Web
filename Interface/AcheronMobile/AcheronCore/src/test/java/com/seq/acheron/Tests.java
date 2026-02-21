@@ -3,6 +3,7 @@ package com.seq.acheron;
 import com.seq.acheron.secrets.symmetric.AESVaultEncryptingStrategyTest;
 import com.seq.acheron.secrets.symmetric.PBKDF2VaultEncryptingStrategyTest;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategyPerformanceTest;
+import com.seq.acheron.vault.VaultTest;
 import com.seq.acheron.vault.storables.AccountTest;
 import com.seq.acheron.vault.storables.CreditCardTest;
 import com.seq.acheron.vault.storables.VaultObjectCompareToTest;
@@ -17,6 +18,7 @@ import org.junit.platform.suite.api.Suite;
         VaultObjectCompareToTest.class,
         AccountTest.class,
         CreditCardTest.class,
+        VaultTest.class,
 })
 public class Tests {
 }

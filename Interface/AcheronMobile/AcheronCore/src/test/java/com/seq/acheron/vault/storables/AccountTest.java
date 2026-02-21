@@ -29,7 +29,7 @@ public class AccountTest {
 
     @Test
     void encryptThenDecrypt_restoresOriginalFields() throws Exception {
-        Account account = new Account("user123", "github.com", "SuperSecret!", false);
+        Account account = new Account("AnAccount", "user123", "github.com", "SuperSecret!", false);
 
         TestVaultStrategy strategy = new TestVaultStrategy();
 
@@ -60,8 +60,8 @@ public class AccountTest {
     void idsHaveAccPrefixAndIncrementPerInstance() throws Exception {
         VaultObject.setObjectCounter(0);
 
-        Account acc1 = new Account("u1", "d1", "p1", false);
-        Account acc2 = new Account("u2", "d2", "p2", false);
+        Account acc1 = new Account("AnAccount","u1", "d1", "p1", false);
+        Account acc2 = new Account("AnAccount","u2", "d2", "p2", false);
 
         String id1 = acc1.getId();
         String id2 = acc2.getId();
@@ -82,7 +82,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_startsAsFalse_whenConstructedWithPlainText() {
-        Account account = new Account("user", "domain.com", "pass", false);
+        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
 
         assertFalse(account.isEncrypted(), "Account should not be encrypted initially");
 
@@ -91,7 +91,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_startsAsTrue_whenConstructedWithEncryptedData() {
-        Account account = new Account("encryptedUser", "encryptedDomain", "encryptedPass", true);
+        Account account = new Account("AnAccount","encryptedUser", "encryptedDomain", "encryptedPass", true);
 
         assertTrue(account.isEncrypted(), "Account should be marked as encrypted");
 
@@ -100,7 +100,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_becomesTrue_afterEncryption() throws Exception {
-        Account account = new Account("user", "domain.com", "pass", false);
+        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         assertFalse(account.isEncrypted(), "Account should start unencrypted");
@@ -114,7 +114,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_becomesFalse_afterDecryption() throws Exception {
-        Account account = new Account("user", "domain.com", "pass", false);
+        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         account.encrypt(strategy);
@@ -129,7 +129,7 @@ public class AccountTest {
 
     @Test
     void encryptTwice_throwsIllegalStateException() throws Exception {
-        Account account = new Account("user", "domain.com", "pass", false);
+        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         account.encrypt(strategy);
@@ -146,7 +146,7 @@ public class AccountTest {
 
     @Test
     void decryptUnencryptedObject_throwsIllegalStateException() throws Exception {
-        Account account = new Account("user", "domain.com", "pass", false);
+        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
@@ -161,7 +161,7 @@ public class AccountTest {
 
     @Test
     void copy_preservesIsEncryptedFlag() throws Exception {
-        Account original = new Account("user", "domain.com", "pass", false);
+        Account original = new Account("AnAccount","user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         original.encrypt(strategy);

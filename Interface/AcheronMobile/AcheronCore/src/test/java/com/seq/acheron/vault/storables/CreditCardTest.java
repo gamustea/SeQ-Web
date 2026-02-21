@@ -31,12 +31,13 @@ public class CreditCardTest {
 
     @BeforeEach
     void setUp() {
-        card = new CreditCard("Juan Pérez", "1234567812345678", "12/29", "123", "28001", false);
+        card = new CreditCard("A Card","Juan Pérez", "1234567812345678", "12/29", "123", "28001", false);
     }
 
     @Test
     void encryptThenDecrypt_restoresOriginalFields() throws Exception {
         CreditCard card = new CreditCard(
+                "A Card",
                 "John Doe",
                 "4111111111111111",
                 "12/29",
@@ -78,8 +79,8 @@ public class CreditCardTest {
     void idsHaveCdcPrefixAndIncrementPerInstance() throws Exception {
         VaultObject.setObjectCounter(0);
 
-        CreditCard c1 = new CreditCard("N1", "4111111111111111", "01/30", "111", "28001", false);
-        CreditCard c2 = new CreditCard("N2", "4222222222222222", "02/31", "222", "28002", false);
+        CreditCard c1 = new CreditCard("A Card","N1", "4111111111111111", "01/30", "111", "28001", false);
+        CreditCard c2 = new CreditCard("A Card","N2", "4222222222222222", "02/31", "222", "28002", false);
 
         String id1 = c1.getId();
         String id2 = c2.getId();
@@ -100,7 +101,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_startsAsFalse_whenConstructedWithPlainText() {
-        CreditCard card = new CreditCard("Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
 
         assertFalse(card.isEncrypted(), "CreditCard should not be encrypted initially");
 
@@ -109,7 +110,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_startsAsTrue_whenConstructedWithEncryptedData() {
-        CreditCard card = new CreditCard(
+        CreditCard card = new CreditCard("A Card",
                 "EncryptedHolder",
                 "EncryptedNumber",
                 "EncryptedDate",
@@ -125,7 +126,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_becomesTrue_afterEncryption() throws Exception {
-        CreditCard card = new CreditCard("Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         assertFalse(card.isEncrypted(), "CreditCard should start unencrypted");
@@ -139,7 +140,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_becomesFalse_afterDecryption() throws Exception {
-        CreditCard card = new CreditCard("Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         card.encrypt(strategy);
@@ -154,7 +155,7 @@ public class CreditCardTest {
 
     @Test
     void encryptTwice_throwsIllegalStateException() throws Exception {
-        CreditCard card = new CreditCard("Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         card.encrypt(strategy);
@@ -171,7 +172,7 @@ public class CreditCardTest {
 
     @Test
     void decryptUnencryptedObject_throwsIllegalStateException() throws Exception {
-        CreditCard card = new CreditCard("Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
@@ -186,7 +187,7 @@ public class CreditCardTest {
 
     @Test
     void copy_preservesIsEncryptedFlag() throws Exception {
-        CreditCard original = new CreditCard("Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard original = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         original.encrypt(strategy);

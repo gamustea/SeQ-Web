@@ -56,6 +56,7 @@ public class CreditCard extends VaultObject {
      *                    {@code false} if they are plain-text
      */
     public CreditCard(
+            @NotNull String title,
             @NotNull String cardHolderName,
             @NotNull String cardNumber,
             @NotNull String expirationDate,
@@ -63,7 +64,7 @@ public class CreditCard extends VaultObject {
             @NotNull String postalCode,
             boolean isEncrypted
     ) {
-        super("CDC", isEncrypted, true);
+        super("CDC", title, isEncrypted, true);
 
         this.cardHolderName = cardHolderName;
         this.cardNumber = cardNumber;
@@ -73,7 +74,8 @@ public class CreditCard extends VaultObject {
     }
 
     public CreditCard(
-            @NotNull String code,
+            @NotNull String id,
+            @NotNull String title,
             @NotNull String cardHolderName,
             @NotNull String cardNumber,
             @NotNull String expirationDate,
@@ -81,7 +83,7 @@ public class CreditCard extends VaultObject {
             @NotNull String postalCode,
             boolean isEncrypted
     ) {
-        super(code, isEncrypted, false);
+        super(id, title, isEncrypted, false);
 
         this.cardHolderName = cardHolderName;
         this.cardNumber = cardNumber;
@@ -92,6 +94,7 @@ public class CreditCard extends VaultObject {
 
 
     public CreditCard(
+            @NotNull String title,
             @NotNull String cardHolderName,
             @NotNull String cardNumber,
             @NotNull String expirationDate,
@@ -101,7 +104,7 @@ public class CreditCard extends VaultObject {
             @NotNull Date updatedAt,
             boolean isEncrypted
     ) {
-        super("CDC", isEncrypted, createdAt, updatedAt, true);
+        super("CDC", title, isEncrypted, createdAt, updatedAt, true);
 
         this.cardHolderName = cardHolderName;
         this.cardNumber = cardNumber;
@@ -111,7 +114,8 @@ public class CreditCard extends VaultObject {
     }
 
     public CreditCard(
-            @NotNull String code,
+            @NotNull String id,
+            @NotNull String title,
             @NotNull String cardHolderName,
             @NotNull String cardNumber,
             @NotNull String expirationDate,
@@ -121,7 +125,7 @@ public class CreditCard extends VaultObject {
             @NotNull Date updatedAt,
             boolean isEncrypted
     ) {
-        super(code, isEncrypted, createdAt, updatedAt, false);
+        super(id, title, isEncrypted, createdAt, updatedAt, false);
 
         this.cardHolderName = cardHolderName;
         this.cardNumber = cardNumber;
@@ -173,6 +177,7 @@ public class CreditCard extends VaultObject {
     public VaultObject copy() {
         return new CreditCard(
                 this.getId(),
+                title,
                 cardHolderName,
                 cardNumber,
                 expirationDate,

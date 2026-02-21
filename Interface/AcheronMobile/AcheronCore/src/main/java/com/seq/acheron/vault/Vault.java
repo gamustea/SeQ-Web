@@ -299,17 +299,12 @@ public class Vault implements JsonSerializable {
      * @throws GeneralSecurityException if exporting the vault key fails
      */
     public String toJson() throws GeneralSecurityException {
-        String isoDate = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(
-                Instant.now().atZone(java.time.ZoneId.systemDefault())
-        );
-
         StringBuilder sb = new StringBuilder();
         sb.append("{");
 
         sb.append("\"checker\": \"").append(checker).append("\", ");
         sb.append("\"vaultKey\": \"").append(strategy.exportVaultKey()).append("\", ");
         sb.append("\"algorithm\": ").append(strategy.toJson()).append(", ");
-
 
         Map<String, List<Storable>> map = classifyStorables();
         boolean firstEntry = true;
@@ -321,7 +316,6 @@ public class Vault implements JsonSerializable {
             firstEntry = false;
 
             sb.append("\"").append(entry.getKey()).append("\": [");
-
             List<Storable> group = entry.getValue();
             for (int i = 0; i < group.size(); i++) {
                 sb.append(group.get(i).toJson());
@@ -329,7 +323,6 @@ public class Vault implements JsonSerializable {
                     sb.append(", ");
                 }
             }
-
             sb.append("]");
         }
 

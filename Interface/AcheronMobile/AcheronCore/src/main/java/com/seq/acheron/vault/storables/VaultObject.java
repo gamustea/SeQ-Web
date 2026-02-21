@@ -32,32 +32,34 @@ import java.util.Set;
  */
 public abstract class VaultObject implements Sharable, Storable, JsonSerializable, Comparable<VaultObject> {
 
-    @Getter
-    private final String id;
+    @Getter @Setter
+    protected String title;
 
     @Getter
-    private final Set<User> allowedUsers;
+    protected final String id;
 
     @Getter
-    @Setter
-    private static int objectCounter = 0;
+    protected final Set<User> allowedUsers;
+
+    @Getter @Setter
+    protected static int objectCounter = 0;
 
     @Getter
     protected boolean isEncrypted;
 
     @Getter
-    private final Date createdAt;
+    protected final Date createdAt;
 
-    @Getter
-    @Setter
-    private Date updatedAt;
+    @Getter @Setter
+    protected Date updatedAt;
 
-    public VaultObject(String code, boolean isEncrypted, boolean increaseCounter) {
-        this(code, isEncrypted, new Date(), new Date(), increaseCounter);
+    public VaultObject(String code, String title, boolean isEncrypted, boolean increaseCounter) {
+        this(code, title, isEncrypted, new Date(), new Date(), increaseCounter);
     }
 
-    public VaultObject(String code, boolean isEncrypted, Date createdAt, Date updatedAt, boolean increaseCounter) {
+    public VaultObject(String code, String title, boolean isEncrypted, Date createdAt, Date updatedAt, boolean increaseCounter) {
         this.id = increaseCounter ? code + objectCounter : code;
+        this.title = title;
         this.allowedUsers = new HashSet<>();
         this.isEncrypted = isEncrypted;
         this.createdAt = createdAt;
@@ -158,7 +160,8 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
         userList.append("]");
 
         return "\"id\": \"" + this.id + "\", "
-                + "\"createdAt\": \"" + createdAtISO + "\", "
+                + "\"title\": \"" + this.title + "\", "
+                +"\"createdAt\": \"" + createdAtISO + "\", "
                 + "\"updatedAt\": \"" + updatedAtISO + "\", "
                 + "\"allowedUsers\": " + userList + ", ";
     }

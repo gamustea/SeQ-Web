@@ -127,6 +127,7 @@ public record VaultFactory(User user) {
 
         // Accounts (demo data only)
         vault.add(new Account(
+                "Gmail Account",
                 "user@gmail.com",
                 "mail.google.com",
                 "P@ssw0rd123!",
@@ -134,6 +135,7 @@ public record VaultFactory(User user) {
         ));
 
         vault.add(new Account(
+                "Github Account",
                 "gamustea",
                 "github.com",
                 "Gh1t#SecurePass",
@@ -141,6 +143,7 @@ public record VaultFactory(User user) {
         ));
 
         vault.add(new Account(
+                "Netflix Account",
                 "user@gmail.com",
                 "netflix.com",
                 "N3tfl1x$Pass",
@@ -149,6 +152,7 @@ public record VaultFactory(User user) {
 
         // Credit Cards (demo data only)
         vault.add(new CreditCard(
+                "Personal Card",
                 "GABRIEL MUSTEATA",
                 "4111111111111111",
                 "12/27",
@@ -158,6 +162,7 @@ public record VaultFactory(User user) {
         ));
 
         vault.add(new CreditCard(
+                "Auxiliary Card",
                 "GABRIEL MUSTEATA",
                 "5500005555555559",
                 "08/26",
@@ -228,12 +233,13 @@ public record VaultFactory(User user) {
                 JsonObject obj = element.getAsJsonObject();
 
                 String id = obj.get("id").getAsString();
+                String title = obj.get("title").getAsString();
                 String username = obj.get("username").getAsString();
                 String domain = obj.get("domain").getAsString();
                 String password = obj.get("password").getAsString();
                 boolean isEncrypted = !password.equals("***");
 
-                vault.add(new Account(id, username, domain, password, isEncrypted));
+                vault.add(new Account(id, title, username, domain, password, isEncrypted));
             }
         }
 
@@ -244,6 +250,7 @@ public record VaultFactory(User user) {
                 JsonObject obj = element.getAsJsonObject();
 
                 String id = obj.get("id").getAsString();
+                String title = obj.get("title").getAsString();
                 String cardHolderName = obj.get("cardHolderName").getAsString();
                 String cardNumber = obj.get("cardNumber").getAsString();
                 String expirationDate = obj.get("expirationDate").getAsString();
@@ -252,7 +259,7 @@ public record VaultFactory(User user) {
                 boolean isEncrypted = !cvv.equals("***");
 
                 vault.add(new CreditCard(
-                        id, cardHolderName, cardNumber, expirationDate,
+                        id, title, cardHolderName, cardNumber, expirationDate,
                         cvv, postalCode, isEncrypted
                 ));
             }

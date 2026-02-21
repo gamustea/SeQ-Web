@@ -19,7 +19,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("Suite de tests nativos JUnit para Vault y VaultFactory")
-class VaultTest {
+public class VaultTest {
 
     private User testUser;
     private VaultEncryptingStrategy testStrategy;
@@ -60,9 +60,9 @@ class VaultTest {
             Vault vault = new Vault(testStrategy, testUser, false);
 
             // Creamos implementaciones reales (Account y CreditCard implementan Storable)
-            Account account1 = new Account("ZZZ_ID", "userZ", "zzz.com", "passZ", false);
-            Account account2 = new Account("AAA_ID", "userA", "aaa.com", "passA", false);
-            CreditCard card = new CreditCard("CARD_ID", "John", "1234", "12/28", "123", "28001", false);
+            Account account1 = new Account("ZZZ_ID", "Account1", "userZ", "zzz.com", "passZ", false);
+            Account account2 = new Account("AAA_ID", "Account2", "userA", "aaa.com", "passA", false);
+            CreditCard card = new CreditCard("CARD_ID", "CreditCard", "John", "1234", "12/28", "123", "28001", false);
 
             // Añadimos en orden desordenado para comprobar si .sort(null) actúa
             vault.add(account1).add(card).add(account2);
@@ -149,7 +149,7 @@ class VaultTest {
             Vault originalVault = factory.mockVault();
 
             // 2. Modificamos y añadimos nuestros propios valores al mockVault base
-            Account customAcc = new Account("CUSTOM_ID", "gabriel", "test.com", "SecretPass!1", false);
+            Account customAcc = new Account("CUSTOM_ID", "Account1", "gabriel", "test.com", "SecretPass!1", false);
             originalVault.add(customAcc);
 
             // 3. Ciframos toda la bóveda y la convertimos en String

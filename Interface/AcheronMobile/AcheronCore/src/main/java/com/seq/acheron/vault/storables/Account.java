@@ -49,12 +49,13 @@ public class Account extends VaultObject {
      *                    {@code false} if they are plain-text
      */
     public Account(
+            @NotNull String title,
             @NotNull String username,
             @NotNull String domain,
             @NotNull String password,
             boolean isEncrypted
     ) {
-        super("ACC", isEncrypted, true);
+        super("ACC", title, isEncrypted, true);
         this.username = username;
         this.domain = domain;
         this.password = password;
@@ -62,12 +63,13 @@ public class Account extends VaultObject {
 
     public Account(
             @NotNull String id,
+            @NotNull String title,
             @NotNull String username,
             @NotNull String domain,
             @NotNull String password,
             boolean isEncrypted
     ) {
-        super(id, isEncrypted, false);
+        super(id, title, isEncrypted, false);
         this.username = username;
         this.domain = domain;
         this.password = password;
@@ -75,13 +77,14 @@ public class Account extends VaultObject {
 
     public Account(
             @NotNull String username,
+            @NotNull String title,
             @NotNull String domain,
             @NotNull String password,
             @NotNull Date createdAt,
             @NotNull Date updatedAt,
             boolean isEncrypted
     ) {
-        super("ACC", isEncrypted, createdAt, updatedAt, true);
+        super("ACC", title, isEncrypted, createdAt, updatedAt, true);
         this.username = username;
         this.domain = domain;
         this.password = password;
@@ -89,6 +92,7 @@ public class Account extends VaultObject {
 
     public Account(
             @NotNull String id,
+            @NotNull String title,
             @NotNull String username,
             @NotNull String domain,
             @NotNull String password,
@@ -96,7 +100,7 @@ public class Account extends VaultObject {
             @NotNull Date updatedAt,
             boolean isEncrypted
     ) {
-        super(id, isEncrypted, createdAt, updatedAt, false);
+        super(id, title, isEncrypted, createdAt, updatedAt, false);
         this.username = username;
         this.domain = domain;
         this.password = password;
@@ -134,6 +138,7 @@ public class Account extends VaultObject {
     public VaultObject copy() {
         return new Account(
                 this.getId(),
+                title,
                 username,
                 domain,
                 password,
