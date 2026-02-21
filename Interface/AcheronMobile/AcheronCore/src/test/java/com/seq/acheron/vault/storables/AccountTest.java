@@ -20,6 +20,11 @@ public class AccountTest {
             SecureRandom.getInstanceStrong().nextBytes(dk);
             this.derivedKey = new SecretKeySpec(dk, "AES");
         }
+
+        @Override
+        public String toJson() {
+            return "";
+        }
     }
 
     @Test

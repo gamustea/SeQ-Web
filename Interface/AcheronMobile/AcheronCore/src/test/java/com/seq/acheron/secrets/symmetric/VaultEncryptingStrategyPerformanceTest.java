@@ -21,6 +21,11 @@ public class VaultEncryptingStrategyPerformanceTest {
             super("AES/GCM/NoPadding", generateVaultKey);
             this.derivedKey = derivedKey;
         }
+
+        @Override
+        public String toJson() {
+            return "";
+        }
     }
 
     private static SecretKey randomDerivedKey() throws GeneralSecurityException {

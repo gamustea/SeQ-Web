@@ -1,4 +1,4 @@
-package com.seq.acheron.vault;
+package com.seq.acheron.vault.interfaces;
 
 import java.security.GeneralSecurityException;
 

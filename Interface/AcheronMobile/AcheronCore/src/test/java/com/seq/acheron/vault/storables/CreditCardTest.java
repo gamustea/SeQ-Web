@@ -20,6 +20,11 @@ public class CreditCardTest {
             SecureRandom.getInstanceStrong().nextBytes(dk);
             this.derivedKey = new SecretKeySpec(dk, "AES");
         }
+
+        @Override
+        public String toJson() {
+            return "";
+        }
     }
 
     private CreditCard card;

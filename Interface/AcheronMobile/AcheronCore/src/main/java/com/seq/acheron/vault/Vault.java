@@ -2,7 +2,8 @@ package com.seq.acheron.vault;
 
 import com.seq.acheron.agents.User;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
-import com.seq.acheron.vault.storables.Storable;
+import com.seq.acheron.vault.interfaces.JsonSerializable;
+import com.seq.acheron.vault.interfaces.Storable;
 import lombok.Getter;
 
 import java.nio.charset.StandardCharsets;
