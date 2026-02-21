@@ -30,12 +30,5 @@ public class Main {
                 new AESVaultEncryptingStrategy(MASTER_PASSWORD, SALT, false)
         );
         System.out.println(vault.decryptAll());
-
-        Vault mock = factory.mockVault(USER).encryptAll();
-        System.out.println(mock);
-        Vault copyOfMock = factory.fromJSON(mock.toJSON(),
-                new AESVaultEncryptingStrategy("CONTRASEÑA", "328197321098732190732198073291873219837281998321", false)
-        );
-        System.out.println(copyOfMock.decryptAll().toJSON());
     }
 }

@@ -13,32 +13,74 @@ import com.seq.acheron.vault.storables.CreditCard;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
-import java.util.Arrays;
+import java.util.Objects;
 
-
+/**
+ * Factory responsible for building {@link Vault} instances.
+ * <p>
+ * Responsibilities:
+ * <ul>
+ *   <li>Create demo vaults populated with mock data (for development and tests).</li>
+ *   <li>Reconstruct vaults from their JSON representation.</li>
+ *   <li>Validate the master password using the {@code checker} field.</li>
+ * </ul>
+ * <p>
+ * This implementation is a process-wide singleton primarily intended for
+ * single-user desktop/mobile scenarios and demo purposes.
+ * For multi-user or server-side environments, prefer creating dedicated
+ * factory instances per user instead of using the static {@link #getInstance(User)}.
+ */
 public class VaultFactory {
 
     private static VaultFactory instance;
+
+    /**
+     * Default encryption strategy used when creating demo/mock vaults.
+     * <p>
+     * This strategy is initialised with hard-coded parameters and MUST NOT be
+     * used for real user data in production. It is safe to use it strictly for:
+     * <ul>
+     *   <li>UI demos,</li>
+     *   <li>sample data,</li>
+     *   <li>and local development/testing.</li>
+     * </ul>
+     */
     private static final VaultEncryptingStrategy DEFAULT_STRATEGY;
 
     static {
         try {
             DEFAULT_STRATEGY = new AESVaultEncryptingStrategy(
-                    "CONTRASEÑA",
+                    "CONTRASEÑA", // demo master password
                     "328197321098732190732198073291873219837281998321",
                     true
             );
         } catch (GeneralSecurityException e) {
-            throw new RuntimeException(e);
+            throw new RuntimeException("Failed to initialise default demo strategy", e);
         }
     }
 
+    /**
+     * The user this factory is bound to. All vaults produced by this instance
+     * will use this user as their logical owner and as input when validating
+     * the master password through the {@code checker} mechanism.
+     */
     private final User user;
 
-    private VaultFactory(User user) throws GeneralSecurityException {
-        this.user = user;
+    private VaultFactory(User user) {
+        this.user = Objects.requireNonNull(user, "user must not be null");
     }
 
+    /**
+     * Returns the process-wide {@link VaultFactory} instance for the given user.
+     * <p>
+     * On the first call, a new instance bound to {@code user} is created.
+     * Subsequent calls will return the same instance, regardless of the
+     * {@code user} argument. This design is suitable for single-user clients
+     * but can be confusing in multi-user environments.
+     *
+     * @param user logical owner for vaults produced by this factory
+     * @return singleton {@link VaultFactory} instance
+     */
     public static VaultFactory getInstance(User user) throws GeneralSecurityException {
         if (instance == null) {
             instance = new VaultFactory(user);
@@ -46,18 +88,43 @@ public class VaultFactory {
         return instance;
     }
 
+    /**
+     * Resets the global factory instance.
+     * <p>
+     * Useful in tests or when switching between users in a single process.
+     */
     public static void resetInstance() {
         instance = null;
     }
 
+    /**
+     * Builds an in-memory vault populated with demo credentials for the user
+     * associated with this factory.
+     * <p>
+     * Intended for development and UI testing only; do not persist or ship this
+     * data in production builds.
+     *
+     * @return a demo {@link Vault} instance
+     */
     public Vault mockVault() throws GeneralSecurityException {
         return mockVault(user);
     }
 
+    /**
+     * Builds an in-memory vault populated with demo credentials for the given user.
+     * <p>
+     * All items are created in plain-text form ({@code isEncrypted = false})
+     * and the containing {@link Vault} is also marked as not encrypted.
+     *
+     * @param user logical owner for the returned vault
+     * @return a demo {@link Vault} instance
+     */
     public Vault mockVault(User user) throws GeneralSecurityException {
+        Objects.requireNonNull(user, "user must not be null");
+
         Vault vault = new Vault(DEFAULT_STRATEGY, user, false);
 
-        // Accounts
+        // Accounts (demo data only)
         vault.add(new Account(
                 "user@gmail.com",
                 "mail.google.com",
@@ -79,7 +146,7 @@ public class VaultFactory {
                 false
         ));
 
-        // Credit Cards
+        // Credit Cards (demo data only)
         vault.add(new CreditCard(
                 "GABRIEL MUSTEATA",
                 "4111111111111111",
@@ -101,8 +168,30 @@ public class VaultFactory {
         return vault;
     }
 
+    /**
+     * Reconstructs a {@link Vault} instance from its JSON representation.
+     * <p>
+     * The method expects the JSON to contain at least:
+     * <ul>
+     *   <li>{@code checker}: encrypted verifier bound to the master password,</li>
+     *   <li>{@code vaultKey}: key material export from the strategy,</li>
+     *   <li>optionally {@code accounts} and {@code creditcards} arrays.</li>
+     * </ul>
+     * The supplied {@code strategy} will have its key imported from
+     * {@code vaultKey} and will be used to validate the master password
+     * against the {@code checker}.
+     *
+     * @param json      vault JSON representation
+     * @param strategy  encryption strategy to associate with the vault
+     * @return a {@link Vault} instance in encrypted state
+     * @throws GeneralSecurityException if the master password is wrong or
+     *                                  cryptographic operations fail
+     */
     public Vault fromJSON(String json, VaultEncryptingStrategy strategy)
             throws GeneralSecurityException {
+
+        Objects.requireNonNull(json, "json must not be null");
+        Objects.requireNonNull(strategy, "strategy must not be null");
 
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
 
@@ -119,38 +208,38 @@ public class VaultFactory {
                 strategy,
                 user,
                 checker,
-                true
+                true // isEncrypted: data is expected to be cipher-text
         );
 
-        // Parsear Accounts
+        // Parse Accounts
         if (root.has("accounts")) {
             JsonArray accounts = root.getAsJsonArray("accounts");
             for (JsonElement element : accounts) {
                 JsonObject obj = element.getAsJsonObject();
 
-                String id            = obj.get("id").getAsString();
-                String username      = obj.get("username").getAsString();
-                String domain        = obj.get("domain").getAsString();
-                String password      = obj.get("password").getAsString();
-                boolean isEncrypted  = !password.equals("***");
+                String id           = obj.get("id").getAsString();
+                String username     = obj.get("username").getAsString();
+                String domain       = obj.get("domain").getAsString();
+                String password     = obj.get("password").getAsString();
+                boolean isEncrypted = !password.equals("***");
 
                 vault.add(new Account(id, username, domain, password, isEncrypted));
             }
         }
 
-        // Parsear CreditCards
+        // Parse CreditCards
         if (root.has("creditcards")) {
             JsonArray creditCards = root.getAsJsonArray("creditcards");
             for (JsonElement element : creditCards) {
                 JsonObject obj = element.getAsJsonObject();
 
-                String id            = obj.get("id").getAsString();
-                String cardHolderName  = obj.get("cardHolderName").getAsString();
-                String cardNumber      = obj.get("cardNumber").getAsString();
-                String expirationDate  = obj.get("expirationDate").getAsString();
-                String cvv             = obj.get("cvv").getAsString();
-                String postalCode      = obj.get("postalCode").getAsString();
-                boolean isEncrypted    = !cvv.equals("***");
+                String id             = obj.get("id").getAsString();
+                String cardHolderName = obj.get("cardHolderName").getAsString();
+                String cardNumber     = obj.get("cardNumber").getAsString();
+                String expirationDate = obj.get("expirationDate").getAsString();
+                String cvv            = obj.get("cvv").getAsString();
+                String postalCode     = obj.get("postalCode").getAsString();
+                boolean isEncrypted   = !cvv.equals("***");
 
                 vault.add(new CreditCard(
                         id, cardHolderName, cardNumber, expirationDate,
@@ -162,7 +251,25 @@ public class VaultFactory {
         return vault;
     }
 
-    private boolean checkMasterPassword(String checker, VaultEncryptingStrategy strategy) throws GeneralSecurityException {
+    /**
+     * Validates that the master password currently configured in the provided
+     * {@link VaultEncryptingStrategy} matches the one used to produce the
+     * given {@code checker} value.
+     * <p>
+     * The checker is decrypted, the SHA-256 of the current {@link User}'s
+     * username is recomputed, and both values are compared using a
+     * constant-time comparison to reduce timing side-channels.
+     *
+     * @param checker  encrypted verifier stored alongside the vault
+     * @param strategy strategy configured with the candidate master password
+     * @return {@code true} if the master password is correct, {@code false} otherwise
+     */
+    private boolean checkMasterPassword(String checker, VaultEncryptingStrategy strategy)
+            throws GeneralSecurityException {
+
+        Objects.requireNonNull(checker, "checker must not be null");
+        Objects.requireNonNull(strategy, "strategy must not be null");
+
         String decryptedChecker = strategy.decryptWithDerivedKey(checker);
 
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -174,7 +281,27 @@ public class VaultFactory {
             hex.append(String.format("%02x", b));
         }
 
-        return hex.toString().equals(decryptedChecker);
+        return constantTimeEquals(hex.toString(), decryptedChecker);
     }
 
+    /**
+     * Compares two strings in (approximate) constant time to mitigate timing
+     * attacks. Both strings must be non-null.
+     */
+    private static boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        if (a.length() != b.length()) {
+            // Keep length check explicit; early return is acceptable since
+            // password length is not considered a secret in this context.
+            return false;
+        }
+
+        int result = 0;
+        for (int i = 0; i < a.length(); i++) {
+            result |= a.charAt(i) ^ b.charAt(i);
+        }
+        return result == 0;
+    }
 }
