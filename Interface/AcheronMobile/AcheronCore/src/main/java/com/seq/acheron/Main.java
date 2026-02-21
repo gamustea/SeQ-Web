@@ -22,7 +22,6 @@ public class Main {
 
     static void main() throws GeneralSecurityException {
 
-
         VaultFactory vaultFactory = VaultFactory.getInstance(
                 new AESVaultEncryptingStrategy(
                         "Una contraseña",

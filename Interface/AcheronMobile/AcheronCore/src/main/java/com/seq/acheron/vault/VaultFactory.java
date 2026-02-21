@@ -92,6 +92,8 @@ public class VaultFactory {
         String checker = root.get("checker").getAsString();
         String vaultKey = root.get("vaultKey").getAsString();
 
+        strategy.importVaultKey(vaultKey);
+
         if (!checkMasterPassword(checker)) {
             throw new GeneralSecurityException("Wrong master password");
         }
