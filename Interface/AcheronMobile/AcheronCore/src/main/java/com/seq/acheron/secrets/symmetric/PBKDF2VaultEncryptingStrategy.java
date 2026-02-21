@@ -6,6 +6,7 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 import java.security.spec.KeySpec;
+import java.util.Arrays;
 import java.util.Base64;
 
 /**
@@ -14,12 +15,12 @@ import java.util.Base64;
  * <p>
  * This strategy:
  * <ul>
- *     <li>Derives {@link #derivedKey} from a master password and salt
- *     using PBKDF2WithHmacSHA256.</li>
- *     <li>Uses an existing {@link #vaultKey} (provided to the constructor)
- *     for AES-GCM encryption/decryption of vault data.</li>
- *     <li>Relies on {@link VaultEncryptingStrategy} to wrap and unwrap
- *     the vault key using the derived key.</li>
+ * <li>Derives {@link #derivedKey} from a master password and salt
+ * using PBKDF2WithHmacSHA256.</li>
+ * <li>Uses an existing {@link #vaultKey} (provided to the constructor)
+ * for AES-GCM encryption/decryption of vault data.</li>
+ * <li>Relies on {@link VaultEncryptingStrategy} to wrap and unwrap
+ * the vault key using the derived key.</li>
  * </ul>
  */
 public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
@@ -46,28 +47,25 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
      * remains {@code null} until {@link VaultEncryptingStrategy#importVaultKey(String)}
      * is called.
      *
-     * @param masterPassword   the user's master password; wiped from memory after use
-     * @param saltBase64       Base64-encoded salt used for PBKDF2
+     * @param masterPassword  the user's master password; wiped from memory after use
+     * @param saltBase64      Base64-encoded salt used for PBKDF2
      * @param generateVaultKey {@code true} to generate a fresh random vault key;
-     *                         {@code false} to defer key assignment
+     *                        {@code false} to defer key assignment
      * @throws GeneralSecurityException if key derivation or key generation fails
      */
     public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey)
             throws GeneralSecurityException {
-
         super("AES/GCM/NoPadding", generateVaultKey);
         this.saltBase64 = saltBase64;
-
         char[] passwordChars = masterPassword.toCharArray();
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-
             KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, ITERATIONS, KEY_LENGTH_BITS);
             SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
             SecretKey tmp = factory.generateSecret(spec);
             this.derivedKey = new SecretKeySpec(tmp.getEncoded(), "AES");
         } finally {
-            java.util.Arrays.fill(passwordChars, '\0');
+            Arrays.fill(passwordChars, '\0');
         }
     }
 
@@ -89,22 +87,36 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
      */
     public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, SecretKey vaultKey)
             throws GeneralSecurityException {
-
         super("AES/GCM/NoPadding", vaultKey);
-
         char[] passwordChars = masterPassword.toCharArray();
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-
             KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, ITERATIONS, KEY_LENGTH_BITS);
             SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
             SecretKey tmp = factory.generateSecret(spec);
             this.derivedKey = new SecretKeySpec(tmp.getEncoded(), "AES");
         } finally {
-            java.util.Arrays.fill(passwordChars, '\0');
+            Arrays.fill(passwordChars, '\0');
         }
     }
 
+    /**
+     * Serialises the cryptographic configuration of this strategy to JSON.
+     * <p>
+     * This does NOT include any secret material (no master password, no
+     * derivedKey, no raw vaultKey), only public parameters required to
+     * reconstruct the KDF and cipher configuration.
+     * Example output:
+     * {
+     *   "transformation": "AES/GCM/NoPadding",
+     *   "kdf": "PBKDF2",
+     *   "kdfIterations": 600000,
+     *   "kdfKeyLength": 256,
+     *   "salt": "base64..."
+     * }
+     *
+     * @return a JSON string with non-secret cryptographic parameters
+     */
     public String toJson() {
         return "{"
                 + "\"transformation\": \"" + transformation + "\","
