@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.seq.acheron.agents.User;
+import com.seq.acheron.secrets.symmetric.AESVaultEncryptingStrategy;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.storables.Account;
 import com.seq.acheron.vault.storables.CreditCard;
@@ -18,19 +19,35 @@ import java.util.Arrays;
 public class VaultFactory {
 
     private static VaultFactory instance;
-    private final VaultEncryptingStrategy strategy;
+    private static final VaultEncryptingStrategy DEFAULT_STRATEGY;
+
+    static {
+        try {
+            DEFAULT_STRATEGY = new AESVaultEncryptingStrategy(
+                    "CONTRASEÑA",
+                    "328197321098732190732198073291873219837281998321",
+                    true
+            );
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private final User user;
 
-    private VaultFactory(VaultEncryptingStrategy strategy, User user) {
-        this.strategy = strategy;
+    private VaultFactory(User user) throws GeneralSecurityException {
         this.user = user;
     }
 
-    public static VaultFactory getInstance(VaultEncryptingStrategy strategy, User user) {
+    public static VaultFactory getInstance(User user) throws GeneralSecurityException {
         if (instance == null) {
-            instance = new VaultFactory(strategy, user);
+            instance = new VaultFactory(user);
         }
         return instance;
+    }
+
+    public static void resetInstance() {
+        instance = null;
     }
 
     public Vault mockVault() throws GeneralSecurityException {
@@ -38,7 +55,7 @@ public class VaultFactory {
     }
 
     public Vault mockVault(User user) throws GeneralSecurityException {
-        Vault vault = new Vault(strategy, user, false);
+        Vault vault = new Vault(DEFAULT_STRATEGY, user, false);
 
         // Accounts
         vault.add(new Account(
@@ -84,7 +101,7 @@ public class VaultFactory {
         return vault;
     }
 
-    public Vault fromJSON(String json)
+    public Vault fromJSON(String json, VaultEncryptingStrategy strategy)
             throws GeneralSecurityException {
 
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
@@ -94,7 +111,7 @@ public class VaultFactory {
 
         strategy.importVaultKey(vaultKey);
 
-        if (!checkMasterPassword(checker)) {
+        if (!checkMasterPassword(checker, strategy)) {
             throw new GeneralSecurityException("Wrong master password");
         }
 
@@ -145,7 +162,7 @@ public class VaultFactory {
         return vault;
     }
 
-    private boolean checkMasterPassword(String checker) throws GeneralSecurityException {
+    private boolean checkMasterPassword(String checker, VaultEncryptingStrategy strategy) throws GeneralSecurityException {
         String decryptedChecker = strategy.decryptWithDerivedKey(checker);
 
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
