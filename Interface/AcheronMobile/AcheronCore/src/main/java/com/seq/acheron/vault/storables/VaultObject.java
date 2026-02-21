@@ -82,22 +82,22 @@ public abstract class VaultObject implements Sharable, Storable, Comparable<Vaul
      *                    (e.g., when loading from persistent storage);
      *                    {@code false} if they are plain-text
      */
-    public VaultObject(String code, boolean isEncrypted) {
-        this.id = code + objectCounter;
+    public VaultObject(String code, boolean isEncrypted, boolean increaseCounter) {
+        this.id = increaseCounter ? code + objectCounter : code;
         this.allowedUsers = new HashSet<>();
         this.isEncrypted = isEncrypted;
         this.createdAt = new Date();
         this.updatedAt = new Date();
-        objectCounter++;
+        if (increaseCounter) objectCounter++;
     }
 
-    public VaultObject(String code, boolean isEncrypted, Date createdAt, Date updatedAt) {
-        this.id = code + objectCounter;
+    public VaultObject(String code, boolean isEncrypted, Date createdAt, Date updatedAt, boolean increaseCounter) {
+        this.id = increaseCounter ? code + objectCounter : code;
         this.allowedUsers = new HashSet<>();
         this.isEncrypted = isEncrypted;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
-        objectCounter++;
+        if (increaseCounter) objectCounter++;
     }
 
     /**
@@ -257,10 +257,10 @@ public abstract class VaultObject implements Sharable, Storable, Comparable<Vaul
             }
         }
 
-        return  "'id': " + "'" + this.id + "', "
-                + "'createdAt': " + "'" + this.createdAt.toString() + "', "
-                + "'updatedAt': " + "'" + this.updatedAt.toString() + "', "
-                + "'allowedUsers': [" + userList + "], ";
+        return  "\"id\": " + "\"" + this.id + "\", "
+                + "\"createdAt\": " + "\"" + this.createdAt.toString() + "\", "
+                + "\"updatedAt\": " + "\"" + this.updatedAt.toString() + "\", "
+                + "\"allowedUsers\": [" + userList + "], ";
     }
 
 

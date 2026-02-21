@@ -211,6 +211,14 @@ public abstract class VaultEncryptingStrategy {
         return decryptWithKey(ivAndCiphertextBase64, vaultKey);
     }
 
+    public String encryptWithDerivedKey(String plainText) throws GeneralSecurityException {
+        return encryptWithKey(plainText, derivedKey);
+    }
+
+    public String decryptWithDerivedKey(String text) throws GeneralSecurityException {
+        return decryptWithKey(text, derivedKey);
+    }
+
     /**
      * Generates a new random 256-bit AES key that can be used as a
      * {@link #vaultKey}.

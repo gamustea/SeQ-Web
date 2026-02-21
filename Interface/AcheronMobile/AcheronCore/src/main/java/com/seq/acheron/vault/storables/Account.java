@@ -1,6 +1,7 @@
 package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
@@ -53,7 +54,20 @@ public class Account extends VaultObject {
             @NotNull String password,
             boolean isEncrypted
     ) {
-        super("ACC", isEncrypted);
+        super("ACC", isEncrypted, true);
+        this.username = username;
+        this.domain = domain;
+        this.password = password;
+    }
+
+    public Account(
+            @NotNull String id,
+            @NotNull String username,
+            @NotNull String domain,
+            @NotNull String password,
+            boolean isEncrypted
+    ) {
+        super(id, isEncrypted, false);
         this.username = username;
         this.domain = domain;
         this.password = password;
@@ -67,7 +81,22 @@ public class Account extends VaultObject {
             @NotNull Date updatedAt,
             boolean isEncrypted
     ) {
-        super("ACC", isEncrypted, createdAt, updatedAt);
+        super("ACC", isEncrypted, createdAt, updatedAt, true);
+        this.username = username;
+        this.domain = domain;
+        this.password = password;
+    }
+
+    public Account(
+            @NotNull String id,
+            @NotNull String username,
+            @NotNull String domain,
+            @NotNull String password,
+            @NotNull Date createdAt,
+            @NotNull Date updatedAt,
+            boolean isEncrypted
+    ) {
+        super(id, isEncrypted, createdAt, updatedAt, false);
         this.username = username;
         this.domain = domain;
         this.password = password;
@@ -103,8 +132,8 @@ public class Account extends VaultObject {
 
     @Override
     public VaultObject copy() {
-        VaultObject.setObjectCounter(getObjectCounter() - 1);
         return new Account(
+                this.getId(),
                 username,
                 domain,
                 password,
@@ -116,10 +145,13 @@ public class Account extends VaultObject {
 
     @Override
     public String toJSON() {
+        String safePassword = isEncrypted ? password : "***";
+
         return "{" +
                 super.toJSON() +
-                "username:'" + username + "'," +
-                "domain:'" + domain + "'," +
+                "\"username\":\"" + username + "\", " +
+                "\"domain\":\"" + domain + "\", " +
+                "\"password\":\"" + safePassword + "\"" +
                 '}';
     }
 }

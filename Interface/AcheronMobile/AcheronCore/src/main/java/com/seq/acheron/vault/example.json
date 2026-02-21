@@ -1,0 +1,56 @@
+{
+  "creditcards": [
+    {
+      "id": "CDC3",
+      "createdAt": "Sat Feb 21 14:24:09 CET 2026",
+      "updatedAt": "Sat Feb 21 14:24:09 CET 2026",
+      "allowedUsers": [],
+      "cardHolderName": "pfy/NfmxxWCSLEgX6HF5aRMLFSZxdyAL/0QIvHCtZECFak8GOHBXMch3RYI=",
+      "cardNumber": "7OuU4EWnUQD+EYRKy8HKDu/SppSR/mOGYFliJM7Ohd0NP+R+er71SiS/Cl4=",
+      "expirationDate": "IqZTTAsb3Yqxfrw6gMlu681cyO7+CgXgOgAk/3XN4YK6",
+      "postalCode": "HakIZ9tiAMVZD96HoBatnoizQJltmNxbWHSfs1UkrLwL",
+      "cvv": "Xh32G/EMY4uWxirvaZaCx3SEeCgEahjl7AszqNDaFw=="
+    },
+    {
+      "id": "CDC4",
+      "createdAt": "Sat Feb 21 14:24:09 CET 2026",
+      "updatedAt": "Sat Feb 21 14:24:09 CET 2026",
+      "allowedUsers": [],
+      "cardHolderName": "Mra1/7vAY8KKy9xixDpZd/yPXWNPEC4+aFnnkPadMPr7vx6Gd8+6SesocEU=",
+      "cardNumber": "QVICkXcJD9kMXRZhQlS1UdJ/DUd5zCv0rG/i3j0htZSWv8W62qmdzcSqyc0=",
+      "expirationDate": "Opb2CoGUp2qCLoon1ie4mGInoFPcQRXqJp7cJBBd2J1Z",
+      "postalCode": "3SDjM0E4ncFL9uyNlDjaxdBT7n5P7fUcUyY7uoIFWfkB",
+      "cvv": "tlvWvKpqwWIF2YdjtmBQ0bCyatpeeSTPIJKhRnJwmA=="
+    }
+  ],
+  "accounts": [
+    {
+      "id": "ACC0",
+      "createdAt": "Sat Feb 21 14:24:09 CET 2026",
+      "updatedAt": "Sat Feb 21 14:24:09 CET 2026",
+      "allowedUsers": [],
+      "username": "LJQ6rjP9YBaMT2mt9bQ4dCMF4QoOVJFv9MPb99/gcn30WzBMcN3QVfgV",
+      "domain": "73YGYjChgUo7MCSGEKix6DbTubST+FjNXtuTO3X2DWp8WL5fU55ylH63Sg==",
+      "password": "3qfbAmxN4dRO9qlGI6LSv1NNWGH1Eavd7oFycHlsDO4N031l+qPkNg=="
+    },
+    {
+      "id": "ACC1",
+      "createdAt": "Sat Feb 21 14:24:09 CET 2026",
+      "updatedAt": "Sat Feb 21 14:24:09 CET 2026",
+      "allowedUsers": [],
+      "username": "ZrnFr5ircFDu8FVHcPj/QxGyjsV82cAOqcHRNyFYoxZ+SOok",
+      "domain": "DF09Ei7w60UKa0c4+xZX1FaGtyjQmL/mbUaJn/+hIgjrJD1+lV0=",
+      "password": "4OQrHmZqnQmotd8WU5VMQSZ1CkgF55h31wzVivuwTQkZAYBDE3v1xtQAfg=="
+    },
+    {
+      "id": "ACC2",
+      "createdAt": "Sat Feb 21 14:24:09 CET 2026",
+      "updatedAt": "Sat Feb 21 14:24:09 CET 2026",
+      "allowedUsers": [],
+      "username": "ULDdT6ky4x4DcapQfxI7RM9Fbrtd797jhDcQ+Kw7jktGZVBjG6x9Wj6c",
+      "domain": "6pV88C8QzbjD6evtSzE5JrFiMvmiwPHxFBFfczLUlOCwaoM+eent",
+      "password": "cSVwQYYflP37EUEydCuzviDhSKe8UoSDquO+EbBrhVYZdn2gApp3Ew=="
+    }
+  ]
+}
+

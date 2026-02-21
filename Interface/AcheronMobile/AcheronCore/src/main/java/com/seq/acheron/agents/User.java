@@ -1,6 +1,7 @@
 package com.seq.acheron.agents;
 
 import lombok.Getter;
+import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -24,7 +25,23 @@ public class User implements Comparable<User> {
      * and immutable afterwards.
      */
     @Getter
-    private final Integer id;
+    private final String id;
+
+    @Getter
+    @Setter
+    private String name;
+
+    @Getter
+    @Setter
+    private String surname;
+
+    @Getter
+    @Setter
+    private String email;
+
+    @Getter
+    @Setter
+    private String username;
 
     /**
      * Creates a new {@code User} with the given unique identifier.
@@ -32,8 +49,30 @@ public class User implements Comparable<User> {
      * @param id the user's unique identifier; must not be {@code null}
      * @throws IllegalArgumentException if {@code id} is {@code null}
      */
-    public User(@NotNull Integer id) {
+    public User(
+            @NotNull String id,
+            @NotNull String name,
+            @NotNull String surname,
+            @NotNull String email,
+            @NotNull String username
+    ) {
         this.id = id;
+        this.name = name;
+        this.surname = surname;
+        this.email = email;
+        this.username = username;
+    }
+
+
+
+    public String toJSON() {
+        return "\"user\": {" +
+                "\"id\": \"" + id + "\", " +
+                "\"name\": \"" + name + "\", " +
+                "\"surname\": \"" + surname + "\", " +
+                "\"email\": \"" + email + "\", " +
+                "\"username\": \"" + username + "\"" +
+                "}";
     }
 
     /**
@@ -72,5 +111,10 @@ public class User implements Comparable<User> {
     @Override
     public int hashCode() {
         return id.hashCode();
+    }
+
+    @Override
+    public String toString() {
+        return this.toJSON();
     }
 }

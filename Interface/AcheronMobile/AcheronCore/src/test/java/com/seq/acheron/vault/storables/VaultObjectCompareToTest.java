@@ -11,7 +11,7 @@ public class VaultObjectCompareToTest {
 
     static class ConcreteVaultObject extends VaultObject {
         public ConcreteVaultObject(String code, boolean isEncrypted) {
-            super(code, isEncrypted);
+            super(code, isEncrypted, true);
         }
 
         @Override

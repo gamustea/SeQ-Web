@@ -1,6 +1,7 @@
 package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
@@ -62,7 +63,25 @@ public class CreditCard extends VaultObject {
             @NotNull String postalCode,
             boolean isEncrypted
     ) {
-        super("CDC", isEncrypted);
+        super("CDC", isEncrypted, true);
+
+        this.cardHolderName = cardHolderName;
+        this.cardNumber = cardNumber;
+        this.expirationDate = expirationDate;
+        this.cvv = cvv;
+        this.postalCode = postalCode;
+    }
+
+    public CreditCard(
+            @NotNull String code,
+            @NotNull String cardHolderName,
+            @NotNull String cardNumber,
+            @NotNull String expirationDate,
+            @NotNull String cvv,
+            @NotNull String postalCode,
+            boolean isEncrypted
+    ) {
+        super(code, isEncrypted, false);
 
         this.cardHolderName = cardHolderName;
         this.cardNumber = cardNumber;
@@ -82,7 +101,27 @@ public class CreditCard extends VaultObject {
             @NotNull Date updatedAt,
             boolean isEncrypted
     ) {
-        super("CDC", isEncrypted, createdAt, updatedAt);
+        super("CDC", isEncrypted, createdAt, updatedAt, true);
+
+        this.cardHolderName = cardHolderName;
+        this.cardNumber = cardNumber;
+        this.expirationDate = expirationDate;
+        this.cvv = cvv;
+        this.postalCode = postalCode;
+    }
+
+    public CreditCard(
+            @NotNull String code,
+            @NotNull String cardHolderName,
+            @NotNull String cardNumber,
+            @NotNull String expirationDate,
+            @NotNull String cvv,
+            @NotNull String postalCode,
+            @NotNull Date createdAt,
+            @NotNull Date updatedAt,
+            boolean isEncrypted
+    ) {
+        super(code, isEncrypted, createdAt, updatedAt, false);
 
         this.cardHolderName = cardHolderName;
         this.cardNumber = cardNumber;
@@ -132,9 +171,8 @@ public class CreditCard extends VaultObject {
 
     @Override
     public VaultObject copy() {
-        VaultObject.setObjectCounter(VaultObject.getObjectCounter() - 1);
-
         return new CreditCard(
+                this.getId(),
                 cardHolderName,
                 cardNumber,
                 expirationDate,
@@ -158,12 +196,12 @@ public class CreditCard extends VaultObject {
 
         return "{" +
                 super.toJSON() +
-                "'cardHolderName': '" + cardHolderName + "'" +
+                "\"cardHolderName\": \"" + cardHolderName + "\"" +
                 // Never log full card number or CVV:
-                ", 'cardNumber': '" + cardNumber + "'" +
-                ", 'expirationDate': '" + expirationDate + '\'' +
-                ", 'postalCode': " + postalCode +
-                ", 'cvv': " + cvv +
+                ", \"cardNumber\": \"" + cardNumber + "\"" +
+                ", \"expirationDate\": \"" + expirationDate + "\"" +
+                ", \"postalCode\": \"" + postalCode + "\"" +
+                ", \"cvv\": \"" + cvv + "\"" +
                 '}';
     }
 }

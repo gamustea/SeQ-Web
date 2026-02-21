@@ -1,12 +1,15 @@
 package com.seq.acheron.vault;
 
+import com.seq.acheron.agents.User;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.storables.Storable;
 import lombok.Getter;
 
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /**
  * A secure container that stores and manages {@link Storable} objects,
@@ -37,6 +40,10 @@ import java.util.List;
 @Getter
 public class Vault {
 
+    /* ═══════════════════════════════════════
+     *                FIELDS
+     * ═══════════════════════════════════════ */
+
     /**
      * The encryption strategy shared by all items in this vault.
      */
@@ -54,6 +61,16 @@ public class Vault {
      */
     private boolean isEncrypted;
 
+    private final String checker;
+
+    private final User user;
+
+
+
+    /* ═══════════════════════════════════════
+     *             CONSTRUCTORS
+     * ═══════════════════════════════════════ */
+
     /**
      * Creates a new, empty vault with the given encryption strategy.
      *
@@ -62,9 +79,34 @@ public class Vault {
      * @throws NoSuchAlgorithmException if the strategy cannot be initialised
      *                                  due to an unsupported algorithm
      */
-    public Vault(VaultEncryptingStrategy strategy) throws NoSuchAlgorithmException {
+    public Vault(VaultEncryptingStrategy strategy, User user, boolean isEncrypted) throws GeneralSecurityException {
         this.strategy = strategy;
+        this.user = user;
+        this.isEncrypted = isEncrypted;
+
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hashBytes = digest.digest(user.getUsername().getBytes(StandardCharsets.UTF_8));
+
+        StringBuilder hex = new StringBuilder();
+        for (byte b : hashBytes) {
+            hex.append(String.format("%02x", b));
+        }
+        String hashedUsername = hex.toString();
+        this.checker = strategy.encryptWithDerivedKey(hashedUsername);
     }
+
+    public Vault(VaultEncryptingStrategy strategy, User user, String checker, boolean isEncrypted) throws GeneralSecurityException {
+        this.strategy = strategy;
+        this.user = user;
+        this.checker = checker;
+        this.isEncrypted = isEncrypted;
+    }
+
+
+
+    /* ═══════════════════════════════════════
+     *               METHODS
+     * ═══════════════════════════════════════ */
 
     /**
      * Retrieves a stored item by its unique identifier.
@@ -87,8 +129,10 @@ public class Vault {
      *
      * @param storable the item to add; must not be {@code null}
      */
-    public void add(Storable storable) {
+    public Vault add(Storable storable) {
         storables.add(storable);
+        storables.sort(null);
+        return this;
     }
 
     /**
@@ -97,8 +141,9 @@ public class Vault {
      *
      * @param storable the item to remove
      */
-    public void remove(Storable storable) {
+    public Vault remove(Storable storable) {
         storables.remove(storable);
+        return this;
     }
 
     /**
@@ -108,8 +153,8 @@ public class Vault {
      *
      * @throws IllegalStateException if the vault is already encrypted
      */
-    public void encryptAll() {
-        toggleEncrypt(true);
+    public Vault encryptAll() {
+        return toggleEncrypt(true);
     }
 
     /**
@@ -119,8 +164,8 @@ public class Vault {
      *
      * @throws IllegalStateException if the vault is not currently encrypted
      */
-    public void decryptAll() {
-        toggleEncrypt(false);
+    public Vault decryptAll() {
+        return toggleEncrypt(false);
     }
 
     /**
@@ -131,8 +176,8 @@ public class Vault {
      * @throws IllegalStateException if the operation conflicts with the current
      *                               {@link #isEncrypted} state
      */
-    private void toggleEncrypt(boolean encrypt) {
-        if (encrypt && isEncrypted) {
+    private Vault toggleEncrypt(boolean encrypt) {
+         if (encrypt && isEncrypted) {
             throw new IllegalStateException("Vault is already encrypted.");
         }
         if (!encrypt && !isEncrypted) {
@@ -147,5 +192,69 @@ public class Vault {
             }
         }
         isEncrypted = encrypt;
+        return this;
+    }
+
+    private Map<String, List<Storable>> classifyStorables() {
+        Map<String, List<Storable>> map = new HashMap<>();
+        for (Storable storable : storables) {
+            String key = storable.category();
+            map.computeIfAbsent(
+                        key, k -> new ArrayList<>()
+                    ).add(storable);
+        }
+        return map;
+    }
+
+    public String toJSON() throws GeneralSecurityException {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+
+        sb.append("\"checker\": \"").append(checker).append("\", ");
+        sb.append("\"vaultKey\": \"").append(strategy.exportVaultKey()).append("\", ");
+        Map<String, List<Storable>> map = classifyStorables();
+        boolean firstEntry = true;
+
+        for (Map.Entry<String, List<Storable>> entry : map.entrySet()) {
+            if (!firstEntry) sb.append(", ");
+            firstEntry = false;
+
+            sb.append("\"").append(entry.getKey()).append("\": [");
+
+            List<Storable> storables = entry.getValue();
+            for (int i = 0; i < storables.size(); i++) {
+                sb.append(storables.get(i).toJSON());
+                if (i < storables.size() - 1) sb.append(", ");
+            }
+
+            sb.append("]");
+        }
+
+        sb.append("}");
+        return sb.toString();
+    }
+
+    @Override
+    public String toString() {
+        try {
+            return toJSON();
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) return true;
+
+        if (other instanceof Vault) {
+            for (Storable storable : storables) {
+                if (!((Vault) other).storables.contains(storable)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 }
