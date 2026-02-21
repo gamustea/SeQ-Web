@@ -48,6 +48,8 @@ public abstract class VaultEncryptingStrategy {
      */
     protected final String transformation;
 
+    protected String saltBase64;
+
     /**
      * Creates a new encrypting strategy and optionally generates a random
      * {@link #vaultKey}.
@@ -62,8 +64,10 @@ public abstract class VaultEncryptingStrategy {
      *                         {@link #importVaultKey(String)} is called
      * @throws GeneralSecurityException if key generation fails
      */
-    protected VaultEncryptingStrategy(String transformation, boolean generateVaultKey)
-            throws GeneralSecurityException {
+    protected VaultEncryptingStrategy(
+            String transformation,
+            boolean generateVaultKey
+    ) throws GeneralSecurityException {
 
         this.transformation = transformation;
         if (generateVaultKey) {
@@ -218,6 +222,8 @@ public abstract class VaultEncryptingStrategy {
     public String decryptWithDerivedKey(String text) throws GeneralSecurityException {
         return decryptWithKey(text, derivedKey);
     }
+
+    public abstract String toJSON();
 
     /**
      * Generates a new random 256-bit AES key that can be used as a

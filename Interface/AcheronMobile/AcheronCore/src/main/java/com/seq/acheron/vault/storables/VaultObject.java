@@ -7,6 +7,8 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -243,6 +245,13 @@ public abstract class VaultObject implements Sharable, Storable, Comparable<Vaul
     public String toJSON() {
         StringBuilder userList = new StringBuilder();
 
+        String createdAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(
+                this.createdAt.toInstant().atZone(java.time.ZoneId.systemDefault())
+        );
+        String updatedAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(
+                this.updatedAt.toInstant().atZone(java.time.ZoneId.systemDefault())
+        );
+
         List<User> users = this.getAllowedUsers()
                 .stream()
                 .sorted()
@@ -258,8 +267,8 @@ public abstract class VaultObject implements Sharable, Storable, Comparable<Vaul
         }
 
         return  "\"id\": " + "\"" + this.id + "\", "
-                + "\"createdAt\": " + "\"" + this.createdAt.toString() + "\", "
-                + "\"updatedAt\": " + "\"" + this.updatedAt.toString() + "\", "
+                + "\"createdAt\": " + "\"" + createdAtISO + "\", "
+                + "\"updatedAt\": " + "\"" + updatedAtISO + "\", "
                 + "\"allowedUsers\": [" + userList + "], ";
     }
 

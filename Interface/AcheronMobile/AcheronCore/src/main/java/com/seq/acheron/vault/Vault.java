@@ -8,6 +8,8 @@ import lombok.Getter;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -296,11 +298,17 @@ public class Vault {
      * @throws GeneralSecurityException if exporting the vault key fails
      */
     public String toJSON() throws GeneralSecurityException {
+        String isoDate = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(
+                Instant.now().atZone(java.time.ZoneId.systemDefault())
+        );
+
         StringBuilder sb = new StringBuilder();
         sb.append("{");
 
         sb.append("\"checker\": \"").append(checker).append("\", ");
         sb.append("\"vaultKey\": \"").append(strategy.exportVaultKey()).append("\", ");
+        sb.append("\"algorithm\": ").append(strategy.toJSON()).append(", ");
+
 
         Map<String, List<Storable>> map = classifyStorables();
         boolean firstEntry = true;
@@ -354,8 +362,7 @@ public class Vault {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof Vault)) return false;
-        Vault that = (Vault) o;
+        if (!(o instanceof Vault that)) return false;
         return isEncrypted == that.isEncrypted
                 && Objects.equals(strategy, that.strategy)
                 && Objects.equals(user, that.user)

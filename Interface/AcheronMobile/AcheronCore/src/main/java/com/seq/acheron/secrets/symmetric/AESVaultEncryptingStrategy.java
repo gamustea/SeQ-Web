@@ -22,6 +22,10 @@ import java.util.Base64;
  */
 public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
 
+    private static final int ARGON2_ITERATIONS   = 3;
+    private static final int ARGON2_MEMORY_KIB   = 65536;
+    private static final int ARGON2_PARALLELISM  = 1;
+
     /**
      * Creates a new strategy instance that:
      * <ul>
@@ -36,15 +40,24 @@ public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
      * @param generateVaultKey  Whether the constructor builds a random {@link #vaultKey} or not
      * @throws GeneralSecurityException if key generation fails
      */
-    public AESVaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey) throws GeneralSecurityException {
+    public AESVaultEncryptingStrategy(String masterPassword,
+                                      String saltBase64,
+                                      boolean generateVaultKey) throws GeneralSecurityException {
         super("AES/GCM/NoPadding", generateVaultKey);
+        this.saltBase64 = saltBase64;
 
         Argon2Advanced argon2 = Argon2Factory.createAdvanced();
         char[] passwordChars = masterPassword.toCharArray();
 
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            byte[] keyBytes = argon2.rawHash(3, 65536, 1, passwordChars, saltBytes);
+            byte[] keyBytes = argon2.rawHash(
+                    ARGON2_ITERATIONS,
+                    ARGON2_MEMORY_KIB,
+                    ARGON2_PARALLELISM,
+                    passwordChars,
+                    saltBytes
+            );
             derivedKey = new SecretKeySpec(keyBytes, "AES");
         } finally {
             argon2.wipeArray(passwordChars);
@@ -62,19 +75,57 @@ public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
      * @param saltBase64     Base64-encoded salt used for Argon2
      * @param vaultKey       an existing vault key to reuse
      */
-    public AESVaultEncryptingStrategy(String masterPassword, String saltBase64, SecretKey vaultKey) {
+    public AESVaultEncryptingStrategy(String masterPassword,
+                                      String saltBase64,
+                                      SecretKey vaultKey) {
         super("AES/GCM/NoPadding", vaultKey);
+        this.saltBase64 = saltBase64;
 
         Argon2Advanced argon2 = Argon2Factory.createAdvanced();
         char[] passwordChars = masterPassword.toCharArray();
 
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            byte[] keyBytes = argon2.rawHash(3, 65536, 1, passwordChars, saltBytes);
+            byte[] keyBytes = argon2.rawHash(
+                    ARGON2_ITERATIONS,
+                    ARGON2_MEMORY_KIB,
+                    ARGON2_PARALLELISM,
+                    passwordChars,
+                    saltBytes
+            );
             derivedKey = new SecretKeySpec(keyBytes, "AES");
         } finally {
             argon2.wipeArray(passwordChars);
         }
+    }
+
+    /**
+     * Serialises the cryptographic configuration of this strategy to JSON.
+     * <p>
+     * This does NOT include any secret material (no master password, no
+     * derivedKey, no raw vaultKey), only public parameters required to
+     * reconstruct the KDF and cipher configuration.
+     * Example output:
+     * {
+     *   "algorithm": "AES/GCM/NoPadding",
+     *   "kdf": "Argon2",
+     *   "kdfIterations": 3,
+     *   "kdfMemoryKiB": 65536,
+     *   "kdfParallelism": 1,
+     *   "salt": "base64..."
+     * }
+     */
+    public String toJSON() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        sb.append("\"transformation\": \"").append(transformation).append("\", ");
+        sb.append("\"kdf\": \"Argon2\", ");
+        sb.append("\"kdfIterations\": \"").append(ARGON2_ITERATIONS).append("\", ");
+        sb.append("\"kdfMemoryKiB\": \"").append(ARGON2_MEMORY_KIB).append("\", ");
+        sb.append("\"kdfParallelism\": \"").append(ARGON2_PARALLELISM).append("\", ");
+        sb.append("\"salt\": \"").append(saltBase64).append("\"");
+        sb.append("}");
+        return sb.toString();
     }
 
 }

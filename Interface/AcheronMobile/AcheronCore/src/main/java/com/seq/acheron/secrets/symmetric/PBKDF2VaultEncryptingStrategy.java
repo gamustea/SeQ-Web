@@ -56,6 +56,7 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
             throws GeneralSecurityException {
 
         super("AES/GCM/NoPadding", generateVaultKey);
+        this.saltBase64 = saltBase64;
 
         char[] passwordChars = masterPassword.toCharArray();
         try {
@@ -102,5 +103,15 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
         } finally {
             java.util.Arrays.fill(passwordChars, '\0');
         }
+    }
+
+    public String toJSON() {
+        return "{"
+                + "\"transformation\": \"" + transformation + "\","
+                + "\"kdf\": \"PBKDF2\","
+                + "\"kdfIterations\": " + ITERATIONS + ","
+                + "\"kdfKeyLength\": " + KEY_LENGTH_BITS + ","
+                + "\"salt\": \"" + saltBase64 + "\""
+                + "}";
     }
 }

@@ -5,11 +5,15 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.seq.acheron.agents.User;
+import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.secrets.symmetric.AESVaultEncryptingStrategy;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.vault.storables.Account;
 import com.seq.acheron.vault.storables.CreditCard;
+import org.jetbrains.annotations.NotNull;
 
+import javax.crypto.AEADBadTagException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -29,8 +33,12 @@ import java.util.Objects;
  * single-user desktop/mobile scenarios and demo purposes.
  * For multi-user or server-side environments, prefer creating dedicated
  * factory instances per user instead of using the static {@link #getInstance(User)}.
+ *
+ * @param user The user this factory is bound to. All vaults produced by this instance
+ *             will use this user as their logical owner and as input when validating
+ *             the master password through the {@code checker} mechanism.
  */
-public class VaultFactory {
+public record VaultFactory(User user) {
 
     private static VaultFactory instance;
 
@@ -51,7 +59,7 @@ public class VaultFactory {
         try {
             DEFAULT_STRATEGY = new AESVaultEncryptingStrategy(
                     "CONTRASEÑA", // demo master password
-                    "328197321098732190732198073291873219837281998321",
+                    CryptoUtils.generateSalt(),
                     true
             );
         } catch (GeneralSecurityException e) {
@@ -59,14 +67,7 @@ public class VaultFactory {
         }
     }
 
-    /**
-     * The user this factory is bound to. All vaults produced by this instance
-     * will use this user as their logical owner and as input when validating
-     * the master password through the {@code checker} mechanism.
-     */
-    private final User user;
-
-    private VaultFactory(User user) {
+    public VaultFactory(User user) {
         this.user = Objects.requireNonNull(user, "user must not be null");
     }
 
@@ -181,34 +182,43 @@ public class VaultFactory {
      * {@code vaultKey} and will be used to validate the master password
      * against the {@code checker}.
      *
-     * @param json      vault JSON representation
-     * @param strategy  encryption strategy to associate with the vault
+     * @param json     vault JSON representation
      * @return a {@link Vault} instance in encrypted state
      * @throws GeneralSecurityException if the master password is wrong or
      *                                  cryptographic operations fail
      */
-    public Vault fromJSON(String json, VaultEncryptingStrategy strategy)
-            throws GeneralSecurityException {
-
-        Objects.requireNonNull(json, "json must not be null");
-        Objects.requireNonNull(strategy, "strategy must not be null");
-
+    public Vault fromJSON(
+            @NotNull String json,
+            @NotNull String masterPassword
+    ) throws  GeneralSecurityException {
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        JsonObject algorithm =  root.getAsJsonObject("algorithm");
 
-        String checker = root.get("checker").getAsString();
+        String salt = algorithm.get("salt").getAsString();
         String vaultKey = root.get("vaultKey").getAsString();
+        String checker = root.get("checker").getAsString();
 
-        strategy.importVaultKey(vaultKey);
+        VaultEncryptingStrategy strategy = new AESVaultEncryptingStrategy(
+                masterPassword,
+                salt,
+                false
+        );
+
+        try {
+            strategy.importVaultKey(vaultKey);
+        } catch (AEADBadTagException e) {
+            throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
+        }
 
         if (!checkMasterPassword(checker, strategy)) {
-            throw new GeneralSecurityException("Wrong master password");
+            throw new WrongPasswordException("Wrong master password");
         }
 
         Vault vault = new Vault(
                 strategy,
                 user,
                 checker,
-                true // isEncrypted: data is expected to be cipher-text
+                true
         );
 
         // Parse Accounts
@@ -217,10 +227,10 @@ public class VaultFactory {
             for (JsonElement element : accounts) {
                 JsonObject obj = element.getAsJsonObject();
 
-                String id           = obj.get("id").getAsString();
-                String username     = obj.get("username").getAsString();
-                String domain       = obj.get("domain").getAsString();
-                String password     = obj.get("password").getAsString();
+                String id = obj.get("id").getAsString();
+                String username = obj.get("username").getAsString();
+                String domain = obj.get("domain").getAsString();
+                String password = obj.get("password").getAsString();
                 boolean isEncrypted = !password.equals("***");
 
                 vault.add(new Account(id, username, domain, password, isEncrypted));
@@ -233,13 +243,13 @@ public class VaultFactory {
             for (JsonElement element : creditCards) {
                 JsonObject obj = element.getAsJsonObject();
 
-                String id             = obj.get("id").getAsString();
+                String id = obj.get("id").getAsString();
                 String cardHolderName = obj.get("cardHolderName").getAsString();
-                String cardNumber     = obj.get("cardNumber").getAsString();
+                String cardNumber = obj.get("cardNumber").getAsString();
                 String expirationDate = obj.get("expirationDate").getAsString();
-                String cvv            = obj.get("cvv").getAsString();
-                String postalCode     = obj.get("postalCode").getAsString();
-                boolean isEncrypted   = !cvv.equals("***");
+                String cvv = obj.get("cvv").getAsString();
+                String postalCode = obj.get("postalCode").getAsString();
+                boolean isEncrypted = !cvv.equals("***");
 
                 vault.add(new CreditCard(
                         id, cardHolderName, cardNumber, expirationDate,
@@ -264,17 +274,16 @@ public class VaultFactory {
      * @param strategy strategy configured with the candidate master password
      * @return {@code true} if the master password is correct, {@code false} otherwise
      */
-    private boolean checkMasterPassword(String checker, VaultEncryptingStrategy strategy)
-            throws GeneralSecurityException {
-
-        Objects.requireNonNull(checker, "checker must not be null");
-        Objects.requireNonNull(strategy, "strategy must not be null");
-
+    private boolean checkMasterPassword(
+            @NotNull String checker,
+            @NotNull VaultEncryptingStrategy strategy
+    ) throws GeneralSecurityException {
         String decryptedChecker = strategy.decryptWithDerivedKey(checker);
 
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] hashBytes = digest.digest(
-                user.getUsername().getBytes(StandardCharsets.UTF_8)
+                user.getUsername()
+                        .getBytes(StandardCharsets.UTF_8)
         );
         StringBuilder hex = new StringBuilder();
         for (byte b : hashBytes) {
@@ -293,8 +302,6 @@ public class VaultFactory {
             return false;
         }
         if (a.length() != b.length()) {
-            // Keep length check explicit; early return is acceptable since
-            // password length is not considered a secret in this context.
             return false;
         }
 
