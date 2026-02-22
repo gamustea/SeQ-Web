@@ -1,13 +1,6 @@
 """
 API REST para SecOps - Sistema de escaneo de seguridad
 Versión 3.1 - Normalizada con mejores prácticas REST
-
-Mejoras implementadas:
-- Headers solo para autenticación (Authorization: Bearer)
-- POST/PUT/PATCH usan body JSON para datos
-- GET usa query params para filtros
-- Eliminados prefijos X- innecesarios en JSON
-- Consistencia en manejo de errores
 """
 
 import os
