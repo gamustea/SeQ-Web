@@ -1,7 +1,10 @@
 package com.seq.acheron.util;
 
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Utility class for cryptographic operations.
@@ -11,8 +14,51 @@ public final class CryptoUtils {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final int DEFAULT_SALT_LENGTH = 16; // 128 bits
 
-    private CryptoUtils() {
-        // Utility class, no instantiation
+    private static final String UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    private static final String LOWERCASE = "abcdefghijklmnopqrstuvwxyz";
+    private static final String DIGITS    = "0123456789";
+    private static final String SPECIALS  = "!@#$%^&*()-_=+[]{}|;:,.<>?";
+    private static final String ALL_CHARS = UPPERCASE + LOWERCASE + DIGITS + SPECIALS;
+
+
+    /**
+     * Genera una contraseña segura de longitud personalizada.
+     * Garantiza al menos un carácter de cada categoría y mezcla aleatoriamente.
+     *
+     * @param length longitud deseada (mínimo 12 recomendado)
+     * @return contraseña generada
+     */
+    public static String generatePassword(int length) {
+        if (length < 4) {
+            throw new IllegalArgumentException("La longitud mínima es 4.");
+        }
+
+        List<Character> chars = new ArrayList<>(length);
+
+        // Garantiza al menos uno de cada tipo
+        chars.add(UPPERCASE.charAt(SECURE_RANDOM.nextInt(UPPERCASE.length())));
+        chars.add(LOWERCASE.charAt(SECURE_RANDOM.nextInt(LOWERCASE.length())));
+        chars.add(DIGITS   .charAt(SECURE_RANDOM.nextInt(DIGITS.length())));
+        chars.add(SPECIALS .charAt(SECURE_RANDOM.nextInt(SPECIALS.length())));
+
+        // Rellena el resto con caracteres aleatorios del pool completo
+        for (int i = 4; i < length; i++) {
+            chars.add(ALL_CHARS.charAt(SECURE_RANDOM.nextInt(ALL_CHARS.length())));
+        }
+
+        /* Mezcla para evitar posiciones predecibles (ej.: especial siempre al final) */
+        Collections.shuffle(chars, SECURE_RANDOM);
+
+        StringBuilder sb = new StringBuilder(length);
+        for (char c : chars) sb.append(c);
+        return sb.toString();
+    }
+
+    /**
+     * Sobrecarga con longitud por defecto (16 caracteres).
+     */
+    public static String generatePassword() {
+        return generatePassword(16);
     }
 
     /**
@@ -71,4 +117,6 @@ public final class CryptoUtils {
         }
         return hex.toString();
     }
+
+
 }

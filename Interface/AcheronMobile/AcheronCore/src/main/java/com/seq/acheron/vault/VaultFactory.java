@@ -9,8 +9,10 @@ import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.secrets.symmetric.AESVaultEncryptingStrategy;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
+import com.seq.acheron.util.Pair;
 import com.seq.acheron.vault.storables.Account;
 import com.seq.acheron.vault.storables.CreditCard;
+import com.seq.acheron.vault.storables.VaultObject;
 import org.jetbrains.annotations.NotNull;
 
 import javax.crypto.AEADBadTagException;
@@ -175,7 +177,8 @@ public record VaultFactory(User user) {
     }
 
     /**
-     * Reconstructs a {@link Vault} instance from its JSON representation.
+     * Reconstructs a {@link Vault} instance from its JSON representation. WARNING:
+     * for a proper functionality, this method assumes the JSON data is encrypted.
      * <p>
      * The method expects the JSON to contain at least:
      * <ul>
@@ -195,7 +198,7 @@ public record VaultFactory(User user) {
     public Vault fromJSON(
             @NotNull String json,
             @NotNull String masterPassword
-    ) throws  GeneralSecurityException {
+    ) throws GeneralSecurityException {
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         JsonObject algorithm =  root.getAsJsonObject("algorithm");
 
@@ -211,7 +214,8 @@ public record VaultFactory(User user) {
 
         try {
             strategy.importVaultKey(vaultKey);
-        } catch (AEADBadTagException e) {
+        }
+        catch (AEADBadTagException e) {
             throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
         }
 
@@ -226,7 +230,6 @@ public record VaultFactory(User user) {
                 true
         );
 
-        // Parse Accounts
         if (root.has("accounts")) {
             JsonArray accounts = root.getAsJsonArray("accounts");
             for (JsonElement element : accounts) {
@@ -243,7 +246,6 @@ public record VaultFactory(User user) {
             }
         }
 
-        // Parse CreditCards
         if (root.has("creditcards")) {
             JsonArray creditCards = root.getAsJsonArray("creditcards");
             for (JsonElement element : creditCards) {
@@ -266,6 +268,34 @@ public record VaultFactory(User user) {
         }
 
         return vault;
+    }
+
+
+    public Pair<Vault, String> getRestorationVault(
+            @NotNull Vault originalVault
+    ) throws GeneralSecurityException {
+
+        String securePassword = CryptoUtils.generatePassword(32);
+        String salt = CryptoUtils.generateSalt(16);
+        VaultEncryptingStrategy strategy = new AESVaultEncryptingStrategy(
+                securePassword,
+                salt,
+                true
+        );
+
+        Vault restorationVault = new Vault(
+                strategy,
+                user,
+                originalVault.isEncrypted()
+        );
+
+        originalVault.getStorables()
+                .forEach(storable -> {
+                    restorationVault.getStorables()
+                            .add(storable.copy());
+                });
+
+        return new Pair<>(restorationVault, securePassword);
     }
 
     /**

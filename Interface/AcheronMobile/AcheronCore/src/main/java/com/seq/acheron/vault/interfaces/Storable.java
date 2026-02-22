@@ -87,6 +87,8 @@ public interface Storable {
      */
     String toJson();
 
+    Storable copy();
+
     default String category() {
         return getClass().getSimpleName().toLowerCase() + "s";
     }

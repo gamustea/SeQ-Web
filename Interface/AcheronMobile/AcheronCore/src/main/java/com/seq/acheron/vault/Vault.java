@@ -330,6 +330,7 @@ public class Vault implements JsonSerializable {
         return sb.toString();
     }
 
+
     /**
      * Delegates to {@link #toJson()} and wraps any {@link GeneralSecurityException}
      * into a {@link RuntimeException}.

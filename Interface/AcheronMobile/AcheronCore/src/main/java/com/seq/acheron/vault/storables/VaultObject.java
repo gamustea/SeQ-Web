@@ -167,5 +167,4 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
     }
 
     abstract String transform(VaultEncryptingStrategy encryptor, boolean encrypt);
-    abstract VaultObject copy();
 }

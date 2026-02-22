@@ -1,6 +1,7 @@
 package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.interfaces.Storable;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -174,7 +175,7 @@ public class CreditCard extends VaultObject {
     }
 
     @Override
-    public VaultObject copy() {
+    public Storable copy() {
         return new CreditCard(
                 this.getId(),
                 title,

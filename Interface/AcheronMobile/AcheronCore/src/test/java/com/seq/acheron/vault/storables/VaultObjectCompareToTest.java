@@ -1,6 +1,7 @@
 package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.interfaces.Storable;
 import org.junit.jupiter.api.*;
 
 import java.security.PublicKey;
@@ -20,7 +21,7 @@ public class VaultObjectCompareToTest {
         }
 
         @Override
-        VaultObject copy() {
+        public Storable copy() {
             return new ConcreteVaultObject("TEST", this.isEncrypted());
         }
 
