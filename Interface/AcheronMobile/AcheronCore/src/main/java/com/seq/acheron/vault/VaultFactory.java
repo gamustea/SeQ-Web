@@ -4,15 +4,13 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.seq.acheron.agents.User;
 import com.seq.acheron.exceptions.WrongPasswordException;
-import com.seq.acheron.secrets.symmetric.AESVaultEncryptingStrategy;
-import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.AESVaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.util.Pair;
 import com.seq.acheron.vault.storables.Account;
 import com.seq.acheron.vault.storables.CreditCard;
-import com.seq.acheron.vault.storables.VaultObject;
 import org.jetbrains.annotations.NotNull;
 
 import javax.crypto.AEADBadTagException;

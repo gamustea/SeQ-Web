@@ -1,9 +1,8 @@
 package com.seq.acheron.vault;
 
-import com.seq.acheron.agents.User;
 import com.seq.acheron.exceptions.WrongPasswordException;
-import com.seq.acheron.secrets.symmetric.AESVaultEncryptingStrategy;
-import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.AESVaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.vault.storables.Account;
 import com.seq.acheron.vault.storables.CreditCard;

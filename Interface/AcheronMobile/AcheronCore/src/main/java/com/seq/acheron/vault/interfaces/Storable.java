@@ -1,6 +1,6 @@
 package com.seq.acheron.vault.interfaces;
 
-import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.storables.Account;
 import com.seq.acheron.vault.storables.CreditCard;
 import com.seq.acheron.vault.storables.VaultObject;

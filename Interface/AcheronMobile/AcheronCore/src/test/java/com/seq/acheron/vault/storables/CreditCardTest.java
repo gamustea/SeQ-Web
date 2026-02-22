@@ -1,6 +1,6 @@
 package com.seq.acheron.vault.storables;
 
-import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

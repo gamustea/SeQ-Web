@@ -1,57 +1,70 @@
 {
-  "checker": "H7v0BR/fuKOK0lSpQC/J+HU8whvH+1MLF2rEzUiaa87Zyx4YDWxy2RIPva61Sz0oPb3nx5s/W3CYqmNatO37gDxE3gPUcuiFkB4sQ6Ot1jf9asw7yTDKCE4EUoc=",
-  "vaultKey": "dep9GeKxgzs4zJ07iKpQfNXzAZ9SDx1lVUxxFuDo78/wZbGu+8I0KlYel3rEKcPTsxKPMtaERxS3s+DB1Af3pTWCIn8Xcaca",
-  "creditcards": [
-    {
-      "id": "CDC3",
-      "createdAt": "Sat Feb 21 16:41:41 CET 2026",
-      "updatedAt": "Sat Feb 21 16:41:41 CET 2026",
-      "allowedUsers": [],
-      "cardHolderName": "7+CdZPbsqgV+BdVfK6naMOq4yXUgzSGxhmtjn1TwCxgHM19iTbL3E30NuVE=",
-      "cardNumber": "2CXktZLd7otIWEBqhgCNHLtDYCL4D0LIoClPX+lwg1BFbjuhin76HhyOPws=",
-      "expirationDate": "nPRXz+Q9qK4nye0Te2C/Ir2Bw+7rfw26E3pUhy+DEUif",
-      "postalCode": "LCO4YD3VH1+8fsg+y8SAu5AFmmTbH//kG6j6xfsKPcKO",
-      "cvv": "WsWIAEINYldnNFy+rSTjYKATBjViaRfw4rGepmQQXw=="
-    },
-    {
-      "id": "CDC4",
-      "createdAt": "Sat Feb 21 16:41:41 CET 2026",
-      "updatedAt": "Sat Feb 21 16:41:41 CET 2026",
-      "allowedUsers": [],
-      "cardHolderName": "TZIeUzFmOjmZPGp+lP9zjmb9fRa6XGpaKVAhtdOj8gzniBx99a41yXfIVpM=",
-      "cardNumber": "flzWn5boGD1aa2ge67LUrE8RiI/yLj0GZm07pJrDZMQ+PW9/Ls5b8qGk3XM=",
-      "expirationDate": "+LQ1bwht8/2UBmqgW1c1xk6xk6ZDHsItz/vdpejHRNMt",
-      "postalCode": "/EV3Rtg7EggmxilOP+JN5pdSIRgEkM/EAgumCrnBxfqn",
-      "cvv": "MUcQ4wyK7DXNTiBtgkBAEbVs1JTB4ag/l6b5iyl1hg=="
-    }
-  ],
+  "checker": "BLTvMpqjXuLyfvDwV8xnIBVA2ZkP8h6m8u3LdcVs6y0r/nDjKiDQ67NmkEybWJUq6xONRWGI0ejB3DpYUQwIFBDeBqacIaRMX11sBYADiz+073SCXMSSQ2OCF08=",
+  "vaultKey": "ZJEpL0mhwYy5xvxToMdP66qFXX2rZBG+KQafJMHeIf8LludSRtnwTCwl7MW/A5gcuaUb0MtZCLJeXJ5luL1KzxL5E0GDpagP",
+  "algorithm": {
+    "transformation": "AES/GCM/NoPadding",
+    "kdf": "Argon2",
+    "kdfIterations": "3",
+    "kdfMemoryKiB": "65536",
+    "kdfParallelism": "1",
+    "salt": "MMw9anxDNjvevBdqhbEBTg=="
+  },
   "accounts": [
     {
       "id": "ACC0",
-      "createdAt": "Sat Feb 21 16:41:41 CET 2026",
-      "updatedAt": "Sat Feb 21 16:41:41 CET 2026",
+      "title": "Gmail Account",
+      "createdAt": "2026-02-22T14:49:31.336+01:00",
+      "updatedAt": "2026-02-22T14:49:31.336+01:00",
       "allowedUsers": [],
-      "username": "8EjJEoHOLR4pWsHHm+RBumZXo0Rtk97vAIcVMBMgyzjmdebsiZTEhKrb",
-      "domain": "9qF4LTbVZul7mFCm+DgYVJZQcB0R8v/fPeR7/yBRkgVujUyCg5USSMmgbg==",
-      "password": "b7yqlQ9RM+WfYXPaue/aERexd/qo+ju2Q3OcJwmKBN3TtIOixC0jKg=="
+      "username": "95H2rEAL7NxQuzXcuNfibhSLr/Hq3ZKSKO2w5qjZZad13GxzF33RoIhx",
+      "domain": "TEIn7QUwmYqUqqbq6IYkbzwlQDGJ3qrDjpQEzkpN4ICqRdVnR34wxeNZdQ==",
+      "password": "/F6DnPrRORfUiFFjfUwCAtupHZ6cVO+LCAQK5/P9suMqF7tgEKY4mA=="
     },
     {
       "id": "ACC1",
-      "createdAt": "Sat Feb 21 16:41:41 CET 2026",
-      "updatedAt": "Sat Feb 21 16:41:41 CET 2026",
+      "title": "Github Account",
+      "createdAt": "2026-02-22T14:49:31.336+01:00",
+      "updatedAt": "2026-02-22T14:49:31.336+01:00",
       "allowedUsers": [],
-      "username": "vjPlaC8g1rDyl2n9I5b1HXCTSu2ZAI5r6dSBjCH8GZvVItH5",
-      "domain": "46cCDK9KwWHBaT/8XDPPHuvJTi5xOHRLxsiB63NJREik02zmQ+U=",
-      "password": "luBPkxsxIXTEH0jWRFzwA240nrqyaujszQr669uWKUDNxbuWP0vaacvtTQ=="
+      "username": "Hap78+2/QJsTyvcjAMyJp/0FqVhXpqaAaxc4ix007IMr1PV6",
+      "domain": "GM/P4FnINcIAhPBzhPgh5qVeciJTgqs5muTcqXmL2ZZjqFwqGvE=",
+      "password": "BMFPZBpMUSiyr/rdLlnfDcv9m2810nddg+5a94XkbhfF6tSD/eH1KJpdzw=="
     },
     {
       "id": "ACC2",
-      "createdAt": "Sat Feb 21 16:41:41 CET 2026",
-      "updatedAt": "Sat Feb 21 16:41:41 CET 2026",
+      "title": "Netflix Account",
+      "createdAt": "2026-02-22T14:49:31.336+01:00",
+      "updatedAt": "2026-02-22T14:49:31.336+01:00",
       "allowedUsers": [],
-      "username": "FLmfPFtFjHV2DIyJHeiEsPMofuGGwTOY/0Fn8n9Xly/ybcuLL+TKjnEz",
-      "domain": "wT3rQAqskfWEPA2Wu9OosbfXU1kYZVJ4V5Fvuy+kMiNk97S3H7Yg",
-      "password": "cqeKj6pQfMF5OSrj7F9jn0VUU92CGAqYPcSZxUW5TD/GhhnXnXMNRQ=="
+      "username": "a/OWRdi+hwwOiWqh49I0BLdG53g+XGlgrgoOGH8l2VmCaKj/SvLhtNZk",
+      "domain": "9VIdaUvuJ35YGzl3O93LK2dLOr+TCWPE/KB+oH+xxMylE+sew9TI",
+      "password": "O6fk8PZKzWJB/i1DXnCBJReBCDh0ALBMhq3Q6lICJQeYzscPbPNeBA=="
+    }
+  ],
+  "creditcards": [
+    {
+      "id": "CDC3",
+      "title": "Personal Card",
+      "createdAt": "2026-02-22T14:49:31.336+01:00",
+      "updatedAt": "2026-02-22T14:49:31.336+01:00",
+      "allowedUsers": [],
+      "cardHolderName": "HxMIH8IeTLpts3UL8mGFCx0OabGqrbyldd80BHi1u9Sgn1D/5tqLvcAmAfo=",
+      "cardNumber": "cFQnNE0mz50Lsn12AV9YAwIPKt1Vag8de5FVONEFJzBg8vkqL4BZGjkbvvA=",
+      "expirationDate": "vxQxdR+6yxlcoPTYCwrcCY+N/H4BM6fUGLHl1Tn1vqK6",
+      "postalCode": "34xLONHYLVQf9oe2Zxkp3gVhqrVVrMz1RcEDbli3W5fC",
+      "cvv": "l7fh2IlqIvZM12umNS4N1w2TjsbA6UFlSplysn4+yg=="
+    },
+    {
+      "id": "CDC4",
+      "title": "Auxiliary Card",
+      "createdAt": "2026-02-22T14:49:31.336+01:00",
+      "updatedAt": "2026-02-22T14:49:31.336+01:00",
+      "allowedUsers": [],
+      "cardHolderName": "TH++1HcvTTx1nmlX2bpErCUh/OWVGaD97zoWo9lhrpuoS1phFsuHjNb3XSo=",
+      "cardNumber": "4vfzF029bYa0iYtY70BRwYLR5tGdvWVQjhyW9Js68Cd7z+QythD5NwpBUGg=",
+      "expirationDate": "FByj8UoR3h1dtzJvfzdqaxlvJzpHGTDcEetCcvTQpRL4",
+      "postalCode": "Y0fjRVN3YDI1Ibr2gWFwBIhz5SOFxURDXLJxlQrCeY0o",
+      "cvv": "Q8osCznTJ4mFtbgHSeceCMp3NJ007lilGorZSDGBOA=="
     }
   ]
 }

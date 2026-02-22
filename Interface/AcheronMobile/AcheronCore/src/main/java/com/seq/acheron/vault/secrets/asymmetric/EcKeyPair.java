@@ -1,4 +1,4 @@
-package com.seq.acheron.secrets.asymmetric;
+package com.seq.acheron.vault.secrets.asymmetric;
 
 import java.security.*;
 import java.security.spec.ECGenParameterSpec;

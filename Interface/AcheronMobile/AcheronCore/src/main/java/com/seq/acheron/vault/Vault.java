@@ -1,7 +1,6 @@
 package com.seq.acheron.vault;
 
-import com.seq.acheron.agents.User;
-import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
 import com.seq.acheron.vault.interfaces.Storable;
 import lombok.Getter;
@@ -9,8 +8,6 @@ import lombok.Getter;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;

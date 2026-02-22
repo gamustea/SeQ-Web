@@ -1,4 +1,4 @@
-package com.seq.acheron.agents;
+package com.seq.acheron.vault;
 
 import com.seq.acheron.vault.interfaces.Sharable;
 import lombok.Getter;

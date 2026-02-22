@@ -1,4 +1,4 @@
-package com.seq.acheron.secrets.symmetric;
+package com.seq.acheron.vault.secrets.symmetric;
 
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;

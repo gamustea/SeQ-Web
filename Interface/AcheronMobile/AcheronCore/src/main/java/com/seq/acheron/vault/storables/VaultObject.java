@@ -1,8 +1,8 @@
 
 package com.seq.acheron.vault.storables;
 
-import com.seq.acheron.agents.User;
-import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.User;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.Pair;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
 import com.seq.acheron.vault.interfaces.Sharable;

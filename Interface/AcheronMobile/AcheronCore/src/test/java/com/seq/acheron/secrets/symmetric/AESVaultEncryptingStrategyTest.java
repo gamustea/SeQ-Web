@@ -1,5 +1,6 @@
 package com.seq.acheron.secrets.symmetric;
 
+import com.seq.acheron.vault.secrets.symmetric.AESVaultEncryptingStrategy;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.SecretKey;

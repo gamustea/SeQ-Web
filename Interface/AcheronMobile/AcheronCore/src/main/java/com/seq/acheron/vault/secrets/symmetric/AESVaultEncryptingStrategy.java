@@ -1,4 +1,4 @@
-package com.seq.acheron.secrets.symmetric;
+package com.seq.acheron.vault.secrets.symmetric;
 
 import de.mkammerer.argon2.Argon2Advanced;
 import de.mkammerer.argon2.Argon2Factory;

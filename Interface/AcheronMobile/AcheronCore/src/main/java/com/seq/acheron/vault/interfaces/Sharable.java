@@ -1,7 +1,7 @@
 package com.seq.acheron.vault.interfaces;
 
-import com.seq.acheron.agents.User;
-import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.User;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 
 import java.security.PublicKey;
 import java.util.Set;
