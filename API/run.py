@@ -1,13 +1,6 @@
 """
 API REST para SecOps - Sistema de escaneo de seguridad
 Versión 3.1 - Normalizada con mejores prácticas REST
-
-Mejoras implementadas:
-- Headers solo para autenticación (Authorization: Bearer)
-- POST/PUT/PATCH usan body JSON para datos
-- GET usa query params para filtros
-- Eliminados prefijos X- innecesarios en JSON
-- Consistencia en manejo de errores
 """
 
 import os
@@ -1678,6 +1671,109 @@ def retrieve_scan_by_id(scan_id: int):
         sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
+
+# ============================================================================
+# ENDPOINTS DE ELIMINACIÓN DE ESCANEOS
+# ============================================================================
+@app.route("/sentinel/scans/<int:scan_id>", methods=["DELETE"])
+@require_oauth_token
+def delete_scan(scan_id: int):
+    """
+    Elimina un escaneo del sistema dado su ID.
+
+    Path Parameters:
+        scan_id: ID del escaneo a eliminar
+
+    Headers requeridos:
+        Authorization: Bearer <token>
+
+    Returns:
+        JSON con el resultado de la eliminación
+
+    Response codes:
+        200: Escaneo eliminado exitosamente
+        401: No autorizado
+        403: El escaneo no pertenece al usuario
+        404: Escaneo no encontrado
+        500: Error interno al eliminar
+    """
+    try:
+        user_id = get_current_user_id()
+        nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)
+
+        logger.info(
+            f"Usuario {get_current_username()} intentando eliminar escaneo ID: {scan_id}"
+        )
+
+        # Localizar el escaneo en los tres managers
+        scan, scan_type = get_scan_by_id_for_user(
+            scan_id, nmap_manager, nikto_manager, openvas_manager
+        )
+
+        # Si no existe, lanzar error de no encontrado
+        if not scan:
+            logger.warning(f"Escaneo {scan_id} no encontrado para eliminación")
+            raise ScanNotFoundError(scan_id)
+
+        # Verificar propiedad: solo el dueño puede borrar su escaneo
+        if scan.user_id != user_id:
+            logger.warning(
+                f"Usuario {get_current_username()} (ID: {user_id}) intentó eliminar "
+                f"el escaneo {scan_id} que pertenece al usuario ID: {scan.user_id}"
+            )
+            return jsonify({
+                "error": "forbidden",
+                "message": "No tienes permiso para eliminar este escaneo",
+                "scanId": scan_id
+            }), 403
+
+        # Seleccionar el manager correcto
+        if scan_type == "nmap":
+            manager = nmap_manager
+        elif scan_type == "nikto":
+            manager = nikto_manager
+        else:
+            manager = openvas_manager
+
+        # Si el escaneo está en curso, cancelarlo antes de borrar
+        if scan.status in ["pending", "running"]:
+            logger.info(
+                f"Escaneo {scan_id} en curso (estado: {scan.status}), "
+                f"cancelando antes de eliminar"
+            )
+            manager.cancel_scan(scan_id)
+
+        # Eliminar el escaneo
+        success = manager.delete_scan(scan_id)
+
+        if not success:
+            logger.error(f"No se pudo eliminar el escaneo {scan_id}")
+            return jsonify({
+                "error": "deletion_failed",
+                "message": "No se pudo eliminar el escaneo",
+                "scanId": scan_id
+            }), 500
+
+        logger.info(
+            f"Usuario {get_current_username()}: escaneo {scan_type} ID {scan_id} eliminado"
+        )
+        return jsonify({
+            "message": "Escaneo eliminado correctamente",
+            "scanId": scan_id,
+            "scanType": scan_type,
+            "user": get_current_username()
+        }), 200
+
+    except ScanNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+    except Exception as e:
+        logger.error(f"Error eliminando escaneo {scan_id}: {str(e)}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
 
 # ============================================================================
 # MANEJO DE ERRORES GLOBALES
