@@ -118,5 +118,22 @@ public final class CryptoUtils {
         return hex.toString();
     }
 
+    /**
+     * Compares two strings in (approximate) constant time to mitigate timing
+     * attacks. Both strings must be non-null.
+     */
+    public static boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        if (a.length() != b.length()) {
+            return false;
+        }
 
+        int result = 0;
+        for (int i = 0; i < a.length(); i++) {
+            result |= a.charAt(i) ^ b.charAt(i);
+        }
+        return result == 0;
+    }
 }

@@ -19,6 +19,8 @@ import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.Objects;
 
+import static com.seq.acheron.util.CryptoUtils.constantTimeEquals;
+
 /**
  * Factory responsible for building {@link Vault} instances.
  * <p>
@@ -217,7 +219,10 @@ public record VaultFactory(User user) {
             throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
         }
 
-        if (!checkMasterPassword(checker, strategy)) {
+        if (!strategy.isValidChecker(
+                checker,
+                user.getUsername()
+        )) {
             throw new WrongPasswordException("Wrong master password");
         }
 
@@ -351,24 +356,5 @@ public Pair<Vault, String> getRestorationVault(
         }
 
         return constantTimeEquals(hex.toString(), decryptedChecker);
-    }
-
-    /**
-     * Compares two strings in (approximate) constant time to mitigate timing
-     * attacks. Both strings must be non-null.
-     */
-    private static boolean constantTimeEquals(String a, String b) {
-        if (a == null || b == null) {
-            return false;
-        }
-        if (a.length() != b.length()) {
-            return false;
-        }
-
-        int result = 0;
-        for (int i = 0; i < a.length(); i++) {
-            result |= a.charAt(i) ^ b.charAt(i);
-        }
-        return result == 0;
     }
 }

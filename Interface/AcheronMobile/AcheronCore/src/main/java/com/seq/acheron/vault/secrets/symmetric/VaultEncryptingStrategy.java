@@ -1,5 +1,6 @@
 package com.seq.acheron.vault.secrets.symmetric;
 
+import com.seq.acheron.vault.User;
 import lombok.Getter;
 
 import javax.crypto.Cipher;
@@ -9,7 +10,11 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+
+import static com.seq.acheron.util.CryptoUtils.constantTimeEquals;
 
 /**
  * Abstract base class for symmetric encryption strategies used by the vault.
@@ -131,6 +136,95 @@ public abstract class VaultEncryptingStrategy {
     }
 
     /**
+     * Encrypts the given plain-text using the current {@link #vaultKey}.
+     * <p>
+     * This is the primary method used to encrypt vault data.
+     *
+     * @param plainText the plain-text to encrypt
+     * @return Base64-encoded {@code IV || ciphertext}
+     * @throws GeneralSecurityException if encryption fails
+     */
+    public String encrypt(String plainText) throws GeneralSecurityException {
+        return encryptWithKey(plainText, vaultKey);
+    }
+
+    /**
+     * Decrypts a Base64-encoded {@code IV || ciphertext} string using
+     * the current {@link #vaultKey}.
+     * <p>
+     * This is the primary method used to decrypt vault data.
+     *
+     * @param ivAndCiphertextBase64 Base64-encoded {@code IV || ciphertext}
+     * @return the decrypted plain-text string
+     * @throws GeneralSecurityException if decryption fails
+     */
+    public String decrypt(String ivAndCiphertextBase64) throws GeneralSecurityException {
+        return decryptWithKey(ivAndCiphertextBase64, vaultKey);
+    }
+
+    public String encryptWithDerivedKey(String plainText) throws GeneralSecurityException {
+        return encryptWithKey(plainText, derivedKey);
+    }
+
+    public String decryptWithDerivedKey(String text) throws GeneralSecurityException {
+        return decryptWithKey(text, derivedKey);
+    }
+
+    /**
+     * Validates that the master password currently configured in the provided
+     * {@link VaultEncryptingStrategy} matches the one used to produce the
+     * given {@code checker} value.
+     * <p>
+     * The checker is decrypted, the SHA-256 of the current {@link User}'s
+     * username is recomputed, and both values are compared using a
+     * constant-time comparison to reduce timing side-channels.
+     *
+     * @param encryptedChecker  encrypted verifier stored alongside the vault
+     * @param validator         based used to get the encrypted checker; system will
+     *                          compare the decrypted checker with the hash of the validator
+     * @return {@code true} if the master password is correct, {@code false} otherwise
+     */
+    public boolean isValidChecker(String encryptedChecker, String validator) throws GeneralSecurityException {
+        String decryptedChecker = decryptWithDerivedKey(encryptedChecker);
+
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hashBytes = digest.digest(
+                validator.getBytes(StandardCharsets.UTF_8)
+        );
+        StringBuilder hex = new StringBuilder();
+        for (byte b : hashBytes) {
+            hex.append(String.format("%02x", b));
+        }
+        String hashedValidator = hex.toString();
+
+        return constantTimeEquals(hashedValidator, decryptedChecker);
+    }
+
+    public String getChecker(String validator) throws GeneralSecurityException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hashBytes = digest.digest(validator.getBytes(StandardCharsets.UTF_8));
+
+        StringBuilder hex = new StringBuilder();
+        for (byte b : hashBytes) {
+            hex.append(String.format("%02x", b));
+        }
+        return encryptWithDerivedKey(hex.toString());
+    }
+
+    /**
+     * Generates a new random 256-bit AES key that can be used as a
+     * {@link #vaultKey}.
+     *
+     * @return a new {@link SecretKey} instance
+     * @throws GeneralSecurityException if secure random generation fails
+     */
+    private static SecretKey generateKey() throws GeneralSecurityException {
+        byte[] keyBytes = new byte[32]; // 256 bits
+        SecureRandom.getInstanceStrong().nextBytes(keyBytes);
+        return new SecretKeySpec(keyBytes, "AES");
+    }
+
+    /**
      * Encrypts a plain-text string using the given key with AES-GCM and
      * returns the result as Base64 {@code IV || ciphertext}.
      *
@@ -156,19 +250,6 @@ public abstract class VaultEncryptingStrategy {
         buffer.put(cipherBytes);
 
         return java.util.Base64.getEncoder().encodeToString(buffer.array());
-    }
-
-    /**
-     * Encrypts the given plain-text using the current {@link #vaultKey}.
-     * <p>
-     * This is the primary method used to encrypt vault data.
-     *
-     * @param plainText the plain-text to encrypt
-     * @return Base64-encoded {@code IV || ciphertext}
-     * @throws GeneralSecurityException if encryption fails
-     */
-    public String encrypt(String plainText) throws GeneralSecurityException {
-        return encryptWithKey(plainText, vaultKey);
     }
 
     /**
@@ -201,40 +282,5 @@ public abstract class VaultEncryptingStrategy {
         return new String(plainBytes, StandardCharsets.UTF_8);
     }
 
-    /**
-     * Decrypts a Base64-encoded {@code IV || ciphertext} string using
-     * the current {@link #vaultKey}.
-     * <p>
-     * This is the primary method used to decrypt vault data.
-     *
-     * @param ivAndCiphertextBase64 Base64-encoded {@code IV || ciphertext}
-     * @return the decrypted plain-text string
-     * @throws GeneralSecurityException if decryption fails
-     */
-    public String decrypt(String ivAndCiphertextBase64) throws GeneralSecurityException {
-        return decryptWithKey(ivAndCiphertextBase64, vaultKey);
-    }
-
-    public String encryptWithDerivedKey(String plainText) throws GeneralSecurityException {
-        return encryptWithKey(plainText, derivedKey);
-    }
-
-    public String decryptWithDerivedKey(String text) throws GeneralSecurityException {
-        return decryptWithKey(text, derivedKey);
-    }
-
     public abstract String toJson();
-
-    /**
-     * Generates a new random 256-bit AES key that can be used as a
-     * {@link #vaultKey}.
-     *
-     * @return a new {@link SecretKey} instance
-     * @throws GeneralSecurityException if secure random generation fails
-     */
-    private static SecretKey generateKey() throws GeneralSecurityException {
-        byte[] keyBytes = new byte[32]; // 256 bits
-        SecureRandom.getInstanceStrong().nextBytes(keyBytes);
-        return new SecretKeySpec(keyBytes, "AES");
-    }
 }

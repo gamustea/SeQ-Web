@@ -43,7 +43,7 @@ public class VaultEncryptingStrategyPerformanceTest {
         SecretKey derivedKey = randomDerivedKey();
 
         TestVaultStrategy base = new TestVaultStrategy(derivedKey, true);
-        assertNotNull(base.vaultKey, "Base strategy must have a vaultKey generated");
+        assertNotNull(base.getVaultKey(), "Base strategy must have a vaultKey generated");
 
         String encryptedVaultKey = base.exportVaultKey();
 

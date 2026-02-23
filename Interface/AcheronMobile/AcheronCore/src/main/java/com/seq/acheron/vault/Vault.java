@@ -126,16 +126,7 @@ public class Vault implements JsonSerializable {
         this.strategy = Objects.requireNonNull(strategy, "strategy must not be null");
         this.user = Objects.requireNonNull(user, "user must not be null");
         this.isEncrypted = isEncrypted;
-
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hashBytes = digest.digest(user.getUsername().getBytes(StandardCharsets.UTF_8));
-
-        StringBuilder hex = new StringBuilder();
-        for (byte b : hashBytes) {
-            hex.append(String.format("%02x", b));
-        }
-        String hashedUsername = hex.toString();
-        this.checker = strategy.encryptWithDerivedKey(hashedUsername);
+        this.checker = strategy.getChecker(user.getUsername());
     }
 
     /**
