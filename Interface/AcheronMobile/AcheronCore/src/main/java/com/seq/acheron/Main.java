@@ -22,6 +22,7 @@ public class Main {
         );
         System.out.println(
                 vf.mockVault()
+                        .encryptAll()
                         .toJson()
         );
     }

@@ -1,30 +1,28 @@
-# Standard library
+
+
+
 import secrets
 import threading
 import time
-from pathlib import Path
+import json
 import urllib.parse
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Iterable
+from typing import Any, Dict, List, Optional, Tuple, Literal
 
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import Optional, Dict
 import time
 
-
-# Third party
 import jwt
 
-# SQLAlchemy
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 from pymysql.err import IntegrityError
 
-# Local imports
 from src.core.exceptions import ExistingUserError, UserBindingError, DatabaseError
 from src.core.model import (
     AccessToken,
@@ -53,7 +51,7 @@ from src.logic.processors import (
 ) 
 
 
-
+StorableKind = Literal["account", "creditcard"]
 
 
 config_reader = ConfigReader()
@@ -1209,37 +1207,60 @@ class VaultManager(BaseManager):
         )
         return vault
 
-    def create_vault_from_json(
+    def upsert_vault_from_json(
         self,
         data: Dict[str, Any],
         is_recovery: bool = False,
     ) -> Vault:
         """
-        Crea un nuevo vault para el usuario activo a partir de un JSON
-        con la estructura del ejemplo (checker, vaultKey, algorithm, accounts, creditcards).
+        Crea o actualiza COMPLETAMENTE el vault del usuario activo a partir de JSON.
 
-        No hace "upsert": si ya existe un vault (user_id, is_recovery) la BD
-        lanzará un error de unicidad que se propaga.
+        Semántica:
+          - Si no existe vault (user_id, is_recovery): se crea uno nuevo.
+          - Si existe: se actualizan metadatos y se reemplazan TODOS los storables
+            (accounts + creditcards) por los del JSON.
         """
         self._check_session()
 
         try:
             algorithm = data.get("algorithm", {}) or {}
 
-            vault = Vault(
-                user_id=self.active_user.id,
-                is_recovery=is_recovery,
-                checker=data["checker"],
-                vault_key=data["vaultKey"],
-                transformation=algorithm.get("transformation", ""),
-                kdf=algorithm.get("kdf", ""),
-                kdf_iterations=int(algorithm.get("kdfIterations", 0)),
-                kdf_memory=int(algorithm.get("kdfMemoryKiB", 0)),
-                kdf_parallelism=int(algorithm.get("kdfParallelism", 1)),
-                salt=algorithm.get("salt", ""),
-            )
-            self.session.add(vault)
-            self.session.flush()  # para tener vault.id
+            # ¿Ya existe vault para este usuario / tipo?
+            vault = self.get_vault_for_user(is_recovery=is_recovery)
+
+            if vault is None:
+                vault = Vault(
+                    user_id=self.active_user.id,
+                    is_recovery=is_recovery,
+                    checker=data["checker"],
+                    vault_key=data["vaultKey"],
+                    transformation=algorithm.get("transformation", ""),
+                    kdf=algorithm.get("kdf", ""),
+                    kdf_iterations=int(algorithm.get("kdfIterations", 0)),
+                    kdf_memory=int(algorithm.get("kdfMemoryKiB", 0)),
+                    kdf_parallelism=int(algorithm.get("kdfParallelism", 1)),
+                    salt=algorithm.get("salt", ""),
+                )
+                self.session.add(vault)
+                self.session.flush()
+            else:
+                # Actualizar metadatos y vaciar storables existentes
+                self._ensure_vault_ownership(vault)
+                vault.checker = data["checker"]
+                vault.vault_key = data["vaultKey"]
+                vault.transformation = algorithm.get("transformation", "")
+                vault.kdf = algorithm.get("kdf", "")
+                vault.kdf_iterations = int(algorithm.get("kdfIterations", 0))
+                vault.kdf_memory = int(algorithm.get("kdfMemoryKiB", 0))
+                vault.kdf_parallelism = int(algorithm.get("kdfParallelism", 1))
+                vault.salt = algorithm.get("salt", "")
+
+                # Borrar todos los storables actuales (cascade borrará Account/CreditCard)
+                for st in list(vault.storables):
+                    self.session.delete(st)
+                self.session.flush()
+
+            # Recrear storables a partir del JSON
 
             # Accounts
             for acc in data.get("accounts", []) or []:
@@ -1279,17 +1300,30 @@ class VaultManager(BaseManager):
 
             self._safe_commit()
             self.session.refresh(vault)
-            self.logger.info(f"Vault {vault.id} creado para user {self.active_user.id}")
+            self.logger.info(
+                f"Vault {vault.id} {'creado' if vault.id else 'actualizado'} "
+                f"para user {self.active_user.id}"
+            )
             return vault
 
         except IntegrityError as ie:
             self._safe_rollback()
-            self.logger.error(f"Error de integridad creando vault: {ie}")
+            self.logger.error(f"Error de integridad en upsert de vault: {ie}")
             raise
         except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error creando vault desde JSON: {e}", exc_info=True)
+            self.logger.error(f"Error en upsert de vault desde JSON: {e}", exc_info=True)
             raise
+
+    def upsert_vault_from_json_string(
+            self,
+            data: str,
+            is_recovery: bool = False
+    ):
+        self.upsert_vault_from_json_string(
+            json.loads(data), 
+            is_recovery
+        )
 
     def export_vault_to_json(self, vault_id: int) -> Dict[str, Any]:
         """
@@ -1355,7 +1389,73 @@ class VaultManager(BaseManager):
             "creditcards": cards_json,
         }
 
+    def export_vault_to_json_string(self, vault_id: int) -> str:
+        return str(self.export_vault_to_json(vault_id))
+
     # ----------------- Operaciones sobre Storables -----------------
+
+    def find_storables(
+        self,
+        *,
+        vault_id: Optional[int] = None,
+        limit: Optional[int] = None,
+        **filters: Any,
+    ) -> List[Storable]:
+        """
+        Búsqueda genérica de Storables.
+
+        Ejemplos:
+          find_storables(vault_id=1, internal_id="ACC0")
+          find_storables(vault_id=1, title="Gmail Account")
+          find_storables(internal_id="CDC3")  # todos los vaults del usuario
+        """
+        self._check_session()
+
+        query = self.session.query(Storable)
+
+        # Restringir a vault(s) del usuario activo
+        if vault_id is not None:
+            vault = self.get_vault_by_id(vault_id)
+            if vault is None:
+                return []
+            query = query.filter(Storable.vault_id == vault_id)
+        else:
+            # limitar siempre a vaults del usuario activo
+            query = query.join(Vault).filter(Vault.user_id == self.active_user.id)
+
+        # Aplicar filtros dinámicamente en columnas de Storable
+        for field, value in filters.items():
+            if not hasattr(Storable, field):
+                raise ValueError(f"Campo inválido para Storable: {field}")
+            query = query.filter(getattr(Storable, field) == value)
+
+        if limit is not None:
+            query = query.limit(limit)
+
+        return query.all()
+
+    def get_storable_by(self, **filters: Any) -> Optional[Storable]:
+        """
+        Devuelve UN storable que cumpla los filtros (o None).
+        Lanza ValueError si devuelve más de uno.
+
+        Ejemplos:
+          get_storable_by(id=10)
+          get_storable_by(vault_id=1, internal_id="ACC0")
+        """
+        results = self.find_storables(limit=2, **filters)
+        if not results:
+            return None
+        if len(results) > 1:
+            raise ValueError(
+                f"Más de un Storable coincide con los filtros: {filters!r}"
+            )
+        return results[0]
+
+    def get_storable(self, storable_id: int) -> Optional[Storable]:
+        """Atajo: obtiene un Storable por id con validación de propietario."""
+        st = self.get_storable_by(id=storable_id)
+        return st
 
     def list_storables(self, vault_id: int) -> List[Storable]:
         """
@@ -1367,21 +1467,76 @@ class VaultManager(BaseManager):
         # storables ya está filtrado por vault
         return list(vault.storables)
 
-    def get_storable(self, storable_id: int) -> Optional[Storable]:
+    def add_storable_to_vault(
+        self,
+        vault_id: int,
+        kind: StorableKind,
+        *,
+        internal_id: Optional[str] = None,
+        title: Optional[str] = None,
+        created_at: Optional[datetime] = None,
+        updated_at: Optional[datetime] = None,
+        **payload: Any,
+    ) -> Storable:
         """
-        Obtiene un Storable (Account / CreditCard) asegurando que pertenece 
-        a un vault del usuario activo.
+        Añade un nuevo Storable (Account o CreditCard) a un vault.
+
+        kind:
+          - "account": usa campos username, domain, password en payload.
+          - "creditcard": usa cardholder_name, card_number, expiration_date, postal_code, cvv.
+
+        Devuelve la instancia creada (ya committeada).
         """
         self._check_session()
-        st = self.session.get(Storable, storable_id)
-        if st is None:
-            return None
-        if st.vault.user_id != self.active_user.id:
-            raise PermissionError(
-                f"El usuario {self.active_user.id} no tiene acceso al storable {storable_id}"
-            )
-        return st
+        vault = self.get_vault_by_id(vault_id)
+        if vault is None:
+            raise ValueError(f"Vault {vault_id} no encontrado")
 
+        created_at = created_at or datetime.utcnow()
+        updated_at = updated_at or created_at
+
+        if kind == "account":
+            st = Account(
+                vault=vault,
+                internal_id=internal_id,
+                title=title,
+                created_at=created_at,
+                updated_at=updated_at,
+                username=payload.get("username", ""),
+                domain=payload.get("domain", ""),
+                password=payload.get("password", ""),
+            )
+        elif kind == "creditcard":
+            st = CreditCard(
+                vault=vault,
+                internal_id=internal_id,
+                title=title,
+                created_at=created_at,
+                updated_at=updated_at,
+                cardholder_name=payload.get("cardholder_name", ""),
+                card_number=payload.get("card_number", ""),
+                expiration_date=payload.get("expiration_date", ""),
+                postal_code=payload.get("postal_code", ""),
+                cvv=payload.get("cvv", ""),
+            )
+        else:
+            raise ValueError(f"Tipo de storable no soportado: {kind}")
+
+        try:
+            self.session.add(st)
+            self._safe_commit()
+            self.session.refresh(st)
+            self.logger.info(f"Storable {st.id} creado en vault {vault_id}")
+            return st
+        except IntegrityError as ie:
+            self._safe_rollback()
+            self.logger.error(f"Error de integridad añadiendo storable: {ie}")
+            raise
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error añadiendo storable: {e}", exc_info=True)
+            raise
+    
     def update_storable(
         self,
         storable_id: int,

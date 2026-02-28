@@ -618,7 +618,7 @@ class RefreshToken(Base):
 
 
 class Vault(Base):
-    __tablename__ = "vault"
+    __tablename__ = "Vault"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
@@ -648,7 +648,7 @@ class Vault(Base):
 
 
 class Storable(Base):
-    __tablename__ = "storable"
+    __tablename__ = "Storable"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
@@ -663,7 +663,7 @@ class Storable(Base):
         onupdate=datetime.now,
     )
 
-    vault_id = Column(Integer, ForeignKey("vault.id"), nullable=False)
+    vault_id = Column(Integer, ForeignKey("Vault.id"), nullable=False)
 
     # discriminador polimórfico
     type = Column(String(50), nullable=False)
@@ -686,10 +686,10 @@ class Storable(Base):
 
 
 class Account(Storable):
-    __tablename__ = "account"
+    __tablename__ = "Account"
 
     # PK = FK a storable.id (joined-table inheritance)
-    id = Column(Integer, ForeignKey("storable.id"), primary_key=True)
+    id = Column(Integer, ForeignKey("Storable.id"), primary_key=True)
 
     username = Column(String(512), nullable=False)
     domain = Column(String(512), nullable=False)
@@ -704,10 +704,10 @@ class Account(Storable):
 
 
 class CreditCard(Storable):
-    __tablename__ = "creditcard"
+    __tablename__ = "CreditCard"
 
     # PK = FK a storable.id (joined-table inheritance)
-    id = Column(Integer, ForeignKey("storable.id"), primary_key=True)
+    id = Column(Integer, ForeignKey("Storable.id"), primary_key=True)
 
     cardholder_name = Column(String(512), nullable=False)
     card_number = Column(String(512), nullable=False)      # cifrado / enmascarado
