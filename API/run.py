@@ -3,6 +3,7 @@ API REST para SecOps - Sistema de escaneo de seguridad
 Versión 3.1 - Normalizada con mejores prácticas REST
 """
 
+
 import os
 import base64
 import time

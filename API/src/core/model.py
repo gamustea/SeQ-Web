@@ -55,12 +55,12 @@ class Person(Base):
     first_name = Column(String(64), nullable=False)
     last_name = Column(String(64), nullable=False)
     alias = Column(String(64), nullable=False, unique=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
 
-    users = relationship("User", back_populates="person", uselist=False)
+    users = relationship("User", back_populates="person", uselist=True)
 
     def __str__(self):
-        return f"Person(id={self.id}, nombre='{self.first_name} {self.last_name}', email='{self.email}')"
+        return f"Person(id={self.id}, nombre='{self.first_name} {self.last_name}')"
 
     def __repr__(self):
         return f"<Person(id={self.id}, {self.first_name} {self.last_name})>"
@@ -110,6 +110,8 @@ class User(Base):
 
     tokens = relationship("AccessToken", back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    vaults = relationship("Vault", back_populates="user")
+
 
     def __str__(self):
         return f"User(id={self.id}, username='{self.username}', person_id={self.person_id})"
@@ -161,21 +163,17 @@ class Scan(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     target = Column(String(255), nullable=False)
-    started_at = Column(DateTime, nullable=False, default=datetime.now())
+    started_at = Column(DateTime, nullable=False, default=datetime.now)
     status = Column(String(20), nullable=False, default="pending")
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type = Column(String(50))
     frecuent = Column(Boolean, nullable=False, default=True)
     host_id = Column(Integer, ForeignKey("Host.id"))
+    finished_at = Column(DateTime, nullable=True)
+
 
     user = relationship("User", back_populates="scans")
     host = relationship("Host", back_populates="scans")
-    finished_scan = relationship(
-        "FinishedScan",
-        back_populates="scan",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
 
     # Configuración de herencia con polimorfismo
     __mapper_args__ = {
@@ -191,48 +189,6 @@ class Scan(Base):
 
     def __repr__(self):
         return f"<Scan(id={self.id}, type='{self.scan_type}', target='{self.target}')>"
-
-
-class FinishedScan(Base):
-    """
-    Almacena información sobre la finalización de un escaneo.
-
-    Columnas:
-        id (int): ID del escaneo asociado (clave primaria y foránea).
-        finished_at (datetime): Fecha y hora de finalización del escaneo.
-
-    Campos obligatorios al crear:
-        - id (debe existir en la tabla Scan)
-        - finished_at (fecha y hora de finalización)
-
-    Campos autogenerados (NO asignar):
-        - Ninguno
-
-    Campos a mostrar:
-        - id, finished_at
-
-    Relaciones:
-        - scan: Escaneo al que pertenece esta finalización
-    """
-
-    __tablename__ = "FinishedScan"
-
-    id = Column(Integer, ForeignKey("Scan.id"), primary_key=True)
-    finished_at = Column(DateTime, nullable=False)
-
-    # Relación con Scan
-    scan = relationship("Scan", back_populates="finished_scan")
-
-    def __str__(self):
-        finished = (
-            self.finished_at.strftime("%Y-%m-%d %H:%M:%S")
-            if self.finished_at # type: ignore
-            else "N/A"
-        )
-        return f"FinishedScan(scan_id={self.id}, finalizado={finished})"
-
-    def __repr__(self):
-        return f"<FinishedScan(scan_id={self.id})>"
 
 
 class NmapScan(Scan):
@@ -589,8 +545,8 @@ class OpenVASVulnerability(Base):
     category = Column(String(255))
     
     # Timestamps
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     # Relaciones
     scan_results = relationship('OpenVASScanResult', back_populates='vulnerability')
@@ -607,14 +563,13 @@ class OpenVASScanResult(Base):
     openvas_scan_id = Column(Integer, ForeignKey('OpenVASScan.id', ondelete='CASCADE'), nullable=False, index=True)
     vulnerability_id = Column(Integer, ForeignKey('OpenVASVulnerability.id'), nullable=False, index=True)
     host_id = Column(Integer, ForeignKey('Host.id'), nullable=False, index=True)
-    detected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    detected_at = Column(DateTime, nullable=False, default=datetime.now)
     
     # Relaciones
     openvas_scan = relationship('OpenVASScan', back_populates='results')
     vulnerability = relationship('OpenVASVulnerability', back_populates='scan_results')
     host = relationship('Host')
     
-
 
 class AccessToken(Base):
     """
@@ -626,7 +581,7 @@ class AccessToken(Base):
     token = Column(String(512), unique=True, nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
     revoked = Column(Integer, default=0)  # 0=activo, 1=revocado
     
     # Relación con User
@@ -634,7 +589,7 @@ class AccessToken(Base):
     
     def is_valid(self) -> bool:
         """Verifica si el token es válido (no revocado y no expirado)"""
-        return not self.revoked and datetime.utcnow() < self.expires_at #type: ignore  
+        return not self.revoked and datetime.now() < self.expires_at #type: ignore  
     
     def __str__(self):
         return f"AccessToken(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})"
@@ -650,14 +605,123 @@ class RefreshToken(Base):
     token = Column(String(512), unique=True, nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
     revoked = Column(Integer, default=0)
     
     user = relationship("User", back_populates="refresh_tokens")
     
     def is_valid(self) -> bool:
-        return not self.revoked and datetime.utcnow() < self.expires_at #type: ignore   
+        return not self.revoked and datetime.now() < self.expires_at #type: ignore   
     
     def __str__(self):
         return f"RefreshToken(id={self.id}, user_id={self.user_id})"
+
+
+class Vault(Base):
+    __tablename__ = "vault"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
+    is_recovery = Column(Boolean, nullable=False, default=False)
+
+    checker = Column(String(512), nullable=False)
+    vault_key = Column(String(512), nullable=False)
+
+    transformation = Column(String(64), nullable=False)   # p.ej. "AES/GCM/NoPadding"
+    kdf = Column(String(64), nullable=False)              # "Argon2"
+    kdf_iterations = Column(Integer, nullable=False)
+    kdf_memory = Column(Integer, nullable=False)
+    kdf_parallelism = Column(Integer, nullable=False)
+    salt = Column(String(128), nullable=False)
+
+    # Relaciones
+    user = relationship("User", back_populates="vaults")
+    storables = relationship(
+        "Storable",
+        back_populates="vault",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Vault id={self.id} user_id={self.user_id} is_recovery={self.is_recovery}>"
+
+
+class Storable(Base):
+    __tablename__ = "storable"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    internal_id = Column(String(128), nullable=True)
+    title = Column(String(128), nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.now,
+        onupdate=datetime.now,
+    )
+
+    vault_id = Column(Integer, ForeignKey("vault.id"), nullable=False)
+
+    # discriminador polimórfico
+    type = Column(String(50), nullable=False)
+
+    vault = relationship("Vault", back_populates="storables")
+
+    __mapper_args__ = {
+        "polymorphic_on": type,
+        "polymorphic_identity": "storable",
+        "with_polymorphic": "*",
+    }
+
+    __table_args__ = (
+        UniqueConstraint("vault_id", "internal_id", name="uq_storable_vault_internal"),
+        UniqueConstraint("title", "vault_id", name="uq_storable_vault_title"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Storable id={self.id} type={self.type} title={self.title!r}>"
+
+
+class Account(Storable):
+    __tablename__ = "account"
+
+    # PK = FK a storable.id (joined-table inheritance)
+    id = Column(Integer, ForeignKey("storable.id"), primary_key=True)
+
+    username = Column(String(512), nullable=False)
+    domain = Column(String(512), nullable=False)
+    password = Column(String(512), nullable=False)  # normalmente cifrado/base64
+
+    __mapper_args__ = {
+        "polymorphic_identity": "account",
+    }
+
+    def __repr__(self) -> str:
+        return f"<Account id={self.id} {self.username}@{self.domain}>"
+
+
+class CreditCard(Storable):
+    __tablename__ = "creditcard"
+
+    # PK = FK a storable.id (joined-table inheritance)
+    id = Column(Integer, ForeignKey("storable.id"), primary_key=True)
+
+    cardholder_name = Column(String(512), nullable=False)
+    card_number = Column(String(512), nullable=False)      # cifrado / enmascarado
+    expiration_date = Column(String(512), nullable=False)  # p.ej. "12/27"
+    postal_code = Column(String(512), nullable=False)
+    cvv = Column(String(512), nullable=False)              # cifrado
+
+    __mapper_args__ = {
+        "polymorphic_identity": "creditcard",
+    }
+
+    def __repr__(self) -> str:
+        return f"<CreditCard id={self.id} holder={self.cardholder_name!r}>"
+
+
+
 

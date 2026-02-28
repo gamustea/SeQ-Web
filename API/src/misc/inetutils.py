@@ -2,6 +2,8 @@
 import socket
 import ipaddress
 import dns.resolver
+from urllib.parse import urlparse
+
 
 from typing import Optional, Tuple
 
@@ -43,41 +45,50 @@ def reverse_dns_lookup(ip_address: str) -> Optional[str]:
         print(f"Error: {e}")
         return None
     
+
+
 def normalize_target(user_input: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Normaliza el target del usuario a IP + hostname.
+    Acepta IPs, dominios o URLs completas (http://, https://).
     
     Args:
-        user_input: Puede ser IP (8.8.8.8) o dominio (google.com)
+        user_input: Puede ser IP (8.8.8.8), dominio (google.com) 
+                   o URL completa (https://google.com/path)
     
     Returns:
         (ip, hostname): Tupla con IP y hostname. Si no se puede resolver, lanza excepción.
     """
     
+    cleaned_input = user_input.strip()
+    
+    if "://" in cleaned_input:
+        parsed = urlparse(cleaned_input)
+        if not parsed.netloc and parsed.path:
+            cleaned_input = parsed.path.split('/')[0]
+        else:
+            cleaned_input = parsed.netloc.split(':')[0]
+    else:
+        cleaned_input = cleaned_input.split(':')[0].split('/')[0]
+    
     ip: Optional[str] = None
     hostname: Optional[str] = None
+    
     try:
-        # Intentar parsear como IP primero
-        ip_obj = ipaddress.ip_address(user_input.strip())
+        ip_obj = ipaddress.ip_address(cleaned_input)
         ip = str(ip_obj)
         
-        # Es una IP: hacer reverse DNS para obtener hostname
         try:
             hostname = socket.gethostbyaddr(ip)[0]
-            hostname = hostname
         except (socket.herror, socket.gaierror):
-            # No tiene registro PTR, dejarlo None
             pass
             
     except ValueError:
-        # No es IP válida, asumir que es hostname/dominio
-        hostname = user_input.strip()
-        
-        # Resolver a IP
+        hostname = cleaned_input
+
         try:
             ip = socket.gethostbyname(hostname)
         except socket.gaierror as e:
-            # No se puede resolver
             raise ValueError(f"No se pudo resolver '{user_input}': {e}")
     
     return ip, hostname

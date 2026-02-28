@@ -11,5 +11,18 @@ import java.security.GeneralSecurityException;
 
 public class Main {
     static void main() throws GeneralSecurityException {
+        VaultFactory vf = VaultFactory.getInstance(
+                new User(
+                        "ID",
+                        "Gabriel",
+                        "Musteata",
+                        "gmiganescu@gmail.com",
+                        "gamustea"
+                )
+        );
+        System.out.println(
+                vf.mockVault()
+                        .toJson()
+        );
     }
 }

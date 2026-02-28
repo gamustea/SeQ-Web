@@ -32,11 +32,11 @@ import java.util.Set;
  */
 public abstract class VaultObject implements Sharable, Storable, JsonSerializable, Comparable<VaultObject> {
 
-    @Getter @Setter
-    protected String title;
-
     @Getter
     protected final String id;
+    
+    @Getter @Setter
+    protected String title;
 
     @Getter
     protected final Set<User> allowedUsers;

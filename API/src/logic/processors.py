@@ -10,7 +10,7 @@ from src.misc.inetutils import normalize_target
 from src.misc.conversion import JSONManager
 from src.core.model import (
     Host,
-    FinishedScan,
+    Scan,
     OpenPort,
     Port,
     NiktoScan,
@@ -52,12 +52,15 @@ class ScanResultProcessor(ABC):
     
     def _mark_scan_finished(self, scan_id: int) -> None:
         """Marca un escaneo como finalizado"""
-        finished = FinishedScan(
-            id=scan_id,
-            finished_at=datetime.now()
-        )
-        self.session.add(finished)
-        self.session.flush()
+        scan: Scan = self.session.get(Scan, scan_id)
+        
+        if scan is None:
+            return
+        
+        scan.finished_at = datetime.now()
+        self.session.add(scan)
+        self.session.commit()
+
 
 
 class NmapResultProcessor(ScanResultProcessor):

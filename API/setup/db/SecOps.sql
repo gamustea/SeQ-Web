@@ -1,7 +1,7 @@
-DROP DATABASE IF EXISTS SecOps;
-CREATE DATABASE IF NOT EXISTS SecOps;
+DROP DATABASE IF EXISTS SeQ;
+CREATE DATABASE IF NOT EXISTS SeQ;
 
-USE SecOps;
+USE SeQ;
 
 CREATE TABLE Person (
 	id INTEGER PRIMARY KEY AUTO_INCREMENT,
@@ -42,6 +42,7 @@ CREATE TABLE Scan (
 	`id` INTEGER PRIMARY KEY AUTO_INCREMENT,
 	`target` VARCHAR(255) NOT NULL,
 	`started_at` DATETIME NOT NULL,
+    `finished_at` DATETIME,
     `status` VARCHAR(20) NOT NULL DEFAULT 'pending',
 	`user_id` INTEGER NOT NULL,
 	`scan_type` VARCHAR(50),
@@ -49,12 +50,6 @@ CREATE TABLE Scan (
     host_id INTEGER,
 	FOREIGN KEY (`user_id`) REFERENCES `User` (`id`),
     FOREIGN KEY (host_id) REFERENCES Host (id)
-);
-
-CREATE TABLE FinishedScan (
-	id INTEGER PRIMARY KEY,
-	finished_at DATETIME NOT NULL,
-	FOREIGN KEY (id) REFERENCES Scan (id)
 );
 
 CREATE TABLE NmapScan (
@@ -191,17 +186,12 @@ CREATE TABLE OpenVASScanResult (
     openvas_scan_id INTEGER NOT NULL,
     vulnerability_id INTEGER NOT NULL,
     host_id INTEGER NOT NULL,
-    
-    -- Información específica del puerto/servicio
-    port VARCHAR(20),
-    protocol VARCHAR(10),
     detected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     
     FOREIGN KEY (openvas_scan_id) REFERENCES OpenVASScan (id) ON DELETE CASCADE,
     FOREIGN KEY (vulnerability_id) REFERENCES OpenVASVulnerability (id),
     FOREIGN KEY (host_id) REFERENCES Host (id),              
     
-    UNIQUE KEY unique_detection (openvas_scan_id, vulnerability_id, host_id, port),
     INDEX idx_scan_id (openvas_scan_id),
     INDEX idx_vuln_id (vulnerability_id),
     INDEX idx_host_id (host_id)
@@ -219,8 +209,6 @@ INSERT INTO User (username, password_hash, email, password_salt, person_id, rol_
 VALUES ("root", "683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a", "gmiganescu@gmail.com", "c167837c1c2a860031d861164d69bd79", 1, 1);
 
 SELECT *
-FROM Person AS P
-	JOIN User AS U ON P.id = U.person_id;
-    
-SELECT *
-FROM AccessToken;
+FROM Scan;
+
+

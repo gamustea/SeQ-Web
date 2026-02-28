@@ -37,6 +37,7 @@ cryptography==41.0.4
 flask_limiter
 PyJWT
 dnspython
+python-gvm
 
 # NOTA IMPORTANTE:
 # Nmap y Nikto deben instalarse directamente en el sistema operativo:
