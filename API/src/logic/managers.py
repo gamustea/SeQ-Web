@@ -1399,6 +1399,7 @@ class VaultManager(BaseManager):
         postal_code: Optional[str] = None,
         cvv: Optional[str] = None,
     ) -> Storable:
+        
         """
         Actualiza campos de un Storable (y de su subtipo si aplica).
 
