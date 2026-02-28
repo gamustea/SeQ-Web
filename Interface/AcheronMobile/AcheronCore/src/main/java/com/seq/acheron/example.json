@@ -11,20 +11,10 @@
   },
   "accounts": [
     {
-      "id": "ACC0",
-      "title": "Gmail Account",
-      "createdAt": "2026-02-28T16:09:55.567+01:00",
-      "updatedAt": "2026-02-28T16:09:55.567+01:00",
-      "allowedUsers": [],
-      "username": "MDYkhWS3otSQ2fe9wcLXKYK2Sl2qZCyaGqbA1YGXC0g//8PSUGLOQ/CF",
-      "domain": "0PmCzSbgYXh7EHiZTqzIwGTZnhsbJ4hT16OEKgeQkAj2gGWFZgJABI2P6g==",
-      "password": "6N8gGZsTydWXNV4djgs1qpy+ga4XOUGX722eqmliC8HHpGZX0Hd/Ig=="
-    },
-    {
       "id": "ACC1",
       "title": "Github Account",
-      "createdAt": "2026-02-28T16:09:55.568+01:00",
-      "updatedAt": "2026-02-28T16:09:55.568+01:00",
+      "createdAt": "2026-02-28T16:09:56",
+      "updatedAt": "2026-02-28T16:09:56",
       "allowedUsers": [],
       "username": "A9ai4QVp+Se3YzlEaO+Bd6j4weoqavxFv8/gycLMOOj9AJhk",
       "domain": "zuaTycrtm3d4ZjB0hMPttuRXBhsuVhzkQZPhNeUZeBJI5RgndNc=",
@@ -33,8 +23,8 @@
     {
       "id": "ACC2",
       "title": "Netflix Account",
-      "createdAt": "2026-02-28T16:09:55.568+01:00",
-      "updatedAt": "2026-02-28T16:09:55.568+01:00",
+      "createdAt": "2026-02-28T16:09:56",
+      "updatedAt": "2026-02-28T16:09:56",
       "allowedUsers": [],
       "username": "KsKfKrLCpLlz3jfI89OPkhbLO0InS7McGwrxQFOggN/Bkc4VRFgGt9Or",
       "domain": "t2ZZfLlwp6l5jSc+ov9/ulKzgasKzD3Aka2aoyFnwcpxjI1DzHOu",
@@ -45,8 +35,8 @@
     {
       "id": "CDC3",
       "title": "Personal Card",
-      "createdAt": "2026-02-28T16:09:55.568+01:00",
-      "updatedAt": "2026-02-28T16:09:55.568+01:00",
+      "createdAt": "2026-02-28T16:09:56",
+      "updatedAt": "2026-02-28T16:09:56",
       "allowedUsers": [],
       "cardHolderName": "VIEkTx2hrmd3U5QTczDEytXqckHUAkMTxnmnI842ezCeU0KjMbeo+5Sw8k0=",
       "cardNumber": "lXId+D+obGQ6KvjdeW9IYoI4dNuosNfnSrS+tNZZ5wqISKPMxcqTTolrVHs=",
@@ -57,8 +47,8 @@
     {
       "id": "CDC4",
       "title": "Auxiliary Card",
-      "createdAt": "2026-02-28T16:09:55.568+01:00",
-      "updatedAt": "2026-02-28T16:09:55.568+01:00",
+      "createdAt": "2026-02-28T16:09:56",
+      "updatedAt": "2026-02-28T16:09:56",
       "allowedUsers": [],
       "cardHolderName": "DN6GSqYjrqDLCaJQlow2rbtOAsdkd/uS0Or5JBp3XR/1dc8hgf62pStWOo0=",
       "cardNumber": "EPEGjAJpyBuY/rAuW2bqzqjRPYVl5ctKNyoRTtB6tTkeeO4KjdzuKo14fic=",

@@ -55,7 +55,7 @@ class Person(Base):
     first_name = Column(String(64), nullable=False)
     last_name = Column(String(64), nullable=False)
     alias = Column(String(64), nullable=False, unique=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     users = relationship("User", back_populates="person", uselist=True)
 
@@ -163,7 +163,7 @@ class Scan(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     target = Column(String(255), nullable=False)
-    started_at = Column(DateTime, nullable=False, default=datetime.now)
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     status = Column(String(20), nullable=False, default="pending")
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type = Column(String(50))
@@ -464,7 +464,7 @@ class NiktoIncident(Base):
 
     # Referencias y timestamp
     references = Column(Text, nullable=True)
-    discovered_at = Column(DateTime, nullable=False, default=datetime.now)
+    discovered_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relación muchos a muchos con NiktoScan
     nikto_scans = relationship(
@@ -545,8 +545,8 @@ class OpenVASVulnerability(Base):
     category = Column(String(255))
     
     # Timestamps
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relaciones
     scan_results = relationship('OpenVASScanResult', back_populates='vulnerability')
@@ -563,7 +563,7 @@ class OpenVASScanResult(Base):
     openvas_scan_id = Column(Integer, ForeignKey('OpenVASScan.id', ondelete='CASCADE'), nullable=False, index=True)
     vulnerability_id = Column(Integer, ForeignKey('OpenVASVulnerability.id'), nullable=False, index=True)
     host_id = Column(Integer, ForeignKey('Host.id'), nullable=False, index=True)
-    detected_at = Column(DateTime, nullable=False, default=datetime.now)
+    detected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     
     # Relaciones
     openvas_scan = relationship('OpenVASScan', back_populates='results')
@@ -581,7 +581,7 @@ class AccessToken(Base):
     token = Column(String(512), unique=True, nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     revoked = Column(Integer, default=0)  # 0=activo, 1=revocado
     
     # Relación con User
@@ -589,7 +589,7 @@ class AccessToken(Base):
     
     def is_valid(self) -> bool:
         """Verifica si el token es válido (no revocado y no expirado)"""
-        return not self.revoked and datetime.now() < self.expires_at #type: ignore  
+        return not self.revoked and datetime.utcnow() < self.expires_at #type: ignore  
     
     def __str__(self):
         return f"AccessToken(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})"
@@ -605,13 +605,13 @@ class RefreshToken(Base):
     token = Column(String(512), unique=True, nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     revoked = Column(Integer, default=0)
     
     user = relationship("User", back_populates="refresh_tokens")
     
     def is_valid(self) -> bool:
-        return not self.revoked and datetime.now() < self.expires_at #type: ignore   
+        return not self.revoked and datetime.utcnow() < self.expires_at #type: ignore   
     
     def __str__(self):
         return f"RefreshToken(id={self.id}, user_id={self.user_id})"
@@ -655,12 +655,12 @@ class Storable(Base):
     internal_id = Column(String(128), nullable=True)
     title = Column(String(128), nullable=True)
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.now,
-        onupdate=datetime.now,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
     )
 
     vault_id = Column(Integer, ForeignKey("Vault.id"), nullable=False)

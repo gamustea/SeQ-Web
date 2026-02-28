@@ -1,7 +1,5 @@
 
-
 import json
-
 from src.logic.managers import NmapScanManager, UserManager, VaultManager
 
 user_manager = UserManager()
@@ -83,6 +81,12 @@ json_string = """{
 }"""
 
 manager = VaultManager(user)
-# manager.create_vault_from_json_string(json_string)
+manager.upsert_vault_from_json_string(json_string)
 
-print(manager.export_vault_to_json_string(1))
+# storable = manager.get_storable_by(internal_id="ACC0")
+# manager.delete_storable(storable_id=storable.id)
+
+# dicc = manager.export_vault_to_json(1)
+# json_formateado = json.dumps(dicc, indent=2, ensure_ascii=False)
+
+# print(json_formateado)

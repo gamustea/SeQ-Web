@@ -7,24 +7,22 @@ Versión 3.1 - Normalizada con mejores prácticas REST
 import os
 import base64
 import time
+from datetime import datetime
 from functools import wraps
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 from flask import send_file, request, jsonify, Flask
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import BadRequest
-from src.logic.managers import NmapScanManager, NiktoScanManager, UserManager, OpenVASScanManager
 from src.logic.documents import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy
 from src.misc.logging import SecOpsLogger
 from src.misc.validation import PortValidator, IPValidator
-from src.core.model import Scan, User
+from src.core.model import Scan
 from src.core.exceptions import (
-    AuthenticationError,
     InvalidCredentialsError,
     ValidationError,
     MissingParameterError,
-    EntityNotFoundError,
     ScanNotFoundError,
     ScanExecutionError,
     ReportGenerationError,
@@ -35,7 +33,15 @@ from src.core.exceptions import (
     UserBindingError,
     DatabaseError
 )
-from src.logic.managers import OAuthTokenManager, ACCESS_TOKEN_EXPIRE_MINUTES
+from src.logic.managers import (
+    NmapScanManager,
+    NiktoScanManager,
+    UserManager,
+    OpenVASScanManager,
+    OAuthTokenManager,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    VaultManager,
+)
 
 # ============================================================================
 # INICIALIZACIÓN DE LA APLICACIÓN
@@ -55,6 +61,8 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"],
     storage_uri="memory://"
 )
+
+
 
 # ============================================================================
 # UTILIDADES DE AUTENTICACIÓN Y USUARIO
@@ -82,9 +90,23 @@ def get_user_managers(user_id: int) -> Tuple[NmapScanManager, NiktoScanManager, 
     USER_MANAGER.close_session()
     return nmap_manager, nikto_manager, openvas_manager
 
+def get_vault_manager(user_id: int) -> VaultManager:
+    """
+    Crea un VaultManager para el usuario dado.
+    """
+    user = USER_MANAGER.get_user_by_id(user_id)
+    if not user:
+        raise UserNotFoundError(user_id=user_id)  # ya tienes esta excepción
+    manager = VaultManager(user)
+    USER_MANAGER.close_session()
+    return manager
+
+
+
 # ============================================================================
 # DECORADORES DE AUTENTICACIÓN
 # ============================================================================
+
 def require_oauth_token(f):
     """
     Decorador que verifica el access token OAuth 2.0.
@@ -134,9 +156,13 @@ def require_oauth_token(f):
 
     return decorated_function
 
+
+
+
 # ============================================================================
 # FUNCIONES AUXILIARES
 # ============================================================================
+
 def build_pdf_creator(scan: Scan) -> PDFCreator:
     """
     Construye el creador de PDF apropiado según el tipo de escaneo.
@@ -201,9 +227,13 @@ def get_scan_by_id_for_user(
 
     return None, ""
 
+
+
+
 # ============================================================================
 # ENDPOINTS OAUTH 2.0
 # ============================================================================
+
 @app.route("/oauth/token", methods=["POST"])
 @limiter.limit("10 per minute")
 def oauth_token():
@@ -371,9 +401,13 @@ def oauth_revoke_all():
             "error": "server_error"
         }), 500
 
+
+
+
 # ============================================================================
 # ENDPOINTS GENERALES
 # ============================================================================
+
 @app.route("/say-hello", methods=["GET"])
 def hello():
     """
@@ -651,9 +685,13 @@ def cancel_scan(scan_id: int):
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
+
 # ============================================================================
 # ENDPOINTS DE USUARIOS
 # ============================================================================
+
 @app.route("/users/sign-up", methods=["POST"])
 def sign_up_user():
     """
@@ -898,10 +936,457 @@ def change_password():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
+
 # ============================================================================
-# ENDPOINTS DE ESCANEO NMAP
+# ENDPOINTS DE BÓVEDAS (ACHERON)
 # ============================================================================
-@app.route("/sentinel/nmap/start", methods=["POST"])
+
+@app.route("/acheron/vault", methods=["GET"])
+@require_oauth_token
+def get_vault():
+    """
+    Recupera el vault del usuario autenticado en formato JSON.
+
+    Query params:
+      isRecovery (opcional, "true"/"false") → indica si se quiere el vault de recuperación.
+
+    Returns:
+      200 + JSON del vault
+      404 si el usuario no tiene vault de ese tipo
+    """
+    try:
+        user_id = get_current_user_id()
+        vault_manager = get_vault_manager(user_id)
+
+        is_recovery_str = request.args.get("isRecovery", "false").lower()
+        is_recovery = is_recovery_str in ("true", "1", "yes")
+
+        vault = vault_manager.get_vault_for_user(is_recovery=is_recovery)
+        if not vault:
+            logger.info(
+                f"Usuario {get_current_username()} no tiene vault "
+                f"(is_recovery={is_recovery})"
+            )
+            return jsonify({
+                "error": "not_found",
+                "error_description": "Vault not found for current user",
+                "isRecovery": is_recovery,
+            }), 404
+
+        payload = vault_manager.export_vault_to_json(vault.id)
+
+        logger.info(
+            f"Usuario {get_current_username()}: recuperado vault {vault.id} "
+            f"(is_recovery={is_recovery})"
+        )
+
+        return jsonify(payload), 200
+
+    except UserNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except PermissionError as e:
+        logger.warning(f"Permiso denegado en /vaults GET: {e}")
+        return jsonify({
+            "error": "forbidden",
+            "error_description": str(e),
+        }), 403
+    except Exception as e:
+        logger.error(f"Error en /vaults GET: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+@app.route("/acheron/vault", methods=["POST"])
+@require_oauth_token
+def upsert_vault():
+    """
+    Crea o actualiza el vault del usuario autenticado a partir de un JSON.
+
+    Body (JSON): vault completo en el formato:
+      {
+        "checker": "...",
+        "vaultKey": "...",
+        "algorithm": { ... },
+        "accounts": [ ... ],
+        "creditcards": [ ... ]
+      }
+
+    Query params:
+      isRecovery (opcional, "true"/"false") → indica si es vault de recuperación.
+    """
+    try:
+        if not request.is_json:
+            return jsonify({
+                "error": "invalid_request",
+                "error_description": "Content-Type must be application/json"
+            }), 400
+
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "error": "invalid_request",
+                "error_description": "Request body must be JSON"
+            }), 400
+
+        is_recovery_str = request.args.get("isRecovery", "false").lower()
+        is_recovery = is_recovery_str in ("true", "1", "yes")
+
+        user_id = get_current_user_id()
+        vault_manager = get_vault_manager(user_id)
+
+        vault, created = vault_manager.upsert_vault_from_json(
+            data,
+            is_recovery=is_recovery,
+        )
+
+        logger.info(
+            f"Usuario {get_current_username()}: "
+            f"{'creado' if created else 'actualizado'} vault {vault.id} "
+            f"(is_recovery={is_recovery})"
+        )
+
+        status_code = 201 if created else 200
+        return jsonify({
+            "message": "Vault created" if created else "Vault updated",
+            "vaultId": vault.id,
+            "isRecovery": is_recovery,
+        }), status_code
+
+    except UserNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except (KeyError, ValueError) as e:
+        # KeyError si faltan claves obligatorias como "checker" / "vaultKey"
+        logger.warning(f"Error de datos en /vaults POST: {e}")
+        return jsonify({
+            "error": "invalid_request",
+            "error_description": str(e),
+        }), 400
+    except PermissionError as e:
+        logger.warning(f"Permiso denegado en /vaults POST: {e}")
+        return jsonify({
+            "error": "forbidden",
+            "error_description": str(e),
+        }), 403
+    except Exception as e:
+        logger.error(f"Error en /vaults POST: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+@app.route("/acheron/storables", methods=["PATCH"])
+@require_oauth_token
+def patch_vault_storables():
+    """
+    Acheron: Actualiza uno o varios Storables de los vaults del usuario autenticado.
+
+    Body (JSON): array de operaciones
+    [
+      {
+        "isRecovery": false,         # opcional, por defecto false
+        "internalId": "ACC0",
+        "changes": {
+          "title": "Nuevo título",
+          "username": "nuevo_user"
+        }
+      },
+      {
+        "isRecovery": true,
+        "internalId": "CDC3",
+        "changes": {
+          "expirationDate": "01/28"
+        }
+      }
+    ]
+    """
+    try:
+        if not request.is_json:
+            return jsonify({
+                "error": "invalid_request",
+                "error_description": "Content-Type must be application/json"
+            }), 400
+
+        data = request.get_json()
+        if not isinstance(data, list):
+            raise ValidationError(
+                field="body",
+                message="Body must be a JSON array of operations",
+                value=data,
+            )
+
+        user_id = get_current_user_id()
+        vault_manager = get_vault_manager(user_id)
+
+        results = vault_manager.bulk_update_storables(operations=data)
+
+        logger.info(
+            f"Acheron: usuario {get_current_username()} aplicó "
+            f"{len(data)} cambios sobre Storables (por-vault)"
+        )
+
+        return jsonify({
+            "message": "Bulk storable update completed",
+            "results": results,
+        }), 200
+
+    except UserNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except ValidationError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en /vaults/storables PATCH: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+@app.route("/vaults/storables", methods=["POST"])
+@require_oauth_token
+def add_vault_storable():
+    """
+    Acheron: añade un nuevo Storable (Account o CreditCard) a un vault del usuario.
+
+    Body (JSON):
+      {
+        "isRecovery": false,              # opcional, por defecto false
+        "kind": "account" | "creditcard",
+        "internalId": "ACC3",
+        "title": "New Gmail",
+        "createdAt": "...",              # opcional (ISO8601)
+        "updatedAt": "...",              # opcional (ISO8601)
+        ... campos específicos del tipo ...
+      }
+    """
+    try:
+        if not request.is_json:
+            return jsonify({
+                "error": "invalid_request",
+                "error_description": "Content-Type must be application/json"
+            }), 400
+
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise ValidationError(
+                field="body",
+                message="Body must be a JSON object",
+                value=data,
+            )
+
+        # Parámetros básicos
+        is_recovery = bool(data.get("isRecovery", False))
+        kind = data.get("kind")
+
+        if kind not in ("account", "creditcard"):
+            raise ValidationError(
+                field="kind",
+                message="kind must be 'account' or 'creditcard'",
+                value=kind,
+            )
+
+        internal_id = data.get("internalId")
+        title = data.get("title")
+
+        # timestamps opcionales
+        def _parse_dt(val: str | None) -> datetime:
+            if not val:
+                return datetime.utcnow()
+            try:
+                return datetime.fromisoformat(val)
+            except Exception:
+                return datetime.utcnow()
+
+        created_at = _parse_dt(data.get("createdAt"))
+        updated_at = _parse_dt(data.get("updatedAt"))
+
+        # Campos específicos según tipo
+        payload: dict[str, Any] = {}
+        if kind == "account":
+            payload["username"] = data.get("username", "")
+            payload["domain"] = data.get("domain", "")
+            payload["password"] = data.get("password", "")
+        else:  # creditcard
+            payload["cardholder_name"] = data.get("cardHolderName", "")
+            payload["card_number"] = data.get("cardNumber", "")
+            payload["expiration_date"] = data.get("expirationDate", "")
+            payload["postal_code"] = data.get("postalCode", "")
+            payload["cvv"] = data.get("cvv", "")
+
+        # Manager de vault para el usuario actual
+        user_id = get_current_user_id()
+        vault_manager = get_vault_manager(user_id)
+
+        # Localizar vault adecuado
+        vault = vault_manager.get_vault_for_user(is_recovery=is_recovery)
+        if not vault:
+            return jsonify({
+                "error": "not_found",
+                "error_description": "Vault not found for current user",
+                "isRecovery": is_recovery,
+            }), 404
+
+        # Comprobar unicidad de internalId en ese vault
+        if internal_id:
+            existing = vault_manager.get_storable_by(
+                vault_id=vault.id,
+                internal_id=internal_id,
+            )
+            if existing:
+                return jsonify({
+                    "error": "conflict",
+                    "error_description": (
+                        f"Storable with internalId={internal_id} already exists "
+                        f"in this vault"
+                    ),
+                    "internalId": internal_id,
+                    "vaultId": vault.id,
+                    "isRecovery": is_recovery,
+                }), 409
+
+        # Crear usando el método ya existente del manager
+        st = vault_manager.add_storable_to_vault(
+            vault_id=vault.id,
+            kind=kind,  # type: ignore
+            internal_id=internal_id,
+            title=title,
+            created_at=created_at,
+            updated_at=updated_at,
+            **payload,
+        )
+
+        logger.info(
+            f"Acheron: usuario {get_current_username()} añadió storable "
+            f"{st.id} (internal_id={st.internal_id}, kind={kind}, "
+            f"is_recovery={is_recovery})"
+        )
+
+        return jsonify({
+            "message": "Storable created",
+            "storableId": st.id,
+            "internalId": st.internal_id,
+            "vaultId": st.vault_id,
+            "isRecovery": is_recovery,
+            "kind": kind,
+        }), 201
+
+    except UserNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except ValidationError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en /vaults/storables POST: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    
+@app.route("/vaults/storables", methods=["DELETE"])
+@require_oauth_token
+def delete_vault_storable():
+    """
+    Acheron: elimina un Storable del vault del usuario autenticado.
+
+    Body (JSON):
+      {
+        "isRecovery": false,      # opcional, por defecto false
+        "internalId": "ACC0"
+      }
+    """
+    try:
+        if not request.is_json:
+            return jsonify({
+                "error": "invalid_request",
+                "error_description": "Content-Type must be application/json"
+            }), 400
+
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise ValidationError(
+                field="body",
+                message="Body must be a JSON object",
+                value=data,
+            )
+
+        internal_id = data.get("internalId")
+        if not internal_id:
+            raise ValidationError(
+                field="internalId",
+                message="internalId is required",
+                value=internal_id,
+            )
+
+        is_recovery = bool(data.get("isRecovery", False))
+
+        user_id = get_current_user_id()
+        vault_manager = get_vault_manager(user_id)
+
+        # Localizar vault y storable
+        vault = vault_manager.get_vault_for_user(is_recovery=is_recovery)
+        if not vault:
+            return jsonify({
+                "error": "not_found",
+                "error_description": "Vault not found for current user",
+                "isRecovery": is_recovery,
+            }), 404
+
+        st = vault_manager.get_storable_by(
+            vault_id=vault.id,
+            internal_id=internal_id,
+        )
+        if not st:
+            return jsonify({
+                "error": "not_found",
+                "error_description": "Storable not found in this vault",
+                "internalId": internal_id,
+                "isRecovery": is_recovery,
+            }), 404
+
+        success = vault_manager.delete_storable(st.id)
+        if not success:
+            # delete_storable devuelve False solo si no encontró nada,
+            # pero ya lo hemos comprobado antes
+            return jsonify({
+                "error": "deletion_failed",
+                "error_description": "Could not delete storable",
+                "internalId": internal_id,
+            }), 500
+
+        logger.info(
+            f"Acheron: usuario {get_current_username()} eliminó storable "
+            f"{st.id} (internal_id={internal_id}, is_recovery={is_recovery})"
+        )
+
+        return jsonify({
+            "message": "Storable deleted",
+            "storableId": st.id,
+            "internalId": internal_id,
+            "vaultId": vault.id,
+            "isRecovery": is_recovery,
+        }), 200
+
+    except UserNotFoundError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except ValidationError as e:
+        error_dict, status_code = create_error_response(e, include_debug_info=False)
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en /vaults/storables DELETE: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(error_dict), status_code
+
+
+
+# ============================================================================
+# ENDPOINTS DE ESCANEO
+# ============================================================================
+
+@app.route("/sentinel/nmap", methods=["POST"])
 @require_oauth_token
 def start_nmap_scan():
     """
@@ -1010,10 +1495,7 @@ def start_nmap_scan():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
-# ============================================================================
-# ENDPOINTS DE ESCANEO NIKTO
-# ============================================================================
-@app.route("/sentinel/nikto/start", methods=["POST"])
+@app.route("/sentinel/nikto", methods=["POST"])
 @require_oauth_token
 def start_nikto_scan():
     """
@@ -1106,10 +1588,7 @@ def start_nikto_scan():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
-# ============================================================================
-# ENDPOINTS DE ESCANEO OPENVAS
-# ============================================================================
-@app.route("/sentinel/openvas/start", methods=["POST"])
+@app.route("/sentinel/openvas", methods=["POST"])
 @require_oauth_token
 def start_openvas_scan():
     """
@@ -1215,9 +1694,13 @@ def start_openvas_scan():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
+
 # ============================================================================
 # ENDPOINTS DE GENERACIÓN DE PDFs
 # ============================================================================
+
 @app.route("/sentinel/generate-pdf", methods=["GET"])
 @require_oauth_token
 def generate_pdf():
@@ -1373,9 +1856,13 @@ def generate_pdf_base64():
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
+
 # ============================================================================
 # ENDPOINTS DE CONSULTA DE RESULTADOS
 # ============================================================================
+
 @app.route("/sentinel/results", methods=["GET"])
 @require_oauth_token
 def retrieve_all_scans():
@@ -1673,10 +2160,14 @@ def retrieve_scan_by_id(scan_id: int):
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
 
+
+
+
 # ============================================================================
 # ENDPOINTS DE ELIMINACIÓN DE ESCANEOS
 # ============================================================================
-@app.route("/sentinel/scans/<int:scan_id>", methods=["DELETE"])
+
+@app.route("/sentinel/<int:scan_id>", methods=["DELETE"])
 @require_oauth_token
 def delete_scan(scan_id: int):
     """
@@ -1776,9 +2267,12 @@ def delete_scan(scan_id: int):
         return jsonify(error_dict), status_code
 
 
+
+
 # ============================================================================
 # MANEJO DE ERRORES GLOBALES
 # ============================================================================
+
 @app.errorhandler(404)
 def not_found(error):
     """Manejo de rutas no encontradas."""
@@ -1807,6 +2301,7 @@ def internal_error(error):
         "error": "Error interno del servidor",
         "message": "Ha ocurrido un error inesperado"
     }), 500
+
 
 
 
