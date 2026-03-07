@@ -38,6 +38,9 @@ flask_limiter
 PyJWT
 dnspython
 python-gvm
+ollama
+requests
+duckduckgo-search>=6.0
 
 # NOTA IMPORTANTE:
 # Nmap y Nikto deben instalarse directamente en el sistema operativo:

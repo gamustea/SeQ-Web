@@ -25,5 +25,24 @@
             "hostname": "localhost",
             "port": 9390
         }
+    },
+    "aegis": {
+        "enabled": true,
+        "ollama": {
+            "host": "http://localhost:11434",
+            "model": "qwen2.5:14b",
+            "timeoutSeconds": 120
+        },
+        "tweaks": {
+            "company": "EMESA",
+            "isITEnterprise": true,
+            "companySize": 80,
+            "mentionContact": "ciberseguridad@emesa.com",
+            "asociatedBrands": ["HPE", "Konica", "SonicWall"]
+        },
+        "paths": {
+            "stackDir": "data/aegis/stack",
+            "outputDir": "data/aegis/output"
+        }
     }
 }

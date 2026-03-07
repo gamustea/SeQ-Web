@@ -67,3 +67,6 @@ class ConfigReader:
     def get_openvas_config(self) -> dict[str, str]:
         configs = self.read_configs()
         return configs["openvas"]
+    
+    def get_aegis_config(self) -> dict[str, str]:
+        return self.read_configs()["aegis"]

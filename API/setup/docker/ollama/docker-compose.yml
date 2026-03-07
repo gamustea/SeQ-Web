@@ -1,0 +1,33 @@
+services:
+
+  # ── Ollama — Motor de IA local ──────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: seq_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama          # persiste modelos entre reinicios
+      - ./entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/usr/bin/bash", "/entrypoint.sh"]
+    environment:
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s    # tiempo para el pull inicial
+
+    # ── GPU NVIDIA ──
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama_models:           # volumen nombrado → los modelos no se re-descargan

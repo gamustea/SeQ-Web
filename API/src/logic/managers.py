@@ -1,10 +1,10 @@
 
-
-
 import secrets
 import threading
 import time
 import json
+import asyncio
+import os
 import urllib.parse
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
@@ -17,6 +17,13 @@ from typing import Optional, Dict
 import time
 
 import jwt
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+import ollama
+from ollama import chat, web_search, web_fetch
 
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -36,7 +43,9 @@ from src.core.model import (
     Vault,
     Storable,
     Account,
-    CreditCard
+    CreditCard,
+    AegisDocument,
+    Topic
 )
 from src.logic.secrets import Encoder
 from src.logic.tasks import NmapScanTask, NiktoScanTask, TaskStatus, _Task, OpenVASTask
@@ -2125,3 +2134,582 @@ class OAuthTokenManager(BaseManager):
             self._safe_commit()
         except Exception:
             self._safe_rollback()
+
+
+class AegisManager(BaseManager):
+    """
+    Manager de Aegis: generación asíncrona de píldoras de concienciación
+    en ciberseguridad mediante un modelo de IA local (Ollama).
+
+    Parámetros obligatorios:
+    - user: Usuario propietario de los documentos que se generen.
+
+    Responsabilidades:
+    - Leer configuración de Ollama desde SecConfig.json (vía ConfigReader).
+    - Resolver el topic desde la BD o elegir uno aleatorio si no se especifica.
+    - Generar la píldora en Markdown de forma asíncrona y persistirla en BD y disco.
+    - Listar, localizar y eliminar documentos del usuario.
+    """
+
+    def __init__(self, user: User, config_reader: Optional[ConfigReader] = None):
+        super().__init__()
+        self.user = user
+        self.config_reader = config_reader or ConfigReader()
+
+    def _read_cfg(self) -> dict[str, Any]:
+        aegis = self.config_reader.get_aegis_config()
+        ol    = aegis.get("ollama", {}) or {}
+        paths = aegis.get("paths",  {}) or {}
+
+        api_root   = Path(__file__).resolve().parents[2]
+        stack_dir  = api_root / str(paths.get("stackDir",  "data/aegis/stack"))
+        output_dir = api_root / str(paths.get("outputDir", "data/aegis/output"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        return {
+            "enabled":         bool(aegis.get("enabled", True)),
+            "ollama_host":     str(ol.get("host",           "http://localhost:11434")),
+            "ollama_model":    str(ol.get("model",          "mistral")),
+            "timeout_seconds": int(ol.get("timeoutSeconds", 120)),
+            "stack_dir":       stack_dir,
+            "output_dir":      output_dir,
+        }
+
+    def _get_topic_from_db(
+        self, topic_id: Optional[int]
+    ) -> tuple[Optional[Topic], bool]:
+        """
+        Resuelve el topic desde la BD.
+
+        Returns:
+            (topic, was_random)
+            - topic=None significa que la BD está vacía.
+            - was_random=True indica que se eligió un topic aleatorio.
+        """
+        import random
+
+        if topic_id is not None:
+            topic = (
+                self.session.query(Topic)
+                .filter(Topic.id == topic_id)
+                .first()
+            )
+            if topic:
+                return topic, False
+            self.logger.warning(
+                f"Topic id={topic_id} no encontrado en BD. Se usará uno aleatorio."
+            )
+
+        all_topics = self.session.query(Topic).all()
+        if not all_topics:
+            return None, False
+
+        return random.choice(all_topics), True
+
+    def _load_reference_stack(self, stack_dir: Path) -> str:
+        """
+        Carga las últimas 3 píldoras de referencia del cliente desde disco.
+        Solo se consideran ficheros .md (formato canónico de Aegis).
+        """
+        if not stack_dir.exists():
+            return ""
+        files = sorted(
+            stack_dir.glob("*.md"),
+            key=lambda p: p.stat().st_mtime
+        )
+        if not files:
+            return ""
+        return "\n\n---\n\n".join(
+            p.read_text(encoding="utf-8") for p in files[-3:]
+        )
+
+    def _build_prompt(
+        self,
+        topic: Optional[Topic],
+        topic_id: int,
+        reference: str,
+        tweaks: dict[str, Any],
+    ) -> str:
+        # ── Tweaks ───────────────────────────────────────────────────────────
+        company  = tweaks.get("company",       "la empresa destinataria")
+        sector   = tweaks.get("sector",        "")
+        audience = tweaks.get("audienceLevel", "mixed")
+        brands   = ", ".join(tweaks.get("associatedBrands", []))
+        contact  = tweaks.get("mentionContact","")
+        language = tweaks.get("language",      "es")
+        tone     = tweaks.get("tone",          "formal")
+        focus    = tweaks.get("topicFocus",    "")
+
+        # ── Contexto del cliente ─────────────────────────────────────────────
+        audience_label = {
+            "technical":     "técnico (conocimiento avanzado de seguridad)",
+            "mixed":         "mixto (empleados técnicos y no técnicos)",
+            "non-technical": "no técnico (empleados de negocio sin perfil IT)",
+        }.get(audience, audience)
+
+        context_parts = [f"- Empresa destinataria: {company}"]
+        if sector:  context_parts.append(f"- Sector de actividad: {sector}")
+        if brands:  context_parts.append(f"- Tecnologías y herramientas en uso: {brands}")
+        if focus:   context_parts.append(f"- Enfoque específico solicitado: {focus}")
+        if contact: context_parts.append(f"- Contacto de referencia para el lector: {contact}")
+        context_parts += [
+            f"- Perfil de la audiencia: {audience_label}",
+            f"- Tono: {tone}",
+        ]
+        context_block = "\n".join(context_parts)
+
+        # ── Tema ─────────────────────────────────────────────────────────────
+        if topic:
+            topic_block = f"- Título: {topic.title}"
+            if getattr(topic, "description", None):
+                topic_block += f"\n- Descripción: {topic.description}"
+        else:
+            topic_block = (
+                f"- ID de tema: {topic_id} (no encontrado en BD).\n"
+                "- Elige un tema de ciberseguridad relevante para empleados de empresa."
+            )
+
+        # ── Rol ──────────────────────────────────────────────────────────────
+        role_block = (
+            f"Eres un redactor senior especializado en comunicación de ciberseguridad corporativa. "
+            f"Tu trabajo es producir píldoras de concienciación en {language.upper()} "
+            f"para empleados de empresas españolas, adaptadas al perfil y contexto de cada cliente. "
+            f"Escribes de forma clara, directa y práctica: explicas el riesgo, das contexto real "
+            f"y ofreces pasos concretos que el empleado puede aplicar de inmediato. "
+            f"Nunca usas jerga técnica innecesaria con audiencias no técnicas. "
+            f"REGLA ABSOLUTA: empieza a escribir el documento directamente en la primera línea, "
+            f"sin preámbulos ni frases introductorias como 'A continuación...', 'En esta píldora...'. "
+            f"NUNCA respondas en otro idioma distinto a {language.upper()}."
+        )
+
+        # ── Ejemplo de referencia (hardcoded, basado en píldora real) ────────
+        example = (
+            "# Píldora de concienciación:\n"
+            "**Borra bien la información**\n\n"
+            "La información sensible de la empresa no solo está en el contenido visible de los "
+            "documentos. Los metadatos —características ocultas de un fichero— y una eliminación "
+            "incorrecta de archivos pueden exponer datos críticos sin que te des cuenta. "
+            "Aquí tienes algunos consejos para proteger adecuadamente la información:\n\n"
+            "- **No compartas capturas de pantalla sin revisarlas antes.** Además del contenido "
+            "principal, pueden verse nombres de usuario, rutas de archivos u otras ventanas abiertas "
+            "que revelen información corporativa.\n"
+            "- **Borrar un archivo y vaciar la papelera no es suficiente.** Los datos siguen siendo "
+            "recuperables con herramientas especializadas. Para información sensible, usa aplicaciones "
+            "de borrado seguro como [Eraser](https://www.incibe.es/ciudadania/herramientas/eraser).\n"
+            "- **Antes de deshacerte de un dispositivo, elimina su contenido de forma segura** "
+            "o, si es necesario, destruye físicamente el soporte.\n"
+            "- **Los documentos en papel también requieren tratamiento adecuado.** No los tires a la "
+            "basura común; usa las destructoras o los contenedores de documentación confidencial "
+            "que la empresa pone a tu disposición.\n"
+            "- **Los metadatos revelan más de lo que crees.** Cada documento contiene información "
+            "oculta: autor, fecha de creación, historial de cambios e incluso comentarios eliminados. "
+            "Revísalos y límpialos antes de compartir documentos fuera de la organización.\n\n"
+            "Si tienes dudas sobre cómo eliminar información de algún dispositivo o soporte, "
+            "consúltalo con ciberseguridad@emesa.com. Un error en el proceso puede dejar expuesta "
+            "información que creías eliminada.\n\n"
+            "Para quienes quieran ampliar el tema, pueden acceder a esta "
+            "[guía de INCIBE](https://www.incibe.es/sites/default/files/contenidos/guias/doc/"
+            "guia_ciberseguridad_borrado_seguro_metad_0.pdf) sobre borrado seguro de la información."
+        )
+
+        # ── Instrucción de formato ────────────────────────────────────────────
+        format_instruction = (
+            "╔══════════════════════════════════════════════════════════════╗\n"
+            "║           TAREA: PÍLDORA DE CONCIENCIACIÓN FINAL            ║\n"
+            "╚══════════════════════════════════════════════════════════════╝\n\n"
+            f"Escribe en {language.upper()} una píldora de concienciación corporativa en Markdown, "
+            "lista para distribuir a los empleados. El documento debe poder enviarse tal cual, "
+            "sin ninguna edición posterior.\n\n"
+
+            "ESTRUCTURA OBLIGATORIA:\n\n"
+
+            "1. ENCABEZADO\n"
+            "   Línea 1: '# Píldora de concienciación:'\n"
+            "   Línea 2: subtítulo en negrita con un título atractivo y directo "
+            "(ej. '**Borra bien la información**').\n\n"
+
+            "2. PÁRRAFO INTRODUCTORIO (3-5 frases)\n"
+            "   - Contextualiza el riesgo: qué amenaza o problema aborda esta píldora.\n"
+            "   - Explica por qué es relevante para los empleados de esta empresa concreta.\n"
+            "   - Si el sector o las tecnologías del cliente tienen relación directa con el tema, "
+            "mencíonalo de forma natural.\n"
+            "   - Anticipa brevemente el tipo de consejos que vendrán.\n\n"
+
+            "3. LISTA DE CONSEJOS (5-7 bullets)\n"
+            "   Cada bullet debe cumplir estos cuatro criterios:\n"
+            "   a) Empezar con la acción o el riesgo principal en negrita.\n"
+            "   b) Desarrollar en 2-3 frases el motivo y la consecuencia real si no se aplica.\n"
+            "   c) A menos que seas PLENAMENTE CONSCIENTE de su existencia, evita emplear pegar enlaces que lleven a recursos inexistentes\n"
+            "   d) Estar redactado en segunda persona y ser aplicable sin conocimientos técnicos.\n\n"
+
+            "4. FRASE DE CIERRE\n"
+            "   - Llamada a la acción: qué debe hacer el empleado si tiene dudas o detecta un problema.\n"
+            + (f"   - Incluye el contacto de referencia: {contact}\n" if contact else "") +
+            "   - Opcional: enlace a una guía o recurso externo de ampliación (INCIBE, CISA, etc.). A menos que seas PLENAMENTE CONSCIENTE de su existencia, evita emplear pegar enlaces que lleven a recursos inexistentes\n\n"
+
+            "CRITERIOS DE CALIDAD:\n"
+            "- Longitud total: entre 350 y 550 palabras.\n"
+            "- Tono: cercano pero profesional; usa el nombre de la empresa cuando aporte naturalidad.\n"
+            "- Sin tecnicismos innecesarios para audiencia no técnica.\n"
+            "- No reproduzcas ninguna frase del ejemplo.\n\n"
+
+            "--- EJEMPLO DE REFERENCIA (imita estructura, tono y extensión; NO copies el contenido) ---\n"
+            f"{example}\n"
+            "--- FIN DEL EJEMPLO ---"
+        )
+
+        # ── Ensamblado: rol → referencias → contexto → tema → tarea ─────────
+        prompt_parts = [role_block]
+
+        if reference:
+            prompt_parts.append(
+                "A continuación tienes píldoras reales publicadas anteriormente por este cliente. "
+                "Analiza su estilo, tono, extensión y forma de estructurar los consejos. "
+                "Tu output debe ser coherente con ellas:\n\n"
+                "━━━ PÍLDORAS DE REFERENCIA ━━━\n"
+                + reference +
+                "\n━━━ FIN DE LAS REFERENCIAS ━━━"
+            )
+
+        prompt_parts += [
+            f"CONTEXTO DEL CLIENTE:\n{context_block}",
+            f"TEMA A DESARROLLAR:\n{topic_block}",
+            format_instruction,
+        ]
+
+        return "\n\n".join(prompt_parts)
+
+    def _web_search(self, query: str, max_results: int = 5) -> str:
+        """
+        Ejecuta una búsqueda web y devuelve los resultados como texto
+        estructurado para inyectarlos en el contexto del modelo.
+
+        Requiere: pip install duckduckgo-search
+        """
+        try:
+            from duckduckgo_search import DDGS
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results))
+
+            if not results:
+                self.logger.warning(f"Búsqueda sin resultados para: '{query}'")
+                return f"No se encontraron resultados para: {query}"
+
+            lines = [f"Resultados de búsqueda para '{query}':\n"]
+            for i, r in enumerate(results, 1):
+                lines.append(f"{i}. {r.get('title', 'Sin título')}")
+                lines.append(f"   {r.get('body',  'Sin descripción')}")
+                lines.append(f"   Fuente: {r.get('href', 'URL no disponible')}\n")
+
+            return "\n".join(lines)
+
+        except ImportError:
+            self.logger.error("duckduckgo-search no está instalado (pip install duckduckgo-search)")
+            return "Búsqueda no disponible: dependencia no instalada."
+        except Exception as e:
+            self.logger.warning(f"Búsqueda web fallida para '{query}': {e}")
+            return f"No se pudo completar la búsqueda: {e}"
+
+    def _call_ollama(self, host: str, model: str, prompt: str) -> str:
+        """
+        Llama al modelo local vía Ollama con soporte de tool calling para
+        búsquedas web. El flujo es:
+
+        1. Primera llamada: el modelo recibe el prompt y decide si necesita
+            buscar información actualizada en internet.
+        2. Si invoca `web_search`, se ejecuta la búsqueda y el resultado se
+            añade a la conversación como respuesta de herramienta.
+        3. Segunda llamada: el modelo genera la píldora final con el contexto
+            enriquecido.
+
+        Si el modelo no invoca ninguna herramienta, se devuelve directamente
+        la respuesta de la primera llamada.
+
+        Nota: requiere un modelo con soporte de tool calling (llama3.1,
+        mistral-nemo, qwen2.5...). Con modelos sin soporte, Ollama ignora
+        las tools y el flujo degenera a una llamada simple.
+        """
+        client = ollama.Client(host=host)
+
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": (
+                    "Busca información actualizada en internet sobre un tema de ciberseguridad. "
+                    "Úsala para encontrar noticias recientes, vulnerabilidades activas o "
+                    "incidentes relevantes que enriquezcan el contenido de la píldora."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Consulta de búsqueda concisa, en español o inglés, "
+                                "orientada a obtener noticias o información técnica reciente."
+                            ),
+                        }
+                    },
+                    "required": ["query"],
+                },
+            },
+        }]
+
+        system = (
+            "Eres un redactor senior especializado en comunicación de ciberseguridad corporativa. "
+            "Produces documentos finales en Markdown, listos para distribuir. "
+            "Nunca describes lo que vas a escribir: escribes directamente el documento. "
+            "Si necesitas contexto actualizado sobre el tema (noticias recientes, "
+            "vulnerabilidades activas, incidentes reales), usa la herramienta web_search "
+            "antes de redactar."
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+
+        # ── Primera llamada: el modelo decide si buscar ───────────────────────
+        try:
+            resp = client.chat(
+                model=model,
+                messages=messages,
+                tools=tools,
+                options={"num_predict": 4096, "temperature": 0.7},
+            )
+        except ollama.ResponseError as e:
+            self.logger.error(f"Ollama ResponseError (primera llamada): {e}")
+            raise RuntimeError(f"Error del modelo: {e}") from e
+        except Exception as e:
+            self.logger.error(f"Error conectando con Ollama en {host}: {e}")
+            raise RuntimeError(f"No se pudo conectar con Ollama en {host}") from e
+
+        # ── Si el modelo invoca tool calls, ejecutamos las búsquedas ─────────
+        tool_calls = getattr(resp.message, "tool_calls", None) or []
+        if tool_calls:
+            self.logger.info(f"Aegis: el modelo solicita {len(tool_calls)} búsqueda(s) web")
+
+            # Añadimos la respuesta del asistente con los tool_calls al hilo
+            messages.append({
+                "role":       "assistant",
+                "content":    getattr(resp.message, "content", "") or "",
+                "tool_calls": tool_calls,
+            })
+
+            for tc in tool_calls:
+                query  = tc.function.arguments.get("query", "")
+                result = self._web_search(query)
+                self.logger.info(f"Aegis: búsqueda ejecutada → '{query}'")
+                messages.append({
+                    "role":    "tool",
+                    "content": result,
+                })
+
+            # ── Segunda llamada: genera la píldora con el contexto enriquecido
+            try:
+                resp = client.chat(
+                    model=model,
+                    messages=messages,
+                    options={"num_predict": 4096, "temperature": 0.7},
+                )
+            except ollama.ResponseError as e:
+                self.logger.error(f"Ollama ResponseError (segunda llamada): {e}")
+                raise RuntimeError(f"Error del modelo: {e}") from e
+            except Exception as e:
+                self.logger.error(f"Error conectando con Ollama en {host}: {e}")
+                raise RuntimeError(f"No se pudo conectar con Ollama en {host}") from e
+        else:
+            self.logger.info("Aegis: el modelo no solicitó búsquedas web")
+
+        content = (getattr(resp.message, "content", None) or "").strip()
+        if not content:
+            raise RuntimeError("El modelo devolvió una respuesta vacía")
+        return content
+
+    def generate(
+        self,
+        topic_id: Optional[int] = None,
+        tweaks: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """
+        Genera una píldora de concienciación en Markdown y la persiste
+        en disco y en BD.
+
+        Args:
+            topic_id: ID del topic en BD. Si es None o no existe, se elige uno aleatorio.
+            tweaks:   Parámetros de personalización por cliente (company, sector, tone, etc.).
+
+        Returns:
+            Dict con id, title, filename, path y generatedAt del documento creado.
+            Incluye 'topicNote' si el topic fue resuelto de forma automática.
+        """
+        cfg    = self._read_cfg()
+        tweaks = tweaks or {}
+
+        if not cfg["enabled"]:
+            raise RuntimeError("Aegis está deshabilitado por configuración")
+
+        # ── Resolución del topic ─────────────────────────────────────────────
+        topic, was_random = self._get_topic_from_db(topic_id)
+
+        if topic is None:
+            topic_note = (
+                "No hay topics disponibles en la BD. "
+                "Se ha generado contenido genérico de ciberseguridad."
+            )
+            resolved_topic_id = topic_id or 0
+        elif was_random:
+            topic_note = (
+                f"El topic solicitado no fue encontrado. "
+                f"Se ha usado uno aleatorio: '{topic.title}' (id={topic.id})."
+            )
+            resolved_topic_id = topic.id
+        else:
+            topic_note = None
+            resolved_topic_id = topic.id
+
+        if topic_note:
+            self.logger.info(f"Aegis topic note: {topic_note}")
+
+        # ── Generación ───────────────────────────────────────────────────────
+        reference = self._load_reference_stack(cfg["stack_dir"])
+        prompt    = self._build_prompt(topic, resolved_topic_id, reference, tweaks)
+
+        self.logger.info(
+            f"Aegis generando píldora | topic_id={resolved_topic_id} "
+            f"| topic_en_bd={'sí' if topic else 'no'} "
+            f"| modelo={cfg['ollama_model']}"
+        )
+
+        content = self._call_ollama(
+            cfg["ollama_host"],
+            cfg["ollama_model"],
+            prompt
+        )
+
+        ##
+        ## TODO: Aquí debería ir la parte de las noticias, justo antes de la persistencia.
+        ##
+
+        # ── Persistencia ─────────────────────────────────────────────────────
+        ts       = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"{ts}_{self.user.id}_{resolved_topic_id}.md"
+        path     = cfg["output_dir"] / filename
+        path.write_text(content, encoding="utf-8")
+
+        title = (
+            topic.title if topic
+            else tweaks.get("topicFocus") or f"Píldora {ts}"
+        )
+        document = AegisDocument(
+            title        = title[:64],
+            filename     = filename,
+            generated_at = datetime.utcnow(),
+            topic_id     = resolved_topic_id,
+            user_id      = self.user.id,
+        )
+        self.session.add(document)
+        self.session.commit()
+        self.session.refresh(document)
+
+        self.logger.info(
+            f"Aegis: píldora '{filename}' generada y persistida (id={document.id})"
+        )
+
+        result: dict[str, Any] = {
+            "id":          document.id,
+            "title":       document.title,
+            "filename":    document.filename,
+            "path":        str(path),
+            "generatedAt": document.generated_at.isoformat(),
+        }
+        if topic_note:
+            result["topicNote"] = topic_note
+
+        return result
+
+    # ── Consulta y gestión de documentos ─────────────────────────────────────
+
+    def list_documents(self) -> list[dict[str, Any]]:
+        """Lista todas las píldoras generadas por el usuario autenticado."""
+        docs = (
+            self.session.query(AegisDocument)
+            .filter(AegisDocument.user_id == self.user.id)
+            .order_by(AegisDocument.generated_at.desc())
+            .all()
+        )
+        return [
+            {
+                "id":          d.id,
+                "title":       d.title,
+                "filename":    d.filename,
+                "generatedAt": d.generated_at.isoformat(),
+            }
+            for d in docs
+        ]
+
+    def get_document_path(self, document_id: int) -> Path:
+        """
+        Devuelve la ruta en disco de una píldora, validando que pertenece
+        al usuario autenticado.
+
+        Raises:
+            ValueError: Si el documento no existe o no pertenece al usuario.
+            FileNotFoundError: Si el fichero no existe en disco.
+        """
+        doc = (
+            self.session.query(AegisDocument)
+            .filter(
+                AegisDocument.id      == document_id,
+                AegisDocument.user_id == self.user.id,
+            )
+            .first()
+        )
+        if not doc:
+            raise ValueError(
+                f"Documento {document_id} no encontrado o no pertenece al usuario"
+            )
+
+        cfg  = self._read_cfg()
+        path = cfg["output_dir"] / doc.filename
+
+        if not path.exists():
+            raise FileNotFoundError(
+                f"El fichero '{doc.filename}' no existe en disco. "
+                "Es posible que haya sido eliminado manualmente."
+            )
+        return path
+
+    def delete_document(self, document_id: int) -> None:
+        """
+        Elimina una píldora de la BD y del sistema de ficheros, validando
+        que pertenece al usuario autenticado.
+
+        Raises:
+            ValueError: Si el documento no existe o no pertenece al usuario.
+        """
+        doc = (
+            self.session.query(AegisDocument)
+            .filter(
+                AegisDocument.id      == document_id,
+                AegisDocument.user_id == self.user.id,
+            )
+            .first()
+        )
+        if not doc:
+            raise ValueError(
+                f"Documento {document_id} no encontrado o no pertenece al usuario"
+            )
+
+        cfg  = self._read_cfg()
+        path = cfg["output_dir"] / doc.filename
+
+        if path.exists():
+            os.remove(path)
+            self.logger.info(f"Aegis: fichero eliminado de disco → {path}")
+        else:
+            self.logger.warning(
+                f"Aegis: fichero '{doc.filename}' no encontrado en disco al eliminar"
+            )
+
+        self.session.delete(doc)
+        self.session.commit()
+        self.logger.info(f"Aegis: píldora id={document_id} eliminada de la BD")

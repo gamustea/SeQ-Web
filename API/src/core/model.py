@@ -111,6 +111,7 @@ class User(Base):
     tokens = relationship("AccessToken", back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     vaults = relationship("Vault", back_populates="user")
+    aegis_documents = relationship("AegisDocument", back_populates="user", cascade="all, delete-orphan")
 
 
     def __str__(self):
@@ -723,5 +724,90 @@ class CreditCard(Storable):
         return f"<CreditCard id={self.id} holder={self.cardholder_name!r}>"
 
 
+class Topic(Base):
+    """
+    Representa un tema de ciberseguridad para la generación de newsletters (Aegis).
+
+    Columnas:
+    id (int): Identificador único del tema.
+    title (str): Título del tema (máx. 64 caracteres).
+
+    Campos obligatorios al crear:
+    - title
+
+    Campos autogenerados (NO asignar):
+    - id (autoincremental)
+
+    Campos a mostrar:
+    - id, title
+
+    Relaciones:
+    - documents: Lista de documentos generados sobre este tema
+    """
+
+    __tablename__ = "Topic"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(64), nullable=False)
+
+    documents = relationship("AegisDocument", back_populates="topic")
+
+    def __str__(self):
+        return f"Topic(id={self.id}, title='{self.title}')"
+
+    def __repr__(self):
+        return f"<Topic id={self.id} title='{self.title}'>"
 
 
+class AegisDocument(Base):
+    """
+    Representa un documento de newsletter generado por Aegis para un usuario.
+
+    Columnas:
+    id (int): Identificador único del documento.
+    title (str): Título del documento (máx. 64 caracteres, único).
+    filename (str): Nombre del fichero generado en disco (máx. 128 caracteres, único).
+    format (str): Formato del documento ('script' o 'newsletter', máx. 16 caracteres).
+    generated_at (datetime): Fecha y hora de generación del documento.
+    topic_id (int): ID del tema asociado (clave foránea).
+    user_id (int): ID del usuario que generó el documento (clave foránea).
+
+    Campos obligatorios al crear:
+    - title
+    - filename (nombre del fichero en data/aegis/output/)
+    - format ('script' o 'newsletter')
+    - topic_id (debe existir en la tabla Topic)
+    - user_id (debe existir en la tabla User)
+
+    Campos autogenerados (NO asignar):
+    - id (autoincremental)
+    - generated_at (fecha actual UTC)
+
+    Campos a mostrar:
+    - id, title, filename, format, generated_at, topic_id, user_id
+
+    Relaciones:
+    - topic: Tema sobre el que se generó el documento
+    - user: Usuario que solicitó la generación
+    """
+
+    __tablename__ = "AegisDocument"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(64), unique=True, nullable=False)
+    filename = Column(String(128), unique=True, nullable=False)
+    generated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    topic_id = Column(Integer, ForeignKey("Topic.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
+
+    topic = relationship("Topic", back_populates="documents")
+    user = relationship("User", back_populates="aegis_documents")
+
+    def __str__(self):
+        return (
+            f"AegisDocument(id={self.id}, title='{self.title}', "
+            f"format='{self.format}', generated_at={self.generated_at})"
+        )
+
+    def __repr__(self):
+        return f"<AegisDocument id={self.id} filename='{self.filename}'>"

@@ -196,6 +196,32 @@ CREATE TABLE `CreditCard` (
   `cvv` varchar(512) NOT NULL
 );
 
+CREATE TABLE `Topic` (
+  `id`    INT         NOT NULL AUTO_INCREMENT,
+  `title` VARCHAR(64) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `AegisDocument` (
+  `id`           INT          NOT NULL AUTO_INCREMENT,
+  `title`        VARCHAR(64)  NOT NULL,
+  `filename`     VARCHAR(128) NOT NULL,
+  `generated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `topic_id`     INT          NOT NULL,
+  `user_id`      INT          NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_aegis_document_filename` (`filename`),
+  KEY `ix_aegis_document_topic_id` (`topic_id`),
+  KEY `ix_aegis_document_user_id`  (`user_id`),
+  CONSTRAINT `fk_aegis_document_topic`
+    FOREIGN KEY (`topic_id`) REFERENCES `Topic` (`id`)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_aegis_document_user`
+    FOREIGN KEY (`user_id`) REFERENCES `User` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
 CREATE INDEX `idx_token` ON `AccessToken` (`token`);
 
 CREATE INDEX `idx_user` ON `AccessToken` (`user_id`);
@@ -276,6 +302,111 @@ VALUES ("Gabriel", "Musteata", "artexian", curdate());
 
 INSERT INTO User (username, password_hash, email, password_salt, person_id, rol_id)
 VALUES ("root", "683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a", "gmiganescu@gmail.com", "c167837c1c2a860031d861164d69bd79", 1, 1);
+
+INSERT INTO `Topic` (`title`) VALUES
+
+-- Ingeniería Social
+('Phishing y suplantación de identidad'),
+('Spear phishing: ataques dirigidos'),
+('Smishing: fraude por SMS'),
+('Vishing: fraude por llamada telefónica'),
+('Pretexting: manipulación por contexto falso'),
+('Baiting: señuelos físicos y digitales'),
+('Quid pro quo: intercambio fraudulento'),
+
+-- Contraseñas y Autenticación
+('Contraseñas robustas: cómo crearlas'),
+('Gestores de contraseñas corporativos'),
+('Autenticación de doble factor (2FA)'),
+('Riesgos de reutilizar contraseñas'),
+('Ataques de fuerza bruta y diccionario'),
+('Passkeys: el futuro sin contraseñas'),
+
+-- Correo Electrónico
+('Uso seguro del correo corporativo'),
+('Cómo identificar un correo fraudulento'),
+('Riesgos de archivos adjuntos maliciosos'),
+('Email spoofing: correos falsificados'),
+('BEC: fraude al CEO por correo'),
+
+-- Malware
+('Ransomware: secuestro de datos'),
+('Troyanos: software disfrazado'),
+('Spyware: espionaje silencioso'),
+('Adware y PUPs: software no deseado'),
+('Keyloggers: robo de pulsaciones'),
+('Rootkits: control oculto del sistema'),
+('Fileless malware: ataques sin fichero'),
+
+-- Navegación y Web
+('Navegación segura por Internet'),
+('Riesgos de las extensiones de navegador'),
+('Verificación de URLs y certificados HTTPS'),
+('Descargas desde fuentes no confiables'),
+('Drive-by download: infección al navegar'),
+('Inyección SQL: riesgo en formularios web'),
+('Cross-Site Scripting (XSS)'),
+
+-- Redes y Conectividad
+('Riesgos de redes Wi-Fi públicas'),
+('VPN: qué es y cuándo usarla'),
+('Ataques Man-in-the-Middle (MitM)'),
+('Seguridad en redes domésticas'),
+('Riesgos del Bluetooth activo'),
+('DNS spoofing: redirección maliciosa'),
+
+-- Dispositivos y Endpoints
+('Actualización de software y parches'),
+('Seguridad en dispositivos móviles'),
+('Riesgos del BYOD en la empresa'),
+('Bloqueo de pantalla y sesiones'),
+('Cifrado de disco en portátiles'),
+('Seguridad en impresoras y periféricos'),
+('Riesgos de los dispositivos USB'),
+
+-- Datos e Información
+('Borrado seguro de información'),
+('Metadatos ocultos en documentos'),
+('Clasificación de la información'),
+('Política de escritorio limpio'),
+('Fugas de información no intencionadas'),
+('Protección de datos personales (RGPD)'),
+
+-- Copias de Seguridad
+('Copias de seguridad: por qué y cómo'),
+('Estrategia 3-2-1 de backups'),
+('Recuperación ante desastres'),
+('Verificación de restauraciones'),
+
+-- Cloud y Servicios Online
+('Seguridad en servicios en la nube'),
+('Riesgos de compartir documentos en cloud'),
+('Shadow IT: apps no autorizadas'),
+('Configuraciones inseguras en cloud'),
+('OAuth y permisos de aplicaciones terceras'),
+
+-- Trabajo Remoto
+('Teletrabajo seguro'),
+('Riesgos del acceso remoto (RDP)'),
+('Seguridad en videoconferencias'),
+('Entornos de trabajo híbrido'),
+
+-- Amenazas Avanzadas
+('APT: amenazas persistentes avanzadas'),
+('Ataques a la cadena de suministro'),
+('Zero-day: vulnerabilidades sin parche'),
+('Lateral movement: movimiento en red interna'),
+('Exfiltración de datos corporativos'),
+
+-- Concienciación General
+('Ingeniería social en redes sociales'),
+('Sobrexposición en redes sociales'),
+('Fraude en compras online'),
+('Ciberseguridad en vacaciones'),
+('Reporte de incidentes de seguridad'),
+('El factor humano en ciberseguridad'),
+('Cultura de seguridad en la empresa');
+
 
 SELECT *
 FROM Vault AS V
