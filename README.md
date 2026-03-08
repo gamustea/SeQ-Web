@@ -1,9 +1,10 @@
 # SeQ — Security Operations Platform
 
-**SeQ** es una plataforma de operaciones de seguridad compuesta por dos módulos principales:
+**SeQ** es una plataforma de operaciones de seguridad compuesta por tres módulos principales:
 
 - **Sentinel** — API REST de escaneo de vulnerabilidades (operativo).
 - **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (en desarrollo).
+- **Aegis** — Módulo de concienciación en ciberseguridad y vigilancia de vulnerabilidades, basado en IA local (en desarrollo avanzado).
 
 ---
 
@@ -19,6 +20,7 @@
   - [Escaneo con OpenVAS](#escaneo-con-openvas)
   - [Consulta de resultados](#consulta-de-resultados)
   - [Generación de informes PDF](#generación-de-informes-pdf)
+- [Módulo Aegis — Concienciación y alertas](#módulo-aegis--concienciación-y-alertas)
 - [Módulo Acheron — Vault (En desarrollo)](#módulo-acheron--vault-en-desarrollo)
 - [Estructura del proyecto](#estructura-del-proyecto)
 - [Stack tecnológico](#stack-tecnológico)
@@ -34,6 +36,7 @@ Antes de ejecutar el proyecto, asegúrate de tener instalado:
 - Nmap (`sudo apt install nmap`)
 - Nikto (`sudo apt install nikto`)
 - OpenVAS / Greenbone Vulnerability Manager (GVM)
+- (Opcional, para Aegis) **Ollama** con al menos un modelo de lenguaje compatible con tool calling (por ejemplo, `llama3.1`)
 
 Instala las dependencias de Python:
 
@@ -275,6 +278,89 @@ Los informes adaptan su formato al tipo de escaneo (Nmap, Nikto u OpenVAS) media
 
 ---
 
+## Módulo Aegis — Concienciación y alertas
+
+> 🧠 **Aegis** amplía SeQ más allá del escaneo técnico: genera contenido de concienciación en ciberseguridad para empleados y acompaña cada píldora con un resumen de vulnerabilidades recientes relevantes.
+
+### ¿Qué hace Aegis?
+
+- **Píldoras de concienciación** en formato Markdown (`.md`) generadas por un modelo de IA local vía Ollama.
+- Contenido adaptado al contexto del cliente (sector, tecnologías usadas, tono, audiencia, etc.) mediante parámetros `tweaks`.
+- **Alertas de vulnerabilidades recientes** combinando:
+  - Feed de avisos de INCIBE-CERT.
+  - CVEs recientes obtenidos de la API pública de CIRCL / NVD.
+- Todo el contenido se guarda como documentos propios del usuario (`AegisDocument`) y se accede vía API.
+
+### Endpoints principales
+
+Todos los endpoints Aegis requieren autenticación OAuth (`Authorization: Bearer <access_token>`).
+
+#### Iniciar generación de una píldora
+
+```http
+POST /aegis/generate
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "topicId": 1,
+  "tweaks": {
+    "company": "Empresa Demo S.A.",
+    "sector": "financiero",
+    "language": "es",
+    "tone": "formal",
+    "associatedBrands": ["Microsoft", "Cisco"],
+    "audienceLevel": "mixed",
+    "mentionContact": "ciberseguridad@empresa.com"
+  }
+}
+```
+
+**Respuesta (asíncrona):**
+```json
+{
+  "message": "Generación Aegis iniciada",
+  "documentId": 42,
+  "status": "pending"
+}
+```
+
+Aegis genera el contenido en segundo plano usando hilos, sin bloquear la API.
+
+#### Consultar estado de una píldora
+
+```http
+GET /aegis/status?id=42
+Authorization: Bearer <token>
+```
+
+**Respuesta:**
+```json
+{
+  "id": 42,
+  "title": "[título generado]",
+  "status": "done",
+  "generatedAt": "2026-03-08T16:30:00Z",
+  "topicId": 1
+}
+```
+
+> 🔐 Un usuario solo puede consultar el estado de sus propios documentos. Si intenta acceder a un `id` que no existe o que pertenece a otro usuario, la API responde con `404` genérico.
+
+#### Descargar la píldora como Markdown
+
+```http
+GET /aegis/download_as_md?id=42
+Authorization: Bearer <token>
+```
+
+Devuelve el fichero `.md` como descarga (`Content-Type: text/markdown`). El cuerpo incluye:
+
+- La píldora principal redactada por el modelo de IA.
+- Una sección adicional con **vulnerabilidades y avisos de seguridad** formateados en Markdown.
+
+---
+
 ## Módulo Acheron — Vault (En desarrollo)
 
 > 🚧 **Este módulo está actualmente en desarrollo activo.**
@@ -302,11 +388,11 @@ Los informes adaptan su formato al tipo de escaneo (Nmap, Nikto u OpenVAS) media
 
 ```
 SeQ/
-├── API/                        # API REST Flask (Sentinel)
+├── API/                        # API REST Flask (Sentinel + Aegis)
 │   ├── run.py                  # Punto de entrada y definición de endpoints
 │   └── src/
 │       ├── core/               # Modelos ORM y excepciones
-│       ├── logic/              # Managers (Nmap, Nikto, OpenVAS), documentos y procesadores
+│       ├── logic/              # Managers (Nmap, Nikto, OpenVAS, Aegis), documentos y procesadores
 │       ├── config/             # Configuración de la aplicación
 │       └── misc/               # Logging y validación
 ├── Interface/
@@ -332,6 +418,8 @@ SeQ/
 | Escaneo web | Nikto |
 | Análisis de vulnerabilidades | OpenVAS / GVM |
 | Generación de PDFs | ReportLab + Pillow |
+| Concienciación y generación de contenido | Ollama (IA local) + prompts especializados |
+| Obtención de vulnerabilidades recientes | Feeds de INCIBE-CERT + API pública CIRCL/NVD |
 | App móvil | Android / Kotlin |
 | Lógica de vault | Java + Lombok |
 | Rate limiting | Flask-Limiter |
