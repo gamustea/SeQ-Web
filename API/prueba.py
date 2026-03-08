@@ -15,20 +15,21 @@ manager = AegisManager(user=user)
 
 # Envuelve la corutina en asyncio.run()
 
-for i in range (10, 15):
-    result = manager.generate(
-        topic_id=i,
+
+result = manager.generate(
+        topic_id=30,
         tweaks={
             "company":          "EMESA",
             "sector":           "distribucion_it",
             "audienceLevel":    "mixed",
-            "associatedBrands": ["HPE", "Konica", "SonicWall"],
+            "associatedBrands": ["HPE", "Sonicwall", "HP"],
             "mentionContact":   "ciberseguridad@emesa.com",
             "language":         "es",
             "tone":             "formal",
         }
     )
-    print(result)
+
+print(result)
 
 
 

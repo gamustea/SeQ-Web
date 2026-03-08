@@ -206,6 +206,7 @@ CREATE TABLE `AegisDocument` (
   `id`           INT          NOT NULL AUTO_INCREMENT,
   `title`        VARCHAR(64)  NOT NULL,
   `filename`     VARCHAR(128) NOT NULL,
+  `status`		 VARCHAR(32)  NOT NULL DEFAULT 'pending',
   `generated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `topic_id`     INT          NOT NULL,
   `user_id`      INT          NOT NULL,
@@ -412,5 +413,8 @@ SELECT *
 FROM Vault AS V
 	JOIN Storable AS S ON V.id = S.vault_id
     JOIN CreditCard AS CC ON CC.id = S.id;
+    
+SELECT *
+FROM AegisDocument;
 
 

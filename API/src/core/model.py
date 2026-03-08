@@ -796,6 +796,7 @@ class AegisDocument(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(64), unique=True, nullable=False)
     filename = Column(String(128), unique=True, nullable=False)
+    status = Column(String(32), unique=False, default="pending")
     generated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     topic_id = Column(Integer, ForeignKey("Topic.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)

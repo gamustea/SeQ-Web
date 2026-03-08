@@ -34,6 +34,7 @@ from src.core.exceptions import (
     DatabaseError
 )
 from src.logic.managers import (
+    AegisManager,
     NmapScanManager,
     NiktoScanManager,
     UserManager,
@@ -101,6 +102,17 @@ def get_vault_manager(user_id: int) -> VaultManager:
     USER_MANAGER.close_session()
     return manager
 
+def get_aegis_manager(user_id: int) -> AegisManager:
+    """
+    Crea un AegisManager para el usuario dado.
+    """
+    user = USER_MANAGER.get_user_by_id(user_id)
+    if not user:
+        # Reutilizamos la excepción existente, mapeada por create_error_response
+        raise UserNotFoundError(user_id=user_id)  # type: ignore
+    manager = AegisManager(user)
+    USER_MANAGER.close_session()
+    return manager
 
 
 # ============================================================================
@@ -1379,6 +1391,253 @@ def delete_vault_storable():
         sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
         error_dict, status_code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(error_dict), status_code
+
+
+
+
+# ============================================================================
+# ENDPOINTS DE NEWSLETTERS (AEGIS)
+# ============================================================================
+
+@app.route("/aegis/generate", methods=["POST"])
+@require_oauth_token
+def aegis_generate():
+    """
+    Inicia la generación asíncrona de una píldora Aegis para el usuario autenticado.
+
+    Body JSON:
+    {
+      "topicId": 1,           # obligatorio, entero (0 = aleatorio según tu lógica)
+      "tweaks": { ... }       # opcional, diccionario con ajustes
+    }
+    """
+    try:
+        user_id = get_current_user_id()
+        manager = get_aegis_manager(user_id)
+
+        if not request.is_json:
+            raise BadRequest("Content-Type must be application/json")
+
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise BadRequest("Request body must be a JSON object")
+
+        topic_id_raw = data.get("topicId")
+        if topic_id_raw is None:
+            raise MissingParameterError("topicId")
+
+        try:
+            topic_id = int(topic_id_raw)
+        except (TypeError, ValueError):
+            raise ValidationError(
+                field="topicId",
+                message="El topicId debe ser un número entero",
+                value=topic_id_raw,
+            )
+
+        tweaks = data.get("tweaks") or {}
+        if not isinstance(tweaks, dict):
+            raise ValidationError(
+                field="tweaks",
+                message="tweaks debe ser un objeto JSON",
+                value=str(type(tweaks)),
+            )
+
+        document_id = manager.generate(topic_id=topic_id, tweaks=tweaks)
+        manager.close_session()
+
+        logger.info(
+            f"Usuario {get_current_username()}: Aegis generate lanzado "
+            f"(topicId={topic_id}, documentId={document_id})"
+        )
+
+        return jsonify(
+            {
+                "message": "Generación Aegis iniciada",
+                "documentId": document_id,
+                "status": "pending",
+            }
+        ), 202
+
+    except (MissingParameterError, ValidationError, UserNotFoundError) as e:
+        error_dict, status_code = create_error_response(
+            e, include_debug_info=False
+        )
+        return jsonify(error_dict), status_code
+    except BadRequest as e:
+        return jsonify(
+            {
+                "error": "invalid_request",
+                "error_description": str(e),
+            }
+        ), 400
+    except Exception as e:
+        logger.error(f"Error en /aegis/generate: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(
+            sec_exc, include_debug_info=False
+        )
+        return jsonify(error_dict), status_code
+
+@app.route("/aegis/status", methods=["GET"])
+@require_oauth_token
+def aegis_status():
+    """
+    Devuelve el estado de una píldora Aegis del usuario autenticado.
+
+    Query params:
+      id: ID del documento AegisDocument
+    """
+    try:
+        user_id = get_current_user_id()
+        manager = get_aegis_manager(user_id)
+
+        doc_id_str = request.args.get("id")
+        if not doc_id_str:
+            raise MissingParameterError("id")
+
+        try:
+            doc_id = int(doc_id_str)
+        except ValueError:
+            raise ValidationError(
+                field="id",
+                message="El ID debe ser un número entero",
+                value=doc_id_str,
+            )
+
+        doc_info = manager.get_document(doc_id)  # dict | None
+        manager.close_session()
+
+        # Política de privacidad: si no existe o no es suyo → 404 genérico
+        if not doc_info or doc_info.get("userId") != user_id:
+            logger.warning(
+                f"Usuario {get_current_username()} intentó acceder a Aegis doc "
+                f"{doc_id} que no existe o no es suyo"
+            )
+            return (
+                jsonify(
+                    {
+                        "error": "not_found",
+                        "message": f"Documento {doc_id} no encontrado",
+                    }
+                ),
+                404,
+            )
+
+        response = {
+            "id": doc_info["id"],
+            "title": doc_info["title"],
+            "status": doc_info["status"],
+            "generatedAt": doc_info["generatedAt"],
+            "topicId": doc_info["topicId"],
+        }
+
+        logger.info(
+            f"Usuario {get_current_username()}: estado Aegis doc "
+            f"{doc_id} -> {doc_info['status']}"
+        )
+
+        return jsonify(response), 200
+
+    except (MissingParameterError, ValidationError, UserNotFoundError) as e:
+        error_dict, status_code = create_error_response(
+            e, include_debug_info=False
+        )
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en /aegis/status: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(
+            sec_exc, include_debug_info=False
+        )
+        return jsonify(error_dict), status_code
+
+@app.route("/aegis/download_as_md", methods=["GET"])
+@require_oauth_token
+def aegis_download_as_md():
+    """
+    Descarga una píldora Aegis en formato Markdown (.md) para el usuario autenticado.
+
+    Query params:
+      id: ID del documento AegisDocument
+    """
+    try:
+        user_id = get_current_user_id()
+        manager = get_aegis_manager(user_id)
+
+        doc_id_str = request.args.get("id")
+        if not doc_id_str:
+            raise MissingParameterError("id")
+
+        try:
+            doc_id = int(doc_id_str)
+        except ValueError:
+            raise ValidationError(
+                field="id",
+                message="El ID debe ser un número entero",
+                value=doc_id_str,
+            )
+
+        try:
+            path = manager.get_document_path(doc_id)
+        except ValueError:
+            # No existe o no pertenece al usuario → 404 genérico
+            logger.warning(
+                f"Usuario {get_current_username()} intentó descargar Aegis doc "
+                f"{doc_id} que no existe o no es suyo"
+            )
+            manager.close_session()
+            return (
+                jsonify(
+                    {
+                        "error": "not_found",
+                        "message": f"Documento {doc_id} no encontrado",
+                    }
+                ),
+                404,
+            )
+        except FileNotFoundError:
+            logger.warning(
+                f"Aegis: fichero de doc {doc_id} no encontrado en disco para "
+                f"usuario {get_current_username()}"
+            )
+            manager.close_session()
+            return (
+                jsonify(
+                    {
+                        "error": "not_found",
+                        "message": "El fichero del documento no está disponible",
+                    }
+                ),
+                404,
+            )
+
+        manager.close_session()
+
+        logger.info(
+            f"Usuario {get_current_username()} descargando Aegis doc {doc_id}"
+        )
+
+        return send_file(
+            path,
+            as_attachment=True,
+            download_name=path.name,
+            mimetype="text/markdown; charset=utf-8",
+        )
+
+    except (MissingParameterError, ValidationError, UserNotFoundError) as e:
+        error_dict, status_code = create_error_response(
+            e, include_debug_info=False
+        )
+        return jsonify(error_dict), status_code
+    except Exception as e:
+        logger.error(f"Error en /aegis/download_as_md: {e}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
+        error_dict, status_code = create_error_response(
+            sec_exc, include_debug_info=False
+        )
+        return jsonify(error_dict), status_code
+
 
 
 

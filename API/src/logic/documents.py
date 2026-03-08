@@ -3,7 +3,8 @@ import os
 from datetime import datetime
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Optional, Dict
+import random
+from typing import Optional, Dict, Any
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -23,6 +24,14 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
 
 from src.misc.configread import ConfigReader, DirectoryType
 from src.core.model import NmapScan, NiktoScan, Scan, Host
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+import ollama
+
+from src.core.model import Topic
+from src.misc.logging import SecOpsLogger
 
 # ----------------------------------------------------------------------
 # Colores y estrategia base
@@ -60,15 +69,6 @@ class _PrintingStrategy(ABC):
     def get_report_title(self) -> str:
         ...
 
-
-# ----------------------------------------------------------------------
-# Tema común de estilos (look & feel global)
-# ----------------------------------------------------------------------
-
-from reportlab.lib import colors
-from reportlab.platypus import Table, TableStyle, Paragraph
-from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 
 class ReportTheme:
     def __init__(self, base_styles, palette):
@@ -1208,3 +1208,701 @@ class NiktoPrintingStrategy(_PrintingStrategy):
 
     def get_report_title(self) -> str:
         return "Análisis de Vulnerabilidades Web"
+
+
+@dataclass
+class AegisContent:
+    """Resultado estructurado de generate_content."""
+    topic_id: int
+    topic_title: str
+    body: str          # Markdown
+    language: str
+    company: str
+    generated_at: str  # ISO-8601 UTC
+    topic_note: str
+
+
+class AegisAIWriter:
+    """Responsable solo de generar contenido usando IA (Ollama)."""
+
+    def __init__(self, host: str, model: str, logger: SecOpsLogger):
+        self.host = host
+        self.model = model
+        self.logger = logger
+
+    def _web_search(self, query: str, max_results: int = 5) -> str:
+        try:
+            from duckduckgo_search import DDGS
+
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results))
+            if not results:
+                return f"No se encontraron resultados para: {query}"
+
+            lines = [f"Resultados para '{query}':\n"]
+            for i, r in enumerate(results, 1):
+                lines.append(f"{i}. {r.get('title', '')}")
+                lines.append(f"   {r.get('body', '')}")
+                lines.append(f"   Fuente: {r.get('href', '')}\n")
+            return "\n".join(lines)
+        except ImportError:
+            self.logger.error(
+                "duckduckgo-search no instalado (pip install duckduckgo-search)"
+            )
+            return "Búsqueda no disponible: dependencia no instalada."
+        except Exception as e:
+            self.logger.warning(f"Búsqueda fallida '{query}': {e}")
+            return f"No se pudo completar la búsqueda: {e}"
+
+    def _build_prompt(
+        self,
+        topic: Optional[Topic],
+        topic_id: int,
+        reference: str,
+        tweaks: dict[str, Any],
+    ) -> str:
+        company  = tweaks.get("company",       "la empresa destinataria")
+        sector   = tweaks.get("sector",        "")
+        audience = tweaks.get("audienceLevel", "mixed")
+        brands   = ", ".join(tweaks.get("associatedBrands", []))
+        contact  = tweaks.get("mentionContact", "")
+        language = tweaks.get("language",      "es")
+        tone     = tweaks.get("tone",          "formal")
+        focus    = tweaks.get("topicFocus",    "")
+
+        audience_label = {
+            "technical":     "técnico (conocimiento avanzado de seguridad)",
+            "mixed":         "mixto (empleados técnicos y no técnicos)",
+            "non-technical": "no técnico (empleados de negocio sin perfil IT)",
+        }.get(audience, audience)
+
+        context_parts = [f"- Empresa destinataria: {company}"]
+        if sector:  context_parts.append(f"- Sector de actividad: {sector}")
+        if brands:  context_parts.append(f"- Tecnologías y herramientas en uso: {brands}")
+        if focus:   context_parts.append(f"- Enfoque específico solicitado: {focus}")
+        if contact: context_parts.append(f"- Contacto de referencia para el lector: {contact}")
+        context_parts += [
+            f"- Perfil de la audiencia: {audience_label}",
+            f"- Tono: {tone}",
+        ]
+        context_block = "\n".join(context_parts)
+
+        if topic:
+            topic_block = f"- Título: {topic.title}"
+            if getattr(topic, "description", None):
+                topic_block += f"\n- Descripción: {topic.description}"
+        else:
+            topic_block = (
+                f"- ID de tema: {topic_id} (no encontrado en BD).\n"
+                "- Elige un tema de ciberseguridad relevante para empleados de empresa."
+            )
+
+        role_block = (
+            f"Eres un redactor senior especializado en comunicación de ciberseguridad corporativa. "
+            f"Tu trabajo es producir píldoras de concienciación en {language.upper()} "
+            f"para empleados de empresas españolas, adaptadas al perfil y contexto de cada cliente. "
+            f"Escribes de forma clara, directa y práctica: explicas el riesgo, das contexto real "
+            f"y ofreces pasos concretos que el empleado puede aplicar de inmediato. "
+            f"Nunca usas jerga técnica innecesaria con audiencias no técnicas. "
+            f"REGLA ABSOLUTA: empieza a escribir el documento directamente en la primera línea, "
+            f"sin preámbulos ni frases introductorias como 'A continuación...', 'En esta píldora...'. "
+            f"NUNCA respondas en otro idioma distinto a {language.upper()}."
+        )
+
+        example = (
+            "# Píldora de concienciación:\n"
+            "**Borra bien la información**\n\n"
+            "La información sensible de la empresa no solo está en el contenido visible de los "
+            "documentos. Los metadatos —características ocultas de un fichero— y una eliminación "
+            "incorrecta de archivos pueden exponer datos críticos sin que te des cuenta. "
+            "Aquí tienes algunos consejos para proteger adecuadamente la información:\n\n"
+            "- **No compartas capturas de pantalla sin revisarlas antes.** Además del contenido "
+            "principal, pueden verse nombres de usuario, rutas de archivos u otras ventanas abiertas "
+            "que revelen información corporativa.\n"
+            "- **Borrar un archivo y vaciar la papelera no es suficiente.** Los datos siguen siendo "
+            "recuperables con herramientas especializadas. Para información sensible, usa aplicaciones "
+            "de borrado seguro como [Eraser](https://www.incibe.es/ciudadania/herramientas/eraser).\n"
+            "- **Antes de deshacerte de un dispositivo, elimina su contenido de forma segura** "
+            "o, si es necesario, destruye físicamente el soporte.\n"
+            "- **Los documentos en papel también requieren tratamiento adecuado.** No los tires a la "
+            "basura común; usa las destructoras o los contenedores de documentación confidencial "
+            "que la empresa pone a tu disposición.\n"
+            "- **Los metadatos revelan más de lo que crees.** Cada documento contiene información "
+            "oculta: autor, fecha de creación, historial de cambios e incluso comentarios eliminados. "
+            "Revísalos y límpialos antes de compartir documentos fuera de la organización.\n\n"
+            "Si tienes dudas sobre cómo eliminar información de algún dispositivo o soporte, "
+            "consúltalo con ciberseguridad@emesa.com. Un error en el proceso puede dejar expuesta "
+            "información que creías eliminada.\n\n"
+            "Para quienes quieran ampliar el tema, pueden acceder a esta "
+            "[guía de INCIBE](https://www.incibe.es/sites/default/files/contenidos/guias/doc/"
+            "guia_ciberseguridad_borrado_seguro_metad_0.pdf) sobre borrado seguro de la información."
+        )
+
+        format_instruction = (
+            "╔══════════════════════════════════════════════════════════════╗\n"
+            "║           TAREA: PÍLDORA DE CONCIENCIACIÓN FINAL            ║\n"
+            "╚══════════════════════════════════════════════════════════════╝\n\n"
+            f"Escribe en {language.upper()} una píldora de concienciación corporativa en Markdown, "
+            "lista para distribuir a los empleados. El documento debe poder enviarse tal cual, "
+            "sin ninguna edición posterior.\n\n"
+            "ESTRUCTURA OBLIGATORIA:\n\n"
+            "1. ENCABEZADO\n"
+            "   Línea 1: '# Píldora de concienciación:'\n"
+            "   Línea 2: subtítulo en negrita con un título atractivo y directo.\n\n"
+            "2. PÁRRAFO INTRODUCTORIO (3-5 frases)\n"
+            "   - Contextualiza el riesgo y explica por qué importa a los empleados de esta empresa.\n"
+            "   - Si el sector o las tecnologías tienen relación con el tema, mencíonalo.\n"
+            "   - Anticipa el tipo de consejos que vendrán.\n\n"
+            "3. LISTA DE CONSEJOS (5-7 bullets)\n"
+            "   Cada bullet debe:\n"
+            "   a) Empezar con la acción o el riesgo en negrita.\n"
+            "   b) Desarrollar en 2-3 frases el motivo y la consecuencia real si no se aplica.\n"
+            "   c) Incluir, si existe, una herramienta o recurso con enlace Markdown.\n"
+            "   d) Estar en segunda persona y ser aplicable sin conocimientos técnicos.\n\n"
+            "4. FRASE DE CIERRE\n"
+            "   - Llamada a la acción clara.\n"
+            + (f"   - Incluye el contacto de referencia: {contact}\n" if contact else "") +
+            "   - Opcional: enlace a guía externa de ampliación.\n\n"
+            "CRITERIOS DE CALIDAD:\n"
+            "- Longitud: entre 350 y 550 palabras.\n"
+            "- Tono cercano pero profesional.\n"
+            "- Sin tecnicismos para audiencia no técnica.\n"
+            "- No reproduzcas ninguna frase del ejemplo.\n\n"
+            "--- EJEMPLO DE REFERENCIA (imita estructura, tono y extensión; NO copies el contenido) ---\n"
+            f"{example}\n"
+            "--- FIN DEL EJEMPLO ---"
+        )
+
+        prompt_parts = [role_block]
+        if reference:
+            prompt_parts.append(
+                "Píldoras reales publicadas anteriormente por este cliente "
+                "(imita su estilo, tono y extensión):\n\n"
+                "━━━ PÍLDORAS DE REFERENCIA ━━━\n"
+                + reference +
+                "\n━━━ FIN DE LAS REFERENCIAS ━━━"
+            )
+        prompt_parts += [
+            f"CONTEXTO DEL CLIENTE:\n{context_block}",
+            f"TEMA A DESARROLLAR:\n{topic_block}",
+            format_instruction,
+        ]
+        return "\n\n".join(prompt_parts)
+
+    def _call_ollama(self, prompt: str) -> str:
+        """Llama a Ollama con tool calling (misma lógica que tu _call_ollama)."""
+        client = ollama.Client(host=self.host)
+        system = (
+            "Eres un redactor senior especializado en ciberseguridad corporativa. "
+            "Produces documentos finales en Markdown, listos para distribuir. "
+            "Nunca describes lo que vas a escribir: escribes directamente el documento. "
+            "Si necesitas contexto actualizado (noticias recientes, vulnerabilidades activas), "
+            "usa la herramienta web_search antes de redactar."
+        )
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": (
+                        "Busca información actualizada en internet sobre ciberseguridad. "
+                        "Úsala para encontrar noticias recientes, vulnerabilidades activas o "
+                        "incidentes relevantes que enriquezcan el contenido de la píldora."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": (
+                                    "Consulta concisa en español o inglés orientada a obtener "
+                                    "noticias o información técnica reciente."
+                                ),
+                            }
+                        },
+                        "required": ["query"],
+                    },
+                },
+            }
+        ]
+
+        messages: list[dict] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+
+        # 1ª llamada
+        try:
+            resp = client.chat(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                options={"num_predict": 4096, "temperature": 0.7},
+            )
+        except ollama.ResponseError as e:
+            self.logger.error(f"Ollama ResponseError (1ª llamada): {e}")
+            raise RuntimeError(f"Error del modelo: {e}") from e
+        except Exception as e:
+            self.logger.error(f"Error conectando Ollama en {self.host}: {e}")
+            raise RuntimeError(f"No se pudo conectar con Ollama en {self.host}") from e
+
+        # tool calling
+        tool_calls = getattr(resp.message, "tool_calls", None) or []
+        if tool_calls:
+            self.logger.info(
+                f"AegisAIWriter: {len(tool_calls)} búsqueda(s) solicitadas por el modelo"
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": getattr(resp.message, "content", "") or "",
+                    "tool_calls": tool_calls,
+                }
+            )
+            for tc in tool_calls:
+                query = tc.function.arguments.get("query", "")
+                result = self._web_search(query)
+                self.logger.info(f"AegisAIWriter: búsqueda ejecutada → '{query}'")
+                messages.append({"role": "tool", "content": result})
+
+            # 2ª llamada
+            try:
+                resp = client.chat(
+                    model=self.model,
+                    messages=messages,
+                    options={"num_predict": 4096, "temperature": 0.7},
+                )
+            except ollama.ResponseError as e:
+                self.logger.error(f"Ollama ResponseError (2ª llamada): {e}")
+                raise RuntimeError(f"Error del modelo: {e}") from e
+            except Exception as e:
+                self.logger.error(f"Error conectando Ollama en {self.host}: {e}")
+                raise RuntimeError(f"No se pudo conectar con Ollama en {self.host}") from e
+        else:
+            self.logger.info("AegisAIWriter: el modelo no solicitó búsquedas web")
+
+        content = (getattr(resp.message, "content", None) or "").strip()
+        if not content:
+            raise RuntimeError("El modelo devolvió una respuesta vacía")
+        return content
+
+    # --- API pública ---------------------------------------------------
+
+    def generate_pill(
+        self,
+        *,
+        topic: Optional[Topic],
+        resolved_topic_id: int,
+        topic_title: str,
+        topic_note: str,
+        reference: str,
+        tweaks: dict[str, Any],
+    ) -> AegisContent:
+        """Genera el cuerpo Markdown de una píldora."""
+        prompt = self._build_prompt(topic, resolved_topic_id, reference, tweaks)
+        self.logger.info(
+            f"AegisAIWriter generando píldora | topic_id={resolved_topic_id} "
+            f"| modelo={self.model}"
+        )
+        body = self._call_ollama(prompt)
+
+        return AegisContent(
+            topic_id=resolved_topic_id,
+            topic_title=topic_title,
+            body=body,
+            language=tweaks.get("language", "es"),
+            company=tweaks.get("company", "la empresa destinataria"),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            topic_note=topic_note,
+        )
+
+
+@dataclass
+class AegisAlert:
+    """Aviso de vulnerabilidad (INCIBE / CIRCL)."""
+    title: str
+    description: str
+    url: str
+    source: str     # "incibe" o "circl"
+    published: str  # ISO-8601 o fecha en texto
+    severity: str   # "crítica"/"alta"/"media"/"baja" o ""
+    brands: list[str] = field(default_factory=list)
+
+
+class AegisAlertFetcher:
+    """Responsable de obtener y formatear vulnerabilidades desde Internet."""
+
+    INCIBE_FEED = "https://www.incibe.es/incibe-cert/alerta-temprana/avisos/feed"
+    MAX_BRANDS = 5
+    MAX_ALERT_AGE_YEARS = 5
+
+    def __init__(self, logger: SecOpsLogger, fallback_brands: list[str]):
+        """
+        fallback_brands: marcas de relleno tipo ["Microsoft", "Google", ...]
+        """
+        self.logger = logger
+        self._fallback_brands = fallback_brands
+
+    # ---------- Helpers genéricos -------------------------------------
+
+    def _resolve_brands(self, brands: list[str]) -> list[str]:
+        """Rellena hasta MAX_BRANDS usando fallback_brands, sin duplicados."""
+        unique = [b.strip() for b in brands if b.strip()]
+        unique = list(dict.fromkeys(unique))  # conserva orden
+        if len(unique) >= self.MAX_BRANDS:
+            return unique[: self.MAX_BRANDS]
+
+        available = [b for b in self._fallback_brands if b not in unique]
+        needed = self.MAX_BRANDS - len(unique)
+        padding = random.sample(available, min(needed, len(available)))
+        resolved = unique + padding
+        self.logger.info(
+            f"AegisAlertFetcher: marcas cliente={unique} relleno={padding}"
+        )
+        return resolved
+
+    def _is_recent(self, date_str: str) -> bool:
+        """Devuelve True si la fecha está dentro de la ventana de MAX_ALERT_AGE_YEARS."""
+        if not date_str:
+            return True
+        try:
+            clean = date_str[:10]
+            pubdate = datetime.strptime(clean, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+            now = datetime.now(timezone.utc)
+            cutoff = now.replace(year=now.year - self.MAX_ALERT_AGE_YEARS)
+            return pubdate >= cutoff
+        except ValueError:
+            self.logger.warning(
+                f"AegisAlertFetcher: fecha no parseable '{date_str}', se considera reciente"
+            )
+            return True
+
+    def _parse_incibe_feed(
+        self,
+        brands: list[str],
+        max_per_brand: int,
+        timeout: int,
+    ) -> list[AegisAlert]:
+        import xml.etree.ElementTree as ET
+        import urllib.request
+        import html
+        import re
+
+        def strip_html(text: str) -> str:
+            return re.sub(r"<[^>]+>", "", text).strip()
+
+        alerts: list[AegisAlert] = []
+        brand_counts: dict[str, int] = {}
+
+        req = urllib.request.Request(
+            self.INCIBE_FEED,
+            headers={"User-Agent": "AegisAlertFetcher/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+
+        root = ET.fromstring(raw)
+        channel = root.find("channel")
+        if channel is None:
+            return []
+
+        for item in channel.findall("item"):
+            title = (item.findtext("title") or "").strip()
+            desc_raw = html.unescape(item.findtext("description") or "").strip()
+            url = (item.findtext("link") or "").strip()
+            pub = (item.findtext("pubDate") or "").strip()
+
+            # Normalizar fecha (similar a tu código actual)
+            pub_iso = pub[:10]
+            try:
+                from email.utils import parsedate_to_datetime
+
+                pub_iso = parsedate_to_datetime(pub).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+            # Texto plano para matching y resumen
+            desc_text = strip_html(desc_raw)
+            m = re.search(r"Descripción.*?<p>(.*?)</p>", desc_raw, re.DOTALL)
+            summary = strip_html(m.group(1)) if m else desc_text[:300]
+
+            # Severidad simple por palabras clave
+            severity = ""
+            haystack = (title + " " + desc_text).lower()
+            for sev_str, sev_label in [
+                ("crítica", "crítica"),
+                ("critical", "crítica"),
+                ("alta", "alta"),
+                ("high", "alta"),
+                ("media", "media"),
+                ("medium", "media"),
+                ("baja", "baja"),
+                ("low", "baja"),
+            ]:
+                if sev_str in haystack:
+                    severity = sev_label
+                    break
+
+            # Filtrado por marcas
+            haystack_brands = haystack
+            matched: list[str] = []
+            for brand in brands:
+                count = brand_counts.get(brand, 0)
+                if count >= max_per_brand:
+                    continue
+                if brand.lower() in haystack_brands:
+                    matched.append(brand)
+                    brand_counts[brand] = count + 1
+
+            if matched:
+                alerts.append(
+                    AegisAlert(
+                        title=title,
+                        description=summary,
+                        url=url,
+                        source="incibe",
+                        published=pub_iso,
+                        severity=severity,
+                        brands=matched,
+                    )
+                )
+
+        return alerts
+
+    def _parse_circl_api(
+        self,
+        brands: list[str],
+        max_per_brand: int,
+        timeout: int,
+    ) -> list[AegisAlert]:
+        import urllib.request
+        import json
+
+        alerts: list[AegisAlert] = []
+        brand_counts: dict[str, int] = {}
+
+        BRAND_SLUGS: dict[str, tuple[str, str]] = {
+            "Microsoft": ("microsoft", "windows"),
+            "Cisco": ("cisco", "ios"),
+            "Apple": ("apple", "macos"),
+            "Google": ("google", "chrome"),
+            "Adobe": ("adobe", "acrobat"),
+            "Android": ("google", "android"),
+            "HPE": ("hp", "hpe"),
+            "SonicWall": ("sonicwall", "sonicos"),
+            "Konica": ("konicaminolta", "printer"),
+            "Juniper": ("juniper", "junos"),
+            "VMware": ("vmware", "esxi"),
+            "Palo Alto": ("paloaltonetworks", "pan-os"),
+            "SAP": ("sap", "netweaver"),
+            "Oracle": ("oracle", "database"),
+            "Mozilla": ("mozilla", "firefox"),
+            "Linux": ("linux", "kernel"),
+            "Fortinet": ("fortinet", "fortios"),
+        }
+
+        for brand in brands:
+            if brand_counts.get(brand, 0) >= max_per_brand:
+                continue
+
+            vendor, product = BRAND_SLUGS.get(
+                brand, (brand.lower().replace(" ", ""), "")
+            )
+            url = (
+                f"https://cve.circl.lu/api/search/{vendor}/{product}"
+                if product
+                else f"https://cve.circl.lu/api/search/{vendor}"
+            )
+
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "AegisAlertFetcher/1.0"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read())
+            except Exception as e:
+                self.logger.warning(
+                    f"AegisAlertFetcher CIRCL: error para '{brand}': {e}"
+                )
+                continue
+
+            results = data.get("results", {})
+            cve_list = results.get("cvelistv5", [])
+
+            def pub_date(entry):
+                try:
+                    return entry[1]["cveMetadata"].get("datePublished", "")
+                except Exception:
+                    return ""
+
+            cve_sorted = sorted(cve_list, key=pub_date, reverse=True)
+
+            for entry in cve_sorted:
+                if brand_counts.get(brand, 0) >= max_per_brand:
+                    break
+                try:
+                    cve_id = entry[0].upper()
+                    meta = entry[1].get("cveMetadata", {})
+                    pub_raw = meta.get("datePublished", "")[:10]
+                    if not self._is_recent(pub_raw):
+                        continue
+
+                    cna = entry[1].get("containers", {}).get("cna", {})
+                    descriptions = cna.get("descriptions", [])
+                    desc_en = next(
+                        (
+                            d["value"]
+                            for d in descriptions
+                            if d.get("lang", "").startswith("en")
+                        ),
+                        "",
+                    )
+                    desc_es = next(
+                        (
+                            d["value"]
+                            for d in descriptions
+                            if d.get("lang", "").startswith("es")
+                        ),
+                        "",
+                    )
+                    desc = desc_es or desc_en
+
+                    severity = ""
+                    metrics = cna.get("metrics", [])
+                    for metric in metrics:
+                        for key in ("cvssV3_1", "cvssV3_0", "cvssV3"):
+                            cvss = metric.get(key, {})
+                            if cvss:
+                                base = cvss.get("baseSeverity", "").upper()
+                                severity = {
+                                    "CRITICAL": "crítica",
+                                    "HIGH": "alta",
+                                    "MEDIUM": "media",
+                                    "LOW": "baja",
+                                }.get(base, base.lower())
+                                break
+                        if severity:
+                            break
+
+                    affected = cna.get("affected", [])
+                    product_name = (
+                        affected[0].get("product", "") if affected else ""
+                    )
+                    title = f"{cve_id}" + (
+                        f" — {product_name}" if product_name else ""
+                    )
+
+                    alerts.append(
+                        AegisAlert(
+                            title=title,
+                            description=desc[:400] + ("…" if len(desc) > 400 else ""),
+                            url=f"https://cve.circl.lu/cve/{cve_id}",
+                            source="circl",
+                            published=pub_raw,
+                            severity=severity,
+                            brands=[brand],
+                        )
+                    )
+                    brand_counts[brand] = brand_counts.get(brand, 0) + 1
+
+                except Exception as e:
+                    self.logger.debug(
+                        f"AegisAlertFetcher CIRCL: entrada malformada para '{brand}': {e}"
+                    )
+                    continue
+
+        return alerts
+
+    def fetch_alerts(
+        self,
+        brands: list[str],
+        max_per_brand: int = 3,
+        timeout: int = 10,
+    ) -> list[AegisAlert]:
+        """Resuelve marcas, consulta INCIBE + CIRCL, filtra por antigüedad."""
+        if not brands and not self._fallback_brands:
+            return []
+
+        resolved_brands = self._resolve_brands(brands)
+        alerts: list[AegisAlert] = []
+
+        # INCIBE
+        incibe_alerts: list[AegisAlert] = []
+        try:
+            incibe_alerts = self._parse_incibe_feed(
+                resolved_brands, max_per_brand, timeout
+            )
+        except Exception as e:
+            self.logger.warning(f"AegisAlertFetcher: error feed INCIBE: {e}")
+
+        incibe_alerts = [
+            a for a in incibe_alerts if self._is_recent(a.published)
+        ]
+
+        # Detectar marcas del cliente sin resultados en INCIBE → sustituir en NVD
+        client_brands = list(
+            dict.fromkeys(b.strip() for b in brands if b.strip())
+        )
+        matched_brands = {b for a in incibe_alerts for b in a.brands}
+        missing = [b for b in client_brands if b not in matched_brands]
+
+        if missing:
+            already_used = set(resolved_brands)
+            candidates = [
+                b for b in self._fallback_brands if b not in already_used
+            ]
+            substitutes = random.sample(
+                candidates, min(len(missing), len(candidates))
+            )
+            self.logger.info(
+                f"AegisAlertFetcher: marcas sin resultados en INCIBE {missing} → "
+                f"sustituyendo por {substitutes}"
+            )
+            resolved_brands = [
+                substitutes.pop(0) if b in missing and substitutes else b
+                for b in resolved_brands
+            ]
+
+        alerts.extend(incibe_alerts)
+
+        # NVD / CIRCL
+        nvd_alerts: list[AegisAlert] = []
+        try:
+            nvd_alerts = self._parse_circl_api(
+                resolved_brands, max_per_brand, timeout
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"AegisAlertFetcher: error NVD/CIRCL API: {e}"
+            )
+
+        nvd_alerts = [a for a in nvd_alerts if self._is_recent(a.published)]
+        alerts.extend(nvd_alerts)
+
+        return alerts
+
+    @staticmethod
+    def alerts_to_markdown(alerts: list[AegisAlert]) -> str:
+        """Serializa las alertas como sección Markdown."""
+        if not alerts:
+            return ""
+
+        lines = ["# Vulnerabilidades y avisos de seguridad:\n"]
+        for a in alerts:
+            source_label = "INCIBE-CERT" if a.source == "incibe" else "NVD/CVE"
+            sev_tag = f" ⚠️ **{a.severity.upper()}**" if a.severity else ""
+            lines.append(f"### {a.title}{sev_tag}")
+            lines.append(
+                f"- **Fuente:** {source_label} | **Publicado:** {a.published}"
+            )
+            if a.brands:
+                lines.append(
+                    f"- **Tecnologías afectadas:** {', '.join(a.brands)}"
+                )
+            lines.append(f"- **Descripción:** {a.description}")
+            lines.append(f"- **Enlace:** [{a.title}]({a.url})\n")
+
+        return "\n".join(lines)
