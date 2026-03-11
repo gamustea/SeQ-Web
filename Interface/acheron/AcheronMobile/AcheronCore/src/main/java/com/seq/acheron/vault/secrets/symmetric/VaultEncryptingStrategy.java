@@ -71,10 +71,12 @@ public abstract class VaultEncryptingStrategy {
      */
     protected VaultEncryptingStrategy(
             String transformation,
-            boolean generateVaultKey
+            boolean generateVaultKey,
+            String saltBase64
     ) throws GeneralSecurityException {
 
         this.transformation = transformation;
+        this.saltBase64 = saltBase64;
         if (generateVaultKey) {
             this.vaultKey = generateKey();
         }
@@ -89,9 +91,10 @@ public abstract class VaultEncryptingStrategy {
      * @param transformation the cipher transformation
      * @param vaultKey       an existing vault key to reuse
      */
-    protected VaultEncryptingStrategy(String transformation, SecretKey vaultKey) {
+    protected VaultEncryptingStrategy(String transformation, SecretKey vaultKey, String saltBase64) {
         this.transformation = transformation;
         this.vaultKey = vaultKey;
+        this.saltBase64 = saltBase64;
     }
 
     /**

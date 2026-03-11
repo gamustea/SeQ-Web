@@ -1,6 +1,6 @@
 package com.seq.acheron;
 
-import com.seq.acheron.secrets.symmetric.AESVaultEncryptingStrategyTest;
+import com.seq.acheron.secrets.symmetric.Argon2VaultEncryptingStrategyTest;
 import com.seq.acheron.secrets.symmetric.PBKDF2VaultEncryptingStrategyTest;
 import com.seq.acheron.secrets.symmetric.VaultEncryptingStrategyPerformanceTest;
 import com.seq.acheron.vault.VaultTest;
@@ -12,7 +12,7 @@ import org.junit.platform.suite.api.Suite;
 
 @Suite
 @SelectClasses({
-        AESVaultEncryptingStrategyTest.class,
+        Argon2VaultEncryptingStrategyTest.class,
         PBKDF2VaultEncryptingStrategyTest.class,
         VaultEncryptingStrategyPerformanceTest.class,
         VaultObjectCompareToTest.class,

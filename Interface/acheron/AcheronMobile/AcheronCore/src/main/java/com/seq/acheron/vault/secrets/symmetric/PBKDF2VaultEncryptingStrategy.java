@@ -23,7 +23,7 @@ import java.util.Base64;
  * the vault key using the derived key.</li>
  * </ul>
  */
-public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
+public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
 
     /**
      * PBKDF2 iteration count. This should be tuned according to security
@@ -55,8 +55,7 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
      */
     public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey)
             throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", generateVaultKey);
-        this.saltBase64 = saltBase64;
+        super("AES/GCM/NoPadding", generateVaultKey, saltBase64);
         char[] passwordChars = masterPassword.toCharArray();
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
@@ -87,7 +86,7 @@ public class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
      */
     public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, SecretKey vaultKey)
             throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", vaultKey);
+        super("AES/GCM/NoPadding", vaultKey, saltBase64);
         char[] passwordChars = masterPassword.toCharArray();
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
