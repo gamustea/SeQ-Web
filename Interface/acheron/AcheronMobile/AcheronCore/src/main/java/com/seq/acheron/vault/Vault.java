@@ -1,5 +1,6 @@
 package com.seq.acheron.vault;
 
+import com.seq.acheron.vault.interfaces.Cypher;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
 import com.seq.acheron.vault.interfaces.Storable;
@@ -206,7 +207,7 @@ public class Vault implements JsonSerializable {
 
     /**
      * Encrypts all items currently stored in the vault by delegating to
-     * {@link Storable#encrypt(VaultEncryptingStrategy)} for each item.
+     * {@link Cypher#encrypt(VaultEncryptingStrategy)} for each item.
      * Sets {@link #isEncrypted} to {@code true} on success.
      *
      * @return this vault instance, for fluent usage
@@ -218,7 +219,7 @@ public class Vault implements JsonSerializable {
 
     /**
      * Decrypts all items currently stored in the vault by delegating to
-     * {@link Storable#decrypt(VaultEncryptingStrategy)} for each item.
+     * {@link Cypher#decrypt(VaultEncryptingStrategy)} for each item.
      * Sets {@link #isEncrypted} to {@code false} on success.
      *
      * @return this vault instance, for fluent usage
@@ -245,7 +246,7 @@ public class Vault implements JsonSerializable {
             throw new IllegalStateException("Vault is already decrypted.");
         }
 
-        for (Storable storable : storables) {
+        for (Cypher storable : storables) {
             if (encrypt) {
                 storable.encrypt(strategy);
             } else {
@@ -320,10 +321,6 @@ public class Vault implements JsonSerializable {
         return sb.toString();
     }
 
-    public VaultObject fromJson(String json) throws GeneralSecurityException {
-        return null;
-    }
-
 
     /**
      * Delegates to {@link #toJson()} and wraps any {@link GeneralSecurityException}
@@ -353,7 +350,6 @@ public class Vault implements JsonSerializable {
         if (this == o) return true;
         if (!(o instanceof Vault that)) return false;
         return isEncrypted == that.isEncrypted
-                && Objects.equals(strategy, that.strategy)
                 && Objects.equals(user, that.user)
                 && Objects.equals(checker, that.checker)
                 && Objects.equals(storables, that.storables);

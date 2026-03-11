@@ -5,7 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.seq.acheron.exceptions.WrongPasswordException;
-import com.seq.acheron.vault.secrets.symmetric.AESVaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.PBKDF2VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.StrategyRegistry;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
@@ -19,7 +20,6 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
-import java.util.Map;
 import java.util.Objects;
 
 import static com.seq.acheron.util.CryptoUtils.constantTimeEquals;
@@ -105,7 +105,7 @@ public record VaultFactory(User user) {
     public Vault mockVault(User user) throws GeneralSecurityException {
         Objects.requireNonNull(user, "user must not be null");
 
-        Vault vault = new Vault(new AESVaultEncryptingStrategy(
+        Vault vault = new Vault(new PBKDF2VaultEncryptingStrategy(
                     "Contraseña",
                     generateSalt(),
                     true
@@ -185,23 +185,20 @@ public record VaultFactory(User user) {
     ) throws GeneralSecurityException, WrongPasswordException {
 
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-
-        // ── 1. Leer el algoritmo y construir estrategia temporal ────────────
         JsonObject algorithmJson = root.getAsJsonObject("algorithm");
-        // Asumimos "Argon2" por defecto por retrocompatibilidad si un vault antiguo no tuviera el campo
-        String kdfId = algorithmJson.has("kdf") ? algorithmJson.get("kdf").getAsString() : "Argon2";
+        String kdfId = algorithmJson.has("kdf") ?
+                algorithmJson.get("kdf").getAsString() :
+                "Argon2";
 
         VaultEncryptingStrategy tempStrategy = StrategyRegistry.build(kdfId, masterPassword, algorithmJson, null);
+        String checker = root
+                .get("checker")
+                .getAsString();
 
-        // ── 2. Validar contraseña y extraer checker ──────────────────────────
-        String checker = root.get("checker").getAsString();
-
-        // Asumiendo que checkMasterPassword() está disponible en tu VaultFactory
         if (!checkMasterPassword(checker, tempStrategy)) {
             throw new WrongPasswordException("Wrong master password");
         }
 
-        // ── 3. Recuperar Vault Key y ensamblar estrategia definitiva ─────────
         String vaultKeyStr = root.get("vaultKey").getAsString();
         SecretKey vaultKey;
         try {
@@ -210,17 +207,20 @@ public record VaultFactory(User user) {
             throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
         }
 
-        VaultEncryptingStrategy strategy = StrategyRegistry.build(kdfId, masterPassword, algorithmJson, vaultKey);
+        VaultEncryptingStrategy strategy = StrategyRegistry.build(
+                        kdfId,
+                        masterPassword,
+                        algorithmJson,
+                        vaultKey
+                );
 
-        // ── 4. Crear el Vault encriptado base ────────────────────────────────
         Vault vault = new Vault(
                 strategy,
                 user,
                 checker,
-                true // Se carga como encriptado, ya que el JSON contiene los datos encriptados
+                true
         );
 
-        // ── 5. Deserializar tipos existentes leyendo directamente del root ───
         if (root.has("accounts")) {
             JsonArray accounts = root.getAsJsonArray("accounts");
             for (JsonElement element : accounts) {
@@ -272,7 +272,7 @@ public record VaultFactory(User user) {
 
         String securePassword = CryptoUtils.generatePassword(32);
         String salt = CryptoUtils.generateSalt(16);
-        VaultEncryptingStrategy strategy = new AESVaultEncryptingStrategy(
+        VaultEncryptingStrategy strategy = new Argon2VaultEncryptingStrategy(
                 securePassword,
                 salt,
                 true

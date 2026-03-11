@@ -1,6 +1,6 @@
 package com.seq.acheron.secrets.symmetric;
 
-import com.seq.acheron.vault.secrets.symmetric.AESVaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.SecretKey;
@@ -10,7 +10,7 @@ import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class AESVaultEncryptingStrategyTest {
+public class Argon2VaultEncryptingStrategyTest {
 
     private static final String MASTER_PASSWORD = "SuperSecret123!";
     private static final String SALT_BASE64 =
@@ -18,8 +18,8 @@ public class AESVaultEncryptingStrategyTest {
 
     @Test
     void encryptThenDecrypt_withSameInstance_returnsOriginalPlaintext() throws Exception {
-        AESVaultEncryptingStrategy strategy =
-                new AESVaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
+        Argon2VaultEncryptingStrategy strategy =
+                new Argon2VaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
 
         String plainText = "Hola, mundo secreto con AES + Argon2";
 
@@ -34,8 +34,8 @@ public class AESVaultEncryptingStrategyTest {
     @Test
     void exportAndImportVaultKey_reopenWithSameMaster_canDecryptOldData() throws Exception {
         // 1) Create first strategy, derive key, generate vaultKey and encrypt a message
-        AESVaultEncryptingStrategy creator =
-                new AESVaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
+        Argon2VaultEncryptingStrategy creator =
+                new Argon2VaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
 
         String plainText = "Mensaje protegido en la bóveda (AES + Argon2)";
         String cipher = creator.encrypt(plainText);
@@ -43,15 +43,15 @@ public class AESVaultEncryptingStrategyTest {
         String encryptedVaultKey = creator.exportVaultKey();
 
         // 2) Simulate reopening the vault: derive the same derivedKey again
-        AESVaultEncryptingStrategy opener =
-                new AESVaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
+        Argon2VaultEncryptingStrategy opener =
+                new Argon2VaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
 
         SecretKey importedVaultKey =
                 opener.importVaultKey(encryptedVaultKey);
 
         // 3) Create a new strategy instance using the imported vaultKey
-        AESVaultEncryptingStrategy reopener =
-                new AESVaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, importedVaultKey);
+        Argon2VaultEncryptingStrategy reopener =
+                new Argon2VaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, importedVaultKey);
 
         String decrypted = reopener.decrypt(cipher);
 
@@ -61,14 +61,14 @@ public class AESVaultEncryptingStrategyTest {
 
     @Test
     void importVaultKey_withWrongMasterPasswordFails() throws Exception {
-        AESVaultEncryptingStrategy correct =
-                new AESVaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
+        Argon2VaultEncryptingStrategy correct =
+                new Argon2VaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
 
         String encryptedVaultKey = correct.exportVaultKey();
 
         // Wrong master password → wrong derivedKey
-        AESVaultEncryptingStrategy wrong =
-                new AESVaultEncryptingStrategy("WrongMasterPassword", SALT_BASE64, true);
+        Argon2VaultEncryptingStrategy wrong =
+                new Argon2VaultEncryptingStrategy("WrongMasterPassword", SALT_BASE64, true);
 
         assertThrows(GeneralSecurityException.class, () -> {
             wrong.importVaultKey(encryptedVaultKey);
@@ -79,8 +79,8 @@ public class AESVaultEncryptingStrategyTest {
 
     @Test
     void keysHaveExpectedLength() throws Exception {
-        AESVaultEncryptingStrategy strategy =
-                new AESVaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
+        Argon2VaultEncryptingStrategy strategy =
+                new Argon2VaultEncryptingStrategy(MASTER_PASSWORD, SALT_BASE64, true);
 
         assertEquals(32, strategy.getVaultKey().getEncoded().length,
                 "Vault key must be 32 bytes (256 bits)");

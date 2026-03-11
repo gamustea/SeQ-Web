@@ -8,6 +8,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 
+import static com.seq.acheron.util.CryptoUtils.generateSalt;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 public class VaultEncryptingStrategyPerformanceTest {
@@ -19,7 +20,7 @@ public class VaultEncryptingStrategyPerformanceTest {
     private static class TestVaultStrategy extends VaultEncryptingStrategy {
 
         public TestVaultStrategy(SecretKey derivedKey, boolean generateVaultKey) throws GeneralSecurityException {
-            super("AES/GCM/NoPadding", generateVaultKey);
+            super("AES/GCM/NoPadding", generateVaultKey, generateSalt());
             this.derivedKey = derivedKey;
         }
 

@@ -20,7 +20,7 @@ import java.util.Base64;
  *     (encrypted) with {@link #derivedKey} via the base class.</li>
  * </ul>
  */
-public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
+public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy {
 
     private static final int ARGON2_ITERATIONS   = 3;
     private static final int ARGON2_MEMORY_KIB   = 65536;
@@ -40,10 +40,10 @@ public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
      * @param generateVaultKey  Whether the constructor builds a random {@link #vaultKey} or not
      * @throws GeneralSecurityException if key generation fails
      */
-    public AESVaultEncryptingStrategy(String masterPassword,
-                                      String saltBase64,
-                                      boolean generateVaultKey) throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", generateVaultKey);
+    public Argon2VaultEncryptingStrategy(String masterPassword,
+                                         String saltBase64,
+                                         boolean generateVaultKey) throws GeneralSecurityException {
+        super("AES/GCM/NoPadding", generateVaultKey, saltBase64);
         this.saltBase64 = saltBase64;
 
         Argon2Advanced argon2 = Argon2Factory.createAdvanced();
@@ -75,10 +75,10 @@ public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
      * @param saltBase64     Base64-encoded salt used for Argon2
      * @param vaultKey       an existing vault key to reuse
      */
-    public AESVaultEncryptingStrategy(String masterPassword,
-                                      String saltBase64,
-                                      SecretKey vaultKey) {
-        super("AES/GCM/NoPadding", vaultKey);
+    public Argon2VaultEncryptingStrategy(String masterPassword,
+                                         String saltBase64,
+                                         SecretKey vaultKey) {
+        super("AES/GCM/NoPadding", vaultKey, saltBase64);
         this.saltBase64 = saltBase64;
 
         Argon2Advanced argon2 = Argon2Factory.createAdvanced();
@@ -116,16 +116,14 @@ public class AESVaultEncryptingStrategy extends VaultEncryptingStrategy {
      * }
      */
     public String toJson() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{");
-        sb.append("\"transformation\": \"").append(transformation).append("\", ");
-        sb.append("\"kdf\": \"Argon2\", ");
-        sb.append("\"kdfIterations\": \"").append(ARGON2_ITERATIONS).append("\", ");
-        sb.append("\"kdfMemoryKiB\": \"").append(ARGON2_MEMORY_KIB).append("\", ");
-        sb.append("\"kdfParallelism\": \"").append(ARGON2_PARALLELISM).append("\", ");
-        sb.append("\"salt\": \"").append(saltBase64).append("\"");
-        sb.append("}");
-        return sb.toString();
+        return "{" +
+                    "\"transformation\": \"" + transformation + "\", " +
+                    "\"kdf\": \"Argon2\", " +
+                    "\"kdfIterations\": \"" + ARGON2_ITERATIONS + "\", " +
+                    "\"kdfMemoryKiB\": \"" + ARGON2_MEMORY_KIB + "\", " +
+                    "\"kdfParallelism\": \"" + ARGON2_PARALLELISM + "\", " +
+                    "\"salt\": \"" + saltBase64 + "\"" +
+                "}";
     }
 
 }

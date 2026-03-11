@@ -2,6 +2,7 @@
 package com.seq.acheron.vault.storables;
 
 import com.seq.acheron.vault.User;
+import com.seq.acheron.vault.interfaces.Cypher;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.Pair;
 import com.seq.acheron.vault.interfaces.JsonSerializable;

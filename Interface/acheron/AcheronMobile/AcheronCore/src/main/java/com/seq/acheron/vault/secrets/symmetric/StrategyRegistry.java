@@ -24,13 +24,12 @@ public final class StrategyRegistry {
     private static final Map<String, StrategyFactory> REGISTRY = new HashMap<>();
 
     static {
-        // ── Built-in registrations ──────────────────────────────────────────
         register("Argon2", (password, json, vaultKey) -> {
             String salt = json.get("salt").getAsString();
             if (vaultKey != null) {
-                return new AESVaultEncryptingStrategy(password, salt, vaultKey);
+                return new Argon2VaultEncryptingStrategy(password, salt, vaultKey);
             }
-            return new AESVaultEncryptingStrategy(password, salt, true);
+            return new Argon2VaultEncryptingStrategy(password, salt, true);
         });
 
         register("PBKDF2", (password, json, vaultKey) -> {

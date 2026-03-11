@@ -22,12 +22,17 @@ public class Main {
         );
 
         Vault mockVault = vf.mockVault().encryptAll();
-
-        System.out.println(
-                mockVault.toJson()
+        System.out.println("Vault mock desencriptado:\n" +
+                mockVault
+                        .decryptAll()
+                        .toJson()
         );
-
-        Vault newVault = vf.fromJson(mockVault.toJson(), "Contraseña");
-        System.out.println(newVault.decryptAll().toJson());
+        Vault newVault = vf.fromJson(mockVault.encryptAll().toJson(), "Contraseña");
+        System.out.println("Vault derivado desencriptado:\n" +
+                newVault
+                .decryptAll()
+                .toJson()
+        );
+        System.out.println("Son el mismo Vault: " + (newVault.equals(mockVault.decryptAll())));
     }
 }
