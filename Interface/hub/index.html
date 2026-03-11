@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SeQ Hub</title>
+  <link rel="stylesheet" href="hub.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="stars" id="stars"></div>
+
+  <header class="hub-header">
+    <div class="hub-logo">
+      <span class="logo-bracket">[</span>
+      <span class="logo-text">SeQ</span>
+      <span class="logo-bracket">]</span>
+    </div>
+    <p class="hub-subtitle">Security Operations Platform</p>
+  </header>
+
+  <main class="hub-grid">
+
+    <!-- AEGIS -->
+    <a href="../aegis/index.html" class="module-card module-aegis">
+      <div class="card-glow"></div>
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+          <path d="M9 12l2 2 4-4"/>
+        </svg>
+      </div>
+      <div class="card-content">
+        <h2 class="card-title">Aegis</h2>
+        <p class="card-desc">Newsletter de seguridad · Pildoras de conocimiento generadas por IA y entregadas a tu equipo.</p>
+        <span class="card-badge card-badge--active">Disponible</span>
+      </div>
+      <div class="card-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+      </div>
+    </a>
+
+    <!-- ACHERON WEB -->
+    <div class="module-card module-acheron module-disabled">
+      <div class="card-glow"></div>
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          <circle cx="12" cy="16" r="1"/>
+        </svg>
+      </div>
+      <div class="card-content">
+        <h2 class="card-title">AcheronWeb</h2>
+        <p class="card-desc">Gestor de credenciales cifradas · Bóveda segura de contraseñas y tarjetas para tu organización.</p>
+        <span class="card-badge card-badge--wip">En desarrollo</span>
+      </div>
+      <div class="wip-overlay">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+          <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+        </svg>
+        <span>Próximamente</span>
+      </div>
+    </div>
+
+    <!-- SENTINEL -->
+    <div class="module-card module-sentinel module-disabled">
+      <div class="card-glow"></div>
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="M21 21l-4.35-4.35"/>
+          <path d="M11 8v3l2 2"/>
+        </svg>
+      </div>
+      <div class="card-content">
+        <h2 class="card-title">Sentinel</h2>
+        <p class="card-desc">Escaner de red y vulnerabilidades · Nmap, Nikto y OpenVAS unificados en un único panel.</p>
+        <span class="card-badge card-badge--wip">En desarrollo</span>
+      </div>
+      <div class="wip-overlay">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+          <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+        </svg>
+        <span>Próximamente</span>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="hub-footer">
+    <span>SeQ Platform &mdash; Security Operations Suite</span>
+  </footer>
+
+  <script>
+    // Generate starfield
+    const container = document.getElementById('stars');
+    for (let i = 0; i < 120; i++) {
+      const star = document.createElement('div');
+      star.className = 'star';
+      star.style.left = Math.random() * 100 + '%';
+      star.style.top = Math.random() * 100 + '%';
+      const size = Math.random() * 2 + 1;
+      star.style.width = size + 'px';
+      star.style.height = size + 'px';
+      star.style.animationDelay = Math.random() * 4 + 's';
+      star.style.animationDuration = (Math.random() * 3 + 2) + 's';
+      container.appendChild(star);
+    }
+  </script>
+</body>
+</html>
