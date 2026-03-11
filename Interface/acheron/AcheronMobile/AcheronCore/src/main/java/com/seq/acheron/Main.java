@@ -20,10 +20,14 @@ public class Main {
                         "gamustea"
                 )
         );
+
+        Vault mockVault = vf.mockVault().encryptAll();
+
         System.out.println(
-                vf.mockVault()
-                        .encryptAll()
-                        .toJson()
+                mockVault.toJson()
         );
+
+        Vault newVault = vf.fromJson(mockVault.toJson(), "Contraseña");
+        System.out.println(newVault.decryptAll().toJson());
     }
 }

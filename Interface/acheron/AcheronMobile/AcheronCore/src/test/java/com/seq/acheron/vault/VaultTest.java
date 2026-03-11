@@ -160,7 +160,7 @@ public class VaultTest {
             assertTrue(exportedJson.contains("\"CUSTOM_ID\""), "El JSON debe incluir el storable custom");
 
             // 4. Restauramos la bóveda en un nuevo objeto usando la contraseña de default de mockVault ("CONTRASEÑA")
-            Vault restoredVault = factory.fromJSON(exportedJson, "CONTRASEÑA");
+            Vault restoredVault = factory.fromJson(exportedJson, "CONTRASEÑA");
 
             // 5. Validaciones de la restauración
             assertTrue(restoredVault.isEncrypted(), "Al venir de un fromJSON cifrado, debe estar true");
@@ -187,7 +187,7 @@ public class VaultTest {
             String exportedJson = originalVault.toJson();
 
             assertThrows(WrongPasswordException.class, () -> {
-                factory.fromJSON(exportedJson, "Contraseña_Incorrecta_Random");
+                factory.fromJson(exportedJson, "Contraseña_Incorrecta_Random");
             });
         }
     }

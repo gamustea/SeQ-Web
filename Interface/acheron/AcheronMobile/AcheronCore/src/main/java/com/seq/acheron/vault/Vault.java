@@ -3,6 +3,7 @@ package com.seq.acheron.vault;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
 import com.seq.acheron.vault.interfaces.Storable;
+import com.seq.acheron.vault.storables.VaultObject;
 import lombok.Getter;
 
 import java.nio.charset.StandardCharsets;
@@ -289,9 +290,10 @@ public class Vault implements JsonSerializable {
     public String toJson() throws GeneralSecurityException {
         StringBuilder sb = new StringBuilder();
         sb.append("{");
-
         sb.append("\"checker\": \"").append(checker).append("\", ");
         sb.append("\"vaultKey\": \"").append(strategy.exportVaultKey()).append("\", ");
+        // strategy.toJson() returns a JSON *object* (not a quoted string),
+        // so it is embedded directly without extra quotes.
         sb.append("\"algorithm\": ").append(strategy.toJson()).append(", ");
 
         Map<String, List<Storable>> map = classifyStorables();
@@ -316,6 +318,10 @@ public class Vault implements JsonSerializable {
 
         sb.append("}");
         return sb.toString();
+    }
+
+    public VaultObject fromJson(String json) throws GeneralSecurityException {
+        return null;
     }
 
 

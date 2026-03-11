@@ -1,5 +1,6 @@
 package com.seq.acheron.vault.storables;
 
+import com.google.gson.JsonObject;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.Storable;
 import lombok.Getter;
@@ -158,5 +159,22 @@ public class Account extends VaultObject {
                 "\"domain\":\"" + domain + "\", " +
                 "\"password\":\"" + safePassword + "\"" +
                 '}';
+    }
+
+    /**
+     * Reconstruye un Account a partir de su representación JSON devuelta por el Vault.
+     */
+    public static Account fromJson(JsonObject json) {
+        return new Account(
+                json.get("id").getAsString(),
+                json.get("title").getAsString(),
+                json.get("username").getAsString(),
+                json.get("domain").getAsString(),
+                json.get("password").getAsString(),
+                // Se asume el formato estándar ISO-8601 guardado por DateTimeFormatter
+                java.util.Date.from(java.time.Instant.parse(json.get("createdAt").getAsString())),
+                java.util.Date.from(java.time.Instant.parse(json.get("updatedAt").getAsString())),
+                true
+        );
     }
 }

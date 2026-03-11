@@ -1,5 +1,6 @@
 package com.seq.acheron.vault.storables;
 
+import com.google.gson.JsonObject;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.Storable;
 import lombok.Getter;
@@ -208,5 +209,23 @@ public class CreditCard extends VaultObject {
                 ", \"postalCode\": \"" + postalCode + "\"" +
                 ", \"cvv\": \"" + cvv + "\"" +
                 '}';
+    }
+
+    /**
+     * Reconstruye un CreditCard a partir de su representación JSON devuelta por el Vault.
+     */
+    public static CreditCard fromJson(JsonObject json) {
+        return new CreditCard(
+                json.get("id").getAsString(),
+                json.get("title").getAsString(),
+                json.get("cardHolderName").getAsString(),
+                json.get("cardNumber").getAsString(),
+                json.get("expirationDate").getAsString(),
+                json.get("cvv").getAsString(),
+                json.get("postalCode").getAsString(),
+                java.util.Date.from(java.time.Instant.parse(json.get("createdAt").getAsString())),
+                java.util.Date.from(java.time.Instant.parse(json.get("updatedAt").getAsString())),
+                true
+        );
     }
 }

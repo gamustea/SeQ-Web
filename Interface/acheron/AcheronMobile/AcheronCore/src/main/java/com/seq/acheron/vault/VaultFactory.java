@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.vault.secrets.symmetric.AESVaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.StrategyRegistry;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.util.Pair;
@@ -14,12 +15,15 @@ import com.seq.acheron.vault.storables.CreditCard;
 import org.jetbrains.annotations.NotNull;
 
 import javax.crypto.AEADBadTagException;
+import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.util.Map;
 import java.util.Objects;
 
 import static com.seq.acheron.util.CryptoUtils.constantTimeEquals;
+import static com.seq.acheron.util.CryptoUtils.generateSalt;
 
 /**
  * Factory responsible for building {@link Vault} instances.
@@ -43,31 +47,7 @@ import static com.seq.acheron.util.CryptoUtils.constantTimeEquals;
 public record VaultFactory(User user) {
 
     private static VaultFactory instance;
-
-    /**
-     * Default encryption strategy used when creating demo/mock vaults.
-     * <p>
-     * This strategy is initialised with hard-coded parameters and MUST NOT be
-     * used for real user data in production. It is safe to use it strictly for:
-     * <ul>
-     *   <li>UI demos,</li>
-     *   <li>sample data,</li>
-     *   <li>and local development/testing.</li>
-     * </ul>
-     */
-    private static final VaultEncryptingStrategy DEFAULT_STRATEGY;
-
-    static {
-        try {
-            DEFAULT_STRATEGY = new AESVaultEncryptingStrategy(
-                    "CONTRASEÑA", // demo master password
-                    CryptoUtils.generateSalt(),
-                    true
-            );
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Failed to initialise default demo strategy", e);
-        }
-    }
+    private static String defaultKdf = "Argon2";
 
     public VaultFactory(User user) {
         this.user = Objects.requireNonNull(user, "user must not be null");
@@ -125,7 +105,14 @@ public record VaultFactory(User user) {
     public Vault mockVault(User user) throws GeneralSecurityException {
         Objects.requireNonNull(user, "user must not be null");
 
-        Vault vault = new Vault(DEFAULT_STRATEGY, user, false);
+        Vault vault = new Vault(new AESVaultEncryptingStrategy(
+                    "Contraseña",
+                    generateSalt(),
+                    true
+                ),
+                user,
+                false
+        );
 
         // Accounts (demo data only)
         vault.add(new Account(
@@ -177,96 +164,76 @@ public record VaultFactory(User user) {
     }
 
     /**
-     * Reconstructs a {@link Vault} instance from its JSON representation. WARNING:
-     * for a proper functionality, this method assumes the JSON data is encrypted.
-     * <p>
-     * The method expects the JSON to contain at least:
-     * <ul>
-     *   <li>{@code checker}: encrypted verifier bound to the master password,</li>
-     *   <li>{@code vaultKey}: key material export from the strategy,</li>
-     *   <li>optionally {@code accounts} and {@code creditcards} arrays.</li>
-     * </ul>
-     * The supplied {@code strategy} will have its key imported from
-     * {@code vaultKey} and will be used to validate the master password
-     * against the {@code checker}.
+     * Reconstructs a {@link Vault} instance from its JSON representation.
      *
-     * @param json     vault JSON representation
-     * @return a {@link Vault} instance in encrypted state
-     * @throws GeneralSecurityException if the master password is wrong or
-     *                                  cryptographic operations fail
+     * <p>Expected top-level JSON keys:
+     * <ul>
+     *   <li>{@code "checker"}  — encrypted password verifier</li>
+     *   <li>{@code "vaultKey"} — vault key encrypted with the derived key</li>
+     *   <li>{@code "algorithm"} — object with at least a {@code "kdf"} field</li>
+     *   <li>{@code "accounts"} — optional array of Account objects</li>
+     *   <li>{@code "creditcards"} — optional array of CreditCard objects</li>
+     * </ul>
+     *
+     * @param json           JSON string previously produced by {@link Vault#toJson()}
+     * @param masterPassword the user's master password
+     * @return a fully reconstructed, decrypted {@link Vault}
      */
-    public Vault fromJSON(
+    public Vault fromJson(
             @NotNull String json,
             @NotNull String masterPassword
-    ) throws GeneralSecurityException {
-        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-        JsonObject algorithm =  root.getAsJsonObject("algorithm");
+    ) throws GeneralSecurityException, WrongPasswordException {
 
-        String salt = algorithm.get("salt").getAsString();
-        String vaultKey = root.get("vaultKey").getAsString();
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+
+        // ── 1. Leer el algoritmo y construir estrategia temporal ────────────
+        JsonObject algorithmJson = root.getAsJsonObject("algorithm");
+        // Asumimos "Argon2" por defecto por retrocompatibilidad si un vault antiguo no tuviera el campo
+        String kdfId = algorithmJson.has("kdf") ? algorithmJson.get("kdf").getAsString() : "Argon2";
+
+        VaultEncryptingStrategy tempStrategy = StrategyRegistry.build(kdfId, masterPassword, algorithmJson, null);
+
+        // ── 2. Validar contraseña y extraer checker ──────────────────────────
         String checker = root.get("checker").getAsString();
 
-        VaultEncryptingStrategy strategy = new AESVaultEncryptingStrategy(
-                masterPassword,
-                salt,
-                false
-        );
-
-        try {
-            strategy.importVaultKey(vaultKey);
-        }
-        catch (AEADBadTagException e) {
-            throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
-        }
-
-        if (!strategy.isValidChecker(
-                checker,
-                user.getUsername()
-        )) {
+        // Asumiendo que checkMasterPassword() está disponible en tu VaultFactory
+        if (!checkMasterPassword(checker, tempStrategy)) {
             throw new WrongPasswordException("Wrong master password");
         }
 
+        // ── 3. Recuperar Vault Key y ensamblar estrategia definitiva ─────────
+        String vaultKeyStr = root.get("vaultKey").getAsString();
+        SecretKey vaultKey;
+        try {
+            vaultKey = tempStrategy.importVaultKey(vaultKeyStr);
+        } catch (AEADBadTagException e) {
+            throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
+        }
+
+        VaultEncryptingStrategy strategy = StrategyRegistry.build(kdfId, masterPassword, algorithmJson, vaultKey);
+
+        // ── 4. Crear el Vault encriptado base ────────────────────────────────
         Vault vault = new Vault(
                 strategy,
                 user,
                 checker,
-                true
+                true // Se carga como encriptado, ya que el JSON contiene los datos encriptados
         );
 
+        // ── 5. Deserializar tipos existentes leyendo directamente del root ───
         if (root.has("accounts")) {
             JsonArray accounts = root.getAsJsonArray("accounts");
             for (JsonElement element : accounts) {
-                JsonObject obj = element.getAsJsonObject();
-
-                String id = obj.get("id").getAsString();
-                String title = obj.get("title").getAsString();
-                String username = obj.get("username").getAsString();
-                String domain = obj.get("domain").getAsString();
-                String password = obj.get("password").getAsString();
-                boolean isEncrypted = !password.equals("***");
-
-                vault.add(new Account(id, title, username, domain, password, isEncrypted));
+                // Usamos el método fromJson de Account (que definimos en el paso anterior)
+                vault.add(Account.fromJson(element.getAsJsonObject()));
             }
         }
 
         if (root.has("creditcards")) {
             JsonArray creditCards = root.getAsJsonArray("creditcards");
             for (JsonElement element : creditCards) {
-                JsonObject obj = element.getAsJsonObject();
-
-                String id = obj.get("id").getAsString();
-                String title = obj.get("title").getAsString();
-                String cardHolderName = obj.get("cardHolderName").getAsString();
-                String cardNumber = obj.get("cardNumber").getAsString();
-                String expirationDate = obj.get("expirationDate").getAsString();
-                String cvv = obj.get("cvv").getAsString();
-                String postalCode = obj.get("postalCode").getAsString();
-                boolean isEncrypted = !cvv.equals("***");
-
-                vault.add(new CreditCard(
-                        id, title, cardHolderName, cardNumber, expirationDate,
-                        cvv, postalCode, isEncrypted
-                ));
+                // Usamos el método fromJson de CreditCard
+                vault.add(CreditCard.fromJson(element.getAsJsonObject()));
             }
         }
 
@@ -274,33 +241,33 @@ public record VaultFactory(User user) {
     }
 
 
-    /**
-     * Creates a restoration {@link Vault} as a self-contained backup copy of the given vault.
-     * <p>
-     * The restoration vault is protected by a freshly generated, cryptographically strong
-     * random password and an independent AES encryption strategy, so it can be stored or
-     * transmitted safely without exposing the user's original master password.
-     * All {@link com.seq.acheron.vault.storables.VaultObject VaultObject} items from
-     * {@code originalVault} are deep-copied into the new vault via
-     * {@link com.seq.acheron.vault.storables.VaultObject#copy()}.
-     * <p>
-     * Typical use cases:
-     * <ul>
-     *   <li>Generating a one-time recovery export before a destructive operation.</li>
-     *   <li>Providing the user with a backup vault alongside a temporary password
-     *       for out-of-band delivery (e.g., email, QR code).</li>
-     * </ul>
-     *
-     * @param originalVault the source {@link Vault} whose storables are to be copied;
-     *                      must not be {@code null}
-     * @return a {@link Pair} where the first element is the newly created restoration
-     *         {@link Vault} (encrypted with a fresh strategy) and the second element
-     *         is the plain-text restoration password needed to decrypt it
-     * @throws GeneralSecurityException if the AES strategy cannot be initialised or
-     *                                  any cryptographic operation fails
-     */
-public Pair<Vault, String> getRestorationVault(
-            @NotNull Vault originalVault
+        /**
+         * Creates a restoration {@link Vault} as a self-contained backup copy of the given vault.
+         * <p>
+         * The restoration vault is protected by a freshly generated, cryptographically strong
+         * random password and an independent AES encryption strategy, so it can be stored or
+         * transmitted safely without exposing the user's original master password.
+         * All {@link com.seq.acheron.vault.storables.VaultObject VaultObject} items from
+         * {@code originalVault} are deep-copied into the new vault via
+         * {@link com.seq.acheron.vault.storables.VaultObject#copy()}.
+         * <p>
+         * Typical use cases:
+         * <ul>
+         *   <li>Generating a one-time recovery export before a destructive operation.</li>
+         *   <li>Providing the user with a backup vault alongside a temporary password
+         *       for out-of-band delivery (e.g., email, QR code).</li>
+         * </ul>
+         *
+         * @param originalVault the source {@link Vault} whose storables are to be copied;
+         *                      must not be {@code null}
+         * @return a {@link Pair} where the first element is the newly created restoration
+         *         {@link Vault} (encrypted with a fresh strategy) and the second element
+         *         is the plain-text restoration password needed to decrypt it
+         * @throws GeneralSecurityException if the AES strategy cannot be initialised or
+         *                                  any cryptographic operation fails
+         */
+    public Pair<Vault, String> getRestorationVault(
+                @NotNull Vault originalVault
     ) throws GeneralSecurityException {
 
         String securePassword = CryptoUtils.generatePassword(32);
@@ -356,5 +323,24 @@ public Pair<Vault, String> getRestorationVault(
         }
 
         return constantTimeEquals(hex.toString(), decryptedChecker);
+    }
+
+    /**
+     * Changes the default KDF used for newly created vaults.
+     * Must be a KDF registered in {@link StrategyRegistry}.
+     *
+     * @param kdfId e.g. "Argon2", "PBKDF2"
+     */
+    public static void setDefaultKdf(String kdfId) {
+        if (!StrategyRegistry.registeredKdfs().contains(kdfId)) {
+            throw new IllegalArgumentException("Unknown KDF: " + kdfId);
+        }
+        defaultKdf = kdfId;
+    }
+
+    /** Builds the default strategy for new vaults (no existing vault key). */
+    private VaultEncryptingStrategy buildDefaultStrategy(String masterPassword)
+            throws GeneralSecurityException {
+        return StrategyRegistry.build(defaultKdf, masterPassword, new JsonObject(), null);
     }
 }
