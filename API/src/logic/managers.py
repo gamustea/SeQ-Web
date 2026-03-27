@@ -29,7 +29,7 @@ import ollama
 
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, scoped_session, sessionmaker
+from sqlalchemy.orm import Session, scoped_session, sessionmaker, joinedload
 from pymysql.err import IntegrityError
 
 from src.logic.documents import AegisAIWriter, AegisAlertFetcher, AegisContent
@@ -613,6 +613,26 @@ class OpenVASScanManager(ScanManager):
     def _get_result_processor(self) -> OpenVASResultProcessor:
         """Retorna el procesador de resultados OpenVAS"""
         return OpenVASResultProcessor(self.session, self.logger)
+
+    def get_scans_for_user(self) -> List[OpenVASScan]:
+        """Obtiene todos los escaneos OpenVAS del usuario con relaciones cargadas."""
+        try:
+            self._check_session()
+            scans = (
+                self.session.query(OpenVASScan)
+                .filter(OpenVASScan.user_id == self.active_user.id)
+                .options(
+                    joinedload(OpenVASScan.results).joinedload("vulnerability"),
+                    joinedload(OpenVASScan.results).joinedload("host"),
+                )
+                .all()
+            )
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos OpenVAS")
+            return scans
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error obteniendo escaneos OpenVAS: {e}", exc_info=True)
+            raise
     
     def _execute_scan_in_thread(self, scan_id: int, task: OpenVASTask) -> None:
         """
@@ -728,6 +748,25 @@ class NmapScanManager(ScanManager):
         """Retorna el procesador de resultados Nmap"""
         return NmapResultProcessor(self.session, self.logger)
 
+    def get_scans_for_user(self) -> List[NmapScan]:
+        """Obtiene todos los escaneos Nmap del usuario con relaciones cargadas."""
+        try:
+            self._check_session()
+            scans = (
+                self.session.query(NmapScan)
+                .filter(NmapScan.user_id == self.active_user.id)
+                .options(
+                    joinedload(NmapScan.open_ports_relation).joinedload("port"),
+                )
+                .all()
+            )
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
+            return scans
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error obteniendo escaneos Nmap: {e}", exc_info=True)
+            raise
+
 
 class NiktoScanManager(ScanManager):
     """Gestor de escaneos Nikto"""
@@ -779,6 +818,25 @@ class NiktoScanManager(ScanManager):
     def _get_result_processor(self) -> NiktoResultProcessor:
         """Retorna el procesador de resultados Nikto"""
         return NiktoResultProcessor(self.session, self.logger)
+
+    def get_scans_for_user(self) -> List[NiktoScan]:
+        """Obtiene todos los escaneos Nikto del usuario con relaciones cargadas."""
+        try:
+            self._check_session()
+            scans = (
+                self.session.query(NiktoScan)
+                .filter(NiktoScan.user_id == self.active_user.id)
+                .options(
+                    joinedload(NiktoScan.incidents),
+                )
+                .all()
+            )
+            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
+            return scans
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error obteniendo escaneos Nikto: {e}", exc_info=True)
+            raise
 
 
 class UserManager(BaseManager):
@@ -1221,212 +1279,6 @@ class VaultManager(BaseManager):
         self,
         data: Dict[str, Any],
         is_recovery: bool = False,
-    ) -> Vault:
-        """
-        Crea o actualiza COMPLETAMENTE el vault del usuario activo a partir de JSON.
-
-        Semántica:
-          - Si no existe vault (user_id, is_recovery): se crea uno nuevo.
-          - Si existe: se actualizan metadatos y se reemplazan TODOS los storables
-            (accounts + creditcards) por los del JSON.
-        """
-        self._check_session()
-
-        try:
-            algorithm = data.get("algorithm", {}) or {}
-
-            created = False
-            vault = self.get_vault_for_user(is_recovery=is_recovery)
-
-            if vault is None:
-                created = True
-                vault = Vault(
-                    user_id=self.active_user.id,
-                    is_recovery=is_recovery,
-                    checker=data["checker"],
-                    vault_key=data["vaultKey"],
-                    transformation=algorithm.get("transformation", ""),
-                    kdf=algorithm.get("kdf", ""),
-                    kdf_iterations=int(algorithm.get("kdfIterations", 0)),
-                    kdf_memory=int(algorithm.get("kdfMemoryKiB", 0)),
-                    kdf_parallelism=int(algorithm.get("kdfParallelism", 1)),
-                    salt=algorithm.get("salt", ""),
-                )
-                self.session.add(vault)
-                self.session.flush()
-            else:
-                self._ensure_vault_ownership(vault)
-                vault.checker = data["checker"]
-                vault.vault_key = data["vaultKey"]
-                vault.transformation = algorithm.get("transformation", "")
-                vault.kdf = algorithm.get("kdf", "")
-                vault.kdf_iterations = int(algorithm.get("kdfIterations", 0))
-                vault.kdf_memory = int(algorithm.get("kdfMemoryKiB", 0))
-                vault.kdf_parallelism = int(algorithm.get("kdfParallelism", 1))
-                vault.salt = algorithm.get("salt", "")
-
-                # Borramos todos los storables existentes
-                for st in list(vault.storables):
-                    self.session.delete(st)
-                self.session.flush()
-
-            # Recrear storables a partir del JSON
-
-            # Accounts
-            for acc in data.get("accounts", []) or []:
-                created = self._parse_dt(acc.get("createdAt"))
-                updated = self._parse_dt(acc.get("updatedAt"))
-
-                account = Account(
-                    vault=vault,
-                    internal_id=acc.get("id"),
-                    title=acc.get("title"),
-                    created_at=created,
-                    updated_at=updated,
-                    username=acc.get("username", ""),
-                    domain=acc.get("domain", ""),
-                    password=acc.get("password", ""),
-                )
-                self.session.add(account)
-
-            # Credit cards
-            for card in data.get("creditcards", []) or []:
-                created = self._parse_dt(card.get("createdAt"))
-                updated = self._parse_dt(card.get("updatedAt"))
-
-                cc = CreditCard(
-                    vault=vault,
-                    internal_id=card.get("id"),
-                    title=card.get("title"),
-                    created_at=created,
-                    updated_at=updated,
-                    cardholder_name=card.get("cardHolderName", ""),
-                    card_number=card.get("cardNumber", ""),
-                    expiration_date=card.get("expirationDate", ""),
-                    postal_code=card.get("postalCode", ""),
-                    cvv=card.get("cvv", ""),
-                )
-                self.session.add(cc)
-
-            self._safe_commit()
-            self.session.refresh(vault)
-            self.logger.info(
-                f"Vault {vault.id} {'creado' if vault.id else 'actualizado'} "
-                f"para user {self.active_user.id}"
-            )
-            return vault
-
-        except IntegrityError as ie:
-            self._safe_rollback()
-            self.logger.error(f"Error de integridad en upsert de vault: {ie}")
-            raise
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error en upsert de vault desde JSON: {e}", exc_info=True)
-            raise
-
-    def export_vault_to_json(self, vault_id: int) -> Dict[str, Any]:
-        """Convierte un vault y sus storables al JSON del formato que has definido."""
-        vault = self.get_vault_by_id(vault_id)
-        if vault is None:
-            raise ValueError(f"Vault {vault_id} no encontrado")
-
-        algorithm = {
-            "transformation": vault.transformation,
-            "kdf": vault.kdf,
-            "kdfIterations": str(vault.kdf_iterations),
-            "kdfMemoryKiB": str(vault.kdf_memory),
-            "kdfParallelism": str(vault.kdf_parallelism),
-            "salt": vault.salt,
-        }
-
-        accounts_json: List[Dict[str, Any]] = []
-        cards_json: List[Dict[str, Any]] = []
-
-        for st in vault.storables:
-            base = {
-                "id": st.internal_id,
-                "title": st.title,
-                "createdAt": st.created_at.isoformat() if st.created_at else None,
-                "updatedAt": st.updated_at.isoformat() if st.updated_at else None,
-                "allowedUsers": [],
-            }
-
-            if isinstance(st, Account):
-                accounts_json.append(
-                    {
-                        **base,
-                        "username": st.username,
-                        "domain": st.domain,
-                        "password": st.password,
-                    }
-                )
-            elif isinstance(st, CreditCard):
-                cards_json.append(
-                    {
-                        **base,
-                        "cardHolderName": st.cardholder_name,
-                        "cardNumber": st.card_number,
-                        "expirationDate": st.expiration_date,
-                        "postalCode": st.postal_code,
-                        "cvv": st.cvv,
-                    }
-                )
-
-        return {
-            "checker": vault.checker,
-            "vaultKey": vault.vault_key,
-            "algorithm": algorithm,
-            "accounts": accounts_json,
-            "creditcards": cards_json,
-        }
-
-    # ----------------- Búsqueda genérica de Storables -----------------
-
-    def find_storables(
-        self,
-        *,
-        vault_id: Optional[int] = None,
-        limit: Optional[int] = None,
-        **filters: Any,
-    ) -> List[Storable]:
-        """
-        Búsqueda genérica de Storables.
-
-        Ejemplos:
-          find_storables(vault_id=1, internal_id="ACC0")
-          find_storables(vault_id=1, title="Gmail Account")
-          find_storables(internal_id="CDC3")  # todos los vaults del usuario
-        """
-        self._check_session()
-
-        query = self.session.query(Storable)
-
-        # Restringir a vault(s) del usuario activo
-        if vault_id is not None:
-            vault = self.get_vault_by_id(vault_id)
-            if vault is None:
-                return []
-            query = query.filter(Storable.vault_id == vault_id)
-        else:
-            # limitar siempre a vaults del usuario activo
-            query = query.join(Vault).filter(Vault.user_id == self.active_user.id)
-
-        # Aplicar filtros dinámicamente en columnas de Storable
-        for field, value in filters.items():
-            if not hasattr(Storable, field):
-                raise ValueError(f"Campo inválido para Storable: {field}")
-            query = query.filter(getattr(Storable, field) == value)
-
-        if limit is not None:
-            query = query.limit(limit)
-
-        return query.all()
-
-    def upsert_vault_from_json(
-        self,
-        data: Dict[str, Any],
-        is_recovery: bool = False,
     ) -> Tuple[Vault, bool]:
         """
         Crea o actualiza COMPLETAMENTE el vault del usuario activo a partir de JSON.
@@ -1693,7 +1545,7 @@ class VaultManager(BaseManager):
         # storables ya está filtrado por vault
         return list(vault.storables)
 
-    def add_storable(
+    def add_storable_to_vault(
         self,
         vault_id: int,
         kind: StorableKind,
@@ -2538,6 +2390,3 @@ class AegisManager(BaseManager):
         thread.start()
 
         return document_id
-
-        
-
