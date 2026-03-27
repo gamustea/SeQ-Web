@@ -435,6 +435,7 @@ class ScanManager(BaseManager, ABC):
     
     def _mark_scan_as_failed(self, scan: Scan) -> None:
         """Marca un escaneo como fallido"""
+        scan.status = "failed"
         scan.ended_at = datetime.now()
         self.session.add(scan)
         self._safe_commit()
