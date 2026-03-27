@@ -1,4 +1,3 @@
-
 import secrets
 import threading
 import time
@@ -38,11 +37,13 @@ from src.core.model import (
     AccessToken,
     NiktoScan,
     NmapScan,
+    OpenPort,
     Person,
     RefreshToken,
     Scan,
     User,
     OpenVASScan,
+    OpenVASScanResult,
     Vault,
     Storable,
     Account,
@@ -622,8 +623,8 @@ class OpenVASScanManager(ScanManager):
                 self.session.query(OpenVASScan)
                 .filter(OpenVASScan.user_id == self.active_user.id)
                 .options(
-                    joinedload(OpenVASScan.results).joinedload("vulnerability"),
-                    joinedload(OpenVASScan.results).joinedload("host"),
+                    joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.vulnerability),
+                    joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.host),
                 )
                 .all()
             )
@@ -756,7 +757,7 @@ class NmapScanManager(ScanManager):
                 self.session.query(NmapScan)
                 .filter(NmapScan.user_id == self.active_user.id)
                 .options(
-                    joinedload(NmapScan.open_ports_relation).joinedload("port"),
+                    joinedload(NmapScan.open_ports_relation).joinedload(OpenPort.port),
                 )
                 .all()
             )
