@@ -23,8 +23,8 @@
 
   <main class="hub-grid">
 
-    <!-- SENTINEL -->
-    <div class="module-card module-sentinel">
+    <!-- SENTINEL — operativo, enlazado -->
+    <a href="../sentinel/index.html" class="module-card module-sentinel">
       <div class="card-glow"></div>
       <div class="card-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -43,9 +43,9 @@
           <path d="M5 12h14M12 5l7 7-7 7"/>
         </svg>
       </div>
-    </div>
+    </a>
 
-    <!-- AEGIS -->
+    <!-- AEGIS — en construcción -->
     <div class="module-card module-aegis module-disabled">
       <div class="card-glow"></div>
       <div class="card-icon">
@@ -67,7 +67,7 @@
       </div>
     </div>
 
-    <!-- ACHERON -->
+    <!-- ACHERON — pendiente -->
     <div class="module-card module-acheron module-disabled">
       <div class="card-glow"></div>
       <div class="card-icon">
@@ -98,6 +98,20 @@
   </footer>
 
   <script>
+    /* Guardia: si no hay sesión activa, redirige al login */
+    (function() {
+      const raw = sessionStorage.getItem('seq_session');
+      if (!raw) { window.location.href = '../auth/login.html'; return; }
+      try {
+        const s = JSON.parse(raw);
+        if (!s.accessToken || Date.now() >= s.expiresAt) {
+          sessionStorage.removeItem('seq_session');
+          window.location.href = '../auth/login.html';
+        }
+      } catch { window.location.href = '../auth/login.html'; }
+    })();
+
+    /* Starfield */
     const container = document.getElementById('stars');
     for (let i = 0; i < 120; i++) {
       const star = document.createElement('div');
