@@ -1,6 +1,6 @@
 """
 API REST para SecOps - Sistema de escaneo de seguridad
-Versión 3.1 - Normalizada con mejores prácticas REST
+Versión 3.2 - Mejoras de seguridad y robustez en endpoints Sentinel
 """
 
 
@@ -48,12 +48,14 @@ from src.logic.managers import (
 # INICIALIZACIÓN DE LA APLICACIÓN
 # ============================================================================
 app = Flask(__name__)
-CORS(app)
+
+# MEJORA DE SEGURIDAD [CORS-01]: Restringir CORS a orígenes conocidos en lugar
+# de permitir todos (*). En producción, sustituir por la URL real del frontend.
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080").split(",")
+CORS(app, origins=[ALLOWED_ORIGINS, "http://127.0.0.1:3000"], supports_credentials=True)
+
 logger_instance = SecOpsLogger(name="APIMain")
 logger = logger_instance.get_logger()
-
-USER_MANAGER = UserManager()
-OAUTH_MANAGER = OAuthTokenManager()
 
 # Rate limiting para prevenir ataques de fuerza bruta
 limiter = Limiter(
@@ -63,6 +65,15 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
+# ============================================================================
+# CONSTANTES DE VALIDACIÓN
+# ============================================================================
+# MEJORA [CONST-01]: Centralizar los estados válidos de escaneo evita
+# errores por strings dispersos y facilita el mantenimiento.
+CANCELLABLE_STATES = frozenset({"pending", "running"})
+VALID_SCAN_TYPES   = frozenset({"nmap", "nikto", "openvas", "all"})
+VALID_OPENVAS_CONFIGS = frozenset({"full_fast", "full_deep", "full_ultimate"})
+MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — evita enviar PDFs gigantes en base64
 
 
 # ============================================================================
@@ -84,35 +95,38 @@ def get_user_managers(user_id: int) -> Tuple[NmapScanManager, NiktoScanManager, 
     Returns:
         Tupla (NmapScanManager, NiktoScanManager, OpenVASScanManager) configurados para el usuario
     """
-    user = USER_MANAGER.get_user_by_id(user_id)
+    user_manager = get_user_manager()
+    user = user_manager.get_user_by_id(user_id)
     nmap_manager = NmapScanManager(user)
     nikto_manager = NiktoScanManager(user)
     openvas_manager = OpenVASScanManager(user)
-    USER_MANAGER.close_session()
+    user_manager.close_session()
+
     return nmap_manager, nikto_manager, openvas_manager
 
 def get_vault_manager(user_id: int) -> VaultManager:
-    """
-    Crea un VaultManager para el usuario dado.
-    """
-    user = USER_MANAGER.get_user_by_id(user_id)
+    user_manager = get_user_manager()
+    user = user_manager.get_user_by_id(user_id)
     if not user:
-        raise UserNotFoundError(user_id=user_id)  # ya tienes esta excepción
+        raise UserNotFoundError(user_id=user_id)
     manager = VaultManager(user)
-    USER_MANAGER.close_session()
+    user_manager.close_session()
     return manager
 
 def get_aegis_manager(user_id: int) -> AegisManager:
-    """
-    Crea un AegisManager para el usuario dado.
-    """
-    user = USER_MANAGER.get_user_by_id(user_id)
+    user_manager = get_user_manager()
+    user = user_manager.get_user_by_id(user_id)
     if not user:
-        # Reutilizamos la excepción existente, mapeada por create_error_response
-        raise UserNotFoundError(user_id=user_id)  # type: ignore
+        raise UserNotFoundError(user_id=user_id)
     manager = AegisManager(user)
-    USER_MANAGER.close_session()
+    user_manager.close_session()
     return manager
+
+def get_user_manager() -> UserManager:
+    return UserManager()
+
+def get_oauth_manager() -> OAuthTokenManager:
+    return OAuthTokenManager()
 
 
 # ============================================================================
@@ -144,7 +158,8 @@ def require_oauth_token(f):
                 }), 401
 
             token = parts[1]
-            payload = OAUTH_MANAGER.verify_access_token(token)
+            oauth_manager = get_oauth_manager()
+            payload = oauth_manager.verify_access_token(token)
 
             if not payload:
                 logger.warning("Token inválido o expirado")
@@ -240,6 +255,38 @@ def get_scan_by_id_for_user(
     return None, ""
 
 
+def _resolve_manager(
+    scan_type: str,
+    nmap_manager: NmapScanManager,
+    nikto_manager: NiktoScanManager,
+    openvas_manager: OpenVASScanManager,
+) -> NmapScanManager | NiktoScanManager | OpenVASScanManager:
+    """
+    MEJORA [HELPER-01]: Función auxiliar DRY para resolver el manager correcto
+    a partir del tipo de escaneo. Elimina el bloque if/elif/else repetido en
+    is-finished, scan-status, generate-pdf y retrieve_scan_by_id.
+    """
+    if scan_type == "nmap":
+        return nmap_manager
+    elif scan_type == "nikto":
+        return nikto_manager
+    return openvas_manager
+
+
+def _verify_scan_ownership(scan: Scan, user_id: int, scan_id: int) -> None:
+    """
+    MEJORA [HELPER-02]: Verifica que el escaneo pertenece al usuario.
+    Lanza ScanNotFoundError en lugar de exponer que el escaneo existe pero
+    no es del usuario (evita enumeración de IDs de otros usuarios).
+    """
+    if scan.user_id != user_id:
+        logger.warning(
+            f"Usuario ID {user_id} intentó acceder al escaneo {scan_id} "
+            f"que pertenece al usuario ID {scan.user_id}"
+        )
+        raise ScanNotFoundError(scan_id)
+
+
 
 
 # ============================================================================
@@ -294,8 +341,10 @@ def oauth_token():
                     "error": "invalid_request",
                     "error_description": "username and password are required"
                 }), 400
+            
+            user_manager = get_user_manager()
 
-            is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
+            is_valid, user_id = user_manager.verify_credentials(username, password)
             if not is_valid:
                 logger.warning(f"Intento de login fallido para: {username}")
                 return jsonify({
@@ -303,8 +352,9 @@ def oauth_token():
                     "error_description": "Invalid username or password"
                 }), 401
 
-            access_token = OAUTH_MANAGER.create_access_token(user_id, username)  # type: ignore
-            refresh_token = OAUTH_MANAGER.create_refresh_token(user_id)  # type: ignore
+            oauth_manager = get_oauth_manager()
+            access_token = oauth_manager.create_access_token(user_id, username)  # type: ignore
+            refresh_token = oauth_manager.create_refresh_token(user_id)  # type: ignore
 
             logger.info(f"Tokens OAuth generados para usuario: {username}")
             return jsonify({
@@ -322,16 +372,21 @@ def oauth_token():
                     "error": "invalid_request",
                     "error_description": "refresh_token is required"
                 }), 400
-
-            user_id = OAUTH_MANAGER.verify_refresh_token(refresh_token)
+            
+            oauth_manager = get_oauth_manager()
+            user_id = oauth_manager.verify_refresh_token(refresh_token)
             if not user_id:
                 return jsonify({
                     "error": "invalid_grant",
                     "error_description": "Invalid or expired refresh token"
                 }), 401
 
-            user = USER_MANAGER.get_user_by_id(user_id)
-            USER_MANAGER.close_session()
+            # CORRECCIÓN [OAUTH-01]: En el flujo refresh_token original existía
+            # una referencia a `user_manager` sin haberlo instanciado en ese scope.
+            # Se instancia correctamente aquí.
+            user_manager = get_user_manager()
+            user = user_manager.get_user_by_id(user_id)
+            user_manager.close_session()
 
             if not user:
                 return jsonify({
@@ -339,7 +394,7 @@ def oauth_token():
                     "error_description": "User not found"
                 }), 401
 
-            access_token = OAUTH_MANAGER.create_access_token(user_id, user.username)  # type: ignore
+            access_token = oauth_manager.create_access_token(user_id, user.username)  # type: ignore
 
             logger.info(f"Access token renovado para usuario ID: {user_id}")
             return jsonify({
@@ -377,7 +432,8 @@ def oauth_revoke():
         auth_header = request.headers.get("Authorization")
         token = auth_header.split()[1]  # type: ignore
 
-        OAUTH_MANAGER.revoke_access_token(token)
+        oauth_manager = get_oauth_manager()
+        oauth_manager.revoke_access_token(token)
         logger.info(f"Token revocado para usuario: {get_current_username()}")
 
         return jsonify({
@@ -400,7 +456,8 @@ def oauth_revoke_all():
     """
     try:
         user_id = get_current_user_id()
-        OAUTH_MANAGER.revoke_all_user_tokens(user_id)
+        oauth_manager = get_oauth_manager()
+        oauth_manager.revoke_all_user_tokens(user_id)
 
         logger.info(f"Todos los tokens revocados para usuario ID: {user_id}")
         return jsonify({
@@ -430,8 +487,12 @@ def hello():
     return jsonify({
         "message": "You did it! You reached an endpoint!",
         "status": "ok",
-        "version": "3.1-normalized"
+        "version": "3.2-improved"
     }), 200
+
+# ============================================================================
+# ENDPOINTS SENTINEL — ESTADO Y CONSULTA
+# ============================================================================
 
 @app.route("/sentinel/is-finished", methods=["GET"])
 @require_oauth_token
@@ -447,6 +508,10 @@ def is_scan_finished():
 
     Returns:
         JSON indicando si el escaneo existe y si está finalizado
+
+    MEJORAS:
+      - [SENTINEL-01] Usa _verify_scan_ownership() para evitar enumeración de IDs.
+      - [SENTINEL-02] Usa _resolve_manager() para eliminar el bloque if/elif duplicado.
     """
     try:
         user_id = get_current_user_id()
@@ -469,15 +534,15 @@ def is_scan_finished():
             scan_id, nmap_manager, nikto_manager, openvas_manager
         )
 
-        if not scan or scan.user_id != user_id:
+        if not scan:
             raise ScanNotFoundError(scan_id)
 
-        if scan_type == "nmap":
-            manager = nmap_manager
-        elif scan_type == "nikto":
-            manager = nikto_manager
-        else:
-            manager = openvas_manager
+        # MEJORA [SENTINEL-01]: Respuesta unificada 404 para scan no encontrado
+        # o no perteneciente al usuario, evitando enumeración de IDs ajenos.
+        _verify_scan_ownership(scan, user_id, scan_id)
+
+        # MEJORA [SENTINEL-02]: Resuelve el manager con la función auxiliar DRY.
+        manager = _resolve_manager(scan_type, nmap_manager, nikto_manager, openvas_manager)
 
         scan_finished = manager.is_scan_finished(scan.id)
         message = (
@@ -518,6 +583,12 @@ def get_scan_status():
 
     Headers requeridos:
         Authorization: Bearer <token>
+
+    MEJORAS:
+      - [SENTINEL-01] Usa _verify_scan_ownership().
+      - [SENTINEL-02] Usa _resolve_manager().
+      - [SENTINEL-03] Añade campo 'status' al response de /results para que
+        el frontend pueda mostrar el estado sin una llamada extra.
     """
     try:
         user_id = get_current_user_id()
@@ -540,15 +611,12 @@ def get_scan_status():
             scan_id, nmap_manager, nikto_manager, openvas_manager
         )
 
-        if not scan or scan.user_id != user_id:
+        if not scan:
             raise ScanNotFoundError(scan_id)
 
-        if scan_type == "nmap":
-            manager = nmap_manager
-        elif scan_type == "nikto":
-            manager = nikto_manager
-        else:
-            manager = openvas_manager
+        _verify_scan_ownership(scan, user_id, scan_id)
+
+        manager = _resolve_manager(scan_type, nmap_manager, nikto_manager, openvas_manager)
 
         status = manager.get_scan_status(scan.id)
         progress = manager.get_scan_progress(scan.id)
@@ -583,73 +651,50 @@ def get_scan_status():
 def cancel_scan(scan_id: int):
     """
     Cancela un escaneo en ejecución.
-    
+
     Path Parameters:
         scan_id: ID del escaneo a cancelar
-    
+
     Headers requeridos:
         Authorization: Bearer <token>
-    
+
     Returns:
         JSON con el resultado de la cancelación
-        
+
     Response codes:
         200: Escaneo cancelado exitosamente
         400: El escaneo no se puede cancelar (ya finalizó o estado inválido)
         401: No autorizado
-        403: El escaneo no pertenece al usuario
-        404: Escaneo no encontrado
+        404: Escaneo no encontrado (incluye el caso de no pertenencia, MEJORA [SENTINEL-01])
         500: Error interno
+
+    MEJORAS:
+      - [SENTINEL-01] Elimina el 403 diferenciado que revelaba la existencia
+        del escaneo. Se retorna 404 genérico tanto si no existe como si no
+        pertenece al usuario.
+      - [SENTINEL-02] Usa _resolve_manager() y CANCELLABLE_STATES centralizado.
+      - [SENTINEL-04] Elimina la doble búsqueda del escaneo (nmap, nikto, openvas
+        se buscaban de forma duplicada). Usa get_scan_by_id_for_user().
     """
     try:
         user_id = get_current_user_id()
         nmap_manager, nikto_manager, openvas_manager = get_user_managers(user_id)
-        
+
         logger.info(f"Usuario {get_current_username()} intentando cancelar escaneo ID: {scan_id}")
-        
-        # Buscar el escaneo en los diferentes managers
-        scan = None
-        manager = None
-        scan_type = None
-        
-        # Intentar con Nmap
-        scan = nmap_manager.get_scan_by_id(scan_id)
-        if scan:
-            manager = nmap_manager
-            scan_type = "nmap"
-        
-        # Intentar con Nikto
+
+        # MEJORA [SENTINEL-04]: Una sola llamada en lugar de tres bloques duplicados.
+        scan, scan_type = get_scan_by_id_for_user(
+            scan_id, nmap_manager, nikto_manager, openvas_manager
+        )
+
         if not scan:
-            scan = nikto_manager.get_scan_by_id(scan_id)
-            if scan:
-                manager = nikto_manager
-                scan_type = "nikto"
-        
-        # Intentar con OpenVAS
-        if not scan:
-            scan = openvas_manager.get_scan_by_id(scan_id)
-            if scan:
-                manager = openvas_manager
-                scan_type = "openvas"
-        
-        # Verificar que se encontró el escaneo
-        if not scan or not manager:
-            logger.warning(f"Escaneo {scan_id} no encontrado")
             raise ScanNotFoundError(scan_id)
-        
-        # Verificar que pertenece al usuario
-        if scan.user_id != user_id:
-            logger.warning(
-                f"Usuario {get_current_username()} no autorizado para cancelar escaneo {scan_id}"
-            )
-            return jsonify({
-                "error": "forbidden",
-                "message": "No tienes permiso para cancelar este escaneo",
-                "scanId": scan_id
-            }), 403
-        
-        # Verificar que el escaneo está en un estado cancelable
-        if scan.status not in ['pending', 'running']:
+
+        # MEJORA [SENTINEL-01]: 404 unificado — no revelamos si el escaneo existe.
+        _verify_scan_ownership(scan, user_id, scan_id)
+
+        # MEJORA [SENTINEL-02]: Estado centralizado con frozenset.
+        if scan.status not in CANCELLABLE_STATES:
             logger.warning(
                 f"Escaneo {scan_id} no se puede cancelar (estado: {scan.status})"
             )
@@ -658,20 +703,19 @@ def cancel_scan(scan_id: int):
                 "message": f"El escaneo no se puede cancelar en su estado actual: {scan.status}",
                 "scanId": scan_id,
                 "currentStatus": scan.status,
-                "cancellableStates": ["pending", "running"]
+                "cancellableStates": sorted(CANCELLABLE_STATES)
             }), 400
-        
-        # Intentar cancelar
+
+        manager = _resolve_manager(scan_type, nmap_manager, nikto_manager, openvas_manager)
         success = manager.cancel_scan(scan_id)
-        
+
         if success:
             logger.info(
                 f"Usuario {get_current_username()}: Escaneo {scan_type} ID {scan_id} cancelado"
             )
-            
-            # Obtener estado actualizado
+            # Refrescar el objeto escaneo para devolver el estado actualizado.
             scan = manager.get_scan_by_id(scan_id)
-            
+
             return jsonify({
                 "message": "Escaneo cancelado exitosamente",
                 "scanId": scan_id,
@@ -686,11 +730,11 @@ def cancel_scan(scan_id: int):
                 "message": "No se pudo cancelar el escaneo",
                 "scanId": scan_id
             }), 500
-    
+
     except ScanNotFoundError as e:
         error_dict, status_code = create_error_response(e, include_debug_info=False)
         return jsonify(error_dict), status_code
-    
+
     except Exception as e:
         logger.error(f"Error cancelando escaneo {scan_id}: {str(e)}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(e, logger=logger)
@@ -748,7 +792,9 @@ def sign_up_user():
         if not alias:
             raise MissingParameterError("alias")
 
-        new_user = USER_MANAGER.sign_in_user(username, password, email, alias)
+
+        user_manager = get_user_manager()
+        new_user = user_manager.sign_in_user(username, password, email, alias)
         logger.info(f"Nuevo usuario registrado: {username} (ID: {new_user.id})")
 
         return jsonify({
@@ -812,7 +858,8 @@ def sign_up_person():
         if not alias:
             raise MissingParameterError("alias")
 
-        new_person = USER_MANAGER.sign_in_person(first_name, last_name, alias)
+        user_manager = get_user_manager()
+        new_person = user_manager.sign_in_person(first_name, last_name, alias)
         logger.info(f"Nueva persona registrada: {first_name} {last_name} (ID: {new_person.id})")
 
         return jsonify({
@@ -869,7 +916,9 @@ def check_credentials():
             raise MissingParameterError("password")
 
         logger.debug(f"Verificando credenciales para usuario: {username}")
-        is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
+
+        user_manager = get_user_manager()
+        is_valid, user_id = user_manager.verify_credentials(username, password)
 
         if not is_valid:
             raise InvalidCredentialsError()
@@ -928,9 +977,11 @@ def change_password():
 
         if not new_password:
             raise MissingParameterError("newPassword")
-
-        USER_MANAGER.update_user_password(user_id, new_password)  # type: ignore
-        OAUTH_MANAGER.revoke_all_user_tokens(user_id)
+        
+        user_manager = get_user_manager()
+        oauth_manager = get_oauth_manager()
+        user_manager.update_user_password(user_id, new_password)  # type: ignore
+        oauth_manager.revoke_all_user_tokens(user_id)
 
         logger.info(f"Usuario {username} (ID: {user_id}) cambió su contraseña")
         return jsonify({
@@ -1071,7 +1122,6 @@ def upsert_vault():
         error_dict, status_code = create_error_response(e, include_debug_info=False)
         return jsonify(error_dict), status_code
     except (KeyError, ValueError) as e:
-        # KeyError si faltan claves obligatorias como "checker" / "vaultKey"
         logger.warning(f"Error de datos en /vaults POST: {e}")
         return jsonify({
             "error": "invalid_request",
@@ -1105,13 +1155,7 @@ def patch_vault_storables():
           "username": "nuevo_user"
         }
       },
-      {
-        "isRecovery": true,
-        "internalId": "CDC3",
-        "changes": {
-          "expirationDate": "01/28"
-        }
-      }
+      ...
     ]
     """
     try:
@@ -1164,13 +1208,11 @@ def add_vault_storable():
 
     Body (JSON):
       {
-        "isRecovery": false,              # opcional, por defecto false
+        "isRecovery": false,
         "kind": "account" | "creditcard",
         "internalId": "ACC3",
         "title": "New Gmail",
-        "createdAt": "...",              # opcional (ISO8601)
-        "updatedAt": "...",              # opcional (ISO8601)
-        ... campos específicos del tipo ...
+        ...
       }
     """
     try:
@@ -1188,7 +1230,6 @@ def add_vault_storable():
                 value=data,
             )
 
-        # Parámetros básicos
         is_recovery = bool(data.get("isRecovery", False))
         kind = data.get("kind")
 
@@ -1202,7 +1243,6 @@ def add_vault_storable():
         internal_id = data.get("internalId")
         title = data.get("title")
 
-        # timestamps opcionales
         def _parse_dt(val: str | None) -> datetime:
             if not val:
                 return datetime.utcnow()
@@ -1214,24 +1254,21 @@ def add_vault_storable():
         created_at = _parse_dt(data.get("createdAt"))
         updated_at = _parse_dt(data.get("updatedAt"))
 
-        # Campos específicos según tipo
         payload: dict[str, Any] = {}
         if kind == "account":
             payload["username"] = data.get("username", "")
             payload["domain"] = data.get("domain", "")
             payload["password"] = data.get("password", "")
-        else:  # creditcard
+        else:
             payload["cardholder_name"] = data.get("cardHolderName", "")
             payload["card_number"] = data.get("cardNumber", "")
             payload["expiration_date"] = data.get("expirationDate", "")
             payload["postal_code"] = data.get("postalCode", "")
             payload["cvv"] = data.get("cvv", "")
 
-        # Manager de vault para el usuario actual
         user_id = get_current_user_id()
         vault_manager = get_vault_manager(user_id)
 
-        # Localizar vault adecuado
         vault = vault_manager.get_vault_for_user(is_recovery=is_recovery)
         if not vault:
             return jsonify({
@@ -1240,7 +1277,6 @@ def add_vault_storable():
                 "isRecovery": is_recovery,
             }), 404
 
-        # Comprobar unicidad de internalId en ese vault
         if internal_id:
             existing = vault_manager.get_storable_by(
                 vault_id=vault.id,
@@ -1258,7 +1294,6 @@ def add_vault_storable():
                     "isRecovery": is_recovery,
                 }), 409
 
-        # Crear usando el método ya existente del manager
         st = vault_manager.add_storable_to_vault(
             vault_id=vault.id,
             kind=kind,  # type: ignore
@@ -1304,7 +1339,7 @@ def delete_vault_storable():
 
     Body (JSON):
       {
-        "isRecovery": false,      # opcional, por defecto false
+        "isRecovery": false,
         "internalId": "ACC0"
       }
     """
@@ -1336,7 +1371,6 @@ def delete_vault_storable():
         user_id = get_current_user_id()
         vault_manager = get_vault_manager(user_id)
 
-        # Localizar vault y storable
         vault = vault_manager.get_vault_for_user(is_recovery=is_recovery)
         if not vault:
             return jsonify({
@@ -1359,8 +1393,6 @@ def delete_vault_storable():
 
         success = vault_manager.delete_storable(st.id)
         if not success:
-            # delete_storable devuelve False solo si no encontró nada,
-            # pero ya lo hemos comprobado antes
             return jsonify({
                 "error": "deletion_failed",
                 "error_description": "Could not delete storable",
@@ -1404,12 +1436,6 @@ def delete_vault_storable():
 def aegis_generate():
     """
     Inicia la generación asíncrona de una píldora Aegis para el usuario autenticado.
-
-    Body JSON:
-    {
-      "topicId": 1,           # obligatorio, entero (0 = aleatorio según tu lógica)
-      "tweaks": { ... }       # opcional, diccionario con ajustes
-    }
     """
     try:
         user_id = get_current_user_id()
@@ -1484,9 +1510,6 @@ def aegis_generate():
 def aegis_status():
     """
     Devuelve el estado de una píldora Aegis del usuario autenticado.
-
-    Query params:
-      id: ID del documento AegisDocument
     """
     try:
         user_id = get_current_user_id()
@@ -1505,10 +1528,9 @@ def aegis_status():
                 value=doc_id_str,
             )
 
-        doc_info = manager.get_document(doc_id)  # dict | None
+        doc_info = manager.get_document(doc_id)
         manager.close_session()
 
-        # Política de privacidad: si no existe o no es suyo → 404 genérico
         if not doc_info or doc_info.get("userId") != user_id:
             logger.warning(
                 f"Usuario {get_current_username()} intentó acceder a Aegis doc "
@@ -1557,9 +1579,6 @@ def aegis_status():
 def aegis_download_as_md():
     """
     Descarga una píldora Aegis en formato Markdown (.md) para el usuario autenticado.
-
-    Query params:
-      id: ID del documento AegisDocument
     """
     try:
         user_id = get_current_user_id()
@@ -1581,7 +1600,6 @@ def aegis_download_as_md():
         try:
             path = manager.get_document_path(doc_id)
         except ValueError:
-            # No existe o no pertenece al usuario → 404 genérico
             logger.warning(
                 f"Usuario {get_current_username()} intentó descargar Aegis doc "
                 f"{doc_id} que no existe o no es suyo"
@@ -1642,7 +1660,7 @@ def aegis_download_as_md():
 
 
 # ============================================================================
-# ENDPOINTS DE ESCANEO
+# ENDPOINTS DE ESCANEO (SENTINEL — LANZAMIENTO)
 # ============================================================================
 
 @app.route("/sentinel/nmap", methods=["POST"])
@@ -1650,9 +1668,6 @@ def aegis_download_as_md():
 def start_nmap_scan():
     """
     Inicia un escaneo Nmap para el usuario autenticado.
-
-    Headers requeridos:
-        Authorization: Bearer <token>
 
     Body (JSON):
     {
@@ -1760,13 +1775,10 @@ def start_nikto_scan():
     """
     Inicia un escaneo Nikto para el usuario autenticado.
 
-    Headers requeridos:
-        Authorization: Bearer <token>
-
     Body (JSON):
     {
         "target": "http://example.com",
-        "timeout": 180  // Opcional, por defecto 180 segundos
+        "timeout": 180
     }
 
     Returns:
@@ -1853,17 +1865,16 @@ def start_openvas_scan():
     """
     Inicia un escaneo OpenVAS para el usuario autenticado.
 
-    Headers requeridos:
-        Authorization: Bearer <token>
-
     Body (JSON):
     {
         "target": "192.168.1.1",
-        "scanConfig": "full_fast"  // Opcional: full_fast, full_deep, full_ultimate
+        "scanConfig": "full_fast"
     }
 
     Returns:
         JSON con el ID del escaneo iniciado
+
+    MEJORA [SENTINEL-05]: Usa VALID_OPENVAS_CONFIGS centralizado.
     """
     try:
         if not request.is_json:
@@ -1894,13 +1905,13 @@ def start_openvas_scan():
                 message="El target no puede estar vacío"
             )
 
-        valid_configs = ["full_fast", "full_deep", "full_ultimate"]
-        if scan_config not in valid_configs:
+        # MEJORA [SENTINEL-05]: Frozenset centralizado.
+        if scan_config not in VALID_OPENVAS_CONFIGS:
             raise ValidationError(
                 field="scanConfig",
                 message="Configuración de escaneo inválida",
                 value=scan_config,
-                expected=f"Una de: {', '.join(valid_configs)}"
+                expected=f"Una de: {', '.join(sorted(VALID_OPENVAS_CONFIGS))}"
             )
 
         valido, hosts, mensaje = IPValidator.validate(target)
@@ -1969,11 +1980,9 @@ def generate_pdf():
     Query Parameters:
         id: ID del escaneo
 
-    Headers requeridos:
-        Authorization: Bearer <token>
-
-    Returns:
-        Archivo PDF para descarga directa
+    MEJORAS:
+      - [SENTINEL-01] Usa _verify_scan_ownership().
+      - [SENTINEL-02] Usa _resolve_manager().
     """
     try:
         user_id = get_current_user_id()
@@ -1996,12 +2005,14 @@ def generate_pdf():
 
         scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager, openvas_manager)
 
-        if not scan or scan.user_id != user_id:  # type: ignore
+        if not scan:
             raise ScanNotFoundError(scan_id)
 
-        manager = nmap_manager if scan_type == "nmap" else (nikto_manager if scan_type == "nikto" else openvas_manager)
+        _verify_scan_ownership(scan, user_id, scan_id)
 
-        if not manager.is_scan_finished(scan.id):  # type: ignore
+        manager = _resolve_manager(scan_type, nmap_manager, nikto_manager, openvas_manager)
+
+        if not manager.is_scan_finished(scan.id):
             raise ValidationError(
                 field="scan_id",
                 message=f"El escaneo con ID {scan_id} no está finalizado aún",
@@ -2048,11 +2059,13 @@ def generate_pdf_base64():
     Query Parameters:
         id: ID del escaneo
 
-    Headers requeridos:
-        Authorization: Bearer <token>
-
-    Returns:
-        JSON con el PDF en base64 y metadata
+    MEJORAS:
+      - [SENTINEL-01] Usa _verify_scan_ownership().
+      - [SENTINEL-02] Usa _resolve_manager().
+      - [SENTINEL-06] Verifica que el escaneo está finalizado antes de generar el PDF
+        (igual que /generate-pdf). En el original, este check faltaba en esta ruta.
+      - [SENTINEL-07] Comprueba el tamaño del PDF antes de base64-encodear para
+        evitar respuestas de cientos de MB que colapsen memoria o la red.
     """
     try:
         user_id = get_current_user_id()
@@ -2075,8 +2088,19 @@ def generate_pdf_base64():
 
         scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_manager, nikto_manager, openvas_manager)
 
-        if not scan or scan.user_id != user_id:  # type: ignore
+        if not scan:
             raise ScanNotFoundError(scan_id)
+
+        _verify_scan_ownership(scan, user_id, scan_id)
+
+        # MEJORA [SENTINEL-06]: Check de finalización que faltaba en el original.
+        manager = _resolve_manager(scan_type, nmap_manager, nikto_manager, openvas_manager)
+        if not manager.is_scan_finished(scan.id):
+            raise ValidationError(
+                field="scan_id",
+                message=f"El escaneo con ID {scan_id} no está finalizado aún",
+                value=scan_id
+            )
 
         try:
             pdf_creator = build_pdf_creator(scan)
@@ -2090,6 +2114,23 @@ def generate_pdf_base64():
                 scan_id,
                 "El archivo PDF no se generó correctamente"
             )
+
+        # MEJORA [SENTINEL-07]: Límite de tamaño antes de cargar en memoria.
+        pdf_size = os.path.getsize(pdf_path)
+        if pdf_size > MAX_PDF_SIZE_BYTES:
+            logger.warning(
+                f"PDF del escaneo {scan_id} supera el límite ({pdf_size} bytes). "
+                f"Usa /generate-pdf para descarga directa."
+            )
+            return jsonify({
+                "error": "payload_too_large",
+                "message": (
+                    f"El PDF generado ({pdf_size // (1024*1024)} MB) supera el límite "
+                    f"para descarga en base64. Usa /sentinel/generate-pdf para "
+                    f"descarga directa."
+                ),
+                "scanId": scan_id,
+            }), 413
 
         with open(pdf_path, "rb") as pdf_file:
             pdf_base64 = base64.b64encode(pdf_file.read()).decode("utf-8")
@@ -2131,11 +2172,11 @@ def retrieve_all_scans():
     Query Parameters opcionales:
         type: Tipo de escaneo ('nmap', 'nikto', 'openvas', o 'all'). Default: 'all'
 
-    Headers requeridos:
-        Authorization: Bearer <token>
-
-    Returns:
-        JSON con la lista de escaneos del usuario
+    MEJORAS:
+      - [SENTINEL-03] Incluye el campo 'status' en cada resultado de Nmap y Nikto
+        (ya estaba en OpenVAS vía scan.status implícito). Así el frontend puede
+        mostrar el estado del escaneo sin llamadas adicionales a /scan-status.
+      - [SENTINEL-05] Usa VALID_SCAN_TYPES centralizado.
     """
     try:
         user_id = get_current_user_id()
@@ -2144,7 +2185,8 @@ def retrieve_all_scans():
         scan_type = request.args.get("type", "all").lower()
         logger.info(f"Usuario {get_current_username()} obteniendo escaneos del tipo: {scan_type}")
 
-        if scan_type not in ["nmap", "nikto", "openvas", "all"]:
+        # MEJORA [SENTINEL-05]: Frozenset centralizado.
+        if scan_type not in VALID_SCAN_TYPES:
             raise ValidationError(
                 field="type",
                 message="Tipo de escaneo inválido",
@@ -2154,7 +2196,6 @@ def retrieve_all_scans():
 
         all_results = []
 
-        # Obtener escaneos Nmap si aplica
         if scan_type in ["nmap", "all"]:
             try:
                 nmap_results = nmap_manager.get_scans_for_user()
@@ -2163,6 +2204,8 @@ def retrieve_all_scans():
                         "id": result.id,
                         "scanType": "nmap",
                         "target": result.target,
+                        # MEJORA [SENTINEL-03]: Campo 'status' incluido.
+                        "status": getattr(result, "status", "unknown"),
                         "startedAt": (
                             result.started_at.isoformat()
                             if hasattr(result.started_at, "isoformat")
@@ -2184,7 +2227,6 @@ def retrieve_all_scans():
             except Exception as e:
                 logger.error(f"Error obteniendo escaneos Nmap: {str(e)}")
 
-        # Obtener escaneos Nikto si aplica
         if scan_type in ["nikto", "all"]:
             try:
                 nikto_results = nikto_manager.get_scans_for_user()
@@ -2193,6 +2235,8 @@ def retrieve_all_scans():
                         "id": result.id,
                         "scanType": "nikto",
                         "target": result.target,
+                        # MEJORA [SENTINEL-03]: Campo 'status' incluido.
+                        "status": getattr(result, "status", "unknown"),
                         "startedAt": (
                             result.started_at.isoformat()
                             if hasattr(result.started_at, "isoformat")
@@ -2222,7 +2266,6 @@ def retrieve_all_scans():
             except Exception as e:
                 logger.error(f"Error obteniendo escaneos Nikto: {str(e)}")
 
-        # Obtener escaneos OpenVAS si aplica
         if scan_type in ["openvas", "all"]:
             try:
                 openvas_results = openvas_manager.get_scans_for_user()
@@ -2233,6 +2276,8 @@ def retrieve_all_scans():
                         "target": result.target,
                         "taskId": result.task_id,
                         "reportId": result.report_id,
+                        # MEJORA [SENTINEL-03]: Campo 'status' incluido.
+                        "status": getattr(result, "status", "unknown"),
                         "startedAt": (
                             result.started_at.isoformat()
                             if hasattr(result.started_at, "isoformat")
@@ -2294,11 +2339,11 @@ def retrieve_scan_by_id(scan_id: int):
     Path Parameters:
         scan_id: ID del escaneo
 
-    Headers requeridos:
-        Authorization: Bearer <token>
-
-    Returns:
-        JSON con los detalles del escaneo
+    MEJORAS:
+      - [SENTINEL-01] Usa _verify_scan_ownership().
+      - [SENTINEL-02] Usa _resolve_manager() (aunque aquí no se necesita el manager,
+        la verificación de ownership sí aplica).
+      - [SENTINEL-03] Campo 'status' incluido en todos los tipos.
     """
     try:
         user_id = get_current_user_id()
@@ -2313,12 +2358,15 @@ def retrieve_scan_by_id(scan_id: int):
         if not scan:
             raise ScanNotFoundError(scan_id)
 
-        # Formatear resultado según el tipo de escaneo
+        _verify_scan_ownership(scan, user_id, scan_id)
+
         if scan_type == "nmap":
             formatted_result = {
                 "id": scan.id,
                 "scanType": "nmap",
                 "target": scan.target,
+                # MEJORA [SENTINEL-03]
+                "status": getattr(scan, "status", "unknown"),
                 "startedAt": (
                     scan.started_at.isoformat()
                     if hasattr(scan.started_at, "isoformat")
@@ -2340,6 +2388,8 @@ def retrieve_scan_by_id(scan_id: int):
                 "id": scan.id,
                 "scanType": "nikto",
                 "target": scan.target,
+                # MEJORA [SENTINEL-03]
+                "status": getattr(scan, "status", "unknown"),
                 "startedAt": (
                     scan.started_at.isoformat()
                     if hasattr(scan.started_at, "isoformat")
@@ -2369,6 +2419,8 @@ def retrieve_scan_by_id(scan_id: int):
                 "target": scan.target,
                 "taskId": scan.task_id,
                 "reportId": scan.report_id,
+                # MEJORA [SENTINEL-03]
+                "status": getattr(scan, "status", "unknown"),
                 "startedAt": (
                     scan.started_at.isoformat()
                     if hasattr(scan.started_at, "isoformat")
@@ -2432,21 +2484,9 @@ def delete_scan(scan_id: int):
     """
     Elimina un escaneo del sistema dado su ID.
 
-    Path Parameters:
-        scan_id: ID del escaneo a eliminar
-
-    Headers requeridos:
-        Authorization: Bearer <token>
-
-    Returns:
-        JSON con el resultado de la eliminación
-
-    Response codes:
-        200: Escaneo eliminado exitosamente
-        401: No autorizado
-        403: El escaneo no pertenece al usuario
-        404: Escaneo no encontrado
-        500: Error interno al eliminar
+    MEJORAS:
+      - [SENTINEL-01] Usa _verify_scan_ownership() → 404 unificado.
+      - [SENTINEL-02] Usa _resolve_manager().
     """
     try:
         user_id = get_current_user_id()
@@ -2456,45 +2496,26 @@ def delete_scan(scan_id: int):
             f"Usuario {get_current_username()} intentando eliminar escaneo ID: {scan_id}"
         )
 
-        # Localizar el escaneo en los tres managers
         scan, scan_type = get_scan_by_id_for_user(
             scan_id, nmap_manager, nikto_manager, openvas_manager
         )
 
-        # Si no existe, lanzar error de no encontrado
         if not scan:
             logger.warning(f"Escaneo {scan_id} no encontrado para eliminación")
             raise ScanNotFoundError(scan_id)
 
-        # Verificar propiedad: solo el dueño puede borrar su escaneo
-        if scan.user_id != user_id:
-            logger.warning(
-                f"Usuario {get_current_username()} (ID: {user_id}) intentó eliminar "
-                f"el escaneo {scan_id} que pertenece al usuario ID: {scan.user_id}"
-            )
-            return jsonify({
-                "error": "forbidden",
-                "message": "No tienes permiso para eliminar este escaneo",
-                "scanId": scan_id
-            }), 403
+        # MEJORA [SENTINEL-01]: 404 unificado.
+        _verify_scan_ownership(scan, user_id, scan_id)
 
-        # Seleccionar el manager correcto
-        if scan_type == "nmap":
-            manager = nmap_manager
-        elif scan_type == "nikto":
-            manager = nikto_manager
-        else:
-            manager = openvas_manager
+        manager = _resolve_manager(scan_type, nmap_manager, nikto_manager, openvas_manager)
 
-        # Si el escaneo está en curso, cancelarlo antes de borrar
-        if scan.status in ["pending", "running"]:
+        if scan.status in CANCELLABLE_STATES:
             logger.info(
                 f"Escaneo {scan_id} en curso (estado: {scan.status}), "
                 f"cancelando antes de eliminar"
             )
             manager.cancel_scan(scan_id)
 
-        # Eliminar el escaneo
         success = manager.delete_scan(scan_id)
 
         if not success:
@@ -2568,4 +2589,7 @@ def internal_error(error):
 # EJECUCIÓN
 # ============================================================================
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # MEJORA [STARTUP-01]: debug=True nunca debe activarse en producción.
+    # Se lee de variable de entorno para que el despliegue lo controle.
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(debug=debug_mode, host="0.0.0.0", port=5000)

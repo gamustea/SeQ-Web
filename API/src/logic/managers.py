@@ -356,7 +356,6 @@ class ScanManager(BaseManager, ABC):
             self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
             return False
     
-
     @abstractmethod
     def run_scan(self, **kwargs) -> int:
         """
@@ -512,8 +511,8 @@ class ScanManager(BaseManager, ABC):
                     self._update_scan_status(scan_id, 'failed')
                 
                 # Eliminar de tareas en ejecución
-                if scan_id in self.running_tasks:
-                    del self.running_tasks[scan_id]
+                if scan_id in self._running_tasks:
+                    del self._running_tasks[scan_id]
             
             except Exception as e:
                 self.logger.error(f"Error en callback de finalización: {e}")
@@ -668,8 +667,9 @@ class OpenVASScanManager(ScanManager):
             # Actualizar IDs de OpenVAS
             scan.task_id = task.task_id
             scan.report_id = task.report_id
+            scan.status = "finished"
             thread_manager.session.add(scan)
-            
+
             # Procesar y guardar resultados
             thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")
             processor = thread_manager._get_result_processor()
@@ -690,8 +690,8 @@ class OpenVASScanManager(ScanManager):
         
         finally:
             thread_manager.close_session()
-            if scan_id in self.running_tasks:
-                del self.running_tasks[scan_id]
+            if scan_id in self._running_tasks:
+                del self._running_tasks[scan_id]
 
 
 class NmapScanManager(ScanManager):

@@ -261,6 +261,22 @@ class ReportTheme:
         ]))
         return outer
 
+    def severity_header_table(self, left_text: str, right_text: str, bg_color) -> Table:
+        data = [[left_text, right_text]]
+        t = Table(data, colWidths=[3 * inch, 3 * inch])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), bg_color),
+            ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor(self.palette[ColorType.BLACK])),
+            ("ALIGN", (0, 0), (0, -1), "LEFT"),
+            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(self.palette[ColorType.LIGHT])),
+        ]))
+        return t
+
 # ----------------------------------------------------------------------
 # PDFCreator con maquetación más profesional
 # ----------------------------------------------------------------------

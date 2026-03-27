@@ -676,31 +676,33 @@
     let html = '<table><thead><tr>';
 
     if (type === 'nmap') {
-      html += '<th>ID</th><th>Target</th><th>Puertos abiertos</th><th>Fecha</th><th>Acciones</th>';
+      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Puertos abiertos</th><th>Fecha</th><th>Acciones</th>';
       html += '</tr></thead><tbody>';
       for (const r of rows) {
         html += `<tr>
           <td>#${r.id}</td>
           <td>${r.target}</td>
+          <td>${statusBadge(r.status)}</td>
           <td>${r.totalOpenPorts ?? 0} <span style="color:var(--text-muted)">puertos</span></td>
           <td>${fmtDate(r.startedAt)}</td>
-          <td>${actionBtns(r.id)}</td>
+          <td>${actionBtns(r.id, r.status)}</td>
         </tr>`;
       }
     } else if (type === 'nikto') {
-      html += '<th>ID</th><th>Target</th><th>Incidencias</th><th>Fecha</th><th>Acciones</th>';
+      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Incidencias</th><th>Fecha</th><th>Acciones</th>';
       html += '</tr></thead><tbody>';
       for (const r of rows) {
         html += `<tr>
           <td>#${r.id}</td>
           <td>${r.target}</td>
+          <td>${statusBadge(r.status)}</td>
           <td>${r.totalIncidents ?? 0} <span style="color:var(--text-muted)">hallazgos</span></td>
           <td>${fmtDate(r.startedAt)}</td>
-          <td>${actionBtns(r.id)}</td>
+          <td>${actionBtns(r.id, r.status)}</td>
         </tr>`;
       }
     } else { /* openvas */
-      html += '<th>ID</th><th>Target</th><th>Vulnerabilidades</th><th>Críticas</th><th>Altas</th><th>Fecha</th><th>Acciones</th>';
+      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Vulnerabilidades</th><th>Críticas</th><th>Altas</th><th>Fecha</th><th>Acciones</th>';
       html += '</tr></thead><tbody>';
       for (const r of rows) {
         const crit = r.criticalCount ?? 0;
@@ -708,11 +710,12 @@
         html += `<tr>
           <td>#${r.id}</td>
           <td>${r.target}</td>
+          <td>${statusBadge(r.status)}</td>
           <td>${r.totalVulnerabilities ?? 0}</td>
           <td class="sev-critical">${crit > 0 ? crit : '<span style="color:var(--text-muted)">0</span>'}</td>
           <td class="sev-high">${high > 0 ? high : '<span style="color:var(--text-muted)">0</span>'}</td>
           <td>${fmtDate(r.startedAt)}</td>
-          <td>${actionBtns(r.id)}</td>
+          <td>${actionBtns(r.id, r.status)}</td>
         </tr>`;
       }
     }
@@ -721,16 +724,36 @@
     wrap.innerHTML = html;
   }
 
-  function actionBtns(id) {
-    return `
-      <button class="action-btn" title="Descargar PDF" onclick="downloadPDF(${id})">
+  function actionBtns(id, status) {
+    const st = (status || '').toLowerCase();
+    const isActive   = st === 'running' || st === 'pending';
+    const isFinished = st === 'done' || st === 'finished';
+
+    /* Botón PDF — sólo activo si el escaneo terminó */
+    const pdfBtn = `
+      <button class="action-btn" title="${isFinished ? 'Descargar PDF' : 'PDF disponible al finalizar'}"
+              onclick="${isFinished ? `downloadPDF(${id})` : ''}"
+              style="${!isFinished ? 'opacity:0.35;cursor:not-allowed' : ''}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
           <line x1="12" y1="18" x2="12" y2="12"/>
           <line x1="9" y1="15" x2="15" y2="15"/>
         </svg>
-      </button>
+      </button>`;
+
+    /* Botón cancelar — sólo visible si está activo */
+    const cancelBtn = isActive ? `
+      <button class="action-btn" title="Cancelar escaneo" onclick="cancelScan(${id})" style="color:var(--amber)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+      </button>` : '';
+
+    /* Botón eliminar — siempre disponible */
+    const deleteBtn = `
       <button class="action-btn" title="Eliminar" onclick="deleteScan(${id})" style="color:var(--red)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="3 6 5 6 21 6"/>
@@ -739,6 +762,8 @@
           <path d="M9 6V4h6v2"/>
         </svg>
       </button>`;
+
+    return pdfBtn + cancelBtn + deleteBtn;
   }
 
   /* ============================================================
@@ -843,6 +868,23 @@
       if (active) loadScans(active);
     } else {
       alert('No se pudo eliminar el escaneo.');
+    }
+  }
+
+  /* ============================================================
+     CANCEL SCAN
+  ============================================================ */
+  async function cancelScan(id) {
+    if (!confirm(`¿Cancelar el escaneo #${id}?`)) return;
+    const headers = await Session.authHeaders();
+    if (!headers) return;
+    const res = await fetch(`${API_BASE}/sentinel/scans/${id}/cancel`, { method: 'POST', headers });
+    if (res.ok) {
+      const active = document.querySelector('.tab.active')?.dataset?.panel;
+      if (active) loadScans(active);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.message || 'No se pudo cancelar el escaneo.');
     }
   }
 

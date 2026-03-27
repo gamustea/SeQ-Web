@@ -444,31 +444,24 @@ class OpenVASTask(_Task):
             raise
     
     def _execute_openvas_scan(self) -> None:
-        """Ejecuta el escaneo completo de OpenVAS"""
         try:
-            connection = TLSConnection(hostname=self.hostname, port=self.port)
-            with Gmp(connection=connection, transform=EtreeTransform()) as gmp:
+            # Fase 1: setup (conexión corta)
+            with self._create_gmp_connection() as gmp:
                 gmp.authenticate(self.username, self.password)
-
-                # Crear/obtener target
                 target_id = self._get_or_create_target(gmp)
-
-                # Obtener scanner
                 scanner_id = self._get_default_scanner(gmp)
-
-                # Crear y ejecutar tarea
                 self._create_and_start_task(gmp, target_id, scanner_id)
 
-                # Esperar finalización o cancelación
-                self._wait_for_completion(gmp)
+            # Fase 2: polling largo (reconecta cada vez)
+            self._wait_for_completion()
 
-                # Si está cancelado, no intentamos obtener reporte
-                if self.status == TaskStatus.CANCELLED:
-                    self.logger.info("Escaneo OpenVAS cancelado; no se obtiene reporte")
-                    self._finished.set()
-                    return
+            if self.status == TaskStatus.CANCELLED:
+                self._finished.set()
+                return
 
-                # Obtener reporte
+            # Fase 3: obtener reporte (conexión corta)
+            with self._create_gmp_connection() as gmp:
+                gmp.authenticate(self.username, self.password)
                 self._fetch_report(gmp)
 
             self._finished.set()
@@ -535,45 +528,53 @@ class OpenVASTask(_Task):
         self.report_id = start_response.xpath('report_id')[0].text
         self.logger.info(f"Escaneo iniciado. Report ID: {self.report_id}")
     
-    def _wait_for_completion(self, gmp: Gmp, check_interval: int = 10) -> None:
-        """Espera a que el escaneo complete"""
+    def _wait_for_completion(self, check_interval: int = 1) -> None:
+        """Espera a que el escaneo complete reconectando en cada iteración."""
         while True:
-            # ¿Se ha solicitado cancelación desde fuera?
             if self._cancel_event.is_set():
-                self.logger.info("Cancelación solicitada para tarea OpenVAS")
-                if self.task_id:
+                # Abrir conexión puntual solo para detener la tarea
+                with self._create_gmp_connection() as gmp:
+                    gmp.authenticate(self.username, self.password)
                     try:
                         gmp.stop_task(self.task_id)
-                        self.logger.info(f"Tarea OpenVAS detenida: {self.task_id}")
                     except Exception as e:
-                        self.logger.error(
-                            f"Error al detener tarea OpenVAS {self.task_id}: {e}",
-                            exc_info=True
-                        )
+                        self.logger.error(f"Error deteniendo tarea: {e}")
                 self.status = TaskStatus.CANCELLED
                 break
 
-            task = gmp.get_task(self.task_id)
+            try:
+                # Conexión nueva en cada poll → nunca expira por tiempo
+                with self._create_gmp_connection() as gmp:
+                    gmp.authenticate(self.username, self.password)
+                    task = gmp.get_task(self.task_id)
+            except Exception as e:
+                self.logger.warning(f"Error consultando tarea, reintentando en {check_interval}s: {e}")
+                time.sleep(check_interval)
+                continue
+
             status = task.xpath('task/status')[0].text
-            progress = task.xpath('task/progress')[0].text
+            progress_text = task.xpath('task/progress')[0].text
 
-            # Actualizar progreso
             with self._lock:
-                self.progress = int(float(progress))
+                self.progress = int(float(progress_text))
 
-            self.logger.info(f"Estado: {status} - Progreso: {progress}%")
+            self.logger.info(f"Estado: {status} - Progreso: {progress_text}%")
 
             if status in ['Done', 'Stopped', 'Interrupted']:
-                # 'Stopped' / 'Interrupted' vienen normalmente de un stop remoto
-                if status == 'Done':
-                    self.logger.info(f"Escaneo finalizado correctamente: {status}")
-                    # Dejamos que wait() procese resultados y marque COMPLETED
-                else:
-                    self.logger.info(f"Escaneo OpenVAS detenido: {status}")
+                if status != 'Done':
                     self.status = TaskStatus.CANCELLED
                 break
 
-        time.sleep(check_interval)
+            time.sleep(check_interval)  # ← Ahora SÍ dentro del bucle
+
+    def _create_gmp_connection(self):
+        """Factoría de conexiones GMP para reutilizar en cada llamada."""
+        connection = TLSConnection(
+            hostname=self.hostname,
+            port=self.port,
+            timeout=60  # Timeout por operación individual, no por sesión
+        )
+        return Gmp(connection=connection, transform=EtreeTransform())
     
     def _fetch_report(self, gmp: Gmp) -> None:
         """Obtiene el reporte XML del escaneo"""

@@ -409,12 +409,3 @@ INSERT INTO `Topic` (`title`) VALUES
 ('Cultura de seguridad en la empresa');
 
 
-SELECT *
-FROM Vault AS V
-	JOIN Storable AS S ON V.id = S.vault_id
-    JOIN CreditCard AS CC ON CC.id = S.id;
-    
-SELECT *
-FROM AegisDocument;
-
-
