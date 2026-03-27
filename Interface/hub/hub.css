@@ -14,6 +14,7 @@
   --sentinel:    #34d399;
   --sentinel-dim:rgba(52, 211, 153, 0.08);
   --wip:         #f59e0b;
+  --later:       #94a3b8;
   --radius:      16px;
 }
 
@@ -93,9 +94,9 @@ html, body {
   transform: translateY(-4px);
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
 }
-.module-aegis:not(.module-disabled):hover    { border-color: var(--aegis); box-shadow: 0 20px 60px rgba(56,189,248,0.15); }
+.module-aegis:not(.module-disabled):hover    { border-color: var(--aegis);    box-shadow: 0 20px 60px rgba(56,189,248,0.15); }
 .module-acheron:not(.module-disabled):hover  { border-color: var(--acheron); }
-.module-sentinel:not(.module-disabled):hover { border-color: var(--sentinel); }
+.module-sentinel:not(.module-disabled):hover { border-color: var(--sentinel); box-shadow: 0 20px 60px rgba(52,211,153,0.15); }
 
 /* Glow blob */
 .card-glow {
@@ -138,8 +139,9 @@ html, body {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.card-badge--active { background: rgba(56,189,248,0.15); color: var(--aegis); }
-.card-badge--wip    { background: rgba(245,158,11,0.15); color: var(--wip); }
+.card-badge--active { background: rgba(52, 211, 153, 0.15); color: var(--sentinel); }
+.card-badge--wip    { background: rgba(245, 158, 11, 0.15);  color: var(--wip); }
+.card-badge--later  { background: rgba(148, 163, 184, 0.12); color: var(--later); }
 
 /* Arrow */
 .card-arrow {
@@ -148,7 +150,7 @@ html, body {
   opacity: 0;
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
-.card-arrow svg { width: 20px; height: 20px; color: var(--aegis); }
+.card-arrow svg { width: 20px; height: 20px; color: var(--sentinel); }
 .module-card:not(.module-disabled):hover .card-arrow {
   opacity: 1;
   transform: translateX(4px);
@@ -171,7 +173,6 @@ html, body {
   gap: 8px;
   background: rgba(8,12,20,0.6);
   backdrop-filter: blur(2px);
-  color: var(--wip);
   font-size: 0.85rem;
   font-weight: 600;
   opacity: 0;
@@ -179,6 +180,8 @@ html, body {
   border-radius: var(--radius);
   pointer-events: none;
 }
+.module-aegis .wip-overlay    { color: var(--wip); }
+.module-acheron .wip-overlay   { color: var(--later); }
 .module-disabled:hover .wip-overlay { opacity: 1; }
 /* Re-allow hover for visual feedback on disabled */
 .module-disabled { pointer-events: auto !important; }
