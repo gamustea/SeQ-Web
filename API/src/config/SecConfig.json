@@ -12,11 +12,12 @@
         "resourcedir": "shared/resources/images"
     },
     "dbconfig": {
+        "dialect": "postgresql+psycopg2",
         "username": "gabriel",
         "password": "06No2004",
         "dbname": "SeQ",
         "host": "127.0.0.1",
-        "port": 3306
+        "port": 5432
     },
     "openvas": {
         "access": {
