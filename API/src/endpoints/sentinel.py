@@ -275,7 +275,7 @@ def start_nikto_scan():
         return jsonify(err), code
 
     try:
-        timeout = int(data.get("timeout", 180))
+        timeout = int(data.get("timeout", 900))
         if timeout <= 0:
             raise ValidationError(field="timeout", message="El timeout debe ser positivo", value=timeout)
     except (TypeError, ValueError):

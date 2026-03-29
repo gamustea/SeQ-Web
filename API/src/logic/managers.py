@@ -373,6 +373,7 @@ class ScanManager(BaseManager, ABC):
                 thread_manager.logger.error(
                     f"Escaneo {scan_id} falló. Estado: {task.status}"
                 )
+                thread_manager._mark_scan_as_failed(scan)
                 return
             
             scan.status = "finished"

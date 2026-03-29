@@ -2,6 +2,8 @@ import subprocess
 import threading
 import re
 import time
+
+from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any, List, Dict
@@ -84,22 +86,24 @@ class _Task(ABC):
         Lee la salida del proceso en un thread separado.
         """
         try:
-            # Señalizar que el thread inició
             self._started.set()
-            
             output_lines = []
             while True:
                 if self._proc is None or self._proc.stdout is None:
                     break
-                    
                 line = self._proc.stdout.readline()
-                if not line:  # EOF
+                if not line:
                     break
-                    
                 self.logger.debug(f"Output: {line.strip()}")
                 output_lines.append(line)
-                
-                # Actualizar progreso si está disponible
+
+                # Detectar que Nikto imprimió el help (opción inválida)
+                if "Unknown option:" in line or "requires a value" in line:
+                    self.logger.error(
+                        f"Nikto rechazó el comando (opción inválida): {line.strip()}"
+                    )
+                    self.status = TaskStatus.FAILED
+
                 prog = self._parse_progress(line)
                 if prog != -1:
                     with self._lock:
@@ -195,17 +199,13 @@ class _Task(ABC):
                     self._proc.wait()
                 return False
 
-            # Si alguien (cancel(), OpenVASTask, etc.) ya fijó un estado final,
-            # NO lo toquemos.
             if self.status in (TaskStatus.CANCELLED,
                             TaskStatus.TIMEOUT,
                             TaskStatus.FAILED):
                 self.logger.info(f"wait() termina con estado {self.status.value}")
                 return self.status == TaskStatus.COMPLETED
 
-            # ---------------------------
-            # A partir de aquí, solo tareas basadas en proceso que siguen RUNNING
-            # ---------------------------
+
             if self._proc:
                 if self._proc.returncode != 0:
                     self.status = TaskStatus.FAILED
@@ -213,6 +213,11 @@ class _Task(ABC):
                         f"Proceso terminó con error: código {self._proc.returncode}"
                     )
                     return False
+
+            if self._output_file and not self._output_file.exists():
+                self.status = TaskStatus.FAILED
+                self.logger.error(f"Archivo de salida no existe: {self._output_file}")
+                return False
 
             # Verificar que existe el archivo de salida
             if self._output_file and not self._output_file.exists():
@@ -490,19 +495,39 @@ class NiktoScanTask(_Task):
         self.temp_path = DirectoryChecker().verify_directory(DirectoryType.TEMP) / f"nikto_scan_{timestamp}.xml"
         self._output_file = self.temp_path
 
-    # NUEVO (con WSL + conversión de ruta):
     def _build_command(self) -> List[str]:
+        raw = self.target
+        if "://" not in raw:
+            raw = "http://" + raw
+
+        parsed = urlparse(raw)
+        host = parsed.hostname or self.target
+        scheme = (parsed.scheme or "http").lower()
+        use_ssl = scheme == "https"
+        port = parsed.port or (443 if use_ssl else 80)
+
+        # Convertir ruta Windows → WSL
         wsl_path = str(self.temp_path).replace("\\", "/")
         if len(wsl_path) > 2 and wsl_path[1] == ":":
             drive = wsl_path[0].lower()
             wsl_path = f"/mnt/{drive}/{wsl_path[3:]}"
-        return [
+
+        cmd = [
             "wsl", "-d", "Ubuntu", "-u", "gmiga",
-            "nikto", "-h", self.target,
-            "-o", wsl_path,
-            "-Format", "xml", "-nointeractive",
-            "-maxtime", str(self.timeout),
+            "nikto",
+            "-h", host,
+            "-port", str(port),
+            "-output", wsl_path,   # esta versión usa -output, no -o
+            "-Format", "xml",
+            "-Tuning", "1234569b",
+            "-timeout", "10",      # timeout por request (segundos), no el total
+            "-nointeractive",
         ]
+
+        if use_ssl:
+            cmd.append("-ssl")
+
+        return cmd
 
     def _process_results(self) -> None:
         """Procesa el XML generado por Nikto."""

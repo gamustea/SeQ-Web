@@ -85,7 +85,6 @@ class ScanResultProcessor(ABC):
         self.session.commit()
 
 
-
 class NmapResultProcessor(ScanResultProcessor):
     """Procesa y guarda resultados de escaneos Nmap"""
     
@@ -165,268 +164,113 @@ class NiktoResultProcessor(ScanResultProcessor):
     """Procesa y guarda resultados de escaneos Nikto"""
     
     def process_and_save(self, scan: NiktoScan, results: dict) -> None:
-        """Procesa resultados de Nikto y los guarda en BD"""
 
         def assign_severity_to_nikto_incident(incident):
-            """
-            Asigna la severidad a un incidente de Nikto basándose en patrones de vulnerabilidad.
-
-            Modifica el objeto incident directamente asignando el atributo 'severity'.
-
-            Args:
-                incident: Objeto NiktoIncident con atributos:
-                        - description (str): Descripción del hallazgo
-                        - method (str): Método HTTP utilizado
-                        - url (str): URL afectada
-                        - osvdb_id (str/int): ID de OSVDB
-
-            Severidades asignadas:
-                - CRITICAL: Exposición de archivos sensibles, credenciales, configuraciones críticas
-                - HIGH: Vulnerabilidades de ejecución remota, autenticación débil, SSL/TLS débil
-                - MEDIUM: Headers de seguridad faltantes, listado de directorios, información sensible
-                - LOW: Información del servidor, métodos HTTP permitidos, páginas por defecto
-                - INFO: Hallazgos informativos sin riesgo directo
-            """
-
-            # Convertir descripción a minúsculas para análisis
             desc = incident.description.lower() if incident.description else ""
             url = incident.url.lower() if incident.url else ""
             method = incident.method.upper() if incident.method else ""
 
-            # ========================================================================
-            # CRITICAL - Exposición de archivos sensibles y configuraciones críticas
-            # ========================================================================
             critical_patterns = [
-                ".env",  # Variables de entorno (credenciales, API keys)
-                "env.production",
-                "env.local",
-                ".git/",  # Repositorio Git expuesto
-                ".git/config",
-                "git/head",
-                "phpinfo",  # Información completa de PHP
-                "config.php",  # Archivos de configuración
-                "database.yml",
-                "wp-config.php",  # WordPress config
-                "web.config",  # IIS config
-                ".sql",  # Dumps de base de datos
-                "backup.sql",
-                "dump.sql",
-                "passwd",  # Archivo de contraseñas Unix
-                "shadow",
-                "credentials",
-                "private_key",
-                "id_rsa",  # Claves SSH
-                "config.bak",  # Backups de configuración
-                "database.bak",
-                "shell",  # Shells web
-                "webshell",
-                "backdoor",
-                "remote code execution",  # RCE
-                "arbitrary code",
-                "command injection",
-                "sql injection",  # SQLi crítico
+                ".env", "env.production", "env.local", ".git/", ".git/config",
+                "git/head", "phpinfo", "config.php", "database.yml", "wp-config.php",
+                "web.config", ".sql", "backup.sql", "dump.sql", "passwd", "shadow",
+                "credentials", "private_key", "id_rsa", "config.bak", "database.bak",
+                "shell", "webshell", "backdoor", "remote code execution",
+                "arbitrary code", "command injection", "sql injection",
                 "unrestricted file upload",
             ]
-
             for pattern in critical_patterns:
                 if pattern in desc or pattern in url:
                     incident.severity = "CRITICAL"
                     return
 
-            # ========================================================================
-            # HIGH - Vulnerabilidades explotables y debilidades de seguridad serias
-            # ========================================================================
             high_patterns = [
-                "outdated",  # Software desactualizado
-                "vulnerable version",
-                "known vulnerability",
-                "cve-",  # Referencias CVE
-                "xss",  # Cross-Site Scripting
-                "cross site scripting",
-                "cross-site scripting",
-                "csrf",  # Cross-Site Request Forgery
-                "authentication bypass",
-                "authorization bypass",
-                "privilege escalation",
-                "directory traversal",
-                "path traversal",
-                "../",
-                "local file inclusion",
-                "remote file inclusion",
-                "lfi",
-                "rfi",
-                "weak ssl",  # SSL/TLS débil
-                "weak tls",
-                "ssl v2",
-                "ssl v3",
-                "sslv2",
-                "sslv3",
-                "poodle",
-                "heartbleed",
-                "shellshock",
-                "default password",  # Credenciales por defecto
-                "default credential",
-                "admin/admin",
-                "weak cipher",
-                "insecure cipher",
-                "null cipher",
-                "export cipher",
+                "outdated", "vulnerable version", "known vulnerability", "cve-",
+                "xss", "cross site scripting", "cross-site scripting", "csrf",
+                "authentication bypass", "authorization bypass", "privilege escalation",
+                "directory traversal", "path traversal", "../", "local file inclusion",
+                "remote file inclusion", "lfi", "rfi", "weak ssl", "weak tls",
+                "ssl v2", "ssl v3", "sslv2", "sslv3", "poodle", "heartbleed",
+                "shellshock", "default password", "default credential", "admin/admin",
+                "weak cipher", "insecure cipher", "null cipher", "export cipher",
             ]
-
-            # Métodos HTTP peligrosos
             dangerous_methods = ["PUT", "DELETE", "TRACE", "CONNECT"]
-
             for pattern in high_patterns:
                 if pattern in desc or pattern in url:
                     incident.severity = "HIGH"
                     return
-
             if method in dangerous_methods and "allowed" in desc:
                 incident.severity = "HIGH"
                 return
 
-            # ========================================================================
-            # MEDIUM - Problemas de configuración y debilidades moderadas
-            # ========================================================================
             medium_patterns = [
-                "directory indexing",  # Listado de directorios
-                "directory listing",
-                "indexes",
-                "missing security header",  # Headers de seguridad faltantes
-                "x-frame-options",
-                "x-content-type-options",
-                "content-security-policy",
-                "strict-transport-security",
-                "x-xss-protection",
-                "clickjacking",
-                "information disclosure",  # Divulgación de información
-                "information leakage",
-                "stack trace",
-                "error message",
-                "debug mode",
-                "verbose error",
-                "source code disclosure",
-                "path disclosure",
-                "version disclosure",
-                "session fixation",
-                "weak session",
-                "cookie without",  # Cookies inseguras
-                "cookie httponly",
-                "cookie secure",
-                "unencrypted",
-                "http basic auth",  # Autenticación básica sin HTTPS
-                "weak authentication",
-                "robots.txt",  # Archivos que revelan estructura
-                "sitemap.xml",
-                "cors misconfiguration",
-                "open redirect",
-                "server-status",  # Páginas de estado del servidor
-                "server-info",
-                "admin panel",  # Paneles de administración expuestos
-                "login panel",
-                "phpmyadmin",
-                "adminer",
+                "directory indexing", "directory listing", "indexes",
+                "missing security header", "x-frame-options", "x-content-type-options",
+                "content-security-policy", "strict-transport-security", "x-xss-protection",
+                "clickjacking", "information disclosure", "information leakage",
+                "stack trace", "error message", "debug mode", "verbose error",
+                "source code disclosure", "path disclosure", "version disclosure",
+                "session fixation", "weak session", "cookie without", "cookie httponly",
+                "cookie secure", "unencrypted", "http basic auth", "weak authentication",
+                "robots.txt", "sitemap.xml", "cors misconfiguration", "open redirect",
+                "server-status", "server-info", "admin panel", "login panel",
+                "phpmyadmin", "adminer",
             ]
-
             for pattern in medium_patterns:
                 if pattern in desc or pattern in url:
                     incident.severity = "MEDIUM"
                     return
 
-            # ========================================================================
-            # LOW - Problemas menores y mejores prácticas
-            # ========================================================================
             low_patterns = [
-                "server banner",  # Banners del servidor
-                "server header",
-                "x-powered-by",
-                "server version",
-                "apache/",
-                "nginx/",
-                "microsoft-iis",
-                "options method",  # Métodos HTTP informativos
-                "head method",
-                "allowed http methods",
-                "default page",  # Páginas por defecto
-                "default installation",
-                "test page",
-                "welcome page",
-                "it works",
-                "uncommon header",  # Headers no estándar
-                "unusual header",
-                "missing header",  # Headers recomendados pero no críticos
-                "cache control",
-                "pragma",
-                "expires",
-                "retrieved x-powered-by",  # Detección de tecnología
-                "retrieved server",
-                "ip address",  # Divulgación de IP interna
-                "internal ip",
-                "retrieved via",
+                "server banner", "server header", "x-powered-by", "server version",
+                "apache/", "nginx/", "microsoft-iis", "options method", "head method",
+                "allowed http methods", "default page", "default installation",
+                "test page", "welcome page", "it works", "uncommon header",
+                "unusual header", "missing header", "cache control", "pragma",
+                "expires", "retrieved x-powered-by", "retrieved server", "ip address",
+                "internal ip", "retrieved via",
             ]
-
             for pattern in low_patterns:
                 if pattern in desc or pattern in url:
                     incident.severity = "LOW"
                     return
 
-            # ========================================================================
-            # INFO - Hallazgos informativos sin riesgo directo
-            # ========================================================================
             info_patterns = [
-                "the site uses",
-                "appears to be",
-                "may be",
-                "possibly",
-                "cookie created",
-                "retrieved",
-                "hostname resolves",
-                "scan completed",
-                "target ip",
-                "end time",
-                "start time",
+                "the site uses", "appears to be", "may be", "possibly",
+                "cookie created", "retrieved", "hostname resolves", "scan completed",
+                "target ip", "end time", "start time",
             ]
-
             for pattern in info_patterns:
                 if pattern in desc:
                     incident.severity = "INFO"
                     return
 
-            # ========================================================================
-            # DEFAULT - Si no coincide con ningún patrón
-            # ========================================================================
-            # Por defecto, asignar MEDIUM como nivel conservador
             incident.severity = "MEDIUM"
 
         try:
-            # Convertir resultados JSON
-            processed = JSONManager.convert_json_to_individual_nikto_data(
-                results[-1] if results else {}
-            )
-            
-            # Guardar incidentes
-            for incident_data in processed:
+            all_incidents = []
+            for block in (results or []):
+                block_incidents = JSONManager.convert_json_to_individual_nikto_data(block)
+                all_incidents.extend(block_incidents)
+
+            for incident_data in all_incidents:
                 incident = self._create_incident_from_data(incident_data)
                 assign_severity_to_nikto_incident(incident)
-                
                 db_incident = self._get_or_create_incident(incident)
-                
                 if db_incident not in scan.incidents:
                     scan.incidents.append(db_incident)
-            
-            # Asociar host
+
             host = self._get_or_create_host(scan.target)
             scan.host = host
-            
-            # Marcar como finalizado
             self._mark_scan_finished(scan.id)
-            
-            self.logger.info(f"Escaneo Nikto {scan.id} guardado con {len(processed)} incidentes")
-        
+            self.logger.info(
+                f"Escaneo Nikto {scan.id} guardado con {len(all_incidents)} incidentes"
+            )
+
         except Exception as e:
             self.logger.error(f"Error guardando resultados Nikto: {e}", exc_info=True)
             raise
-    
+        
     def _create_incident_from_data(self, incident_data: dict) -> NiktoIncident:
         """Crea un objeto NiktoIncident desde datos procesados"""
         incident = NiktoIncident()
@@ -439,7 +283,9 @@ class NiktoResultProcessor(ScanResultProcessor):
     def _get_or_create_incident(self, incident: NiktoIncident) -> NiktoIncident:
         """Obtiene o crea un incidente en BD"""
         existing = self.session.query(NiktoIncident).filter(
-            NiktoIncident.description == incident.description
+            NiktoIncident.description == incident.description,
+            NiktoIncident.url == incident.url,
+            NiktoIncident.method == incident.method,
         ).first()
         
         if existing:

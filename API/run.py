@@ -28,7 +28,6 @@ _logger = SecOpsLogger(name="APIMain").get_logger()
 
 SHUTDOWN_TIMEOUT = 30
 
-
 def _graceful_shutdown(signum, frame) -> None:
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
