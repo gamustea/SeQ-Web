@@ -28,7 +28,7 @@ oauth_bp = Blueprint("oauth", __name__)
 _logger  = SecOpsLogger("oauth").get_logger()
 
 
-# ── POST /oauth/token ─────────────────────────────────────────────────────────
+# ── POST /oauth/token ────────────────────────────────────────────────────
 
 @oauth_bp.post("/token")
 @limiter.limit("20 per hour; 100 per day")
@@ -45,7 +45,7 @@ def oauth_token():
     data = request.get_json(silent=True) or {}
     grant_type = data.get("grantType")
 
-    # ── password grant ─────────────────────────────────────────────────────
+    # ── password grant ────────────────────────────────────────────────────────
     if grant_type == "password":
         username = data.get("username")
         password = data.get("password")
@@ -53,16 +53,22 @@ def oauth_token():
         if not username or not password:
             return jsonify({"error": "invalid_request", "error_description": "username and password are required"}), 400
 
-        user_manager  = get_user_manager()
-        is_valid, uid = user_manager.verify_credentials(username, password)
+        user_manager = get_user_manager()
+        try:
+            is_valid, uid = user_manager.verify_credentials(username, password)
+        finally:
+            user_manager.close_session()
 
         if not is_valid:
             _logger.warning(f"Login fallido para: {username}")
             return jsonify({"error": "invalid_grant", "error_description": "Invalid username or password"}), 401
 
         oauth_manager = get_oauth_manager()
-        access_token  = oauth_manager.create_access_token(uid, username)   # type: ignore[arg-type]
-        refresh_token = oauth_manager.create_refresh_token(uid)            # type: ignore[arg-type]
+        try:
+            access_token  = oauth_manager.create_access_token(uid, username)   # type: ignore[arg-type]
+            refresh_token = oauth_manager.create_refresh_token(uid)            # type: ignore[arg-type]
+        finally:
+            oauth_manager.close_session()
 
         _logger.info(f"Tokens emitidos para: {username}")
         return jsonify({
@@ -72,7 +78,7 @@ def oauth_token():
             "refresh_token": refresh_token,
         }), 200
 
-    # ── refresh_token grant ────────────────────────────────────────────────
+    # ── refresh_token grant ────────────────────────────────────────────────────
     if grant_type == "refresh_token":
         refresh_token = data.get("refresh_token")
 
@@ -80,19 +86,28 @@ def oauth_token():
             return jsonify({"error": "invalid_request", "error_description": "refresh_token is required"}), 400
 
         oauth_manager = get_oauth_manager()
-        uid           = oauth_manager.verify_refresh_token(refresh_token)
+        try:
+            uid = oauth_manager.verify_refresh_token(refresh_token)
+        finally:
+            oauth_manager.close_session()
 
         if not uid:
             return jsonify({"error": "invalid_grant", "error_description": "Invalid or expired refresh token"}), 401
 
         user_manager = get_user_manager()
-        user         = user_manager.get_user_by_id(uid)
-        user_manager.close_session()
+        try:
+            user = user_manager.get_user_by_id(uid)
+        finally:
+            user_manager.close_session()
 
         if not user:
             return jsonify({"error": "invalid_grant", "error_description": "User not found"}), 401
 
-        access_token = oauth_manager.create_access_token(uid, user.username)  # type: ignore[arg-type]
+        oauth_manager2 = get_oauth_manager()
+        try:
+            access_token = oauth_manager2.create_access_token(uid, user.username)  # type: ignore[arg-type]
+        finally:
+            oauth_manager2.close_session()
 
         _logger.info(f"Access token renovado para usuario ID: {uid}")
         return jsonify({
@@ -104,25 +119,33 @@ def oauth_token():
     return jsonify({"error": "unsupported_grant_type", "error_description": "Supported: password, refresh_token"}), 400
 
 
-# ── POST /oauth/revoke ────────────────────────────────────────────────────────
+# ── POST /oauth/revoke ────────────────────────────────────────────────────
 
 @oauth_bp.post("/revoke")
 @require_oauth_token
 def oauth_revoke():
     """Revoca el token Bearer actual."""
     token = request.headers["Authorization"].split()[1]
-    get_oauth_manager().revoke_access_token(token)
+    mgr = get_oauth_manager()
+    try:
+        mgr.revoke_access_token(token)
+    finally:
+        mgr.close_session()
     _logger.info(f"Token revocado para: {get_current_username()}")
     return jsonify({"message": "Token revoked successfully"}), 200
 
 
-# ── POST /oauth/revoke-all ────────────────────────────────────────────────────
+# ── POST /oauth/revoke-all ──────────────────────────────────────────────────
 
 @oauth_bp.post("/revoke-all")
 @require_oauth_token
 def oauth_revoke_all():
     """Revoca todos los tokens del usuario autenticado."""
     uid = get_current_user_id()
-    get_oauth_manager().revoke_all_user_tokens(uid)
+    mgr = get_oauth_manager()
+    try:
+        mgr.revoke_all_user_tokens(uid)
+    finally:
+        mgr.close_session()
     _logger.info(f"Todos los tokens revocados para usuario ID: {uid}")
     return jsonify({"message": "All tokens revoked successfully"}), 200

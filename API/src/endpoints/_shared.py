@@ -69,9 +69,13 @@ def require_oauth_token(f):
 
     Inyecta `request.current_user_id` y `request.current_username`
     para que los handlers downstream los lean sin tocar la BD.
+    Cierra siempre la sesión del OAuthTokenManager en un bloque
+    finally para que la conexión se devuelva al pool aunque ocurra
+    una excepción durante la verificación.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
+        oauth_manager = None
         try:
             auth_header = request.headers.get("Authorization")
             if not auth_header:
@@ -111,6 +115,12 @@ def require_oauth_token(f):
                 "error": "server_error",
                 "error_description": "Authentication error",
             }), 500
+        finally:
+            if oauth_manager is not None:
+                try:
+                    oauth_manager.close_session()
+                except Exception:
+                    pass
 
     return decorated
 
@@ -123,32 +133,40 @@ def _get_oauth_manager() -> OAuthTokenManager:
 def get_user_managers(
     user_id: int,
 ) -> Tuple[NmapScanManager, NiktoScanManager, OpenVASScanManager]:
-    """Crea los tres managers de escaneo para el usuario indicado."""
+    """
+    Crea los tres managers de escaneo para el usuario indicado.
+    El UserManager auxiliar se cierra en un finally para garantizar
+    que su conexión vuelve al pool aunque get_user_by_id lance.
+    """
     um = _get_user_manager()
-    user = um.get_user_by_id(user_id)
+    try:
+        user = um.get_user_by_id(user_id)
+    finally:
+        um.close_session()
     nmap    = NmapScanManager(user)
     nikto   = NiktoScanManager(user)
     openvas = OpenVASScanManager(user)
-    um.close_session()
     return nmap, nikto, openvas
 
 def get_vault_manager(user_id: int) -> VaultManager:
     um = _get_user_manager()
-    user = um.get_user_by_id(user_id)
+    try:
+        user = um.get_user_by_id(user_id)
+    finally:
+        um.close_session()
     if not user:
         raise UserNotFoundError(user_id=user_id)
-    mgr = VaultManager(user)
-    um.close_session()
-    return mgr
+    return VaultManager(user)
 
 def get_aegis_manager(user_id: int) -> AegisManager:
     um = _get_user_manager()
-    user = um.get_user_by_id(user_id)
+    try:
+        user = um.get_user_by_id(user_id)
+    finally:
+        um.close_session()
     if not user:
         raise UserNotFoundError(user_id=user_id)
-    mgr = AegisManager(user)
-    um.close_session()
-    return mgr
+    return AegisManager(user)
 
 get_user_manager  = _get_user_manager
 get_oauth_manager = _get_oauth_manager
