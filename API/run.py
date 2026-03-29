@@ -6,12 +6,15 @@ Responsabilidades de este fichero:
   2. Configurar CORS y rate limiting.
   3. Registrar los blueprints (via endpoints.register_blueprints).
   4. Instalar manejadores de error globales.
-  5. Arrancar el servidor de desarrollo si se ejecuta directamente.
+  5. Gestionar el apagado graceful (SIGTERM / SIGINT).
+  6. Arrancar el servidor de desarrollo si se ejecuta directamente.
 
 Toda la lógica de rutas vive en el paquete `endpoints/`.
 """
 
 import os
+import signal
+import sys
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -23,6 +26,44 @@ from src.misc.logging import SecOpsLogger
 
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
+
+# Tiempo máximo (segundos) para esperar a que los threads de escaneo terminen
+# antes de forzar la salida del proceso.
+SHUTDOWN_TIMEOUT = 30
+
+
+def _graceful_shutdown(signum, frame) -> None:
+    """
+    Handler para SIGTERM / SIGINT.
+
+    1. Cancela todas las tareas de escaneo activas (Nmap, Nikto, OpenVAS).
+    2. Espera hasta SHUTDOWN_TIMEOUT segundos a que sus threads terminen.
+    3. Sale con código 0.
+
+    Importamos ScanManager aquí (import tardío) para evitar importación
+    circular en el momento del arranque.
+    """
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
+
+    try:
+        from src.logic.managers import ScanManager
+        _logger.info(
+            f"[Shutdown] Cancelando {len(ScanManager._running_tasks)} tarea(s) activa(s)..."
+        )
+        ScanManager.cancel_all_running(timeout=SHUTDOWN_TIMEOUT)
+        _logger.info("[Shutdown] Todas las tareas finalizadas.")
+    except Exception as e:
+        _logger.error(f"[Shutdown] Error durante el apagado: {e}")
+
+    _logger.info("[Shutdown] Proceso terminado.")
+    sys.exit(0)
+
+
+# Registrar señales lo antes posible, antes de crear la app
+signal.signal(signal.SIGTERM, _graceful_shutdown)
+signal.signal(signal.SIGINT,  _graceful_shutdown)
+
 
 def create_app() -> Flask:
     """
@@ -41,16 +82,18 @@ def create_app() -> Flask:
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
 
+
 def _configure_cors(app: Flask) -> None:
     """
     Restringe los orígenes permitidos al valor de la variable de entorno
-    ALLOWED_ORIGINS (lista separada por comas).  En local se permite
+    ALLOWED_ORIGINS (lista separada por comas). En local se permite
     http://localhost:8080 y el origen del frontend de desarrollo.
     """
     raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
     origins.append("http://127.0.0.1:3000")   # dev frontend
     CORS(app, origins=origins, supports_credentials=True)
+
 
 def _configure_rate_limiting(app: Flask) -> None:
     """
@@ -63,6 +106,7 @@ def _configure_rate_limiting(app: Flask) -> None:
         default_limits=["200 per day", "50 per hour"],
         storage_uri="memory://",
     )
+
 
 def _register_error_handlers(app: Flask) -> None:
     """
@@ -106,6 +150,7 @@ def _register_error_handlers(app: Flask) -> None:
             "error":   "internal_server_error",
             "message": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
+
 
 app = create_app()
 

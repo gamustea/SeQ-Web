@@ -86,7 +86,6 @@ def initialize_engine(database_url: Optional[str] = None):
     
     if _ENGINE is None:
         if database_url is None:
-            # Obtener credenciales por defecto
             (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_crendetials()
             database_url = (
                 f"postgresql+psycopg2://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}/{DBNAME}"
@@ -117,14 +116,8 @@ class BaseManager:
     """
     
     def __init__(self, session: Optional[Session] = None):
-        """
-        Args:
-            session: Sesión SQLAlchemy externa opcional. 
-                     Si es None, usa la sesión del thread actual.
-        """
         global _SESSION_FACTORY
         
-        # Inicializar engine si no existe
         if _SESSION_FACTORY is None:
             initialize_engine()
         
@@ -138,12 +131,10 @@ class BaseManager:
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
     
     def _check_session(self):
-        """Verifica que la sesión está activa"""
         if self.session is None:
             raise Exception("La sesión de base de datos no está establecida.")
     
     def close_session(self):
-        """Cierra la sesión del thread actual si fue creada por este manager"""
         if self._owns_session and self.session is not None:
             try:
                 self.session.close()
@@ -152,7 +143,6 @@ class BaseManager:
                 self.logger.warning(f"Error al cerrar sesión: {e}")
     
     def _safe_commit(self):
-        """Realiza un commit seguro con manejo de errores"""
         try:
             self.session.commit()
             return True
@@ -162,14 +152,12 @@ class BaseManager:
             raise
     
     def _safe_rollback(self):
-        """Realiza un rollback seguro"""
         try:
             if self.session is not None:
                 self.session.rollback()
                 self.logger.debug("Rollback ejecutado exitosamente")
         except Exception as e:
             self.logger.warning(f"Error durante rollback: {e}")
-            # Intentar recrear sesión si falla
             try:
                 if self._owns_session:
                     self.session.close()
@@ -182,7 +170,6 @@ class BaseManager:
     
     @staticmethod
     def close_all_sessions():
-        """Cierra todas las sesiones y limpia el factory"""
         global _SESSION_FACTORY
         if _SESSION_FACTORY is not None:
             _SESSION_FACTORY.remove()
@@ -195,6 +182,7 @@ class ScanManager(BaseManager, ABC):
     """
 
     _running_tasks: Dict[int, _Task] = {}
+    _running_threads: Dict[int, threading.Thread] = {}  # registro de threads activos
     _running_tasks_lock = threading.RLock()
 
     def __init__(self, user: User, session: Optional[Session] = None):
@@ -204,9 +192,11 @@ class ScanManager(BaseManager, ABC):
     # ------------ Helpers de clase para el registro global ------------
 
     @classmethod
-    def _register_task(cls, scan_id: int, task: _Task) -> None:
+    def _register_task(cls, scan_id: int, task: _Task, thread: Optional[threading.Thread] = None) -> None:
         with cls._running_tasks_lock:
             cls._running_tasks[scan_id] = task
+            if thread is not None:
+                cls._running_threads[scan_id] = thread
 
     @classmethod
     def _get_task(cls, scan_id: int) -> Optional[_Task]:
@@ -217,9 +207,28 @@ class ScanManager(BaseManager, ABC):
     def _unregister_task(cls, scan_id: int) -> None:
         with cls._running_tasks_lock:
             cls._running_tasks.pop(scan_id, None)
-    
+            cls._running_threads.pop(scan_id, None)
+
+    @classmethod
+    def cancel_all_running(cls, timeout: float = 10.0) -> None:
+        """
+        Cancela todas las tareas activas y espera a que sus threads terminen.
+        Pensado para ser llamado desde el signal handler de shutdown.
+        """
+        with cls._running_tasks_lock:
+            task_snapshot = dict(cls._running_tasks)
+            thread_snapshot = dict(cls._running_threads)
+
+        for scan_id, task in task_snapshot.items():
+            try:
+                task.cancel()
+            except Exception:
+                pass
+
+        for scan_id, thread in thread_snapshot.items():
+            thread.join(timeout=timeout)
+
     def get_scan_by_id(self, scan_id: int) -> Optional[Scan]:
-        """Obtiene un escaneo por ID"""
         try:
             self._check_session()
             scan = self.session.query(Scan).filter(Scan.id == scan_id).one_or_none()
@@ -236,7 +245,6 @@ class ScanManager(BaseManager, ABC):
             raise
     
     def get_scans_for_user(self) -> List[Scan]:
-        """Obtiene todos los escaneos del usuario activo"""
         try:
             self._check_session()
             scans = self.session.query(Scan).filter(
@@ -252,7 +260,6 @@ class ScanManager(BaseManager, ABC):
             raise
     
     def delete_scan(self, scan_id: int) -> bool:
-        """Elimina un escaneo"""
         try:
             self._check_session()
             scan = self.get_scan_by_id(scan_id)
@@ -272,7 +279,6 @@ class ScanManager(BaseManager, ABC):
             raise
     
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
-        """Obtiene el progreso de un escaneo en ejecución"""
         task = self._get_task(scan_id)
         if task:
             progress = task.progress
@@ -281,7 +287,6 @@ class ScanManager(BaseManager, ABC):
         return None
     
     def get_scan_status(self, scan_id: int) -> Optional[str]:
-        """Obtiene el estado de un escaneo"""
         task = self._get_task(scan_id)
         if task:
             return str(task.status)
@@ -290,46 +295,27 @@ class ScanManager(BaseManager, ABC):
         return None
     
     def is_scan_finished(self, scan_id: int) -> Optional[bool]:
-        """Verifica si un escaneo ha finalizado"""
         return self._is_scan_finished(scan_id)
     
     def cancel_scan(self, scan_id: int) -> bool:
-        """
-        Cancela un escaneo en ejecución.
-        
-        Validaciones:
-        - Verifica que el escaneo existe
-        - Verifica que pertenece al usuario activo
-        - Solo permite cancelar escaneos en estado 'pending' o 'running'
-        
-        Args:
-            scan_id: ID del escaneo a cancelar
-        
-        Returns:
-            bool: True si se canceló correctamente, False en caso contrario
-        """
         try:
-            # Verificar que el escaneo existe
             scan = self.get_scan_by_id(scan_id)
             if not scan:
                 self.logger.warning(f"Escaneo {scan_id} no encontrado, no se puede cancelar")
                 return False
             
-            # Verificar que el escaneo pertenece al usuario activo
             if scan.user_id != self.active_user.id:
                 self.logger.warning(
                     f"El usuario {self.active_user.username} no tiene permisos para cancelar el escaneo {scan_id}"
                 )
                 return False
             
-            # Verificar que el escaneo está en un estado cancelable
             if scan.status not in ['pending', 'running']:
                 self.logger.warning(
                     f"El escaneo {scan_id} no se puede cancelar (estado actual: {scan.status})"
                 )
                 return False
             
-            # Intentar cancelar la tarea en ejecución
             task = self._get_task(scan_id)
             if task:
                 try:
@@ -343,7 +329,6 @@ class ScanManager(BaseManager, ABC):
                 self.logger.warning(f"No se encontró tarea en ejecución para el escaneo {scan_id}")
                 return False
             
-            # Actualizar estado en la base de datos
             self._update_scan_status(scan_id, 'cancelled')
             
             self.logger.info(f"Escaneo {scan_id} cancelado exitosamente")
@@ -355,33 +340,21 @@ class ScanManager(BaseManager, ABC):
     
     @abstractmethod
     def run_scan(self, **kwargs) -> int:
-        """
-        Inicia un nuevo escaneo.
-        Retorna: ID del escaneo creado
-        """
         pass
     
     @abstractmethod
     def _create_scan_record(self, **kwargs) -> Scan:
-        """Crea el registro inicial del escaneo en BD"""
         pass
     
     @abstractmethod
     def _create_task(self, **kwargs) -> _Task:
-        """Crea la tarea específica de escaneo"""
         pass
     
     @abstractmethod
     def _get_result_processor(self) -> ScanResultProcessor:
-        """Retorna el procesador de resultados apropiado"""
         pass
     
     def _execute_scan_in_thread(self, scan_id: int, task: _Task) -> None:
-        """
-        Ejecuta un escaneo en un thread separado.
-        Patrón común para todos los tipos de escaneo.
-        """
-        # Crear manager con sesión independiente para este thread
         thread_manager = self.__class__(self.active_user)
         
         try:
@@ -391,10 +364,7 @@ class ScanManager(BaseManager, ABC):
                 return
             
             thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
-            
-            self._register_task(scan_id, task)
 
-            # Ejecutar escaneo
             TIME_MARGIN = 30
             task.scan()
             success = task.wait(timeout=task.timeout + TIME_MARGIN)
@@ -407,7 +377,6 @@ class ScanManager(BaseManager, ABC):
             
             scan.status = "finished"
             
-            # Procesar y guardar resultados
             thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")
             processor = thread_manager._get_result_processor()
             processor.process_and_save(scan, task.results)
@@ -430,14 +399,12 @@ class ScanManager(BaseManager, ABC):
             self._unregister_task(scan_id)
     
     def _mark_scan_as_failed(self, scan: Scan) -> None:
-        """Marca un escaneo como fallido"""
         scan.status = "failed"
-        scan.finished_at = datetime.now()  # campo correcto del modelo Scan
+        scan.finished_at = datetime.now()
         self.session.add(scan)
         self._safe_commit()
     
     def _is_scan_finished(self, scan_id: int) -> bool:
-        """Verifica si un escaneo está finalizado"""
         try:
             self._check_session()
             scan = self.session.get(Scan, scan_id)
@@ -452,16 +419,6 @@ class ScanManager(BaseManager, ABC):
             return False
 
     def _update_scan_status(self, scan_id: int, status: str) -> bool:
-        """
-        Actualiza el estado de un escaneo en la base de datos.
-        
-        Args:
-            scan_id: ID del escaneo
-            status: Nuevo estado ('pending', 'running', 'completed', 'failed', 'cancelled')
-        
-        Returns:
-            bool: True si se actualizó correctamente, False en caso contrario
-        """
         try:
             self._check_session()
             scan = self.get_scan_by_id(scan_id)
@@ -483,21 +440,12 @@ class ScanManager(BaseManager, ABC):
             return False
     
     def _setup_task_callbacks(self, task: _Task, scan_id: int):
-        """
-        Configura callbacks para actualizar el estado cuando la tarea finalice.
-        
-        Args:
-            task: Tarea a la que añadir el callback
-            scan_id: ID del escaneo asociado
-        """
         original_wait = task.wait
         
         def wait_with_callback(timeout: Optional[float] = None) -> bool:
-            """Wrapper de wait que actualiza el estado al finalizar"""
             result = original_wait(timeout)
             
             try:
-                # Actualizar estado según el resultado
                 if task.status == TaskStatus.COMPLETED:
                     self._update_scan_status(scan_id, 'completed')
                 elif task.status == TaskStatus.FAILED:
@@ -507,7 +455,6 @@ class ScanManager(BaseManager, ABC):
                 elif task.status == TaskStatus.TIMEOUT:
                     self._update_scan_status(scan_id, 'failed')
                 
-                # Eliminar de tareas en ejecución
                 if scan_id in self._running_tasks:
                     del self._running_tasks[scan_id]
             
@@ -549,28 +496,25 @@ class OpenVASScanManager(ScanManager):
             target_ip, _ = normalize_target(target)
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
             
-            # Crear registro en BD
             scan = self._create_scan_record(target=target_ip) # type: ignore
             scan_id = scan.id
             
-            # Crear tarea
             task = self._create_task(
                 target=target_ip,
                 scan_config=config_id,
                 timeout=30000000
             )
             
-            # Ejecutar en thread
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
                 args=(scan_id, task),
-                daemon=False,
+                daemon=True,  # fix: daemon=True para no bloquear shutdown
                 name=f"OpenVASScan-{scan_id}"
             )
-            thread.start()
-            time.sleep(0.2)
 
-            self._register_task(scan_id, task)
+            # fix: registrar ANTES de start() para evitar race condition
+            self._register_task(scan_id, task, thread)
+            thread.start()
             
             self.logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
             return scan_id
@@ -580,10 +524,7 @@ class OpenVASScanManager(ScanManager):
             raise
     
     def _create_scan_record(self, target: str) -> OpenVASScan:
-        """Crea el registro del escaneo OpenVAS con ID temporal único"""
         import uuid
-        
-        # Generar ID temporal único (36 caracteres)
         temp_task_id = f"PENDING_{uuid.uuid4()}"
         
         scan = OpenVASScan(
@@ -597,7 +538,6 @@ class OpenVASScanManager(ScanManager):
         return scan
     
     def _create_task(self, target: str, scan_config: str, timeout: int) -> OpenVASTask:
-        """Crea la tarea de escaneo OpenVAS"""
         return OpenVASTask(
             target=target,
             hostname=self.hostname,
@@ -609,11 +549,9 @@ class OpenVASScanManager(ScanManager):
         )
     
     def _get_result_processor(self) -> OpenVASResultProcessor:
-        """Retorna el procesador de resultados OpenVAS"""
         return OpenVASResultProcessor(self.session, self.logger)
 
     def get_scans_for_user(self) -> List[OpenVASScan]:
-        """Obtiene todos los escaneos OpenVAS del usuario con relaciones cargadas."""
         try:
             self._check_session()
             scans = (
@@ -647,10 +585,6 @@ class OpenVASScanManager(ScanManager):
             
             thread_manager.logger.info(f"Iniciando escaneo OpenVAS {scan_id}")
             
-            # Registrar tarea
-            self._register_task(scan_id, task)
-            
-            # Ejecutar escaneo
             task.scan()
             success = task.wait(timeout=task.timeout + 30)
             
@@ -661,13 +595,11 @@ class OpenVASScanManager(ScanManager):
                 thread_manager._mark_scan_as_failed(scan)
                 return
             
-            # Actualizar IDs de OpenVAS
             scan.task_id = task.task_id
             scan.report_id = task.report_id
             scan.status = "finished"
             thread_manager.session.add(scan)
 
-            # Procesar y guardar resultados
             thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")
             processor = thread_manager._get_result_processor()
             processor.process_and_save(scan, task.results)
@@ -687,8 +619,7 @@ class OpenVASScanManager(ScanManager):
         
         finally:
             thread_manager.close_session()
-            if scan_id in self._running_tasks:
-                del self._running_tasks[scan_id]
+            self._unregister_task(scan_id)
 
 
 class NmapScanManager(ScanManager):
@@ -697,29 +628,25 @@ class NmapScanManager(ScanManager):
     def run_scan(self, target_host: str, target_ports: str, timeout: int = 300) -> int:
         """Inicia un escaneo Nmap"""
         try:
-            # Crear registro en BD
             scan = self._create_scan_record(target=target_host)
             scan_id = scan.id
             
-            # Crear tarea
             task = self._create_task(
                 target_host=target_host,
                 target_ports=target_ports,
                 timeout=timeout
             )
             
-            # Ejecutar en thread
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
                 args=(scan_id, task),
-                daemon=False,
+                daemon=True,  # fix: daemon=True para no bloquear shutdown
                 name=f"NmapScan-{scan_id}"
             )
 
-            self._register_task(scan_id, task)
-
+            # fix: registrar ANTES de start() — ya estaba correcto en Nmap
+            self._register_task(scan_id, task, thread)
             thread.start()
-            time.sleep(0.2)
             
             self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
             return scan_id
@@ -729,7 +656,6 @@ class NmapScanManager(ScanManager):
             raise
     
     def _create_scan_record(self, target: str) -> NmapScan:
-        """Crea el registro del escaneo Nmap"""
         scan = NmapScan(
             target=target,
             user=self.active_user,
@@ -740,15 +666,12 @@ class NmapScanManager(ScanManager):
         return scan
     
     def _create_task(self, target_host: str, target_ports: str, timeout: int) -> NmapScanTask:
-        """Crea la tarea de escaneo Nmap"""
         return NmapScanTask(target_host, target_ports, timeout)
     
     def _get_result_processor(self) -> NmapResultProcessor:
-        """Retorna el procesador de resultados Nmap"""
         return NmapResultProcessor(self.session, self.logger)
 
     def get_scans_for_user(self) -> List[NmapScan]:
-        """Obtiene todos los escaneos Nmap del usuario con relaciones cargadas."""
         try:
             self._check_session()
             scans = (
@@ -773,24 +696,21 @@ class NiktoScanManager(ScanManager):
     def run_scan(self, target_domain: str, timeout: int = 60) -> int:
         """Inicia un escaneo Nikto"""
         try:
-            # Crear registro en BD
             scan = self._create_scan_record(target=target_domain)
             scan_id = scan.id
             
-            # Crear tarea
             task = self._create_task(target_domain=target_domain, timeout=timeout)
             
-            # Ejecutar en thread
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
                 args=(scan_id, task),
-                daemon=False,
+                daemon=True,  # fix: daemon=True para no bloquear shutdown
                 name=f"NiktoScan-{scan_id}"
             )
-            thread.start()
-            time.sleep(0.2)
 
-            self._register_task(scan_id, task)
+            # fix: registrar ANTES de start() para evitar race condition
+            self._register_task(scan_id, task, thread)
+            thread.start()
             
             self.logger.info(f"Escaneo Nikto {scan_id} iniciado")
             return scan_id
@@ -800,7 +720,6 @@ class NiktoScanManager(ScanManager):
             raise
     
     def _create_scan_record(self, target: str) -> NiktoScan:
-        """Crea el registro del escaneo Nikto"""
         scan = NiktoScan(
             target=target,
             user=self.active_user,
@@ -811,15 +730,12 @@ class NiktoScanManager(ScanManager):
         return scan
     
     def _create_task(self, target_domain: str, timeout: int) -> NiktoScanTask:
-        """Crea la tarea de escaneo Nikto"""
         return NiktoScanTask(target_domain, timeout)
     
     def _get_result_processor(self) -> NiktoResultProcessor:
-        """Retorna el procesador de resultados Nikto"""
         return NiktoResultProcessor(self.session, self.logger)
 
     def get_scans_for_user(self) -> List[NiktoScan]:
-        """Obtiene todos los escaneos Nikto del usuario con relaciones cargadas."""
         try:
             self._check_session()
             scans = (
@@ -841,25 +757,9 @@ class NiktoScanManager(ScanManager):
 class UserManager(BaseManager):
     """
     Gestor completo para usuarios y personas con autenticación y gestión de tokens.
-    
-    Características:
-        - Autenticación con salt y hash
-        - Gestión de usuarios y personas
-        - Validación de credenciales
-        - CRUD completo thread-safe
     """
     
     def verify_credentials(self, username: str, password: str) -> Tuple[bool, Optional[int]]:
-        """
-        Verifica las credenciales de un usuario.
-        
-        Args:
-            username (str): Nombre de usuario
-            password (str): Contraseña en texto plano
-        
-        Returns:
-            Tuple[bool, Optional[int]]: (es_válido, user_id)
-        """
         self._check_session()
         
         try:
@@ -890,20 +790,10 @@ class UserManager(BaseManager):
             raise
     
     def validate_credentials_simple(self, username: str, password: str) -> bool:
-        """Validación simple de credenciales sin devolver user_id."""
         is_valid, _ = self.verify_credentials(username, password)
         return is_valid
     
     def create_user(self, user: User) -> None:
-        """
-        Crea un nuevo usuario.
-        
-        Args:
-            user (User): Usuario a crear
-        
-        Raises:
-            ExistingUserError: Si el usuario ya existe
-        """
         self._check_session()
         
         try:
@@ -930,22 +820,6 @@ class UserManager(BaseManager):
             raise
     
     def sign_in_user(self, username: str, password: str, email: str, alias: str) -> User:
-        """
-        Registra un nuevo usuario vinculándolo a una persona.
-        
-        Args:
-            username (str): Nombre de usuario
-            password (str): Contraseña en texto plano
-            email (str): Email del usuario
-            alias (str): Alias de la persona existente
-        
-        Returns:
-            User: Usuario creado
-        
-        Raises:
-            ExistingUserError: Si el usuario ya existe
-            UserBindingError: Si no existe la persona
-        """
         self._check_session()
         
         try:
@@ -984,28 +858,15 @@ class UserManager(BaseManager):
             raise DatabaseError("Error con credenciales. Revísalas e inténtalo de nuevo.")
     
     def get_user_by_username(self, username: str) -> Optional[User]:
-        """Obtiene un usuario por su username."""
         return self._get_by_field(User, "username", username)
     
     def get_user_by_id(self, user_id: int) -> Optional[User]:
-        """Obtiene un usuario por ID."""
         return self._get_by_field(User, "id", user_id)
     
     def get_all_users(self) -> List[User]:
-        """Obtiene todos los usuarios."""
         return self._get_all(User)
     
     def update_user_password(self, user_or_id, new_password: str) -> None:
-        """
-        Actualiza la contraseña de un usuario.
-
-        Acepta tanto un objeto User como un user_id (int), para ser compatible
-        con las llamadas desde run.py que pasan el ID directamente.
-
-        Args:
-            user_or_id: Objeto User o ID entero del usuario a actualizar.
-            new_password (str): Nueva contraseña en texto plano.
-        """
         self._check_session()
 
         if isinstance(user_or_id, int):
@@ -1033,7 +894,6 @@ class UserManager(BaseManager):
             raise
     
     def update_user_password_by_id(self, user_id: int, new_password: str) -> None:
-        """Actualiza la contraseña de un usuario por ID."""
         user = self.get_user_by_id(user_id)
         
         if not user:
@@ -1042,24 +902,9 @@ class UserManager(BaseManager):
         self.update_user_password(user, new_password)
     
     def delete_user(self, user: User) -> None:
-        """Elimina un usuario."""
         self._delete(user, "Usuario")
     
     def sign_in_person(self, first_name: str, last_name: str, alias: str) -> Person:
-        """
-        Registra una nueva persona.
-        
-        Args:
-            first_name (str): Nombre
-            last_name (str): Apellido
-            alias (str): Alias único
-        
-        Returns:
-            Person: Persona creada
-        
-        Raises:
-            ExistingUserError: Si ya existe
-        """
         self._check_session()
         
         try:
@@ -1085,23 +930,18 @@ class UserManager(BaseManager):
             raise
     
     def get_person_by_alias(self, alias: str) -> Optional[Person]:
-        """Obtiene una persona por alias."""
         return self._get_by_field(Person, "alias", alias)
     
     def get_person_by_email(self, email: str) -> Optional[Person]:
-        """Obtiene una persona por email."""
         return self._get_by_field(Person, "email", email)
     
     def get_person_by_id(self, person_id: int) -> Optional[Person]:
-        """Obtiene una persona por ID."""
         return self._get_by_field(Person, "id", person_id)
     
     def get_all_people(self) -> List[Person]:
-        """Obtiene todas las personas."""
         return self._get_all(Person)
     
     def update_person(self, person: Person) -> None:
-        """Actualiza la información de una persona."""
         self._check_session()
         
         try:
@@ -1123,23 +963,9 @@ class UserManager(BaseManager):
             raise
     
     def delete_person(self, person: Person) -> None:
-        """Elimina una persona."""
         self._delete(person, "Persona")
     
-    # Métodos privados genéricos
-    
     def _get_by_field(self, model, field: str, value: Any) -> Optional[Any]:
-        """
-        Obtiene un objeto por un campo específico.
-        
-        Args:
-            model: Clase del modelo
-            field (str): Nombre del campo
-            value: Valor a buscar
-        
-        Returns:
-            Optional[Any]: Objeto encontrado o None
-        """
         self._check_session()
         
         try:
@@ -1159,7 +985,6 @@ class UserManager(BaseManager):
             raise
     
     def _get_all(self, model) -> List[Any]:
-        """Obtiene todos los objetos de un modelo."""
         self._check_session()
         
         try:
@@ -1172,7 +997,6 @@ class UserManager(BaseManager):
             raise
     
     def _exists(self, model, field: str, value: Any) -> bool:
-        """Verifica si existe un objeto con el campo especificado."""
         self._check_session()
         
         exists = self.session.query(model).filter(
@@ -1182,13 +1006,6 @@ class UserManager(BaseManager):
         return exists
     
     def _delete(self, obj: Any, obj_type: str) -> None:
-        """
-        Elimina un objeto genérico.
-        
-        Args:
-            obj: Objeto a eliminar
-            obj_type (str): Tipo de objeto (para logging)
-        """
         self._check_session()
         
         try:
@@ -1203,7 +1020,6 @@ class UserManager(BaseManager):
             raise
     
     def _create_person(self, person: Person) -> None:
-        """Crea una nueva persona (método interno)."""
         self._check_session()
         
         try:
@@ -1222,29 +1038,17 @@ class UserManager(BaseManager):
 class VaultManager(BaseManager):
     """
     Gestor de almacenes (Vaults) y elementos almacenables (Storables).
-
-    Responsabilidades:
-      - Crear/actualizar vaults a partir de JSON.
-      - Exportar vaults a JSON.
-      - Listar y modificar Storables (Account / CreditCard).
-      - Garantizar que solo el usuario dueño del vault lo manipula.
     """
 
     def __init__(self, user: User, session: Optional[Session] = None):
         super().__init__(session)
         self.active_user = user
 
-    # ----------------- Helpers internos -----------------
-
     @staticmethod
     def _parse_dt(value: Optional[str]) -> datetime:
-        """
-        Convierte un string ISO8601 a datetime. Si es None o falla, usa ahora.
-        """
         if not value:
             return datetime.utcnow()
         try:
-            # Python 3.11: soporta offsets tipo "+01:00"
             return datetime.fromisoformat(value)
         except Exception:
             return datetime.utcnow()
@@ -1255,12 +1059,7 @@ class VaultManager(BaseManager):
                 f"El usuario {self.active_user.id} no es dueño del vault {vault.id}"
             )
 
-    # ----------------- Operaciones sobre Vault -----------------
-
     def get_vault_by_id(self, vault_id: int) -> Optional[Vault]:
-        """
-        Obtiene un vault por ID, verificando que pertenece al usuario activo.
-        """
         self._check_session()
         vault = self.session.get(Vault, vault_id)
         if vault is None:
@@ -1270,9 +1069,6 @@ class VaultManager(BaseManager):
         return vault
 
     def get_vault_for_user(self, is_recovery: bool = False) -> Optional[Vault]:
-        """
-        Devuelve el vault del usuario (normal o de recuperación).
-        """
         self._check_session()
         vault = (
             self.session.query(Vault)
@@ -1289,23 +1085,11 @@ class VaultManager(BaseManager):
         data: Dict[str, Any],
         is_recovery: bool = False,
     ) -> Tuple[Vault, bool]:
-        """
-        Crea o actualiza COMPLETAMENTE el vault del usuario activo a partir de JSON.
-
-        Semántica:
-          - Si no existe vault (user_id, is_recovery): se crea uno nuevo.
-          - Si existe: se actualizan metadatos y se reemplazan TODOS los storables
-            (accounts + creditcards) por los del JSON.
-
-        Returns:
-            (vault, created) donde created=True si se ha creado un vault nuevo.
-        """
         self._check_session()
 
         try:
             algorithm = data.get("algorithm", {}) or {}
 
-            # ¿Ya existe vault para este usuario / tipo?
             vault = self.get_vault_for_user(is_recovery=is_recovery)
             created = vault is None
 
@@ -1323,9 +1107,8 @@ class VaultManager(BaseManager):
                     salt=algorithm.get("salt", ""),
                 )
                 self.session.add(vault)
-                self.session.flush()  # para obtener vault.id
+                self.session.flush()
             else:
-                # Actualizar metadatos existentes
                 self._ensure_vault_ownership(vault)
                 vault.checker = data["checker"]
                 vault.vault_key = data["vaultKey"]
@@ -1336,14 +1119,10 @@ class VaultManager(BaseManager):
                 vault.kdf_parallelism = int(algorithm.get("kdfParallelism", 1))
                 vault.salt = algorithm.get("salt", "")
 
-                # Eliminar todos los storables actuales (cascade borra Account/CreditCard)
                 for st in list(vault.storables):
                     self.session.delete(st)
                 self.session.flush()
 
-            # ---------------------
-            # Recrear ACCOUNTS
-            # ---------------------
             for acc in data.get("accounts", []) or []:
                 created_at = self._parse_dt(acc.get("createdAt"))
                 updated_at = self._parse_dt(acc.get("updatedAt"))
@@ -1360,9 +1139,6 @@ class VaultManager(BaseManager):
                 )
                 self.session.add(account)
 
-            # ---------------------
-            # Recrear CREDITCARDS
-            # ---------------------
             for card in data.get("creditcards", []) or []:
                 created_at = self._parse_dt(card.get("createdAt"))
                 updated_at = self._parse_dt(card.get("updatedAt"))
@@ -1381,7 +1157,6 @@ class VaultManager(BaseManager):
                 )
                 self.session.add(cc)
 
-            # Commit final
             self._safe_commit()
             self.session.refresh(vault)
 
@@ -1413,12 +1188,6 @@ class VaultManager(BaseManager):
         )
 
     def export_vault_to_json(self, vault_id: int) -> Dict[str, Any]:
-        """
-        Convierte un vault y sus storables a un dict JSON con el formato del ejemplo.
-
-        Lanza:
-          - ValueError si el vault no existe o no pertenece al usuario.
-        """
         vault = self.get_vault_by_id(vault_id)
         if vault is None:
             raise ValueError(f"Vault {vault_id} no encontrado")
@@ -1437,14 +1206,13 @@ class VaultManager(BaseManager):
         accounts_json: List[Dict[str, Any]] = []
         cards_json: List[Dict[str, Any]] = []
 
-        # SQLAlchemy ya te cargará subclases por polimorfismo
         for st in vault.storables:
             base = {
                 "id": st.internal_id,
                 "title": st.title,
                 "createdAt": st.created_at.isoformat() if st.created_at else None,
                 "updatedAt": st.updated_at.isoformat() if st.updated_at else None,
-                "allowedUsers": [],  # aún no implementado
+                "allowedUsers": [],
             }
 
             if isinstance(st, Account):
@@ -1479,8 +1247,6 @@ class VaultManager(BaseManager):
     def export_vault_to_json_string(self, vault_id: int) -> str:
         return str(self.export_vault_to_json(vault_id))
 
-    # ----------------- Operaciones sobre Storables -----------------
-
     def find_storables(
         self,
         *,
@@ -1488,29 +1254,18 @@ class VaultManager(BaseManager):
         limit: Optional[int] = None,
         **filters: Any,
     ) -> List[Storable]:
-        """
-        Búsqueda genérica de Storables.
-
-        Ejemplos:
-          find_storables(vault_id=1, internal_id="ACC0")
-          find_storables(vault_id=1, title="Gmail Account")
-          find_storables(internal_id="CDC3")  # todos los vaults del usuario
-        """
         self._check_session()
 
         query = self.session.query(Storable)
 
-        # Restringir a vault(s) del usuario activo
         if vault_id is not None:
             vault = self.get_vault_by_id(vault_id)
             if vault is None:
                 return []
             query = query.filter(Storable.vault_id == vault_id)
         else:
-            # limitar siempre a vaults del usuario activo
             query = query.join(Vault).filter(Vault.user_id == self.active_user.id)
 
-        # Aplicar filtros dinámicamente en columnas de Storable
         for field, value in filters.items():
             if not hasattr(Storable, field):
                 raise ValueError(f"Campo inválido para Storable: {field}")
@@ -1522,14 +1277,6 @@ class VaultManager(BaseManager):
         return query.all()
 
     def get_storable_by(self, **filters: Any) -> Optional[Storable]:
-        """
-        Devuelve UN storable que cumpla los filtros (o None).
-        Lanza ValueError si devuelve más de uno.
-
-        Ejemplos:
-          get_storable_by(id=10)
-          get_storable_by(vault_id=1, internal_id="ACC0")
-        """
         results = self.find_storables(limit=2, **filters)
         if not results:
             return None
@@ -1540,18 +1287,13 @@ class VaultManager(BaseManager):
         return results[0]
 
     def get_storable(self, storable_id: int) -> Optional[Storable]:
-        """Atajo: obtiene un Storable por id con validación de propietario."""
         st = self.get_storable_by(id=storable_id)
         return st
 
     def list_storables(self, vault_id: int) -> List[Storable]:
-        """
-        Devuelve todos los storables de un vault del usuario activo.
-        """
         vault = self.get_vault_by_id(vault_id)
         if vault is None:
             return []
-        # storables ya está filtrado por vault
         return list(vault.storables)
 
     def add_storable_to_vault(
@@ -1565,15 +1307,6 @@ class VaultManager(BaseManager):
         updated_at: Optional[datetime] = None,
         **payload: Any,
     ) -> Storable:
-        """
-        Añade un nuevo Storable (Account o CreditCard) a un vault.
-
-        kind:
-          - "account": usa campos username, domain, password en payload.
-          - "creditcard": usa cardholder_name, card_number, expiration_date, postal_code, cvv.
-
-        Devuelve la instancia creada (ya committeada).
-        """
         self._check_session()
         vault = self.get_vault_by_id(vault_id)
         if vault is None:
@@ -1630,30 +1363,21 @@ class VaultManager(BaseManager):
         *,
         title: Optional[str] = None,
         internal_id: Optional[str] = None,
-        # campos específicos de Account
         username: Optional[str] = None,
         domain: Optional[str] = None,
         password: Optional[str] = None,
-        # campos específicos de CreditCard
         cardholder_name: Optional[str] = None,
         card_number: Optional[str] = None,
         expiration_date: Optional[str] = None,
         postal_code: Optional[str] = None,
         cvv: Optional[str] = None,
     ) -> Storable:
-        
-        """
-        Actualiza campos de un Storable (y de su subtipo si aplica).
-
-        Solo permite modificar campos explícitos; cualquier parámetro None se ignora.
-        """
         self._check_session()
         st = self.get_storable(storable_id)
         if st is None:
             raise ValueError(f"Storable {storable_id} no encontrado")
 
         try:
-            # Campos base
             changed = False
             if title is not None:
                 st.title = title
@@ -1662,7 +1386,6 @@ class VaultManager(BaseManager):
                 st.internal_id = internal_id
                 changed = True
 
-            # Campos de Account
             if isinstance(st, Account):
                 if username is not None:
                     st.username = username
@@ -1674,7 +1397,6 @@ class VaultManager(BaseManager):
                     st.password = password
                     changed = True
 
-            # Campos de CreditCard
             if isinstance(st, CreditCard):
                 if cardholder_name is not None:
                     st.cardholder_name = cardholder_name
@@ -1718,22 +1440,9 @@ class VaultManager(BaseManager):
         self,
         operations: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """
-        Aplica una o varias modificaciones sobre Storables de los vaults
-        (normal o de recuperación) del usuario actual.
-
-        Cada operación:
-        {
-          "isRecovery": false,        # opcional; por defecto False (vault normal)
-          "internalId": "ACC0",
-          "changes": { ... }
-        }
-        """
         self._check_session()
 
         results: List[Dict[str, Any]] = []
-
-        # Cache de vaults por tipo para no consultar cada vez
         vault_cache: Dict[bool, Optional[Vault]] = {}
 
         field_map = {
@@ -1773,7 +1482,6 @@ class VaultManager(BaseManager):
                 continue
 
             try:
-                # Obtener / cachear vault adecuado
                 if is_recovery not in vault_cache:
                     vault_cache[is_recovery] = self.get_vault_for_user(
                         is_recovery=is_recovery
@@ -1788,7 +1496,6 @@ class VaultManager(BaseManager):
                     })
                     continue
 
-                # Buscar Storable por vault + internal_id
                 st = self.get_storable_by(
                     vault_id=vault.id,
                     internal_id=internal_id,
@@ -1839,9 +1546,6 @@ class VaultManager(BaseManager):
         return results
     
     def delete_storable(self, storable_id: int) -> bool:
-        """
-        Elimina un storable (y su subtabla asociada) si pertenece al usuario activo.
-        """
         self._check_session()
         st = self.get_storable(storable_id)
         if st is None:
@@ -1862,20 +1566,18 @@ class OAuthTokenManager(BaseManager):
     """Gestor de tokens OAuth 2.0 usando JWT"""
     
     def create_access_token(self, user_id: int, username: str) -> str:
-        """Crea un JWT access token"""
         expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         
         payload = {
-            "sub": str(user_id),  # subject (user ID)
+            "sub": str(user_id),
             "username": username,
-            "exp": expires_at,  # expiration time
-            "iat": datetime.utcnow(),  # issued at
+            "exp": expires_at,
+            "iat": datetime.utcnow(),
             "type": "access"
         }
         
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
         
-        # Guardar en DB
         access_token_record = AccessToken(
             token=token,
             user_id=user_id,
@@ -1887,7 +1589,6 @@ class OAuthTokenManager(BaseManager):
         return token
     
     def create_refresh_token(self, user_id: int) -> str:
-        """Crea un refresh token opaco (no JWT)"""
         token = secrets.token_urlsafe(64)
         expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         
@@ -1902,19 +1603,12 @@ class OAuthTokenManager(BaseManager):
         return token
     
     def verify_access_token(self, token: str) -> Optional[dict]:
-        """
-        Verifica y decodifica un access token.
-        Returns: Payload del token si es válido, None si no lo es
-        """
         try:
-            # Decodificar JWT
             payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
             
-            # Verificar tipo
             if payload.get("type") != "access":
                 return None
             
-            # Verificar si está revocado en DB
             token_record = self.session.query(AccessToken).filter(
                 AccessToken.token == token
             ).one_or_none()
@@ -1928,14 +1622,10 @@ class OAuthTokenManager(BaseManager):
             return None
         except jwt.InvalidTokenError:
             return None
-        except Exception as e:
+        except Exception:
             return None
     
     def verify_refresh_token(self, token: str) -> Optional[int]:
-        """
-        Verifica un refresh token.
-        Returns: user_id si es válido, None si no lo es
-        """
         try:
             token_record = self.session.query(RefreshToken).filter(
                 RefreshToken.token == token
@@ -1950,7 +1640,6 @@ class OAuthTokenManager(BaseManager):
             return None
     
     def revoke_access_token(self, token: str) -> bool:
-        """Revoca un access token"""
         try:
             token_record = self.session.query(AccessToken).filter(
                 AccessToken.token == token
@@ -1965,7 +1654,6 @@ class OAuthTokenManager(BaseManager):
             return False
     
     def revoke_all_user_tokens(self, user_id: int) -> None:
-        """Revoca todos los tokens de un usuario"""
         try:
             self.session.query(AccessToken).filter(
                 AccessToken.user_id == user_id
@@ -1981,7 +1669,6 @@ class OAuthTokenManager(BaseManager):
             raise
     
     def cleanup_expired_tokens(self) -> None:
-        """Elimina tokens expirados de la DB (ejecutar periódicamente)"""
         try:
             now = datetime.utcnow()
             
@@ -1997,8 +1684,6 @@ class OAuthTokenManager(BaseManager):
         except Exception:
             self._safe_rollback()
 
-
-            # ── Añadir al bloque de imports del fichero ──────────────────────────────────
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
@@ -2020,22 +1705,13 @@ class AegisManager(BaseManager):
     """
     Manager de Aegis: generación asíncrona de píldoras de concienciación
     en ciberseguridad mediante un modelo de IA local (Ollama).
-
-    Módulos:
-    1. Generación de contenido — píldora Markdown vía Ollama con tool calling
-       para búsquedas web opcionales.
-    2. Vigilancia de vulnerabilidades — avisos INCIBE-CERT y CVEs de NVD
-       filtrados por las marcas tecnológicas del cliente, con relleno
-       automático hasta _MAX_BRANDS y descarte de alertas antiguas.
     """
 
-    # ── Constantes de clase ───────────────────────────────────────────────────
     _INCIBE_AVISOS_FEED  = "https://www.incibe.es/incibe-cert/alerta-temprana/avisos/feed"
     _NVD_CVE_API         = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     _MAX_BRANDS          = 5
     _MAX_ALERT_AGE_YEARS = 5
 
-    # Marcas de relleno ordenadas por relevancia global en ciberseguridad corporativa
     _FALLBACK_BRANDS: list[str] = [
         "Microsoft", "Google", "Cisco", "Apple", "Adobe",
         "Oracle", "SAP", "VMware", "Fortinet", "Palo Alto",
@@ -2051,8 +1727,6 @@ class AegisManager(BaseManager):
             logger=self.logger,
             fallback_brands=self._FALLBACK_BRANDS,
         )
-
-    # ── Configuración ─────────────────────────────────────────────────────────
 
     def _read_cfg(self) -> dict[str, Any]:
         aegis = self.config_reader.get_aegis_config()
@@ -2076,14 +1750,6 @@ class AegisManager(BaseManager):
     def _get_topic_from_db(
         self, topic_id: Optional[int]
     ) -> tuple[Optional[Topic], bool]:
-        """
-        Resuelve el topic desde la BD.
-
-        Returns:
-            (topic, was_random)
-            - topic=None significa que la BD está vacía.
-            - was_random=True indica que se eligió un topic aleatorio.
-        """
         if topic_id is not None:
             topic = (
                 self.session.query(Topic)
@@ -2103,10 +1769,6 @@ class AegisManager(BaseManager):
         return random.choice(all_topics), True
 
     def _load_reference_stack(self, stack_dir: Path) -> str:
-        """
-        Carga las últimas 3 píldoras de referencia del cliente desde disco.
-        Solo se consideran ficheros .md (formato canónico de Aegis).
-        """
         if not stack_dir.exists():
             return ""
         files = sorted(
@@ -2132,7 +1794,7 @@ class AegisManager(BaseManager):
         )
         self.session.add(doc)
         self.session.flush()
-        self._safe_commit()  # commit antes de lanzar el hilo
+        self._safe_commit()
         return doc.id
 
     def _update_document(
@@ -2165,7 +1827,6 @@ class AegisManager(BaseManager):
         try:
             cfg = self._read_cfg()
 
-            # TODA la BD y lógica de negocio via self (este self es el thread_manager)
             pill_content = self._generate_content(topic_id, tweaks, cfg)
 
             alerts = self.alert_fetcher.fetch_alerts(
@@ -2188,7 +1849,6 @@ class AegisManager(BaseManager):
             with path.open("w", encoding="utf-8") as f:
                 f.write(full_body)
 
-            # Actualizar documento usando la sesión del thread_manager
             self._update_document(
                 document_id=document_id,
                 status="done",
@@ -2216,7 +1876,6 @@ class AegisManager(BaseManager):
                 )
 
         finally:
-            # Cerrar la sesión del hilo, igual que en ScanManager
             self.close_session()
     
     def _generate_content(
@@ -2267,7 +1926,6 @@ class AegisManager(BaseManager):
         )
 
     def list_documents(self) -> list[dict[str, Any]]:
-        """Lista todas las píldoras generadas por el usuario autenticado."""
         docs = (
             self.session.query(AegisDocument)
             .filter(AegisDocument.user_id == self.user.id)
@@ -2285,14 +1943,6 @@ class AegisManager(BaseManager):
         ]
 
     def get_document_path(self, document_id: int) -> Path:
-        """
-        Devuelve la ruta en disco de una píldora, validando que pertenece
-        al usuario autenticado.
-
-        Raises:
-            ValueError: Si el documento no existe o no pertenece al usuario.
-            FileNotFoundError: Si el fichero no existe en disco.
-        """
         doc = (
             self.session.query(AegisDocument)
             .filter(
@@ -2315,13 +1965,6 @@ class AegisManager(BaseManager):
         return path
 
     def delete_document(self, document_id: int) -> None:
-        """
-        Elimina una píldora de la BD y del sistema de ficheros, validando
-        que pertenece al usuario autenticado.
-
-        Raises:
-            ValueError: Si el documento no existe o no pertenece al usuario.
-        """
         doc = (
             self.session.query(AegisDocument)
             .filter(
@@ -2348,10 +1991,6 @@ class AegisManager(BaseManager):
         self.logger.info(f"Aegis: documento id={document_id} eliminado de BD")
 
     def get_document(self, document_id: int) -> dict | None:
-        """
-        Devuelve el estado y metadatos de un AegisDocument.
-        Si status='done', incluye el contenido del .md desde disco.
-        """
         cfg = self._read_cfg()
         output_dir = cfg["output_dir"]
         doc = self.session.get(AegisDocument, document_id)
@@ -2385,7 +2024,6 @@ class AegisManager(BaseManager):
         tweaks: Optional[dict[str, Any]] = None,
     ) -> int:
         tweaks = tweaks or {}
-        topic_id = topic_id
 
         document_id = self._create_pending_document(topic_id)
         thread_manager = self.__class__(self.user)
@@ -2393,7 +2031,7 @@ class AegisManager(BaseManager):
         thread = threading.Thread(
             target=thread_manager._run_generate,
             args=(document_id, topic_id, tweaks),
-            daemon=False,
+            daemon=True,  # fix: daemon=True para no bloquear shutdown
             name=f"Aegis-{document_id}",
         )
         thread.start()
