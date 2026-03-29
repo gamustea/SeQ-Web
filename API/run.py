@@ -21,12 +21,8 @@ from flask_limiter.util import get_remote_address
 from src.endpoints import register_blueprints
 from src.misc.logging import SecOpsLogger
 
-# ── Logger ────────────────────────────────────────────────────────────────────
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
-
-
-# ── Factory de aplicación ─────────────────────────────────────────────────────
 
 def create_app() -> Flask:
     """
@@ -45,9 +41,6 @@ def create_app() -> Flask:
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
 
-
-# ── CORS ──────────────────────────────────────────────────────────────────────
-
 def _configure_cors(app: Flask) -> None:
     """
     Restringe los orígenes permitidos al valor de la variable de entorno
@@ -58,9 +51,6 @@ def _configure_cors(app: Flask) -> None:
     origins = [o.strip() for o in raw.split(",") if o.strip()]
     origins.append("http://127.0.0.1:3000")   # dev frontend
     CORS(app, origins=origins, supports_credentials=True)
-
-
-# ── Rate limiting ─────────────────────────────────────────────────────────────
 
 def _configure_rate_limiting(app: Flask) -> None:
     """
@@ -73,9 +63,6 @@ def _configure_rate_limiting(app: Flask) -> None:
         default_limits=["200 per day", "50 per hour"],
         storage_uri="memory://",
     )
-
-
-# ── Manejadores de error globales ─────────────────────────────────────────────
 
 def _register_error_handlers(app: Flask) -> None:
     """
@@ -119,9 +106,6 @@ def _register_error_handlers(app: Flask) -> None:
             "error":   "internal_server_error",
             "message": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
-
-
-# ── Arranque ──────────────────────────────────────────────────────────────────
 
 app = create_app()
 

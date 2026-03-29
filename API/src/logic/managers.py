@@ -395,8 +395,9 @@ class ScanManager(BaseManager, ABC):
             self._register_task(scan_id, task)
 
             # Ejecutar escaneo
+            TIME_MARGIN = 30
             task.scan()
-            success = task.wait(timeout=task.timeout + 1000)
+            success = task.wait(timeout=task.timeout + TIME_MARGIN)
             
             if not success or task.results is None:
                 thread_manager.logger.error(
@@ -693,7 +694,7 @@ class OpenVASScanManager(ScanManager):
 class NmapScanManager(ScanManager):
     """Gestor de escaneos Nmap"""
     
-    def run_scan(self, target_host: str, target_ports: str, timeout: int = 120) -> int:
+    def run_scan(self, target_host: str, target_ports: str, timeout: int = 300) -> int:
         """Inicia un escaneo Nmap"""
         try:
             # Crear registro en BD

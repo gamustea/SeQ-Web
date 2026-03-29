@@ -203,6 +203,17 @@ def start_nmap_scan():
         return jsonify(err), code
 
     try:
+        timeout = int(data.get("timeout", 300))   # 5 min por defecto
+        if timeout <= 0:
+            raise ValidationError(field="timeout",
+                                  message="El timeout debe ser positivo",
+                                  value=timeout)
+    except (TypeError, ValueError):
+        raise ValidationError(field="timeout",
+                              message="El timeout debe ser un entero válido",
+                              value=data.get("timeout"))
+
+    try:
         uid = get_current_user_id()
         nmap_manager, _, _ = get_user_managers(uid)
 
@@ -216,7 +227,11 @@ def start_nmap_scan():
 
         scan_ids = []
         for target_host in hosts:
-            scan_id = nmap_manager.run_scan(target_host, ports)
+            scan_id = nmap_manager.run_scan(
+                target_host=target_host, 
+                target_ports=ports,
+                timeout=timeout
+            )
             scan_ids.append(scan_id)
             _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={get_current_username()}")
             time.sleep(0.10)

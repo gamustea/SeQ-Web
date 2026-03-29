@@ -280,7 +280,7 @@ class NmapScanTask(_Task):
     Implementación concreta para escaneos Nmap.
     """
 
-    def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 20):
+    def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300):
         super().__init__(target_host, timeout)
         TEMP_DIR = ConfigReader().get_directory_of(DirectoryType.TEMP)
         
