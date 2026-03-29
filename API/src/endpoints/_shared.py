@@ -37,28 +37,24 @@ from src.logic.managers import (
 )
 from src.misc.logging import SecOpsLogger
 
-# ── Logger compartido ─────────────────────────────────────────────────────────
-
 _logger = SecOpsLogger(name="API").get_logger()
+limiter = Limiter(
+    get_remote_address,
+    default_limits=["500 per day", "120 per hour"],  # sube el global
+    storage_uri="memory://",
+)
 
-# ── Constantes de validación ─────────────────────────────────────────────────
 
 CANCELLABLE_STATES    = frozenset({"pending", "running"})
 VALID_SCAN_TYPES      = frozenset({"nmap", "nikto", "openvas", "all"})
 VALID_OPENVAS_CONFIGS = frozenset({"full_fast", "full_deep", "full_ultimate"})
 MAX_PDF_SIZE_BYTES    = 50 * 1024 * 1024  # 50 MB
 
-# ── Acceso al usuario autenticado ─────────────────────────────────────────────
-
 def get_current_user_id() -> int:
     return request.current_user_id  # type: ignore[attr-defined]
 
-
 def get_current_username() -> str:
     return request.current_username  # type: ignore[attr-defined]
-
-
-# ── Decorador OAuth ───────────────────────────────────────────────────────────
 
 def require_oauth_token(f):
     """
@@ -111,16 +107,11 @@ def require_oauth_token(f):
 
     return decorated
 
-
-# ── Factoría de managers ──────────────────────────────────────────────────────
-
 def _get_user_manager() -> UserManager:
     return UserManager()
 
-
 def _get_oauth_manager() -> OAuthTokenManager:
     return OAuthTokenManager()
-
 
 def get_user_managers(
     user_id: int,
@@ -134,7 +125,6 @@ def get_user_managers(
     um.close_session()
     return nmap, nikto, openvas
 
-
 def get_vault_manager(user_id: int) -> VaultManager:
     um = _get_user_manager()
     user = um.get_user_by_id(user_id)
@@ -143,7 +133,6 @@ def get_vault_manager(user_id: int) -> VaultManager:
     mgr = VaultManager(user)
     um.close_session()
     return mgr
-
 
 def get_aegis_manager(user_id: int) -> AegisManager:
     um = _get_user_manager()
@@ -154,13 +143,8 @@ def get_aegis_manager(user_id: int) -> AegisManager:
     um.close_session()
     return mgr
 
-
-# Exponer acceso para los blueprints que lo necesiten directamente
 get_user_manager  = _get_user_manager
 get_oauth_manager = _get_oauth_manager
-
-
-# ── Helpers de escaneos ───────────────────────────────────────────────────────
 
 def get_scan_by_id_for_user(
     scan_id: int,
@@ -183,7 +167,6 @@ def get_scan_by_id_for_user(
         return scan, "openvas"
     return None, ""
 
-
 def resolve_manager(
     scan_type: str,
     nmap_manager:    NmapScanManager,
@@ -197,7 +180,6 @@ def resolve_manager(
         return nikto_manager
     return openvas_manager
 
-
 def verify_scan_ownership(scan: Scan, user_id: int, scan_id: int) -> None:
     """
     Verifica que el escaneo pertenece al usuario. Responde 404 en caso
@@ -209,9 +191,6 @@ def verify_scan_ownership(scan: Scan, user_id: int, scan_id: int) -> None:
             f"(propietario: {scan.user_id})"
         )
         raise ScanNotFoundError(scan_id)
-
-
-# ── PDFCreator ────────────────────────────────────────────────────────────────
 
 def build_pdf_creator(scan: Scan) -> PDFCreator:
     """Construye el PDFCreator con la estrategia correcta según el tipo de escaneo."""

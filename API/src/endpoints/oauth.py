@@ -21,6 +21,7 @@ from ._shared import (
     get_current_user_id,
     get_current_username,
     require_oauth_token,
+    limiter
 )
 
 oauth_bp = Blueprint("oauth", __name__)
@@ -30,6 +31,7 @@ _logger  = SecOpsLogger("oauth").get_logger()
 # ── POST /oauth/token ─────────────────────────────────────────────────────────
 
 @oauth_bp.post("/token")
+@limiter.limit("20 per hour; 100 per day")
 def oauth_token():
     """
     Emite tokens OAuth 2.0.
