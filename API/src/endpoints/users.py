@@ -28,6 +28,7 @@ from ._shared import (
     get_current_username,
     get_oauth_manager,
     get_user_manager,
+    limiter,
     require_oauth_token,
 )
 
@@ -38,6 +39,7 @@ _logger  = SecOpsLogger("users").get_logger()
 # ── POST /users/sign-up-person ────────────────────────────────────────────────
 
 @users_bp.post("/sign-up-person")
+@limiter.limit("10 per hour; 20 per day")
 def sign_up_person():
     """Registra una nueva Persona en el sistema."""
     data = _require_json()
@@ -75,6 +77,7 @@ def sign_up_person():
 # ── POST /users/sign-up ───────────────────────────────────────────────────────
 
 @users_bp.post("/sign-up")
+@limiter.limit("10 per hour; 20 per day")
 def sign_up_user():
     """Registra un nuevo Usuario vinculándolo a una Persona existente."""
     data = _require_json()
@@ -115,6 +118,7 @@ def sign_up_user():
 # ── POST /users/check-credentials ────────────────────────────────────────────
 
 @users_bp.post("/check-credentials")
+@limiter.limit("10 per minute; 30 per hour")
 def check_credentials():
     """Valida credenciales (endpoint legacy — usar /oauth/token en producción)."""
     data = _require_json()
@@ -150,6 +154,7 @@ def check_credentials():
 
 @users_bp.put("/change-password")
 @require_oauth_token
+@limiter.limit("5 per hour; 10 per day")
 def change_password():
     """Cambia la contraseña del usuario autenticado e invalida todos sus tokens."""
     data = _require_json()

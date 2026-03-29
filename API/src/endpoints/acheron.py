@@ -31,6 +31,7 @@ from ._shared import (
     get_current_user_id,
     get_current_username,
     get_vault_manager,
+    limiter,
     require_oauth_token,
 )
 
@@ -44,6 +45,7 @@ _logger    = SecOpsLogger("acheron").get_logger()
 
 @acheron_bp.get("/acheron/vault")
 @require_oauth_token
+@limiter.limit("120 per hour; 500 per day")
 def get_vault():
     """Devuelve el vault del usuario en formato JSON."""
     try:
@@ -73,6 +75,7 @@ def get_vault():
 
 @acheron_bp.post("/acheron/vault")
 @require_oauth_token
+@limiter.limit("60 per hour; 300 per day")
 def upsert_vault():
     """Crea o reemplaza completamente el vault del usuario."""
     data = _require_json()
@@ -104,6 +107,7 @@ def upsert_vault():
 
 @acheron_bp.patch("/acheron/storables")
 @require_oauth_token
+@limiter.limit("60 per hour; 300 per day")
 def patch_vault_storables():
     """Actualiza en bulk uno o varios Storables del usuario."""
     if not request.is_json:
@@ -143,6 +147,7 @@ def patch_vault_storables():
 
 @acheron_bp.post("/vaults/storables")
 @require_oauth_token
+@limiter.limit("60 per hour; 300 per day")
 def add_vault_storable():
     """Añade un nuevo Account o CreditCard al vault del usuario."""
     data = _require_json()
@@ -191,6 +196,7 @@ def add_vault_storable():
 
 @acheron_bp.delete("/vaults/storables")
 @require_oauth_token
+@limiter.limit("60 per hour; 200 per day")
 def delete_vault_storable():
     """Elimina un Storable del vault del usuario por su internalId."""
     data = _require_json()

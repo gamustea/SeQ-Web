@@ -26,6 +26,7 @@ from ._shared import (
     get_aegis_manager,
     get_current_user_id,
     get_current_username,
+    limiter,
     require_oauth_token,
 )
 
@@ -37,6 +38,7 @@ _logger  = SecOpsLogger("aegis").get_logger()
 
 @aegis_bp.post("/generate")
 @require_oauth_token
+@limiter.limit("10 per hour; 30 per day")
 def aegis_generate():
     """
     Inicia la generación asíncrona de una píldora Aegis.
@@ -88,6 +90,7 @@ def aegis_generate():
 
 @aegis_bp.get("/status")
 @require_oauth_token
+@limiter.limit("120 per hour; 500 per day")
 def aegis_status():
     """Devuelve el estado de generación de una píldora por su documentId."""
     doc_id_str = request.args.get("id")
@@ -132,6 +135,7 @@ def aegis_status():
 
 @aegis_bp.get("/download_as_md")
 @require_oauth_token
+@limiter.limit("30 per hour; 100 per day")
 def aegis_download_as_md():
     """Descarga una píldora generada como fichero Markdown."""
     doc_id_str = request.args.get("id")

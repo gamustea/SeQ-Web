@@ -57,6 +57,7 @@ from ._shared import (
     get_current_username,
     get_scan_by_id_for_user,
     get_user_managers,
+    limiter,
     require_oauth_token,
     resolve_manager,
     verify_scan_ownership,
@@ -72,6 +73,7 @@ _logger     = SecOpsLogger("sentinel").get_logger()
 
 @sentinel_bp.get("/is-finished")
 @require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
 def is_scan_finished():
     """Indica si un escaneo ya finalizó."""
     try:
@@ -106,6 +108,7 @@ def is_scan_finished():
 
 @sentinel_bp.get("/scan-status")
 @require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
 def get_scan_status():
     """Estado y progreso de un escaneo."""
     try:
@@ -145,6 +148,7 @@ def get_scan_status():
 
 @sentinel_bp.post("/scans/<int:scan_id>/cancel")
 @require_oauth_token
+@limiter.limit("60 per hour; 200 per day")
 def cancel_scan(scan_id: int):
     """Cancela un escaneo en curso (estados 'pending' o 'running')."""
     try:
@@ -189,6 +193,7 @@ def cancel_scan(scan_id: int):
 
 @sentinel_bp.post("/nmap")
 @require_oauth_token
+@limiter.limit("20 per hour; 100 per day")
 def start_nmap_scan():
     """Lanza uno o más escaneos Nmap (soporta rangos CIDR y rangos de IPs)."""
     data = _require_json()
@@ -256,6 +261,7 @@ def start_nmap_scan():
 
 @sentinel_bp.post("/nikto")
 @require_oauth_token
+@limiter.limit("20 per hour; 100 per day")
 def start_nikto_scan():
     """Lanza un escaneo Nikto."""
     data = _require_json()
@@ -294,6 +300,7 @@ def start_nikto_scan():
 
 @sentinel_bp.post("/openvas")
 @require_oauth_token
+@limiter.limit("10 per hour; 50 per day")
 def start_openvas_scan():
     """Lanza un escaneo OpenVAS para un único host."""
     data = _require_json()
@@ -339,6 +346,7 @@ def start_openvas_scan():
 
 @sentinel_bp.get("/results")
 @require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
 def retrieve_all_scans():
     """Lista todos los escaneos del usuario. Filtrable por ?type=nmap|nikto|openvas|all."""
     try:
@@ -382,6 +390,7 @@ def retrieve_all_scans():
 
 @sentinel_bp.get("/results/<int:scan_id>")
 @require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
 def retrieve_scan_by_id(scan_id: int):
     """Devuelve el detalle completo de un escaneo concreto."""
     try:
@@ -426,6 +435,7 @@ def retrieve_scan_by_id(scan_id: int):
 
 @sentinel_bp.get("/generate-pdf")
 @require_oauth_token
+@limiter.limit("30 per hour; 100 per day")
 def generate_pdf():
     """Genera y descarga el PDF de un escaneo finalizado."""
     try:
@@ -465,6 +475,7 @@ def generate_pdf():
 
 @sentinel_bp.get("/generate-pdf-base64")
 @require_oauth_token
+@limiter.limit("30 per hour; 100 per day")
 def generate_pdf_base64():
     """Devuelve el PDF de un escaneo como string base64."""
     try:
@@ -514,6 +525,7 @@ def generate_pdf_base64():
 
 @sentinel_bp.delete("/<int:scan_id>")
 @require_oauth_token
+@limiter.limit("60 per hour; 200 per day")
 def delete_scan(scan_id: int):
     """Elimina un escaneo. Si está en curso, lo cancela primero."""
     try:
