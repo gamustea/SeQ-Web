@@ -11,6 +11,7 @@
     /* ── Reset & variables ── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+
     :root {
       --bg:           #080c14;
       --surface:      #0e1520;
@@ -33,10 +34,13 @@
       --transition:   0.2s ease;
     }
 
+
     html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; }
+
 
     /* ── Layout ── */
     .layout { display: flex; flex-direction: column; min-height: 100vh; }
+
 
     /* ── Topbar ── */
     .topbar {
@@ -51,6 +55,7 @@
     .topbar-left  { display: flex; align-items: center; gap: 0.75rem; }
     .topbar-right { display: flex; align-items: center; gap: 0.75rem; }
 
+
     .back-link {
       display: flex; align-items: center; gap: 0.4rem;
       color: var(--text-muted); text-decoration: none;
@@ -59,6 +64,7 @@
     }
     .back-link:hover { color: var(--text); }
     .back-link svg   { width: 14px; height: 14px; }
+
 
     .topbar-title {
       font-size: 0.95rem; font-weight: 700; letter-spacing: 0.03em;
@@ -69,6 +75,7 @@
       font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
       background: var(--green-dim); color: var(--green);
     }
+
 
     /* Session pill */
     .session-pill {
@@ -84,6 +91,7 @@
     }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
 
+
     .btn-logout-top {
       display: flex; align-items: center; gap: 0.35rem;
       background: transparent; border: 1px solid rgba(248,113,113,0.3);
@@ -94,8 +102,10 @@
     .btn-logout-top:hover { background: var(--red-dim); }
     .btn-logout-top svg   { width: 13px; height: 13px; }
 
+
     /* ── Main content ── */
     .main { flex: 1; padding: 2rem; max-width: 1200px; margin: 0 auto; width: 100%; }
+
 
     /* ── Stats row ── */
     .stats-row {
@@ -116,12 +126,14 @@
     .stat-card.blue  .stat-value { color: var(--blue);  }
     .stat-sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.25rem; }
 
+
     /* ── Section header ── */
     .section-header {
       display: flex; align-items: center; justify-content: space-between;
       margin-bottom: 1rem;
     }
     .section-title { font-size: 1rem; font-weight: 700; }
+
 
     /* ── Tabs ── */
     .tabs {
@@ -147,9 +159,11 @@
     .nikto-dot   { background: var(--amber); }
     .openvas-dot { background: var(--red);   }
 
+
     /* ── Panel ── */
     .panel { display: none; }
     .panel.active { display: block; }
+
 
     /* ── Launch form ── */
     .launch-card {
@@ -180,6 +194,7 @@
     .field input::placeholder { color: var(--text-muted); opacity: 0.5; }
     .field select option       { background: var(--surface); }
 
+
     .btn-launch {
       padding: 0.55rem 1.25rem; border: none; border-radius: var(--radius-sm);
       font-family: 'Inter', sans-serif; font-size: 0.85rem; font-weight: 700;
@@ -194,6 +209,7 @@
     .btn-launch.openvas-btn { background: var(--red);   color: #1f0606; }
     .btn-launch svg { width: 14px; height: 14px; }
 
+
     /* Spinner in button */
     .btn-spin {
       width: 12px; height: 12px;
@@ -205,6 +221,7 @@
     .btn-launch.loading .btn-label { display: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+
     /* ── Inline alert ── */
     .panel-alert {
       padding: 0.65rem 1rem; border-radius: var(--radius-sm);
@@ -215,6 +232,7 @@
     .panel-alert.success { background: var(--green-dim); border: 1px solid rgba(52,211,153,0.25); color: var(--green); }
     .panel-alert.error   { background: var(--red-dim);   border: 1px solid rgba(248,113,113,0.25); color: var(--red); }
     .panel-alert.info    { background: var(--blue-dim);  border: 1px solid rgba(96,165,250,0.25);  color: var(--blue); }
+
 
     /* ── Results table ── */
     .table-wrap {
@@ -238,6 +256,7 @@
     .btn-refresh:hover { color: var(--text); border-color: var(--text-muted); }
     .btn-refresh svg   { width: 12px; height: 12px; }
 
+
     table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
     thead { background: var(--surface-2); }
     th {
@@ -256,6 +275,7 @@
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: rgba(255,255,255,0.02); }
 
+
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: 12px;
       font-family: 'Inter', sans-serif; font-size: 0.68rem; font-weight: 600;
@@ -267,6 +287,7 @@
     .badge-error    { background: var(--red-dim);   color: var(--red);   }
     .badge-cancelled{ background: rgba(100,116,139,0.15); color: var(--text-muted); }
 
+
     .action-btn {
       background: transparent; border: none; color: var(--text-muted);
       cursor: pointer; padding: 4px; border-radius: 4px;
@@ -276,6 +297,7 @@
     .action-btn:hover { color: var(--text); }
     .action-btn svg { width: 14px; height: 14px; }
 
+
     /* Empty state */
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
@@ -284,11 +306,13 @@
     }
     .empty-state svg { opacity: 0.3; }
 
+
     /* ── Severity pills (OpenVAS) ── */
     .sev-critical { color: #f43f5e; font-weight: 700; }
     .sev-high     { color: var(--red); }
     .sev-medium   { color: var(--amber); }
     .sev-low      { color: var(--green); }
+
 
     /* ── Footer ── */
     footer {
@@ -296,6 +320,7 @@
       font-size: 0.75rem; color: var(--text-muted);
       border-top: 1px solid var(--border);
     }
+
 
     @media (max-width: 640px) {
       .main { padding: 1rem; }
@@ -308,6 +333,7 @@
 </head>
 <body>
 <div class="layout">
+
 
   <!-- ── TOPBAR ── -->
   <nav class="topbar">
@@ -338,8 +364,10 @@
     </div>
   </nav>
 
+
   <!-- ── MAIN ── -->
   <main class="main">
+
 
     <!-- Stats -->
     <div class="stats-row">
@@ -365,6 +393,7 @@
       </div>
     </div>
 
+
     <!-- Tabs -->
     <div class="tabs" role="tablist">
       <button class="tab nmap active" role="tab" data-panel="nmap" onclick="switchTab('nmap')">
@@ -377,6 +406,7 @@
         <span class="tab-dot openvas-dot"></span> OpenVAS
       </button>
     </div>
+
 
     <!-- ══ PANEL: NMAP ══ -->
     <div class="panel active" id="panel-nmap">
@@ -391,8 +421,13 @@
             <label>Puertos</label>
             <input type="text" id="nmap-ports" placeholder="80,443 o 1-1000" />
           </div>
+          <!-- ── NUEVO: campo timeout Nmap ── -->
+          <div class="field" style="max-width:130px">
+            <label>Timeout (s)</label>
+            <input type="number" id="nmap-timeout" value="300" min="30" max="86400" />
+          </div>
           <button class="btn-launch nmap-btn" id="btn-nmap" onclick="launchNmap()">
-            <span class="btn-label">▶ Lanzar</span>
+            <span class="btn-label">&#9654; Lanzar</span>
             <span class="btn-spin"></span>
           </button>
         </div>
@@ -413,6 +448,7 @@
       </div>
     </div>
 
+
     <!-- ══ PANEL: NIKTO ══ -->
     <div class="panel" id="panel-nikto">
       <div class="launch-card">
@@ -427,7 +463,7 @@
             <input type="number" id="nikto-timeout" value="180" min="10" max="600" />
           </div>
           <button class="btn-launch nikto-btn" id="btn-nikto" onclick="launchNikto()">
-            <span class="btn-label">▶ Lanzar</span>
+            <span class="btn-label">&#9654; Lanzar</span>
             <span class="btn-spin"></span>
           </button>
         </div>
@@ -448,6 +484,7 @@
       </div>
     </div>
 
+
     <!-- ══ PANEL: OPENVAS ══ -->
     <div class="panel" id="panel-openvas">
       <div class="launch-card">
@@ -460,13 +497,13 @@
           <div class="field" style="max-width:180px">
             <label>Configuración</label>
             <select id="openvas-config">
-              <option value="full_fast">Full & Fast</option>
-              <option value="full_deep">Full & Deep</option>
-              <option value="full_ultimate">Full & Ultimate</option>
+              <option value="full_fast">Full &amp; Fast</option>
+              <option value="full_deep">Full &amp; Deep</option>
+              <option value="full_ultimate">Full &amp; Ultimate</option>
             </select>
           </div>
           <button class="btn-launch openvas-btn" id="btn-openvas" onclick="launchOpenvas()">
-            <span class="btn-label">▶ Lanzar</span>
+            <span class="btn-label">&#9654; Lanzar</span>
             <span class="btn-spin"></span>
           </button>
         </div>
@@ -487,10 +524,13 @@
       </div>
     </div>
 
+
   </main>
+
 
   <footer>SeQ Platform &mdash; Sentinel &mdash; Security Operations Suite</footer>
 </div>
+
 
 <script>
   /* ============================================================
@@ -499,11 +539,13 @@
   const API_BASE   = 'http://localhost:5000';
   const LOGIN_URL  = '../auth/login.html';
 
+
   /* ============================================================
      SESSION — leer desde sessionStorage (puesto por login.html)
   ============================================================ */
   const Session = (() => {
     let _data = null;
+
 
     function load() {
       const raw = sessionStorage.getItem('seq_session');
@@ -514,9 +556,11 @@
       } catch { return false; }
     }
 
+
     function save() {
       sessionStorage.setItem('seq_session', JSON.stringify(_data));
     }
+
 
     async function getToken() {
       if (!_data) return null;
@@ -527,6 +571,7 @@
       }
       return _data.accessToken;
     }
+
 
     async function refresh() {
       if (!_data?.refreshToken) return false;
@@ -544,11 +589,13 @@
       } catch { return false; }
     }
 
+
     async function authHeaders() {
       const t = await getToken();
       if (!t) { logout(); return null; }
       return { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' };
     }
+
 
     function logout() {
       const token = _data?.accessToken;
@@ -563,6 +610,7 @@
       window.location.href = LOGIN_URL;
     }
 
+
     function username() {
       /* El JWT payload está en Base64 en la parte central */
       if (!_data?.accessToken) return '—';
@@ -572,13 +620,16 @@
       } catch { return '—'; }
     }
 
+
     return { load, authHeaders, logout, username };
   })();
+
 
   /* Guardia de sesión */
   if (!Session.load()) window.location.href = LOGIN_URL;
   document.getElementById('session-user').textContent = Session.username();
   document.getElementById('btn-logout').addEventListener('click', Session.logout);
+
 
   /* ============================================================
      TABS
@@ -591,6 +642,7 @@
     loadScans(name);
   }
 
+
   /* ============================================================
      ALERT HELPERS
   ============================================================ */
@@ -600,6 +652,7 @@
     el.textContent = msg;
     if (kind === 'success') setTimeout(() => el.classList.remove('visible'), 4000);
   }
+
 
   /* ============================================================
      STATS
@@ -619,6 +672,7 @@
     } catch { /* noop */ }
   }
 
+
   /* ============================================================
      BADGE
   ============================================================ */
@@ -635,11 +689,13 @@
     return `<span class="badge ${cls}">${label}</span>`;
   }
 
+
   function fmtDate(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
     return d.toLocaleDateString('es-ES') + ' ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
   }
+
 
   /* ============================================================
      LOAD SCANS
@@ -649,6 +705,7 @@
     if (!headers) return;
     const wrap = document.getElementById(`table-${type}`);
     wrap.innerHTML = '<div class="empty-state"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Cargando…</span></div>';
+
 
     try {
       const res  = await fetch(`${API_BASE}/sentinel/results?type=${type}`, { headers });
@@ -662,6 +719,7 @@
     }
   }
 
+
   /* ============================================================
      RENDER TABLES
   ============================================================ */
@@ -673,7 +731,9 @@
       return;
     }
 
+
     let html = '<table><thead><tr>';
+
 
     if (type === 'nmap') {
       html += '<th>ID</th><th>Target</th><th>Estado</th><th>Puertos abiertos</th><th>Fecha</th><th>Acciones</th>';
@@ -720,14 +780,17 @@
       }
     }
 
+
     html += '</tbody></table>';
     wrap.innerHTML = html;
   }
+
 
   function actionBtns(id, status) {
     const st = (status || '').toLowerCase();
     const isActive   = st === 'running' || st === 'pending';
     const isFinished = st === 'done' || st === 'finished';
+
 
     /* Botón PDF — sólo activo si el escaneo terminó */
     const pdfBtn = `
@@ -742,6 +805,7 @@
         </svg>
       </button>`;
 
+
     /* Botón cancelar — sólo visible si está activo */
     const cancelBtn = isActive ? `
       <button class="action-btn" title="Cancelar escaneo" onclick="cancelScan(${id})" style="color:var(--amber)">
@@ -751,6 +815,7 @@
           <line x1="9" y1="9" x2="15" y2="15"/>
         </svg>
       </button>` : '';
+
 
     /* Botón eliminar — siempre disponible */
     const deleteBtn = `
@@ -763,8 +828,10 @@
         </svg>
       </button>`;
 
+
     return pdfBtn + cancelBtn + deleteBtn;
   }
+
 
   /* ============================================================
      LAUNCH SCANS
@@ -775,10 +842,14 @@
     btn.classList.toggle('loading', on);
   }
 
+
   async function launchNmap() {
-    const target = document.getElementById('nmap-target').value.trim();
-    const ports  = document.getElementById('nmap-ports').value.trim();
+    const target  = document.getElementById('nmap-target').value.trim();
+    const ports   = document.getElementById('nmap-ports').value.trim();
+    const timeout = parseInt(document.getElementById('nmap-timeout').value, 10);
+
     if (!target || !ports) { showPanelAlert('nmap', 'Rellena el target y los puertos.'); return; }
+    if (!timeout || timeout <= 0) { showPanelAlert('nmap', 'El timeout debe ser un número positivo.'); return; }
 
     setLaunching('btn-nmap', true);
     const headers = await Session.authHeaders();
@@ -786,20 +857,22 @@
     try {
       const res  = await fetch(`${API_BASE}/sentinel/nmap`, {
         method: 'POST', headers,
-        body: JSON.stringify({ target, ports })
+        body: JSON.stringify({ target, ports, timeout })
       });
       const data = await res.json();
       if (!res.ok) { showPanelAlert('nmap', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
-      showPanelAlert('nmap', `Escaneo Nmap iniciado (ID: ${(data.scanIds || []).join(', ')})`, 'success');
+      showPanelAlert('nmap', `Escaneo Nmap iniciado (ID: ${(data.scanIds || []).join(', ')}) — timeout: ${timeout}s`, 'success');
       setTimeout(() => loadScans('nmap'), 1200);
     } catch { showPanelAlert('nmap', 'No se pudo conectar con la API.'); }
     finally   { setLaunching('btn-nmap', false); }
   }
 
+
   async function launchNikto() {
     const target  = document.getElementById('nikto-target').value.trim();
     const timeout = parseInt(document.getElementById('nikto-timeout').value, 10);
     if (!target) { showPanelAlert('nikto', 'Introduce una URL de destino.'); return; }
+
 
     setLaunching('btn-nikto', true);
     const headers = await Session.authHeaders();
@@ -817,10 +890,12 @@
     finally   { setLaunching('btn-nikto', false); }
   }
 
+
   async function launchOpenvas() {
     const target = document.getElementById('openvas-target').value.trim();
     const config = document.getElementById('openvas-config').value;
     if (!target) { showPanelAlert('openvas', 'Introduce una IP de destino.'); return; }
+
 
     setLaunching('btn-openvas', true);
     const headers = await Session.authHeaders();
@@ -838,6 +913,7 @@
     finally   { setLaunching('btn-openvas', false); }
   }
 
+
   /* ============================================================
      PDF DOWNLOAD
   ============================================================ */
@@ -852,6 +928,7 @@
     a.href = url; a.download = `scan_${id}.pdf`; a.click();
     URL.revokeObjectURL(url);
   }
+
 
   /* ============================================================
      DELETE SCAN
@@ -871,6 +948,7 @@
     }
   }
 
+
   /* ============================================================
      CANCEL SCAN
   ============================================================ */
@@ -888,12 +966,14 @@
     }
   }
 
+
   /* ============================================================
      INIT
   ============================================================ */
   loadStats();
   loadScans('nmap');
 </script>
+
 
 </body>
 </html>
