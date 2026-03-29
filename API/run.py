@@ -27,8 +27,7 @@ from src.misc.logging import SecOpsLogger
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
-# Tiempo máximo (segundos) para esperar a que los threads de escaneo terminen
-# antes de forzar la salida del proceso.
+
 SHUTDOWN_TIMEOUT = 30
 
 
@@ -60,7 +59,6 @@ def _graceful_shutdown(signum, frame) -> None:
     sys.exit(0)
 
 
-# Registrar señales lo antes posible, antes de crear la app
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT,  _graceful_shutdown)
 

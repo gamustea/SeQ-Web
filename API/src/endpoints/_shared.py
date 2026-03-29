@@ -17,6 +17,9 @@ from functools import wraps
 from typing import Optional, Tuple, Any
 
 from flask import request, jsonify
+# src/misc/limiter.py  (nuevo fichero)
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from src.core.exceptions import (
     ScanNotFoundError,
