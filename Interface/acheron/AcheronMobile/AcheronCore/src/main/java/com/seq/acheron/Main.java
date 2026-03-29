@@ -28,6 +28,7 @@ public class Main {
                         .toJson()
         );
         Vault newVault = vf.fromJson(mockVault.encryptAll().toJson(), "Contraseña");
+        System.out.println("Vault encriptado: \n" + mockVault);
         System.out.println("Vault derivado desencriptado:\n" +
                 newVault
                 .decryptAll()

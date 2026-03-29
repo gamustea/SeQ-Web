@@ -47,3 +47,6 @@ Thumbs.db
 local.properties
 
 API/src/config/SecConfig.json
+
+.claude
+CLAUDE.md
