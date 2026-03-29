@@ -1,14 +1,15 @@
 # Web Framework
-Flask==3.0.0
-flask-cors==4.0.0
+Flask>=3.0.0
+flask-cors>=4.0.0
 
 # Database & ORM
-SQLAlchemy==2.0.23
-psycopg2-binary==2.9.9
+SQLAlchemy>=2.0.23
+# Eliminado psycopg2-binary por uso de MySQL
+pymysql>=1.0.3
 
 # PDF Generation
-reportlab==4.0.7
-Pillow==10.1.0
+reportlab>=4.0.7
+Pillow>=11.0.0
 
 # Python-Nmap: Interfaz Python para Nmap
 python-nmap==0.7.1
@@ -17,23 +18,24 @@ python-nmap==0.7.1
 ipaddress==1.0.23
 
 # XML Processing (for Nmap and Nikto output parsing)
-lxml==4.9.3
+lxml>=4.9.3
 xmltodict==0.13.0
 
 # Logging & Utilities
 python-dateutil==2.8.2
 
 # Testing (optional but recommended)
-pytest==7.4.3
-pytest-cov==4.1.0
-pytest-mock==3.12.0
+pytest>=7.4.3
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
 
 # Type Hints & Code Quality (development)
-mypy==1.7.1
-black==23.11.0
-flake8==6.1.0
-pymysql==1.0.3
-cryptography==41.0.4
+mypy>=1.7.1
+black>=23.11.0
+flake8>=6.1.0
+
+# Security, API & Utilities
+cryptography>=41.0.4
 flask_limiter
 PyJWT
 dnspython
@@ -45,16 +47,6 @@ duckduckgo-search>=6.0
 # NOTA IMPORTANTE:
 # Nmap y Nikto deben instalarse directamente en el sistema operativo:
 # 
-# Linux (Debian/Ubuntu):
-#   sudo apt-get update
-#   sudo apt-get install nmap nikto
-#
-# Linux (RedHat/CentOS):
-#   sudo yum install nmap nikto
-#
-# macOS (con Homebrew):
-#   brew install nmap nikto
-#
 # Windows:
 #   Descargar instaladores desde:
 #   - Nmap: https://nmap.org/download.html
