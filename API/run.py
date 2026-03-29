@@ -3,7 +3,7 @@ run.py — Punto de entrada de la API SeQ
 ════════════════════════════════════════
 Responsabilidades de este fichero:
   1. Crear la aplicación Flask.
-  2. Configurar CORS y rate limiting.
+  2. Configurar CORS y rate limiting (via init_app del limiter de _shared).
   3. Registrar los blueprints (via endpoints.register_blueprints).
   4. Instalar manejadores de error globales.
   5. Gestionar el apagado graceful (SIGTERM / SIGINT).
@@ -18,30 +18,18 @@ import sys
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
 from src.endpoints import register_blueprints
+from src.endpoints._shared import limiter
 from src.misc.logging import SecOpsLogger
 
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
-
 SHUTDOWN_TIMEOUT = 30
 
 
 def _graceful_shutdown(signum, frame) -> None:
-    """
-    Handler para SIGTERM / SIGINT.
-
-    1. Cancela todas las tareas de escaneo activas (Nmap, Nikto, OpenVAS).
-    2. Espera hasta SHUTDOWN_TIMEOUT segundos a que sus threads terminen.
-    3. Sale con código 0.
-
-    Importamos ScanManager aquí (import tardío) para evitar importación
-    circular en el momento del arranque.
-    """
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
 
@@ -64,12 +52,6 @@ signal.signal(signal.SIGINT,  _graceful_shutdown)
 
 
 def create_app() -> Flask:
-    """
-    Crea y configura la aplicación Flask.
-
-    Usar el patrón Application Factory facilita los tests de integración:
-    cada test puede instanciar su propio `app` sin efectos secundarios globales.
-    """
     app = Flask(__name__)
 
     _configure_cors(app)
@@ -82,39 +64,25 @@ def create_app() -> Flask:
 
 
 def _configure_cors(app: Flask) -> None:
-    """
-    Restringe los orígenes permitidos al valor de la variable de entorno
-    ALLOWED_ORIGINS (lista separada por comas). En local se permite
-    http://localhost:8080 y el origen del frontend de desarrollo.
-    """
     raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
-    origins.append("http://127.0.0.1:3000")   # dev frontend
+    origins.append("http://127.0.0.1:3000")
     CORS(app, origins=origins, supports_credentials=True)
 
 
 def _configure_rate_limiting(app: Flask) -> None:
     """
-    Aplica límites globales para prevenir fuerza bruta y DDoS básico.
-    El límite de /oauth/token se refina dentro del propio blueprint.
+    Asocia el único Limiter de la aplicación (definido en _shared.py)
+    a esta instancia de Flask.
+
+    NO se crea un segundo Limiter aquí: tener dos instancias provoca que
+    Flask-Limiter aplique ambos default_limits y gane el más restrictivo,
+    lo que generaba 429 con solo 4-5 escaneos en paralelo.
     """
-    Limiter(
-        get_remote_address,
-        app=app,
-        default_limits=["200 per day", "50 per hour"],
-        storage_uri="memory://",
-    )
+    limiter.init_app(app)
 
 
 def _register_error_handlers(app: Flask) -> None:
-    """
-    Manejadores de error a nivel de aplicación.
-
-    Los errores de negocio (ValidationError, ScanNotFoundError, …) se capturan
-    dentro de cada blueprint; estos manejadores actúan como última red de seguridad
-    para errores HTTP puros (404 de ruta, 405, 500 inesperado).
-    """
-
     @app.errorhandler(404)
     def not_found(error):
         _logger.warning(f"Ruta no encontrada: {request.method} {request.url}")
@@ -153,6 +121,5 @@ def _register_error_handlers(app: Flask) -> None:
 app = create_app()
 
 if __name__ == "__main__":
-    # debug=True NUNCA en producción — se controla con la variable de entorno.
     debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     app.run(debug=debug_mode, host="0.0.0.0", port=5000)

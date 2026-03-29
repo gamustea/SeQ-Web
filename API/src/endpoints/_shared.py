@@ -17,7 +17,6 @@ from functools import wraps
 from typing import Optional, Tuple, Any
 
 from flask import request, jsonify
-# src/misc/limiter.py  (nuevo fichero)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
@@ -41,9 +40,14 @@ from src.logic.managers import (
 from src.misc.logging import SecOpsLogger
 
 _logger = SecOpsLogger(name="API").get_logger()
+
+# Único Limiter de la aplicación. Se asocia a la app Flask mediante
+# init_app(app) desde run.py (patrón Application Factory).
+# default_limits=[] significa que no hay límite global automático;
+# cada ruta define el suyo propio con @limiter.limit(...).
 limiter = Limiter(
     get_remote_address,
-    default_limits=["500 per day", "120 per hour"],  # sube el global
+    default_limits=[],
     storage_uri="memory://",
 )
 
