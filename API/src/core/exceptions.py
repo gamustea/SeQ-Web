@@ -547,10 +547,10 @@ class UserNotFoundError(AuthenticationError):
     """Usuario no encontrado"""
     default_code = ErrorCode.USER_NOT_FOUND
 
-    def __init__(self, username: str):
+    def __init__(self, user_id: int):
         super().__init__(
-            message=f"Usuario '{username}' no encontrado",
-            details={"username": username},
+            message=f"Usuario '{user_id}' no encontrado",
+            details={"id_usuario": user_id},
             user_message="Usuario no encontrado."
         )
 

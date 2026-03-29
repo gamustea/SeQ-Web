@@ -4,8 +4,7 @@ flask-cors>=4.0.0
 
 # Database & ORM
 SQLAlchemy>=2.0.23
-# Eliminado psycopg2-binary por uso de MySQL
-pymysql>=1.0.3
+psycopg2-binary
 
 # PDF Generation
 reportlab>=4.0.7

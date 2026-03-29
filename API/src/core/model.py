@@ -1,10 +1,19 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Text, Boolean, UniqueConstraint, Float
+from sqlalchemy import (
+    Column, 
+    Integer, 
+    String, 
+    DateTime, 
+    ForeignKey, 
+    Table, 
+    Text, 
+    Boolean, 
+    UniqueConstraint, 
+    Float,
+    create_engine)
 from sqlalchemy.orm import relationship, declarative_base
 
-
 Base = declarative_base()
-
 
 TargetPort = Table(
     "TargetPort",
@@ -515,9 +524,9 @@ class OpenVASVulnerability(Base):
     name = Column(Text, nullable=False)
     
     # Severidad
-    severity_score = Column(Float(3, 1))
+    severity_score = Column(Float(3))
     severity_class = Column(String(20), index=True)
-    cvss_base_score = Column(Float(3, 1))
+    cvss_base_score = Column(Float(3))
     cvss_vector = Column(String(255))
     
     # Referencias (JSON strings o CSV)

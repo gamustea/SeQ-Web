@@ -45,8 +45,6 @@ def reverse_dns_lookup(ip_address: str) -> Optional[str]:
         print(f"Error: {e}")
         return None
     
-
-
 def normalize_target(user_input: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Normaliza el target del usuario a IP + hostname.
@@ -81,7 +79,7 @@ def normalize_target(user_input: str) -> Tuple[Optional[str], Optional[str]]:
         try:
             hostname = socket.gethostbyaddr(ip)[0]
         except (socket.herror, socket.gaierror):
-            pass
+            hostname = ip
             
     except ValueError:
         hostname = cleaned_input

@@ -1,4 +1,3 @@
-
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List
@@ -35,19 +34,43 @@ class ScanResultProcessor(ABC):
         pass
     
     def _get_or_create_host(self, target: str) -> Host:
-        """Obtiene o crea un host en la BD"""
+        """Obtiene o crea un host en la BD.
+
+        Garantías:
+        - hostname nunca es None (cae back a la IP o al target original).
+        - ip_address nunca es None (cae back al target original).
+        - mac_address se establece a cadena vacía si no está disponible, evitando
+          NotNullViolation ya que la columna es NOT NULL en el modelo.
+        """
         ip, hostname = normalize_target(target)
-        
+
+        # Fallbacks para evitar NOT NULL violations
+        if not hostname:
+            hostname = ip or target
+        if not ip:
+            ip = target
+
+        # Buscar por hostname primero; si no, por IP (host creado sin PTR)
         host = self.session.query(Host).filter(
             Host.hostname == hostname
         ).one_or_none()
-        
+
         if not host:
-            host = Host(hostname=hostname, ip_address=ip)
+            # Buscar también por IP por si ya existe con distinto hostname
+            host = self.session.query(Host).filter(
+                Host.ip_address == ip
+            ).first()
+
+        if not host:
+            host = Host(
+                hostname=hostname,
+                ip_address=ip,
+                mac_address="",   # NOT NULL en modelo; cadena vacía como nulo semántico
+            )
             self.session.add(host)
             self.session.flush()
-            self.logger.info(f"Host creado: {hostname}")
-        
+            self.logger.info(f"Host creado: {hostname} ({ip})")
+
         return host
     
     def _mark_scan_finished(self, scan_id: int) -> None:
@@ -374,7 +397,6 @@ class NiktoResultProcessor(ScanResultProcessor):
             # ========================================================================
             # Por defecto, asignar MEDIUM como nivel conservador
             incident.severity = "MEDIUM"
-
 
         try:
             # Convertir resultados JSON

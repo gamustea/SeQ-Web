@@ -27,9 +27,8 @@ from typing import Any, Optional
 import ollama
 
 from sqlalchemy import create_engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import Session, scoped_session, sessionmaker, joinedload
-from pymysql.err import IntegrityError
 
 from src.logic.documents import AegisAIWriter, AegisAlertFetcher, AegisContent
 from src.core.exceptions import ExistingUserError, UserBindingError, DatabaseError
@@ -63,9 +62,7 @@ from src.logic.processors import (
     ScanResultProcessor
 ) 
 
-
 StorableKind = Literal["account", "creditcard"]
-
 
 config_reader = ConfigReader()
 (   
@@ -92,7 +89,7 @@ def initialize_engine(database_url: Optional[str] = None):
             # Obtener credenciales por defecto
             (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_crendetials()
             database_url = (
-                f"mysql+pymysql://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}/{DBNAME}"
+                f"postgresql+psycopg2://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}/{DBNAME}"
             )
         
         _ENGINE = create_engine(
@@ -399,13 +396,12 @@ class ScanManager(BaseManager, ABC):
 
             # Ejecutar escaneo
             task.scan()
-            success = task.wait(timeout=task.timeout + 30)
+            success = task.wait(timeout=task.timeout + 1000)
             
             if not success or task.results is None:
                 thread_manager.logger.error(
                     f"Escaneo {scan_id} falló. Estado: {task.status}"
                 )
-                thread_manager._mark_scan_as_failed(scan)
                 return
             
             scan.status = "finished"
@@ -435,7 +431,7 @@ class ScanManager(BaseManager, ABC):
     def _mark_scan_as_failed(self, scan: Scan) -> None:
         """Marca un escaneo como fallido"""
         scan.status = "failed"
-        scan.ended_at = datetime.now()
+        scan.finished_at = datetime.now()  # campo correcto del modelo Scan
         self.session.add(scan)
         self._safe_commit()
     
@@ -541,10 +537,10 @@ class OpenVASScanManager(ScanManager):
         super().__init__(user, session)
         
         config = ConfigReader().get_openvas_config()["access"]
-        self.hostname = config["hostname"]
-        self.port = config["port"]
-        self.username = config["username"]
-        self.password = config["password"]
+        self.hostname = config["hostname"] # type: ignore
+        self.port = config["port"] # type: ignore
+        self.username = config["username"] # type: ignore
+        self.password = config["password"] # type: ignore
     
     def run_scan(self, target: str, scan_config: str = 'full_fast') -> int:
         """Inicia un escaneo OpenVAS"""
@@ -553,7 +549,7 @@ class OpenVASScanManager(ScanManager):
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
             
             # Crear registro en BD
-            scan = self._create_scan_record(target=target_ip)
+            scan = self._create_scan_record(target=target_ip) # type: ignore
             scan_id = scan.id
             
             # Crear tarea
@@ -998,28 +994,38 @@ class UserManager(BaseManager):
         """Obtiene todos los usuarios."""
         return self._get_all(User)
     
-    def update_user_password(self, user: User, new_password: str) -> None:
+    def update_user_password(self, user_or_id, new_password: str) -> None:
         """
         Actualiza la contraseña de un usuario.
-        
+
+        Acepta tanto un objeto User como un user_id (int), para ser compatible
+        con las llamadas desde run.py que pasan el ID directamente.
+
         Args:
-            user (User): Usuario a actualizar
-            new_password (str): Nueva contraseña
+            user_or_id: Objeto User o ID entero del usuario a actualizar.
+            new_password (str): Nueva contraseña en texto plano.
         """
         self._check_session()
-        
+
+        if isinstance(user_or_id, int):
+            user = self.get_user_by_id(user_or_id)
+            if not user:
+                raise UserBindingError(username=str(user_or_id), alias="unknown")
+        else:
+            user = user_or_id
+
         try:
             new_salt = Encoder.generate_salt()
             new_hash = Encoder.hash_password_with_salt(new_password, new_salt)
-            
+
             user.password_salt = new_salt
             user.password_hash = new_hash
-            
+
             self.session.add(user)
             self._safe_commit()
-            
+
             self.logger.info(f"Contraseña actualizada para usuario {user.id}")
-        
+
         except Exception as e:
             self._safe_rollback()
             self.logger.error(f"Error actualizando contraseña: {e}")
@@ -2162,7 +2168,7 @@ class AegisManager(BaseManager):
             pill_content = self._generate_content(topic_id, tweaks, cfg)
 
             alerts = self.alert_fetcher.fetch_alerts(
-                brands=cfg.get("brands", []),
+                brands=tweaks.get("associatedBrands", []),
                 max_per_brand=2,
                 timeout=10,
             )

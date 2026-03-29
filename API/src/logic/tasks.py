@@ -46,7 +46,7 @@ class _Task(ABC):
     logger = SecOpsLogger(name=__name__).get_logger()
     progress: int = 0
 
-    def __init__(self, target: str, timeout: int = 20):
+    def __init__(self, target: str, timeout: int = 200000):
         self.timeout = timeout
         self.results: Optional[Any] = None
         self.target: str = target
@@ -297,50 +297,184 @@ class NmapScanTask(_Task):
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _build_command(self) -> List[str]:
-        """Construye el comando nmap."""
+        wsl_output = str(self._output_file).replace("\\", "/")
+        if len(wsl_output) > 2 and wsl_output[1] == ":":
+            drive = wsl_output[0].lower()
+            wsl_output = f"/mnt/{drive}/{wsl_output[3:]}"
         return [
-            "sudo",
-            "-n",
-            "nmap",
-            "-sV",
-            "-sT",
+            "wsl", "-d", "Ubuntu", "-u", "gmiga",
+            "sudo", "-n", "nmap",
+            "-sV", "-sT",
             "-p", self.target_ports,
-            "-oX", str(self._output_file),
+            "-oX", wsl_output,
             self.target,
             "--stats-every", "1s"
         ]
 
     def _process_results(self) -> None:
-        """Procesa el XML generado por nmap."""
         try:
-            self.scanner = PortScanner()
-            
-            if not self._output_file.exists(): # type: ignore
+            if not self._output_file.exists():
                 self.logger.error(f"Archivo XML no existe: {self._output_file}")
                 self.results = None
                 return
-            
-            if self._output_file.stat().st_size == 0: # type: ignore
+            if self._output_file.stat().st_size == 0:
                 self.logger.error(f"Archivo XML está vacío: {self._output_file}")
                 self.results = None
                 return
-            
-            with self._output_file.open("r") as f: # type: ignore
+
+            with self._output_file.open("r", encoding="utf-8") as f:
                 xml_data = f.read()
-            
+
             if not xml_data.strip():
                 self.logger.error("Contenido del XML está vacío")
                 self.results = None
                 return
-            
-            
-            self.results = self.scanner.analyse_nmap_xml_scan(xml_data)
-            self.logger.info(f"Resultados procesados: {self._output_file}") 
-        
+
+            self.results = self._parse_nmap_xml(xml_data)
+            self.logger.info(f"Resultados procesados: {self._output_file}")
+
         except Exception as e:
             self.logger.error(f"Error procesando resultados: {e}", exc_info=True)
             self.results = None
             raise
+
+    def _parse_nmap_xml(self, xml_data: str) -> dict:
+        """
+        Parsea el XML de nmap reproduciendo exactamente la estructura
+        que devuelve PortScanner.analyse_nmap_xml_scan(), que es lo que
+        espera JSONManager.convert_json_to_individual_nmap_data().
+        Estructura devuelta:
+        {
+            "nmap": {"command_line": "...", "scaninfo": {...}, ...},
+            "scan": {
+                "192.168.1.1": {
+                    "hostnames": [{"name": "...", "type": "..."}],
+                    "addresses": {"ipv4": "...", "mac": "..."},
+                    "vendor": {"MAC": "vendor"},
+                    "status": {"state": "up", "reason": "..."},
+                    "tcp": {
+                        80: {"state": "open", "reason": "...", "name": "http",
+                            "product": "...", "version": "...", "extrainfo": "...",
+                            "conf": "...", "cpe": ""}
+                    }
+                }
+            },
+            "stats": {"timestr": "...", "elapsed": "...", "uphosts": "1", ...}
+        }
+        """
+        root = ET.fromstring(xml_data)
+
+        # ── Metadatos del escaneo ──────────────────────────────────────────────
+        nmap_meta = {
+            "command_line": root.get("args", ""),
+            "version": root.get("version", ""),
+            "scanflags": "",
+            "scaninfo": {}
+        }
+        scaninfo_el = root.find("scaninfo")
+        if scaninfo_el is not None:
+            nmap_meta["scaninfo"] = {
+                "type": scaninfo_el.get("type", ""),
+                "protocol": scaninfo_el.get("protocol", ""),
+                "numservices": scaninfo_el.get("numservices", ""),
+                "services": scaninfo_el.get("services", ""),
+            }
+
+        # ── Stats ──────────────────────────────────────────────────────────────
+        stats = {}
+        runstats = root.find("runstats")
+        if runstats is not None:
+            finished = runstats.find("finished")
+            hosts_el = runstats.find("hosts")
+            stats = {
+                "timestr": finished.get("timestr", "") if finished is not None else "",
+                "elapsed": finished.get("elapsed", "") if finished is not None else "",
+                "uphosts": hosts_el.get("up", "0") if hosts_el is not None else "0",
+                "downhosts": hosts_el.get("down", "0") if hosts_el is not None else "0",
+                "totalhosts": hosts_el.get("total", "0") if hosts_el is not None else "0",
+            }
+
+        # ── Hosts ──────────────────────────────────────────────────────────────
+        scan = {}
+        for host in root.findall("host"):
+            # Dirección IP principal
+            addr_el = host.find("address[@addrtype='ipv4']")
+            if addr_el is None:
+                addr_el = host.find("address")
+            if addr_el is None:
+                continue
+            ip = addr_el.get("addr", "unknown")
+
+            # Todas las direcciones (ipv4, mac...)
+            addresses = {}
+            vendor = {}
+            for a in host.findall("address"):
+                atype = a.get("addrtype", "")
+                addr_val = a.get("addr", "")
+                addresses[atype] = addr_val
+                if atype == "mac" and a.get("vendor"):
+                    vendor[addr_val] = a.get("vendor", "")
+
+            # Estado
+            status_el = host.find("status")
+            status = {
+                "state": status_el.get("state", "unknown") if status_el is not None else "unknown",
+                "reason": status_el.get("reason", "") if status_el is not None else "",
+            }
+
+            # Hostnames
+            hostnames = []
+            hostnames_el = host.find("hostnames")
+            if hostnames_el is not None:
+                for hn in hostnames_el.findall("hostname"):
+                    hostnames.append({
+                        "name": hn.get("name", ""),
+                        "type": hn.get("type", ""),
+                    })
+            # Si no hay hostname, usar la IP
+            if not hostnames:
+                hostnames.append({"name": ip, "type": "PTR"})
+
+            # Puertos TCP y UDP
+            tcp_ports = {}
+            udp_ports = {}
+            ports_el = host.find("ports")
+            if ports_el is not None:
+                for port_el in ports_el.findall("port"):
+                    proto = port_el.get("protocol", "tcp")
+                    portid = int(port_el.get("portid", 0))
+                    state_el = port_el.find("state")
+                    service_el = port_el.find("service")
+
+                    port_data = {
+                        "state": state_el.get("state", "") if state_el is not None else "",
+                        "reason": state_el.get("reason", "") if state_el is not None else "",
+                        "name": service_el.get("name", "") if service_el is not None else "",
+                        "product": service_el.get("product", "") if service_el is not None else "",
+                        "version": service_el.get("version", "") if service_el is not None else "",
+                        "extrainfo": service_el.get("extrainfo", "") if service_el is not None else "",
+                        "conf": service_el.get("conf", "") if service_el is not None else "",
+                        "cpe": "",
+                    }
+                    cpe_el = service_el.find("cpe") if service_el is not None else None
+                    if cpe_el is not None and cpe_el.text:
+                        port_data["cpe"] = cpe_el.text
+
+                    if proto == "tcp":
+                        tcp_ports[portid] = port_data
+                    else:
+                        udp_ports[portid] = port_data
+
+            scan[ip] = {
+                "hostnames": hostnames,
+                "addresses": addresses,
+                "vendor": vendor,
+                "status": status,
+                "tcp": tcp_ports,
+                "udp": udp_ports,
+            }
+
+        return {"nmap": nmap_meta, "scan": scan, "stats": stats}
 
 
 class NiktoScanTask(_Task):
@@ -356,14 +490,17 @@ class NiktoScanTask(_Task):
         self.temp_path = DirectoryChecker().verify_directory(DirectoryType.TEMP) / f"nikto_scan_{timestamp}.xml"
         self._output_file = self.temp_path
 
+    # NUEVO (con WSL + conversión de ruta):
     def _build_command(self) -> List[str]:
-        """Construye el comando Nikto."""
+        wsl_path = str(self.temp_path).replace("\\", "/")
+        if len(wsl_path) > 2 and wsl_path[1] == ":":
+            drive = wsl_path[0].lower()
+            wsl_path = f"/mnt/{drive}/{wsl_path[3:]}"
         return [
-            "nikto",
-            "-h", self.target,
-            "-o", str(self.temp_path),
-            "-Format", "xml",
-            "-nointeractive",
+            "wsl", "-d", "Ubuntu", "-u", "gmiga",
+            "nikto", "-h", self.target,
+            "-o", wsl_path,
+            "-Format", "xml", "-nointeractive",
             "-maxtime", str(self.timeout),
         ]
 
