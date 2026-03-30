@@ -1,0 +1,1813 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict cpgXaU6hdsZYppb9B11PO8LCIR5pohavhQr6VddpLdrFCNiVqKcjzhIvHiXC5b7
+
+-- Dumped from database version 18.3
+-- Dumped by pg_dump version 18.3
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: AccessToken; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."AccessToken" (
+    id integer NOT NULL,
+    token character varying(512) NOT NULL,
+    user_id integer NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    revoked integer
+);
+
+
+ALTER TABLE public."AccessToken" OWNER TO "SecOps";
+
+--
+-- Name: AccessToken_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."AccessToken_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."AccessToken_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: AccessToken_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."AccessToken_id_seq" OWNED BY public."AccessToken".id;
+
+
+--
+-- Name: Account; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Account" (
+    id integer NOT NULL,
+    username character varying(512) NOT NULL,
+    domain character varying(512) NOT NULL,
+    password character varying(512) NOT NULL
+);
+
+
+ALTER TABLE public."Account" OWNER TO "SecOps";
+
+--
+-- Name: AegisDocument; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."AegisDocument" (
+    id integer NOT NULL,
+    title character varying(64) NOT NULL,
+    filename character varying(128) NOT NULL,
+    status character varying(32),
+    generated_at timestamp without time zone NOT NULL,
+    topic_id integer NOT NULL,
+    user_id integer NOT NULL
+);
+
+
+ALTER TABLE public."AegisDocument" OWNER TO "SecOps";
+
+--
+-- Name: AegisDocument_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."AegisDocument_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."AegisDocument_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: AegisDocument_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."AegisDocument_id_seq" OWNED BY public."AegisDocument".id;
+
+
+--
+-- Name: CreditCard; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."CreditCard" (
+    id integer NOT NULL,
+    cardholder_name character varying(512) NOT NULL,
+    card_number character varying(512) NOT NULL,
+    expiration_date character varying(512) NOT NULL,
+    postal_code character varying(512) NOT NULL,
+    cvv character varying(512) NOT NULL
+);
+
+
+ALTER TABLE public."CreditCard" OWNER TO "SecOps";
+
+--
+-- Name: Host; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Host" (
+    id integer NOT NULL,
+    hostname character varying(64) NOT NULL,
+    ip_address character varying(15) NOT NULL,
+    mac_address character varying(17) NOT NULL,
+    vendor character varying(64)
+);
+
+
+ALTER TABLE public."Host" OWNER TO "SecOps";
+
+--
+-- Name: Host_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Host_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Host_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Host_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Host_id_seq" OWNED BY public."Host".id;
+
+
+--
+-- Name: NiktoIncident; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."NiktoIncident" (
+    id integer NOT NULL,
+    osvdb_id character varying(20),
+    method character varying(10),
+    url character varying(512) NOT NULL,
+    description text NOT NULL,
+    severity character varying(20),
+    port integer,
+    "references" text,
+    discovered_at timestamp without time zone NOT NULL
+);
+
+
+ALTER TABLE public."NiktoIncident" OWNER TO "SecOps";
+
+--
+-- Name: NiktoIncident_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."NiktoIncident_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."NiktoIncident_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: NiktoIncident_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."NiktoIncident_id_seq" OWNED BY public."NiktoIncident".id;
+
+
+--
+-- Name: NiktoScan; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."NiktoScan" (
+    id integer NOT NULL
+);
+
+
+ALTER TABLE public."NiktoScan" OWNER TO "SecOps";
+
+--
+-- Name: NmapScan; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."NmapScan" (
+    id integer NOT NULL
+);
+
+
+ALTER TABLE public."NmapScan" OWNER TO "SecOps";
+
+--
+-- Name: OpenPort; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."OpenPort" (
+    port_id integer NOT NULL,
+    nmap_scan_id integer NOT NULL,
+    reason character varying(255) NOT NULL,
+    product character varying(255),
+    version character varying(64),
+    given_use character varying(255)
+);
+
+
+ALTER TABLE public."OpenPort" OWNER TO "SecOps";
+
+--
+-- Name: OpenVASScan; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."OpenVASScan" (
+    id integer NOT NULL,
+    task_id character varying(255) NOT NULL,
+    report_id character varying(255) NOT NULL,
+    scan_config_name character varying(255),
+    scanner_name character varying(255)
+);
+
+
+ALTER TABLE public."OpenVASScan" OWNER TO "SecOps";
+
+--
+-- Name: OpenVASScanResult; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."OpenVASScanResult" (
+    id integer NOT NULL,
+    openvas_scan_id integer NOT NULL,
+    vulnerability_id integer NOT NULL,
+    host_id integer NOT NULL,
+    detected_at timestamp without time zone NOT NULL
+);
+
+
+ALTER TABLE public."OpenVASScanResult" OWNER TO "SecOps";
+
+--
+-- Name: OpenVASScanResult_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."OpenVASScanResult_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."OpenVASScanResult_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: OpenVASScanResult_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."OpenVASScanResult_id_seq" OWNED BY public."OpenVASScanResult".id;
+
+
+--
+-- Name: OpenVASVulnerability; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."OpenVASVulnerability" (
+    id integer NOT NULL,
+    nvt_oid character varying(255) NOT NULL,
+    name text NOT NULL,
+    severity_score real,
+    severity_class character varying(20),
+    cvss_base_score real,
+    cvss_vector character varying(255),
+    cve_ids text,
+    cert_refs text,
+    bugtraq_ids text,
+    other_refs text,
+    summary text,
+    description text,
+    impact text,
+    insight text,
+    affected_software text,
+    solution_type character varying(50),
+    solution text,
+    qod_value integer,
+    qod_type character varying(100),
+    family character varying(255),
+    category character varying(255),
+    created_at timestamp without time zone NOT NULL,
+    updated_at timestamp without time zone
+);
+
+
+ALTER TABLE public."OpenVASVulnerability" OWNER TO "SecOps";
+
+--
+-- Name: OpenVASVulnerability_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."OpenVASVulnerability_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."OpenVASVulnerability_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: OpenVASVulnerability_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."OpenVASVulnerability_id_seq" OWNED BY public."OpenVASVulnerability".id;
+
+
+--
+-- Name: Person; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Person" (
+    id integer NOT NULL,
+    first_name character varying(64) NOT NULL,
+    last_name character varying(64) NOT NULL,
+    alias character varying(64) NOT NULL,
+    created_at timestamp without time zone NOT NULL
+);
+
+
+ALTER TABLE public."Person" OWNER TO "SecOps";
+
+--
+-- Name: Person_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Person_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Person_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Person_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Person_id_seq" OWNED BY public."Person".id;
+
+
+--
+-- Name: Port; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Port" (
+    id integer NOT NULL,
+    protocol character varying(255) NOT NULL
+);
+
+
+ALTER TABLE public."Port" OWNER TO "SecOps";
+
+--
+-- Name: Port_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Port_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Port_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Port_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Port_id_seq" OWNED BY public."Port".id;
+
+
+--
+-- Name: RefreshToken; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."RefreshToken" (
+    id integer NOT NULL,
+    token character varying(512) NOT NULL,
+    user_id integer NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    revoked integer
+);
+
+
+ALTER TABLE public."RefreshToken" OWNER TO "SecOps";
+
+--
+-- Name: RefreshToken_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."RefreshToken_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."RefreshToken_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: RefreshToken_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."RefreshToken_id_seq" OWNED BY public."RefreshToken".id;
+
+
+--
+-- Name: Rol; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Rol" (
+    id integer NOT NULL,
+    name character varying(32) NOT NULL,
+    description character varying(128),
+    hierarchy_level integer NOT NULL
+);
+
+
+ALTER TABLE public."Rol" OWNER TO "SecOps";
+
+--
+-- Name: Rol_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Rol_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Rol_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Rol_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Rol_id_seq" OWNED BY public."Rol".id;
+
+
+--
+-- Name: Scan; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Scan" (
+    id integer NOT NULL,
+    target character varying(255) NOT NULL,
+    started_at timestamp without time zone NOT NULL,
+    status character varying(20) NOT NULL,
+    user_id integer NOT NULL,
+    scan_type character varying(50),
+    frecuent boolean NOT NULL,
+    host_id integer,
+    finished_at timestamp without time zone
+);
+
+
+ALTER TABLE public."Scan" OWNER TO "SecOps";
+
+--
+-- Name: ScanIncident; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."ScanIncident" (
+    nikto_scan_id integer NOT NULL,
+    nikto_incident_id integer NOT NULL
+);
+
+
+ALTER TABLE public."ScanIncident" OWNER TO "SecOps";
+
+--
+-- Name: Scan_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Scan_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Scan_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Scan_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Scan_id_seq" OWNED BY public."Scan".id;
+
+
+--
+-- Name: Storable; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Storable" (
+    id integer NOT NULL,
+    internal_id character varying(128),
+    title character varying(128),
+    created_at timestamp without time zone NOT NULL,
+    updated_at timestamp without time zone NOT NULL,
+    vault_id integer NOT NULL,
+    type character varying(50) NOT NULL
+);
+
+
+ALTER TABLE public."Storable" OWNER TO "SecOps";
+
+--
+-- Name: Storable_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Storable_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Storable_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Storable_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Storable_id_seq" OWNED BY public."Storable".id;
+
+
+--
+-- Name: TargetPort; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."TargetPort" (
+    port_id integer NOT NULL,
+    nmap_scan_id integer NOT NULL
+);
+
+
+ALTER TABLE public."TargetPort" OWNER TO "SecOps";
+
+--
+-- Name: Topic; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Topic" (
+    id integer NOT NULL,
+    title character varying(64) NOT NULL
+);
+
+
+ALTER TABLE public."Topic" OWNER TO "SecOps";
+
+--
+-- Name: Topic_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Topic_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Topic_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Topic_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Topic_id_seq" OWNED BY public."Topic".id;
+
+
+--
+-- Name: User; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."User" (
+    id integer NOT NULL,
+    username character varying(64) NOT NULL,
+    password_hash character varying(128) NOT NULL,
+    password_salt character varying(128) NOT NULL,
+    person_id integer NOT NULL,
+    rol_id integer NOT NULL,
+    email character varying(128) NOT NULL
+);
+
+
+ALTER TABLE public."User" OWNER TO "SecOps";
+
+--
+-- Name: User_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."User_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."User_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: User_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."User_id_seq" OWNED BY public."User".id;
+
+
+--
+-- Name: Vault; Type: TABLE; Schema: public; Owner: SecOps
+--
+
+CREATE TABLE public."Vault" (
+    id integer NOT NULL,
+    user_id integer NOT NULL,
+    is_recovery boolean NOT NULL,
+    checker character varying(512) NOT NULL,
+    vault_key character varying(512) NOT NULL,
+    transformation character varying(64) NOT NULL,
+    kdf character varying(64) NOT NULL,
+    kdf_iterations integer NOT NULL,
+    kdf_memory integer NOT NULL,
+    kdf_parallelism integer NOT NULL,
+    salt character varying(128) NOT NULL
+);
+
+
+ALTER TABLE public."Vault" OWNER TO "SecOps";
+
+--
+-- Name: Vault_id_seq; Type: SEQUENCE; Schema: public; Owner: SecOps
+--
+
+CREATE SEQUENCE public."Vault_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."Vault_id_seq" OWNER TO "SecOps";
+
+--
+-- Name: Vault_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: SecOps
+--
+
+ALTER SEQUENCE public."Vault_id_seq" OWNED BY public."Vault".id;
+
+
+--
+-- Name: AccessToken id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AccessToken" ALTER COLUMN id SET DEFAULT nextval('public."AccessToken_id_seq"'::regclass);
+
+
+--
+-- Name: AegisDocument id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AegisDocument" ALTER COLUMN id SET DEFAULT nextval('public."AegisDocument_id_seq"'::regclass);
+
+
+--
+-- Name: Host id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Host" ALTER COLUMN id SET DEFAULT nextval('public."Host_id_seq"'::regclass);
+
+
+--
+-- Name: NiktoIncident id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."NiktoIncident" ALTER COLUMN id SET DEFAULT nextval('public."NiktoIncident_id_seq"'::regclass);
+
+
+--
+-- Name: OpenVASScanResult id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScanResult" ALTER COLUMN id SET DEFAULT nextval('public."OpenVASScanResult_id_seq"'::regclass);
+
+
+--
+-- Name: OpenVASVulnerability id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASVulnerability" ALTER COLUMN id SET DEFAULT nextval('public."OpenVASVulnerability_id_seq"'::regclass);
+
+
+--
+-- Name: Person id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Person" ALTER COLUMN id SET DEFAULT nextval('public."Person_id_seq"'::regclass);
+
+
+--
+-- Name: Port id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Port" ALTER COLUMN id SET DEFAULT nextval('public."Port_id_seq"'::regclass);
+
+
+--
+-- Name: RefreshToken id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."RefreshToken" ALTER COLUMN id SET DEFAULT nextval('public."RefreshToken_id_seq"'::regclass);
+
+
+--
+-- Name: Rol id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Rol" ALTER COLUMN id SET DEFAULT nextval('public."Rol_id_seq"'::regclass);
+
+
+--
+-- Name: Scan id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Scan" ALTER COLUMN id SET DEFAULT nextval('public."Scan_id_seq"'::regclass);
+
+
+--
+-- Name: Storable id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Storable" ALTER COLUMN id SET DEFAULT nextval('public."Storable_id_seq"'::regclass);
+
+
+--
+-- Name: Topic id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Topic" ALTER COLUMN id SET DEFAULT nextval('public."Topic_id_seq"'::regclass);
+
+
+--
+-- Name: User id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."User" ALTER COLUMN id SET DEFAULT nextval('public."User_id_seq"'::regclass);
+
+
+--
+-- Name: Vault id; Type: DEFAULT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Vault" ALTER COLUMN id SET DEFAULT nextval('public."Vault_id_seq"'::regclass);
+
+
+--
+-- Data for Name: AccessToken; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."AccessToken" (id, token, user_id, expires_at, created_at, revoked) FROM stdin;
+1	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk0MDgxLCJpYXQiOjE3NzQ3OTMxODEsInR5cGUiOiJhY2Nlc3MifQ.6Co7f-Hu8MBcWrT4w26R1TDK21BaF4m7z7S5tZcsp9M	1	2026-03-29 14:21:21.294387	2026-03-29 14:06:21.295387	0
+2	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk0OTg0LCJpYXQiOjE3NzQ3OTQwODQsInR5cGUiOiJhY2Nlc3MifQ.UjHigc05FpYcB-roFzwVFu6vWeVTCpsqCa91-DDcT-w	1	2026-03-29 14:36:24.750649	2026-03-29 14:21:24.752154	0
+4	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk0OTg4LCJpYXQiOjE3NzQ3OTQwODgsInR5cGUiOiJhY2Nlc3MifQ.Btr9gmDMEIX2nvSp7DMqlN32fx0NVueGQagNeZpfKns	1	2026-03-29 14:36:28.449356	2026-03-29 14:21:28.449662	0
+5	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk1NzEyLCJpYXQiOjE3NzQ3OTQ4MTIsInR5cGUiOiJhY2Nlc3MifQ.huJSnQWijHvX0PT9AmhRa1ilS22qVn4jbWEjVw6zsBU	1	2026-03-29 14:48:32.146231	2026-03-29 14:33:32.147155	0
+6	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk2NTg5LCJpYXQiOjE3NzQ3OTU2ODksInR5cGUiOiJhY2Nlc3MifQ.GdHYaG5ZuA79nojmzo-z4Xew_f5xRe1O3LYxvV3SGlM	1	2026-03-29 15:03:09.975944	2026-03-29 14:48:09.977145	0
+7	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk3NDM1LCJpYXQiOjE3NzQ3OTY1MzUsInR5cGUiOiJhY2Nlc3MifQ.4x2XRSb-QSys1AGMYgjnLvMSnw4mk672YQLKCSVtrzo	1	2026-03-29 15:17:15.937908	2026-03-29 15:02:15.938333	0
+8	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk4NDYzLCJpYXQiOjE3NzQ3OTc1NjMsInR5cGUiOiJhY2Nlc3MifQ.erRC0TBaS_PtMJuFYgY0PLp0Nj35L2UkfYTcHR1YoPE	1	2026-03-29 15:34:23.981239	2026-03-29 15:19:23.981816	0
+9	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0Nzk5NTI3LCJpYXQiOjE3NzQ3OTg2MjcsInR5cGUiOiJhY2Nlc3MifQ.ogv1LQjmFoQcZU4FOR5FxsWQFlsbP8oAWw3zYGgmOOY	1	2026-03-29 15:52:07.739718	2026-03-29 15:37:07.740166	0
+10	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0ODAzNTE0LCJpYXQiOjE3NzQ4MDI2MTQsInR5cGUiOiJhY2Nlc3MifQ.dKKR6cB6lFH2yQfWziKSSHthTbKokAwBxGTtnsvUAh4	1	2026-03-29 16:58:34.657566	2026-03-29 16:43:34.658207	0
+11	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0ODA0Mzg0LCJpYXQiOjE3NzQ4MDM0ODQsInR5cGUiOiJhY2Nlc3MifQ.XAFaYtdQycsV8EelWWv6f4GscNN3ZMF3t_S8NM1-QSI	1	2026-03-29 17:13:04.192777	2026-03-29 16:58:04.193514	0
+12	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0ODA2MTQ2LCJpYXQiOjE3NzQ4MDUyNDYsInR5cGUiOiJhY2Nlc3MifQ.DpBE-Uj6NohWTtNemtd5ntgEh3Q0abopmLLrwz81Llk	1	2026-03-29 17:42:26.181767	2026-03-29 17:27:26.182758	0
+13	eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJyb290IiwiZXhwIjoxNzc0ODEyNDk0LCJpYXQiOjE3NzQ4MTE1OTQsInR5cGUiOiJhY2Nlc3MifQ.3cI0UU10BbHymn8WxELNP__d--PNlUmrVmht2vWjJ04	1	2026-03-29 19:28:14.622897	2026-03-29 19:13:14.624572	0
+\.
+
+
+--
+-- Data for Name: Account; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Account" (id, username, domain, password) FROM stdin;
+\.
+
+
+--
+-- Data for Name: AegisDocument; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."AegisDocument" (id, title, filename, status, generated_at, topic_id, user_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: CreditCard; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."CreditCard" (id, cardholder_name, card_number, expiration_date, postal_code, cvv) FROM stdin;
+\.
+
+
+--
+-- Data for Name: Host; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Host" (id, hostname, ip_address, mac_address, vendor) FROM stdin;
+1	192.168.1.1	192.168.1.1		
+2	host.docker.internal	192.168.1.130		
+3	192.168.1.29	192.168.1.29		\N
+4	192.168.1.129	192.168.1.129		
+5	192.168.1.30	192.168.1.30		
+6	192.168.1.28	192.168.1.28		
+7	emesagrupo.com	195.20.230.152		\N
+\.
+
+
+--
+-- Data for Name: NiktoIncident; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."NiktoIncident" (id, osvdb_id, method, url, description, severity, port, "references", discovered_at) FROM stdin;
+1	0	GET	/	Uncommon header 'x-frame-options' found, with contents: SAMEORIGIN	MEDIUM	\N	\N	2026-03-29 14:10:09.566818
+2	0	GET	/	Uncommon header 'x-xss-protection' found, with contents: 1; mode=block	HIGH	\N	\N	2026-03-29 14:10:09.570937
+3	0	GET	/	Uncommon header 'content-security-policy' found, with contents: frame-ancestors 'self' data:	MEDIUM	\N	\N	2026-03-29 14:10:09.572935
+4	0	GET	/	Uncommon header 'x-content-type-options' found, with contents: nosniff	MEDIUM	\N	\N	2026-03-29 14:10:09.575311
+5	0	GET	/	Cookie SID created without the httponly flag	MEDIUM	\N	\N	2026-03-29 14:10:09.576711
+6	0	GET	/	Cookie _TESTCOOKIESUPPORT created without the httponly flag	MEDIUM	\N	\N	2026-03-29 14:10:09.577953
+7	0	GET	/img/favicon.ico	Server leaks inodes via ETags, header found with file /img/favicon.ico, fields: 0xbd056a300f707556bd30738db3c665b0	MEDIUM	\N	\N	2026-03-29 14:10:09.578944
+8	0	GET	/	Uncommon header 'x-frame-options' found, with contents: DENY	MEDIUM	\N	\N	2026-03-29 14:23:36.350386
+9	0	GET	/	Uncommon header 'x-dns-prefetch-control' found, with contents: off	LOW	\N	\N	2026-03-29 14:23:36.353228
+10	0	GET	/	Uncommon header 'content-security-policy' found, with contents: default-src 'none'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; img-src 'self'; manifest-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'	MEDIUM	\N	\N	2026-03-29 14:23:36.354161
+11	0	GET	/	Uncommon header 'x-xss-protection' found, with contents: 0	HIGH	\N	\N	2026-03-29 14:23:36.355937
+12	0	GET	/	Uncommon header 'referrer-policy' found, with contents: strict-origin-when-cross-origin	LOW	\N	\N	2026-03-29 14:23:36.357117
+13	0	GET	.	Uncommon header 'access-control-allow-methods' found, with contents: *	LOW	\N	\N	2026-03-29 14:23:36.358301
+14	0	GET	.	Uncommon header 'access-control-allow-headers' found, with contents: *	LOW	\N	\N	2026-03-29 14:23:36.359252
+15	0	OPTIONS	/	Retrieved dav header: 1	INFO	\N	\N	2026-03-29 14:23:36.360102
+16	0	OPTIONS	/	Allowed HTTP Methods: GET, POST, PUT, DELETE, HEAD, OPTIONS, CONNECT, PATCH, PROPFIND, MKCOL, LOCK, UNLOCK, PROPPATCH, COPY, MOVE, REPORT	LOW	\N	\N	2026-03-29 14:23:36.360841
+17	397	GET	/	HTTP method ('Allow' Header): 'PUT' method could allow clients to save files on the web server.	MEDIUM	\N	\N	2026-03-29 14:23:36.361576
+18	5646	GET	/	HTTP method ('Allow' Header): 'DELETE' may allow clients to remove files on the web server.	MEDIUM	\N	\N	2026-03-29 14:23:36.362875
+19	0	GET	/	HTTP method ('Allow' Header): 'CONNECT' may allow server to proxy client requests.	MEDIUM	\N	\N	2026-03-29 14:23:36.364039
+20	5647	GET	/	HTTP method ('Allow' Header): 'MOVE' may allow clients to change file locations on the web server.	MEDIUM	\N	\N	2026-03-29 14:23:36.365222
+21	0	OPTIONS	/	WebDAV enabled (UNLOCK COPY MKCOL LOCK PROPPATCH PROPFIND listed as allowed)	MEDIUM	\N	\N	2026-03-29 14:23:36.366369
+22	0	GET	/postnuke/modules.php?op=modload&name=Web_Links&file=index&req=viewlinkdetails&lid=666&ttitle=Mocosoft Utilities\\&quot;%3&lt;script&gt;alert('Vulnerable')&lt;/script&gt;	/postnuke/modules.php?op=modload&name=Web_Links&file=index&req=viewlinkdetails&lid=666&ttitle=Mocosoft Utilities\\"%3<script>alert('Vulnerable')</script>: Postnuke Phoenix 0.7.2.3 is vulnerable to Cross Site Scripting (XSS). CA-2000-02.	HIGH	\N	\N	2026-03-29 14:23:36.367506
+23	0	OPTIONS	/	WebDAV enabled (UNLOCK PROPPATCH COPY MKCOL LOCK PROPFIND listed as allowed)	MEDIUM	\N	\N	2026-03-29 14:56:32.978604
+24	0	GET	/	The anti-clickjacking X-Frame-Options header is not present.	MEDIUM	\N	\N	2026-03-29 15:13:32.957841
+25	0	GET	/clientaccesspolicy.xml	lines	MEDIUM	\N	\N	2026-03-29 17:05:06.353268
+26	0	GET	/crossdomain.xml	/crossdomain.xml contains 0 line which should be manually viewed for improper domains or wildcards.	MEDIUM	\N	\N	2026-03-29 17:05:06.354354
+27	0	GET	/	Cookie SID_HTTPS_ created without the secure flag	MEDIUM	\N	\N	2026-03-29 17:06:28.37452
+28	0	GET	/	Cookie SID_HTTPS_ created without the httponly flag	MEDIUM	\N	\N	2026-03-29 17:06:28.375589
+29	0	GET	/	Cookie _TESTCOOKIESUPPORT_HTTPS_ created without the secure flag	MEDIUM	\N	\N	2026-03-29 17:06:28.376967
+30	0	GET	/	Cookie _TESTCOOKIESUPPORT_HTTPS_ created without the httponly flag	MEDIUM	\N	\N	2026-03-29 17:06:28.378158
+31	0	GET	/	Hostname '192.168.1.1' does not match certificate's CN '192.168.1.1/emailAddress=zane@zte.com.cn'	MEDIUM	\N	\N	2026-03-29 17:06:28.380588
+32	0	GET	/	Retrieved x-powered-by header: PleskLin	LOW	\N	\N	2026-03-29 17:10:25.360404
+33	0	GET	/	Cookie b9e3a135eb8ad490cef8592e32fe38ae created without the httponly flag	MEDIUM	\N	\N	2026-03-29 17:10:25.368333
+34	0	GET	/1X4hVOem.php	Server leaks inodes via ETags, header found with file /1X4hVOem.php, fields: 0x6514b663 0x328	MEDIUM	\N	\N	2026-03-29 17:10:25.369452
+35	0	GET	/robots.txt	Uncommon header 'x-accel-version' found, with contents: 0.01	MEDIUM	\N	\N	2026-03-29 17:10:25.370458
+36	0	GET	/administrator/	Uncommon header 'x-frame-options' found, with contents: SAMEORIGIN	MEDIUM	\N	\N	2026-03-29 17:10:25.371546
+37	0	GET	/administrator/	Cookie 62a5a2bf1b9045fac870610c95e1e79e created without the httponly flag	MEDIUM	\N	\N	2026-03-29 17:10:25.372604
+38	0	GET	//administrator/	File/dir '/administrator/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.373773
+39	0	GET	//cache/	File/dir '/cache/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.374972
+40	0	GET	//cli/	File/dir '/cli/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.376161
+41	0	GET	//components/	File/dir '/components/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.37719
+42	0	GET	//includes/	File/dir '/includes/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.378042
+43	0	GET	//language/	File/dir '/language/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.37892
+44	0	GET	//layouts/	File/dir '/layouts/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.380256
+45	0	GET	//logs/	File/dir '/logs/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.38148
+46	0	GET	//modules/	File/dir '/modules/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.382603
+47	0	GET	//plugins/	File/dir '/plugins/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.383527
+48	0	GET	//tmp/	File/dir '/tmp/' in robots.txt returned a non-forbidden or redirect HTTP code (200)	MEDIUM	\N	\N	2026-03-29 17:10:25.384539
+49	0	GET	/robots.txt	"robots.txt" contains 14 entries which should be manually viewed.	MEDIUM	\N	\N	2026-03-29 17:10:25.385547
+50	0	GET	/	Hostname 'emesa.com' does not match certificate's CN 'Plesk/emailAddress=info@plesk.com'	MEDIUM	\N	\N	2026-03-29 17:10:25.386635
+51	0	DEBUG	HASH(0x59f37c7d9168)	DEBUG HTTP verb may show server debugging information. See http://msdn.microsoft.com/en-us/library/e8z01xdh%28VS.80%29.aspx for details.	MEDIUM	\N	\N	2026-03-29 17:10:25.387695
+\.
+
+
+--
+-- Data for Name: NiktoScan; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."NiktoScan" (id) FROM stdin;
+3
+27
+\.
+
+
+--
+-- Data for Name: NmapScan; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."NmapScan" (id) FROM stdin;
+1
+2
+4
+6
+8
+9
+10
+14
+15
+28
+\.
+
+
+--
+-- Data for Name: OpenPort; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."OpenPort" (port_id, nmap_scan_id, reason, product, version, given_use) FROM stdin;
+1	1	no-response			ssh
+2	1	syn-ack	ISC BIND	9.18.41	domain
+3	1	syn-ack	ZTE web server 1.0 ZTE corp 2015.		http
+4	1	syn-ack			tcpwrapped
+5	2	syn-ack	MySQL		mysql
+6	2	syn-ack			upnp
+7	2	syn-ack			pando-pub
+8	2	syn-ack			mysqlx
+1	4	no-response			ssh
+2	4	syn-ack	ISC BIND	9.18.41	domain
+3	4	syn-ack	ZTE web server 1.0 ZTE corp 2015.		http
+4	4	syn-ack	ZTE web server 1.0 ZTE corp 2015.		https
+1	10	syn-ack	OpenSSH	9.2p1 Debian 2+deb12u7	ssh
+1	8	syn-ack	OpenSSH	10.0p2 Debian 7	ssh
+9	8	syn-ack		2-4	rpcbind
+1	9	syn-ack	OpenSSH	9.2p1 Debian 2+deb12u7	ssh
+2	9	syn-ack	dnsmasq	pi-hole-v2.92rc1	domain
+3	9	syn-ack			webdav
+4	9	syn-ack			webdav
+1	14	syn-ack	OpenSSH	9.2p1 Debian 2+deb12u7	ssh
+1	28	no-response			ssh
+2	28	syn-ack	ISC BIND	9.18.41	domain
+3	28	syn-ack	ZTE web server 1.0 ZTE corp 2015.		http
+4	28	syn-ack			tcpwrapped
+\.
+
+
+--
+-- Data for Name: OpenVASScan; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."OpenVASScan" (id, task_id, report_id, scan_config_name, scanner_name) FROM stdin;
+\.
+
+
+--
+-- Data for Name: OpenVASScanResult; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."OpenVASScanResult" (id, openvas_scan_id, vulnerability_id, host_id, detected_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: OpenVASVulnerability; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."OpenVASVulnerability" (id, nvt_oid, name, severity_score, severity_class, cvss_base_score, cvss_vector, cve_ids, cert_refs, bugtraq_ids, other_refs, summary, description, impact, insight, affected_software, solution_type, solution, qod_value, qod_type, family, category, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: Person; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Person" (id, first_name, last_name, alias, created_at) FROM stdin;
+1	Gabriel	Musteata	artexian	2026-03-29 00:00:00
+\.
+
+
+--
+-- Data for Name: Port; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Port" (id, protocol) FROM stdin;
+1	22/tcp
+2	53/tcp
+3	80/tcp
+4	443/tcp
+5	3306/tcp
+6	5000/tcp
+7	7680/tcp
+8	33060/tcp
+9	111/tcp
+\.
+
+
+--
+-- Data for Name: RefreshToken; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."RefreshToken" (id, token, user_id, expires_at, created_at, revoked) FROM stdin;
+1	xtYGWhd7GuS-9zf_YdsS6BhCBNLiRyRWkH7AF6NnnvJ78_GdvAw6CiwN4VqjrOsdXthCtLzL76qeu8V5izSBFQ	1	2026-04-28 14:06:21.30503	2026-03-29 14:06:21.305748	0
+2	V7acQhra6AC6fnuWVxyrr55glM2Nl7iWyMBMuHkIkxRPc0fFT5ljBxxRPNR1VQZKILCLNiclwCs1EeOyLOTl7Q	1	2026-04-28 14:21:28.450655	2026-03-29 14:21:28.451287	0
+3	bHacvb_Ozoxbtsbf-J1q3arPBPXj9nUgKzrWH-sSfW0PBKdtrEMPEfwGh5X92_1ZuK8x2of4G7PY2ZgqOOPb2g	1	2026-04-28 14:33:32.15686	2026-03-29 14:33:32.157674	0
+4	iiMcs5B8hj-W2zE8_OvwdyMKxvLj25-BjzW3IMdARBWwaPBsx8sFrrqi23jzZLOxZwkeLqmR8f4ZvSkenZuO1g	1	2026-04-28 16:58:04.19478	2026-03-29 16:58:04.195359	0
+5	BCTyw35l7me-OEy9WKWpD7nsqtEoHCEoM-FEDIkObTNGqGE3uiqVCdDSbJLQmOxMzJjGyO5FvV2TDAFlAkClag	1	2026-04-28 19:13:14.631195	2026-03-29 19:13:14.632018	0
+\.
+
+
+--
+-- Data for Name: Rol; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Rol" (id, name, description, hierarchy_level) FROM stdin;
+1	Admin		0
+\.
+
+
+--
+-- Data for Name: Scan; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Scan" (id, target, started_at, status, user_id, scan_type, frecuent, host_id, finished_at) FROM stdin;
+1	192.168.1.1	2026-03-29 16:06:32.994009	finished	1	nmap	t	1	2026-03-29 16:06:54.832205
+3	192.168.1.1	2026-03-29 16:06:58.083512	finished	1	nikto	t	1	2026-03-29 16:10:25.591456
+27	https://emesa.com	2026-03-29 19:09:11.475839	finished	1	nikto	t	7	2026-03-29 19:10:25.405813
+2	192.168.1.130	2026-03-29 16:06:43.553714	finished	1	nmap	t	2	2026-03-29 16:11:18.19743
+4	192.168.1.1	2026-03-29 16:21:51.632693	finished	1	nmap	t	1	2026-03-29 16:22:19.208301
+28	192.168.1.1	2026-03-29 21:13:43.054687	finished	1	nmap	t	1	2026-03-29 21:14:06.814416
+6	192.168.1.129	2026-03-29 16:22:04.078925	finished	1	nmap	t	4	2026-03-29 16:24:16.3019
+10	192.168.1.30	2026-03-29 16:33:52.312158	finished	1	nmap	t	5	2026-03-29 16:34:06.186627
+8	192.168.1.28	2026-03-29 16:33:45.805142	finished	1	nmap	t	6	2026-03-29 16:34:06.73564
+9	192.168.1.29	2026-03-29 16:33:48.420968	finished	1	nmap	t	3	2026-03-29 16:34:12.551465
+14	192.168.1.30	2026-03-29 16:49:10.75075	finished	1	nmap	t	5	2026-03-29 16:53:52.097251
+15	192.168.1.1	2026-03-29 16:49:13.494581	cancelled	1	nmap	t	\N	2026-03-29 16:58:14.72934
+\.
+
+
+--
+-- Data for Name: ScanIncident; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."ScanIncident" (nikto_scan_id, nikto_incident_id) FROM stdin;
+3	1
+3	2
+3	3
+3	4
+3	5
+3	6
+3	7
+27	32
+27	24
+27	33
+27	34
+27	35
+27	36
+27	37
+27	38
+27	39
+27	40
+27	41
+27	42
+27	43
+27	44
+27	45
+27	46
+27	47
+27	48
+27	49
+27	50
+27	51
+\.
+
+
+--
+-- Data for Name: Storable; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Storable" (id, internal_id, title, created_at, updated_at, vault_id, type) FROM stdin;
+\.
+
+
+--
+-- Data for Name: TargetPort; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."TargetPort" (port_id, nmap_scan_id) FROM stdin;
+1	1
+2	1
+3	1
+4	1
+5	2
+6	2
+7	2
+8	2
+1	4
+2	4
+3	4
+4	4
+1	10
+1	8
+9	8
+1	9
+2	9
+3	9
+4	9
+1	14
+1	28
+2	28
+3	28
+4	28
+\.
+
+
+--
+-- Data for Name: Topic; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Topic" (id, title) FROM stdin;
+\.
+
+
+--
+-- Data for Name: User; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."User" (id, username, password_hash, password_salt, person_id, rol_id, email) FROM stdin;
+1	root	683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a	c167837c1c2a860031d861164d69bd79	1	1	gmiganescu@gmail.com
+\.
+
+
+--
+-- Data for Name: Vault; Type: TABLE DATA; Schema: public; Owner: SecOps
+--
+
+COPY public."Vault" (id, user_id, is_recovery, checker, vault_key, transformation, kdf, kdf_iterations, kdf_memory, kdf_parallelism, salt) FROM stdin;
+\.
+
+
+--
+-- Name: AccessToken_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."AccessToken_id_seq"', 13, true);
+
+
+--
+-- Name: AegisDocument_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."AegisDocument_id_seq"', 1, false);
+
+
+--
+-- Name: Host_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Host_id_seq"', 7, true);
+
+
+--
+-- Name: NiktoIncident_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."NiktoIncident_id_seq"', 51, true);
+
+
+--
+-- Name: OpenVASScanResult_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."OpenVASScanResult_id_seq"', 1, false);
+
+
+--
+-- Name: OpenVASVulnerability_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."OpenVASVulnerability_id_seq"', 1, false);
+
+
+--
+-- Name: Person_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Person_id_seq"', 1, true);
+
+
+--
+-- Name: Port_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Port_id_seq"', 9, true);
+
+
+--
+-- Name: RefreshToken_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."RefreshToken_id_seq"', 5, true);
+
+
+--
+-- Name: Rol_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Rol_id_seq"', 1, false);
+
+
+--
+-- Name: Scan_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Scan_id_seq"', 28, true);
+
+
+--
+-- Name: Storable_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Storable_id_seq"', 1, false);
+
+
+--
+-- Name: Topic_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Topic_id_seq"', 1, false);
+
+
+--
+-- Name: User_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."User_id_seq"', 1, true);
+
+
+--
+-- Name: Vault_id_seq; Type: SEQUENCE SET; Schema: public; Owner: SecOps
+--
+
+SELECT pg_catalog.setval('public."Vault_id_seq"', 1, false);
+
+
+--
+-- Name: AccessToken AccessToken_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AccessToken"
+    ADD CONSTRAINT "AccessToken_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: Account Account_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Account"
+    ADD CONSTRAINT "Account_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: AegisDocument AegisDocument_filename_key; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AegisDocument"
+    ADD CONSTRAINT "AegisDocument_filename_key" UNIQUE (filename);
+
+
+--
+-- Name: AegisDocument AegisDocument_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AegisDocument"
+    ADD CONSTRAINT "AegisDocument_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: AegisDocument AegisDocument_title_key; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AegisDocument"
+    ADD CONSTRAINT "AegisDocument_title_key" UNIQUE (title);
+
+
+--
+-- Name: CreditCard CreditCard_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."CreditCard"
+    ADD CONSTRAINT "CreditCard_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: Host Host_hostname_key; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Host"
+    ADD CONSTRAINT "Host_hostname_key" UNIQUE (hostname);
+
+
+--
+-- Name: Host Host_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Host"
+    ADD CONSTRAINT "Host_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: NiktoIncident NiktoIncident_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."NiktoIncident"
+    ADD CONSTRAINT "NiktoIncident_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: NiktoScan NiktoScan_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."NiktoScan"
+    ADD CONSTRAINT "NiktoScan_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: NmapScan NmapScan_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."NmapScan"
+    ADD CONSTRAINT "NmapScan_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: OpenPort OpenPort_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenPort"
+    ADD CONSTRAINT "OpenPort_pkey" PRIMARY KEY (port_id, nmap_scan_id);
+
+
+--
+-- Name: OpenVASScanResult OpenVASScanResult_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScanResult"
+    ADD CONSTRAINT "OpenVASScanResult_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: OpenVASScan OpenVASScan_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScan"
+    ADD CONSTRAINT "OpenVASScan_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: OpenVASVulnerability OpenVASVulnerability_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASVulnerability"
+    ADD CONSTRAINT "OpenVASVulnerability_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: Person Person_alias_key; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Person"
+    ADD CONSTRAINT "Person_alias_key" UNIQUE (alias);
+
+
+--
+-- Name: Person Person_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Person"
+    ADD CONSTRAINT "Person_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: Port Port_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Port"
+    ADD CONSTRAINT "Port_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: Port Port_protocol_key; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Port"
+    ADD CONSTRAINT "Port_protocol_key" UNIQUE (protocol);
+
+
+--
+-- Name: RefreshToken RefreshToken_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."RefreshToken"
+    ADD CONSTRAINT "RefreshToken_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: Rol Rol_name_key; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Rol"
+    ADD CONSTRAINT "Rol_name_key" UNIQUE (name);
+
+
+--
+-- Name: Rol Rol_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Rol"
+    ADD CONSTRAINT "Rol_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: ScanIncident ScanIncident_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."ScanIncident"
+    ADD CONSTRAINT "ScanIncident_pkey" PRIMARY KEY (nikto_scan_id, nikto_incident_id);
+
+
+--
+-- Name: Scan Scan_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Scan"
+    ADD CONSTRAINT "Scan_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: Storable Storable_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Storable"
+    ADD CONSTRAINT "Storable_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: TargetPort TargetPort_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."TargetPort"
+    ADD CONSTRAINT "TargetPort_pkey" PRIMARY KEY (port_id, nmap_scan_id);
+
+
+--
+-- Name: Topic Topic_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Topic"
+    ADD CONSTRAINT "Topic_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: User User_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."User"
+    ADD CONSTRAINT "User_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: User User_username_key; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."User"
+    ADD CONSTRAINT "User_username_key" UNIQUE (username);
+
+
+--
+-- Name: Vault Vault_pkey; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Vault"
+    ADD CONSTRAINT "Vault_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: OpenVASScan unique_task_report; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScan"
+    ADD CONSTRAINT unique_task_report UNIQUE (task_id, report_id);
+
+
+--
+-- Name: Storable uq_storable_vault_internal; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Storable"
+    ADD CONSTRAINT uq_storable_vault_internal UNIQUE (vault_id, internal_id);
+
+
+--
+-- Name: Storable uq_storable_vault_title; Type: CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Storable"
+    ADD CONSTRAINT uq_storable_vault_title UNIQUE (title, vault_id);
+
+
+--
+-- Name: ix_AccessToken_token; Type: INDEX; Schema: public; Owner: SecOps
+--
+
+CREATE UNIQUE INDEX "ix_AccessToken_token" ON public."AccessToken" USING btree (token);
+
+
+--
+-- Name: ix_OpenVASScanResult_host_id; Type: INDEX; Schema: public; Owner: SecOps
+--
+
+CREATE INDEX "ix_OpenVASScanResult_host_id" ON public."OpenVASScanResult" USING btree (host_id);
+
+
+--
+-- Name: ix_OpenVASScanResult_openvas_scan_id; Type: INDEX; Schema: public; Owner: SecOps
+--
+
+CREATE INDEX "ix_OpenVASScanResult_openvas_scan_id" ON public."OpenVASScanResult" USING btree (openvas_scan_id);
+
+
+--
+-- Name: ix_OpenVASScanResult_vulnerability_id; Type: INDEX; Schema: public; Owner: SecOps
+--
+
+CREATE INDEX "ix_OpenVASScanResult_vulnerability_id" ON public."OpenVASScanResult" USING btree (vulnerability_id);
+
+
+--
+-- Name: ix_OpenVASVulnerability_nvt_oid; Type: INDEX; Schema: public; Owner: SecOps
+--
+
+CREATE UNIQUE INDEX "ix_OpenVASVulnerability_nvt_oid" ON public."OpenVASVulnerability" USING btree (nvt_oid);
+
+
+--
+-- Name: ix_OpenVASVulnerability_severity_class; Type: INDEX; Schema: public; Owner: SecOps
+--
+
+CREATE INDEX "ix_OpenVASVulnerability_severity_class" ON public."OpenVASVulnerability" USING btree (severity_class);
+
+
+--
+-- Name: ix_RefreshToken_token; Type: INDEX; Schema: public; Owner: SecOps
+--
+
+CREATE UNIQUE INDEX "ix_RefreshToken_token" ON public."RefreshToken" USING btree (token);
+
+
+--
+-- Name: AccessToken AccessToken_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AccessToken"
+    ADD CONSTRAINT "AccessToken_user_id_fkey" FOREIGN KEY (user_id) REFERENCES public."User"(id);
+
+
+--
+-- Name: Account Account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Account"
+    ADD CONSTRAINT "Account_id_fkey" FOREIGN KEY (id) REFERENCES public."Storable"(id);
+
+
+--
+-- Name: AegisDocument AegisDocument_topic_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AegisDocument"
+    ADD CONSTRAINT "AegisDocument_topic_id_fkey" FOREIGN KEY (topic_id) REFERENCES public."Topic"(id);
+
+
+--
+-- Name: AegisDocument AegisDocument_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."AegisDocument"
+    ADD CONSTRAINT "AegisDocument_user_id_fkey" FOREIGN KEY (user_id) REFERENCES public."User"(id);
+
+
+--
+-- Name: CreditCard CreditCard_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."CreditCard"
+    ADD CONSTRAINT "CreditCard_id_fkey" FOREIGN KEY (id) REFERENCES public."Storable"(id);
+
+
+--
+-- Name: NiktoScan NiktoScan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."NiktoScan"
+    ADD CONSTRAINT "NiktoScan_id_fkey" FOREIGN KEY (id) REFERENCES public."Scan"(id);
+
+
+--
+-- Name: NmapScan NmapScan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."NmapScan"
+    ADD CONSTRAINT "NmapScan_id_fkey" FOREIGN KEY (id) REFERENCES public."Scan"(id);
+
+
+--
+-- Name: OpenPort OpenPort_nmap_scan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenPort"
+    ADD CONSTRAINT "OpenPort_nmap_scan_id_fkey" FOREIGN KEY (nmap_scan_id) REFERENCES public."NmapScan"(id);
+
+
+--
+-- Name: OpenPort OpenPort_port_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenPort"
+    ADD CONSTRAINT "OpenPort_port_id_fkey" FOREIGN KEY (port_id) REFERENCES public."Port"(id);
+
+
+--
+-- Name: OpenVASScanResult OpenVASScanResult_host_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScanResult"
+    ADD CONSTRAINT "OpenVASScanResult_host_id_fkey" FOREIGN KEY (host_id) REFERENCES public."Host"(id);
+
+
+--
+-- Name: OpenVASScanResult OpenVASScanResult_openvas_scan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScanResult"
+    ADD CONSTRAINT "OpenVASScanResult_openvas_scan_id_fkey" FOREIGN KEY (openvas_scan_id) REFERENCES public."OpenVASScan"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: OpenVASScanResult OpenVASScanResult_vulnerability_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScanResult"
+    ADD CONSTRAINT "OpenVASScanResult_vulnerability_id_fkey" FOREIGN KEY (vulnerability_id) REFERENCES public."OpenVASVulnerability"(id);
+
+
+--
+-- Name: OpenVASScan OpenVASScan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."OpenVASScan"
+    ADD CONSTRAINT "OpenVASScan_id_fkey" FOREIGN KEY (id) REFERENCES public."Scan"(id);
+
+
+--
+-- Name: RefreshToken RefreshToken_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."RefreshToken"
+    ADD CONSTRAINT "RefreshToken_user_id_fkey" FOREIGN KEY (user_id) REFERENCES public."User"(id);
+
+
+--
+-- Name: ScanIncident ScanIncident_nikto_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."ScanIncident"
+    ADD CONSTRAINT "ScanIncident_nikto_incident_id_fkey" FOREIGN KEY (nikto_incident_id) REFERENCES public."NiktoIncident"(id);
+
+
+--
+-- Name: ScanIncident ScanIncident_nikto_scan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."ScanIncident"
+    ADD CONSTRAINT "ScanIncident_nikto_scan_id_fkey" FOREIGN KEY (nikto_scan_id) REFERENCES public."NiktoScan"(id);
+
+
+--
+-- Name: Scan Scan_host_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Scan"
+    ADD CONSTRAINT "Scan_host_id_fkey" FOREIGN KEY (host_id) REFERENCES public."Host"(id);
+
+
+--
+-- Name: Scan Scan_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Scan"
+    ADD CONSTRAINT "Scan_user_id_fkey" FOREIGN KEY (user_id) REFERENCES public."User"(id);
+
+
+--
+-- Name: Storable Storable_vault_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Storable"
+    ADD CONSTRAINT "Storable_vault_id_fkey" FOREIGN KEY (vault_id) REFERENCES public."Vault"(id);
+
+
+--
+-- Name: TargetPort TargetPort_nmap_scan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."TargetPort"
+    ADD CONSTRAINT "TargetPort_nmap_scan_id_fkey" FOREIGN KEY (nmap_scan_id) REFERENCES public."NmapScan"(id);
+
+
+--
+-- Name: TargetPort TargetPort_port_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."TargetPort"
+    ADD CONSTRAINT "TargetPort_port_id_fkey" FOREIGN KEY (port_id) REFERENCES public."Port"(id);
+
+
+--
+-- Name: User User_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."User"
+    ADD CONSTRAINT "User_person_id_fkey" FOREIGN KEY (person_id) REFERENCES public."Person"(id);
+
+
+--
+-- Name: User User_rol_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."User"
+    ADD CONSTRAINT "User_rol_id_fkey" FOREIGN KEY (rol_id) REFERENCES public."Rol"(id);
+
+
+--
+-- Name: Vault Vault_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: SecOps
+--
+
+ALTER TABLE ONLY public."Vault"
+    ADD CONSTRAINT "Vault_user_id_fkey" FOREIGN KEY (user_id) REFERENCES public."User"(id);
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict cpgXaU6hdsZYppb9B11PO8LCIR5pohavhQr6VddpLdrFCNiVqKcjzhIvHiXC5b7
+
