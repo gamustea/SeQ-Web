@@ -45,10 +45,8 @@ def _graceful_shutdown(signum, frame) -> None:
     _logger.info("[Shutdown] Proceso terminado.")
     sys.exit(0)
 
-
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT,  _graceful_shutdown)
-
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -61,13 +59,11 @@ def create_app() -> Flask:
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
 
-
 def _configure_cors(app: Flask) -> None:
     raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
     origins.append("http://127.0.0.1:3000")
     CORS(app, origins=origins, supports_credentials=True)
-
 
 def _configure_rate_limiting(app: Flask) -> None:
     """
@@ -79,7 +75,6 @@ def _configure_rate_limiting(app: Flask) -> None:
     lo que generaba 429 con solo 4-5 escaneos en paralelo.
     """
     limiter.init_app(app)
-
 
 def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(404)

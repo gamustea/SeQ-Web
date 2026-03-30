@@ -764,3 +764,35 @@ class OpenVASTask(_Task):
             self.logger.error(f"Error procesando resultados OpenVAS: {e}", exc_info=True)
             self.results = None
             raise
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        """
+        Override: OpenVAS gestiona su propio ciclo interno.
+        Solo esperamos a que _finished se active (sin timeout o con límite razonable).
+        """
+        try:
+            # Esperamos sin límite (None) o con un máximo razonable de 8h
+            safe_timeout = min(timeout, 28800) if timeout is not None else None
+            finished = self._finished.wait(safe_timeout)
+
+            if not finished:
+                self.status = TaskStatus.TIMEOUT
+                self.logger.error("Timeout esperando finalización de OpenVAS")
+                return False
+
+            if self.status in (TaskStatus.CANCELLED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
+                return False
+
+            if self.results is None:
+                self.status = TaskStatus.FAILED
+                self.logger.error("OpenVAS finalizó pero no hay resultados")
+                return False
+
+            self.status = TaskStatus.COMPLETED
+            self.progress = 100
+            return True
+
+        except Exception as e:
+            self.status = TaskStatus.FAILED
+            self.logger.error(f"Error en wait de OpenVAS: {e}", exc_info=True)
+            return False

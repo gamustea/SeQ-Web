@@ -503,13 +503,13 @@ class OpenVASScanManager(ScanManager):
             task = self._create_task(
                 target=target_ip,
                 scan_config=config_id,
-                timeout=30000000
+                timeout=28800
             )
             
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
                 args=(scan_id, task),
-                daemon=True,  # fix: daemon=True para no bloquear shutdown
+                daemon=True,
                 name=f"OpenVASScan-{scan_id}"
             )
 
@@ -621,7 +621,6 @@ class OpenVASScanManager(ScanManager):
         finally:
             thread_manager.close_session()
             self._unregister_task(scan_id)
-
 
 class NmapScanManager(ScanManager):
     """Gestor de escaneos Nmap"""
