@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any, List, Dict
-from enum import Enum, auto
+from enum import Enum
 from abc import ABC, abstractmethod
 from nmap import PortScanner
 
@@ -17,9 +17,10 @@ from src.misc.conversion import JSONManager
 from src.misc.directorychecker import DirectoryChecker
 
 import xml.etree.ElementTree as ET
-from gvm.connections import TLSConnection
-from gvm.protocols.gmp import Gmp
-from gvm.transforms import EtreeTransform
+from lxml import etree
+from gvm.connections import SSHConnection
+from gvm.protocols.gmp import GMP
+from gvm.transforms import EtreeCheckCommandTransform
 
 
 class TaskStatus(Enum):
@@ -32,7 +33,7 @@ class TaskStatus(Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
-    
+
     def __str__(self):
         return self.value
 
@@ -71,9 +72,7 @@ class _Task(ABC):
         pass
 
     def _parse_progress(self, line: str) -> int:
-        """
-        Extrae el porcentaje de progreso de una línea de salida.
-        """
+        """Extrae el porcentaje de progreso de una línea de salida."""
         match = re.search(r'(\d+(?:\.\d+)?)%', line)
         if match:
             prog_float = float(match.group(1))
@@ -82,9 +81,7 @@ class _Task(ABC):
         return -1
 
     def _read_output(self):
-        """
-        Lee la salida del proceso en un thread separado.
-        """
+        """Lee la salida del proceso en un thread separado."""
         try:
             self._started.set()
             output_lines = []
@@ -97,7 +94,6 @@ class _Task(ABC):
                 self.logger.debug(f"Output: {line.strip()}")
                 output_lines.append(line)
 
-                # Detectar que Nikto imprimió el help (opción inválida)
                 if "Unknown option:" in line or "requires a value" in line:
                     self.logger.error(
                         f"Nikto rechazó el comando (opción inválida): {line.strip()}"
@@ -108,12 +104,11 @@ class _Task(ABC):
                 if prog != -1:
                     with self._lock:
                         self.progress = prog
-        
+
         except Exception as e:
             self.logger.error(f"Error leyendo salida: {e}")
-        
+
         finally:
-            # Esperar a que el proceso termine completamente
             if self._proc:
                 try:
                     self._proc.wait(timeout=10)
@@ -122,11 +117,8 @@ class _Task(ABC):
                     self.logger.error("Timeout esperando fin del proceso")
                     self._proc.kill()
                     self._proc.wait()
-            
-            # Dar tiempo al sistema de archivos para escribir completamente
+
             time.sleep(0.5)
-            
-            # Señalizar que todo terminó
             self._finished.set()
 
     def scan(self) -> None:
@@ -134,15 +126,15 @@ class _Task(ABC):
         if self._proc and self._proc.poll() is None:
             self.logger.warning("El escaneo ya está en ejecución")
             return
-        
+
         try:
             self.status = TaskStatus.RUNNING
             cmd = self._build_command()
             self.logger.info(f"Iniciando escaneo con comando: {' '.join(cmd)}")
-            
+
             if self._output_file and not self._output_file.parent.exists():
                 self._output_file.parent.mkdir(parents=True, exist_ok=True)
-            
+
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -150,46 +142,40 @@ class _Task(ABC):
                 text=True,
                 bufsize=1
             )
-            
-            # Verificar que el proceso inició
+
             time.sleep(0.1)
             returncode = self._proc.poll()
-            
-            # ✅ MEJORADO: Solo fallar si hay código de error real
+
             if returncode is not None and returncode != 0:
                 self.status = TaskStatus.FAILED
                 raise RuntimeError(f"Proceso falló al iniciar (código {returncode})")
-            
-            # ⚠️ Si terminó con código 0, dejar que wait() lo maneje
+
             if returncode == 0:
-                self.logger.warning(f"Proceso terminó inmediatamente con código 0. Puede que el target no sea alcanzable.")
-            
-            # Iniciar thread de lectura
+                self.logger.warning(
+                    "Proceso terminó inmediatamente con código 0. "
+                    "Puede que el target no sea alcanzable."
+                )
+
             self._thread = threading.Thread(target=self._read_output, daemon=True)
             self._thread.start()
-            
+
             if not self._started.wait(timeout=5):
                 raise RuntimeError("Thread de lectura no inició")
-            
+
             self.logger.info("Escaneo iniciado correctamente (no bloqueante)")
-        
+
         except Exception as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error iniciando escaneo: {e}")
             raise
 
     def wait(self, timeout: Optional[float] = None) -> bool:
-        """
-        Espera a que termine el escaneo.
-        Esta es la llamada BLOQUEANTE que debe usar el thread worker.
-        """
+        """Espera a que termine el escaneo (llamada BLOQUEANTE para el thread worker)."""
         try:
-            # Verificar que scan() se llamó
             if not self._started.is_set():
                 self.logger.error("wait() llamado pero scan() nunca se ejecutó")
                 return False
 
-            # Esperar a que termine
             finished = self._finished.wait(timeout)
             if not finished:
                 self.status = TaskStatus.TIMEOUT
@@ -199,12 +185,9 @@ class _Task(ABC):
                     self._proc.wait()
                 return False
 
-            if self.status in (TaskStatus.CANCELLED,
-                            TaskStatus.TIMEOUT,
-                            TaskStatus.FAILED):
+            if self.status in (TaskStatus.CANCELLED, TaskStatus.TIMEOUT, TaskStatus.FAILED):
                 self.logger.info(f"wait() termina con estado {self.status.value}")
                 return self.status == TaskStatus.COMPLETED
-
 
             if self._proc:
                 if self._proc.returncode != 0:
@@ -219,28 +202,18 @@ class _Task(ABC):
                 self.logger.error(f"Archivo de salida no existe: {self._output_file}")
                 return False
 
-            # Verificar que existe el archivo de salida
-            if self._output_file and not self._output_file.exists():
-                self.status = TaskStatus.FAILED
-                self.logger.error(f"Archivo de salida no existe: {self._output_file}")
-                return False
-
-            # Verificar que el archivo no está vacío
             if self._output_file and self._output_file.stat().st_size == 0:
                 self.status = TaskStatus.FAILED
                 self.logger.error(f"Archivo de salida está vacío: {self._output_file}")
                 return False
 
-            # Procesar resultados
             self._process_results()
 
-            # Verificar que se obtuvieron resultados
             if self.results is None:
                 self.status = TaskStatus.FAILED
                 self.logger.error("No se pudieron procesar los resultados")
                 return False
 
-            # Todo OK
             self.status = TaskStatus.COMPLETED
             self.progress = 100
             self.logger.info("Escaneo completado correctamente")
@@ -257,10 +230,8 @@ class _Task(ABC):
 
     def cancel(self) -> None:
         """Cancela el escaneo."""
-        # Marcar que se ha solicitado cancelación (lo usará OpenVAS, etc.)
         self._cancel_event.set()
 
-        # Si es un escaneo basado en proceso, terminarlo
         if self._proc and self._proc.poll() is None:
             try:
                 self._proc.terminate()
@@ -270,7 +241,6 @@ class _Task(ABC):
                 self._proc.kill()
                 self._proc.wait()
 
-        # Estado final de cancelación
         self.status = TaskStatus.CANCELLED
         self._finished.set()
         self.logger.info("Escaneo cancelado")
@@ -281,24 +251,20 @@ class _Task(ABC):
 
 
 class NmapScanTask(_Task):
-    """
-    Implementación concreta para escaneos Nmap.
-    """
+    """Implementación concreta para escaneos Nmap."""
 
     def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300):
         super().__init__(target_host, timeout)
         TEMP_DIR = ConfigReader().get_directory_of(DirectoryType.TEMP)
-        
-        # Nombre único y seguro
+
         timestamp = int(time.time() * 1000)
         safe_target = target_host.replace("/", "_").replace(":", "_")
         FILE_NAME = f"nmap_scan_{safe_target}_{timestamp}.xml"
-        
+
         self.target_ports = target_ports
         self._output_file = Path(f"{TEMP_DIR}/{FILE_NAME}")
         self.scanner = None
-        
-        # Asegurar directorio
+
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _build_command(self) -> List[str]:
@@ -344,32 +310,8 @@ class NmapScanTask(_Task):
             raise
 
     def _parse_nmap_xml(self, xml_data: str) -> dict:
-        """
-        Parsea el XML de nmap reproduciendo exactamente la estructura
-        que devuelve PortScanner.analyse_nmap_xml_scan(), que es lo que
-        espera JSONManager.convert_json_to_individual_nmap_data().
-        Estructura devuelta:
-        {
-            "nmap": {"command_line": "...", "scaninfo": {...}, ...},
-            "scan": {
-                "192.168.1.1": {
-                    "hostnames": [{"name": "...", "type": "..."}],
-                    "addresses": {"ipv4": "...", "mac": "..."},
-                    "vendor": {"MAC": "vendor"},
-                    "status": {"state": "up", "reason": "..."},
-                    "tcp": {
-                        80: {"state": "open", "reason": "...", "name": "http",
-                            "product": "...", "version": "...", "extrainfo": "...",
-                            "conf": "...", "cpe": ""}
-                    }
-                }
-            },
-            "stats": {"timestr": "...", "elapsed": "...", "uphosts": "1", ...}
-        }
-        """
         root = ET.fromstring(xml_data)
 
-        # ── Metadatos del escaneo ──────────────────────────────────────────────
         nmap_meta = {
             "command_line": root.get("args", ""),
             "version": root.get("version", ""),
@@ -385,7 +327,6 @@ class NmapScanTask(_Task):
                 "services": scaninfo_el.get("services", ""),
             }
 
-        # ── Stats ──────────────────────────────────────────────────────────────
         stats = {}
         runstats = root.find("runstats")
         if runstats is not None:
@@ -399,10 +340,8 @@ class NmapScanTask(_Task):
                 "totalhosts": hosts_el.get("total", "0") if hosts_el is not None else "0",
             }
 
-        # ── Hosts ──────────────────────────────────────────────────────────────
         scan = {}
         for host in root.findall("host"):
-            # Dirección IP principal
             addr_el = host.find("address[@addrtype='ipv4']")
             if addr_el is None:
                 addr_el = host.find("address")
@@ -410,7 +349,6 @@ class NmapScanTask(_Task):
                 continue
             ip = addr_el.get("addr", "unknown")
 
-            # Todas las direcciones (ipv4, mac...)
             addresses = {}
             vendor = {}
             for a in host.findall("address"):
@@ -420,14 +358,12 @@ class NmapScanTask(_Task):
                 if atype == "mac" and a.get("vendor"):
                     vendor[addr_val] = a.get("vendor", "")
 
-            # Estado
             status_el = host.find("status")
             status = {
                 "state": status_el.get("state", "unknown") if status_el is not None else "unknown",
                 "reason": status_el.get("reason", "") if status_el is not None else "",
             }
 
-            # Hostnames
             hostnames = []
             hostnames_el = host.find("hostnames")
             if hostnames_el is not None:
@@ -436,11 +372,9 @@ class NmapScanTask(_Task):
                         "name": hn.get("name", ""),
                         "type": hn.get("type", ""),
                     })
-            # Si no hay hostname, usar la IP
             if not hostnames:
                 hostnames.append({"name": ip, "type": "PTR"})
 
-            # Puertos TCP y UDP
             tcp_ports = {}
             udp_ports = {}
             ports_el = host.find("ports")
@@ -483,16 +417,16 @@ class NmapScanTask(_Task):
 
 
 class NiktoScanTask(_Task):
-    """
-    Implementación concreta para escaneos Nikto.
-    """
+    """Implementación concreta para escaneos Nikto."""
 
     def __init__(self, target_domain, timeout: int = 120):
         super().__init__(target_domain, timeout)
-        
-        # Nombre único
+
         timestamp = int(time.time() * 1000)
-        self.temp_path = DirectoryChecker().verify_directory(DirectoryType.TEMP) / f"nikto_scan_{timestamp}.xml"
+        self.temp_path = (
+            DirectoryChecker().verify_directory(DirectoryType.TEMP)
+            / f"nikto_scan_{timestamp}.xml"
+        )
         self._output_file = self.temp_path
 
     def _build_command(self) -> List[str]:
@@ -506,7 +440,6 @@ class NiktoScanTask(_Task):
         use_ssl = scheme == "https"
         port = parsed.port or (443 if use_ssl else 80)
 
-        # Convertir ruta Windows → WSL
         wsl_path = str(self.temp_path).replace("\\", "/")
         if len(wsl_path) > 2 and wsl_path[1] == ":":
             drive = wsl_path[0].lower()
@@ -517,10 +450,10 @@ class NiktoScanTask(_Task):
             "nikto",
             "-h", host,
             "-port", str(port),
-            "-output", wsl_path,   # esta versión usa -output, no -o
+            "-output", wsl_path,
             "-Format", "xml",
             "-Tuning", "1234569b",
-            "-timeout", "10",      # timeout por request (segundos), no el total
+            "-timeout", "10",
             "-nointeractive",
         ]
 
@@ -536,15 +469,15 @@ class NiktoScanTask(_Task):
                 self.logger.error(f"Archivo XML no existe: {self.temp_path}")
                 self.results = None
                 return
-            
+
             if self.temp_path.stat().st_size == 0:
                 self.logger.error(f"Archivo XML está vacío: {self.temp_path}")
                 self.results = None
                 return
-            
+
             self.results = JSONManager.convert_multi_niktoscan_xml_to_json(str(self.temp_path))
             self.logger.info("Resultados Nikto procesados")
-        
+
         except Exception as e:
             self.logger.error(f"Error procesando resultados Nikto: {e}", exc_info=True)
             self.results = None
@@ -553,16 +486,36 @@ class NiktoScanTask(_Task):
 
 class OpenVASTask(_Task):
     """
-    Tarea de escaneo OpenVAS que maneja la conexión con el servidor GVM.
-    A diferencia de Nmap/Nikto, esta tarea NO ejecuta comandos CLI sino que
-    usa la API de OpenVAS mediante GMP.
+    Tarea de escaneo OpenVAS/GVM adaptada para la VM oficial de Greenbone Enterprise Trial.
+
+    HISTORIAL DE CONEXIONES:
+    ─────────────────────────────────────────────────────────────────────────
+    v1 (Docker):       TLSConnection → puerto 9390 (GMP directo sobre TLS).
+                       Funcionaba porque el contenedor exponía gvmd en red.
+
+    v2 (GSE REST API): requests HTTP → puerto 9392.
+                       Falló: la Enterprise Trial no expone ninguna REST API
+                       pública en ese puerto (Connection refused).
+
+    v3 (ACTUAL):       SSHConnection → puerto 22.
+                       Solución correcta según la documentación oficial de
+                       python-gvm para Greenbone Enterprise Appliances.
+                       La VM expone SSH en el puerto 22 y python-gvm tunela
+                       el protocolo GMP a través de ese canal cifrado.
+    ─────────────────────────────────────────────────────────────────────────
+
+    El campo "port" en SecConfig.json debe ser 22 (SSH estándar).
+    El usuario SSH de la VM de Greenbone suele ser "gmp" por convención;
+    usa el que tengas configurado en tu appliance.
+
+    Referencia: https://greenbone.github.io/python-gvm/api/connections.html
     """
-    
+
     def __init__(
-        self, 
+        self,
         target: str,
         hostname: str,
-        port: str,
+        port: int,
         username: str,
         password: str,
         scan_config: str = 'daba56c8-73ec-11df-a475-002264764cea',
@@ -571,109 +524,144 @@ class OpenVASTask(_Task):
     ):
         super().__init__(target, timeout)
         self.hostname = hostname
-        self.port = port
+        self.port = int(port)
         self.username = username
         self.password = password
         self.scan_config = scan_config
         self.port_list_id = port_list_id
-        
+
         self.task_id: Optional[str] = None
         self.report_id: Optional[str] = None
         self._report_xml: Optional[str] = None
-    
+
+    # ── Interfaz base ─────────────────────────────────────────────────────────
+
     def _build_command(self) -> List[str]:
-        """OpenVAS no usa comandos CLI, retorna lista vacía"""
+        """OpenVAS no usa subprocess — retorna lista vacía."""
         return []
-    
+
+    def _create_gmp_connection(self) -> GMP:
+        """
+        Factoría de conexiones GMP sobre SSH.
+
+        python-gvm abre un canal SSH a la VM y tunela el protocolo GMP
+        por él. Cada llamada crea una nueva sesión independiente para
+        evitar timeouts durante el polling de escaneos largos.
+        """
+        connection = SSHConnection(
+            hostname=self.hostname,
+            port=self.port,       # 22 en SecConfig.json
+            username=self.username,
+            password=self.password,
+            timeout=60            # timeout por operación individual
+        )
+        return GMP(connection=connection, transform=EtreeCheckCommandTransform())
+
+    # ── Ciclo de vida del escaneo ──────────────────────────────────────────────
+
     def scan(self) -> None:
         """
         Inicia el escaneo OpenVAS de forma asíncrona.
-        Override del método base porque OpenVAS funciona diferente.
+        Override del método base porque OpenVAS usa GMP/SSH en lugar de subprocess.
         """
         try:
             self.status = TaskStatus.RUNNING
             self._started.set()
-            
-            # Lanzar escaneo en thread separado
-            self._thread = threading.Thread(target=self._execute_openvas_scan, daemon=True)
+
+            self._thread = threading.Thread(
+                target=self._execute_openvas_scan,
+                daemon=True,
+                name=f"OpenVASExec-{self.target}"
+            )
             self._thread.start()
-            
+
             self.logger.info(f"Escaneo OpenVAS iniciado para {self.target}")
-        
+
         except Exception as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}")
             raise
-    
+
     def _execute_openvas_scan(self) -> None:
+        """Ciclo completo: setup → polling → reporte → procesado de resultados."""
         try:
-            # Fase 1: setup (conexión corta)
+            # Fase 1: Crear target y tarea, iniciar escaneo (conexión corta)
             with self._create_gmp_connection() as gmp:
                 gmp.authenticate(self.username, self.password)
                 target_id = self._get_or_create_target(gmp)
                 scanner_id = self._get_default_scanner(gmp)
                 self._create_and_start_task(gmp, target_id, scanner_id)
 
-            # Fase 2: polling largo (reconecta cada vez)
+            # Fase 2: Polling largo — reconecta en cada iteración para evitar
+            # que la sesión SSH expire durante escaneos de muchas horas
             self._wait_for_completion()
 
             if self.status == TaskStatus.CANCELLED:
-                self._finished.set()
                 return
 
-            # Fase 3: obtener reporte (conexión corta)
+            # Fase 3: Obtener reporte XML (conexión corta)
             with self._create_gmp_connection() as gmp:
                 gmp.authenticate(self.username, self.password)
                 self._fetch_report(gmp)
 
-            self._finished.set()
+            # Fase 4: Procesar resultados
+            self._process_results()
+
+            if self.results is None:
+                self.status = TaskStatus.FAILED
+                self.logger.error("OpenVAS: _process_results no produjo resultados")
+            else:
+                self.status = TaskStatus.COMPLETED
+                self.progress = 100
+                self.logger.info(f"Escaneo OpenVAS completado para {self.target}")
 
         except Exception as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
+
+        finally:
             self._finished.set()
-    
-    def _get_or_create_target(self, gmp: Gmp) -> str:
-        """Crea o reutiliza un target en OpenVAS"""
+
+    # ── Operaciones GMP ───────────────────────────────────────────────────────
+
+    def _get_or_create_target(self, gmp: GMP) -> str:
+        """Crea o reutiliza un target en GVM."""
         target_name = f"Target_{self.target}"
-        
-        # Buscar target existente
+
         targets = gmp.get_targets(filter_string=f'name="{target_name}"')
         target_list = targets.xpath('target')
-        
         if target_list:
             target_id = target_list[0].attrib.get('id')
-            self.logger.info(f"Reutilizando target: {target_id}")
+            self.logger.info(f"Reutilizando target existente: {target_id}")
             return target_id
-        
-        # Crear nuevo target
+
         target_response = gmp.create_target(
             name=target_name,
             hosts=[self.target],
             port_list_id=self.port_list_id,
             comment=f"Target para {self.target}"
         )
-        
         target_id = target_response.attrib.get('id') or target_response.get('id')
         self.logger.info(f"Target creado: {target_id}")
         return target_id
-    
-    def _get_default_scanner(self, gmp: Gmp) -> str:
-        """Obtiene el scanner por defecto de OpenVAS"""
+
+    def _get_default_scanner(self, gmp: GMP) -> str:
+        """Obtiene el ID del scanner 'OpenVAS Default'."""
         scanners = gmp.get_scanners()
-        
         for scanner in scanners.xpath('scanner'):
-            if scanner.find('name').text == 'OpenVAS Default':
+            name_el = scanner.find('name')
+            if name_el is not None and name_el.text == 'OpenVAS Default':
                 scanner_id = scanner.get('id')
                 self.logger.info(f"Scanner encontrado: {scanner_id}")
                 return scanner_id
-        
-        raise RuntimeError("No se encontró el scanner 'OpenVAS Default'")
-    
-    def _create_and_start_task(self, gmp: Gmp, target_id: str, scanner_id: str) -> None:
-        """Crea la tarea de escaneo y la inicia"""
+        raise RuntimeError(
+            "No se encontró el scanner 'OpenVAS Default' en la VM de Greenbone"
+        )
+
+    def _create_and_start_task(self, gmp: GMP, target_id: str, scanner_id: str) -> None:
+        """Crea la tarea de escaneo y la inicia."""
         task_name = f"Scan_{self.target}_{int(time.time())}"
-        
+
         task_response = gmp.create_task(
             name=task_name,
             config_id=self.scan_config,
@@ -681,97 +669,99 @@ class OpenVASTask(_Task):
             scanner_id=scanner_id,
             comment=f"Escaneo de {self.target}"
         )
-        
         self.task_id = task_response.attrib.get('id') or task_response.get('id')
         self.logger.info(f"Tarea creada: {self.task_id}")
-        
-        # Iniciar escaneo
+
         start_response = gmp.start_task(self.task_id)
         self.report_id = start_response.xpath('report_id')[0].text
         self.logger.info(f"Escaneo iniciado. Report ID: {self.report_id}")
-    
-    def _wait_for_completion(self, check_interval: int = 1) -> None:
-        """Espera a que el escaneo complete reconectando en cada iteración."""
+
+    def _wait_for_completion(self, check_interval: int = 30) -> None:
+        """
+        Polling del estado de la tarea hasta que finalice.
+        Reconecta vía SSH en cada iteración para evitar timeouts de sesión
+        en escaneos que pueden durar varias horas.
+        """
         while True:
             if self._cancel_event.is_set():
-                # Abrir conexión puntual solo para detener la tarea
-                with self._create_gmp_connection() as gmp:
-                    gmp.authenticate(self.username, self.password)
-                    try:
+                try:
+                    with self._create_gmp_connection() as gmp:
+                        gmp.authenticate(self.username, self.password)
                         gmp.stop_task(self.task_id)
-                    except Exception as e:
-                        self.logger.error(f"Error deteniendo tarea: {e}")
+                except Exception as e:
+                    self.logger.error(f"Error deteniendo tarea en GVM: {e}")
                 self.status = TaskStatus.CANCELLED
-                break
+                return
 
             try:
-                # Conexión nueva en cada poll → nunca expira por tiempo
                 with self._create_gmp_connection() as gmp:
                     gmp.authenticate(self.username, self.password)
                     task = gmp.get_task(self.task_id)
             except Exception as e:
-                self.logger.warning(f"Error consultando tarea, reintentando en {check_interval}s: {e}")
+                self.logger.warning(
+                    f"Error consultando tarea, reintentando en {check_interval}s: {e}"
+                )
                 time.sleep(check_interval)
                 continue
 
-            status = task.xpath('task/status')[0].text
-            progress_text = task.xpath('task/progress')[0].text
+            status_nodes = task.xpath('task/status')
+            progress_nodes = task.xpath('task/progress')
+
+            if not status_nodes or not progress_nodes:
+                self.logger.warning("Respuesta de get_task incompleta, reintentando...")
+                time.sleep(check_interval)
+                continue
+
+            status = status_nodes[0].text
+            progress_text = progress_nodes[0].text or "0"
 
             with self._lock:
-                self.progress = int(float(progress_text))
+                self.progress = max(0, int(float(progress_text)))
 
-            self.logger.info(f"Estado: {status} - Progreso: {progress_text}%")
+            self.logger.info(f"Estado GVM: {status} — Progreso: {progress_text}%")
 
-            if status in ['Done', 'Stopped', 'Interrupted']:
+            if status in ('Done', 'Stopped', 'Interrupted'):
                 if status != 'Done':
                     self.status = TaskStatus.CANCELLED
-                break
+                return
 
-            time.sleep(check_interval)  # ← Ahora SÍ dentro del bucle
+            time.sleep(check_interval)
 
-    def _create_gmp_connection(self):
-        """Factoría de conexiones GMP para reutilizar en cada llamada."""
-        connection = TLSConnection(
-            hostname=self.hostname,
-            port=self.port,
-            timeout=60  # Timeout por operación individual, no por sesión
-        )
-        return Gmp(connection=connection, transform=EtreeTransform())
-    
-    def _fetch_report(self, gmp: Gmp) -> None:
-        """Obtiene el reporte XML del escaneo"""
+    def _fetch_report(self, gmp: GMP) -> None:
+        """Obtiene el reporte XML del escaneo."""
         report_response = gmp.get_report(
             report_id=self.report_id,
-            report_format_id='a994b278-1f62-11e1-96ac-406186ea4fc5',  # XML
+            report_format_id='a994b278-1f62-11e1-96ac-406186ea4fc5',  # XML nativo GVM
             ignore_pagination=True,
             details=True
         )
-        
-        from lxml import etree
-        self._report_xml = etree.tostring(report_response, encoding='unicode', pretty_print=True)
-        self.logger.info("Reporte XML obtenido")
-    
+        self._report_xml = etree.tostring(
+            report_response, encoding='unicode', pretty_print=True
+        )
+        self.logger.info("Reporte XML obtenido de la VM de Greenbone")
+
     def _process_results(self) -> None:
-        """Procesa el XML del reporte y lo convierte a JSON"""
+        """Convierte el XML del reporte al formato JSON que espera el procesador."""
         try:
             if not self._report_xml:
-                raise RuntimeError("No hay reporte XML disponible")
-            
+                raise RuntimeError("No hay reporte XML disponible para procesar")
+
             self.results = JSONManager.openvas_xml_to_json(self._report_xml)
-            self.logger.info("Resultados OpenVAS procesados")
-        
+            self.logger.info("Resultados OpenVAS procesados correctamente")
+
         except Exception as e:
             self.logger.error(f"Error procesando resultados OpenVAS: {e}", exc_info=True)
             self.results = None
             raise
 
+    # ── Override de wait ──────────────────────────────────────────────────────
+
     def wait(self, timeout: Optional[float] = None) -> bool:
         """
-        Override: OpenVAS gestiona su propio ciclo interno.
-        Solo esperamos a que _finished se active (sin timeout o con límite razonable).
+        Override: todo el ciclo interno (polling, reporte, procesado) se gestiona
+        en _execute_openvas_scan. Aquí solo esperamos a _finished con un tope de 8h.
         """
         try:
-            # Esperamos sin límite (None) o con un máximo razonable de 8h
             safe_timeout = min(timeout, 28800) if timeout is not None else None
             finished = self._finished.wait(safe_timeout)
 
@@ -788,8 +778,6 @@ class OpenVASTask(_Task):
                 self.logger.error("OpenVAS finalizó pero no hay resultados")
                 return False
 
-            self.status = TaskStatus.COMPLETED
-            self.progress = 100
             return True
 
         except Exception as e:

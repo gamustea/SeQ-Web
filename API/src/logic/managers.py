@@ -486,10 +486,10 @@ class OpenVASScanManager(ScanManager):
         super().__init__(user, session)
         
         config = ConfigReader().get_openvas_config()["access"]
-        self.hostname = config["hostname"] # type: ignore
-        self.port = config["port"] # type: ignore
-        self.username = config["username"] # type: ignore
-        self.password = config["password"] # type: ignore
+        self.hostname = config["hostname"]
+        self.port = int(config["port"])  # Puerto 22 — SSH, canal de transporte para GMP
+        self.username = config["username"]
+        self.password = config["password"]
     
     def run_scan(self, target: str, scan_config: str = 'full_fast') -> int:
         """Inicia un escaneo OpenVAS"""
@@ -546,6 +546,7 @@ class OpenVASScanManager(ScanManager):
             username=self.username,
             password=self.password,
             scan_config=scan_config,
+            port_list_id=self.PORT_LISTS['tcp_all'],  # configurable por subclase si se necesita
             timeout=timeout
         )
     
