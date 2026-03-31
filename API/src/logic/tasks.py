@@ -490,10 +490,9 @@ class OpenVASTask(_Task):
     """
     Tarea de escaneo OpenVAS que se conecta a gvmd a través de un túnel SSH.
 
-    gvmd en Greenbone Community Edition solo escucha en un Unix socket
-    (/run/gvmd/gvmd.sock), por lo que no hay puerto GMP TCP disponible.
-    SSHConnection de python-gvm abre el túnel automáticamente y accede
-    al socket de forma transparente.
+    python-gvm SSHConnection se conecta al puerto SSH de la VM (22) y usa
+    socat internamente para acceder al Unix socket de gvmd. No hay parámetro
+    socket_path en el constructor; el path es gestionado por la librería.
 
     SecConfig.json (openvas.access):
         hostname  → IP de la VM Greenbone
@@ -501,8 +500,6 @@ class OpenVASTask(_Task):
         username  → usuario SSH del SO de la VM
         password  → contraseña SSH del SO de la VM
     """
-
-    _GVM_SOCKET_PATH = "/run/gvmd/gvmd.sock"
 
     def __init__(
         self,
@@ -517,7 +514,7 @@ class OpenVASTask(_Task):
     ):
         super().__init__(target, timeout)
         self.hostname     = hostname
-        self.port         = int(port)   # SSH port (22)
+        self.port         = int(port)   # puerto SSH (22)
         self.username     = username
         self.password     = password
         self.scan_config  = scan_config
@@ -581,7 +578,6 @@ class OpenVASTask(_Task):
             port=self.port,
             username=self.username,
             password=self.password,
-            socket_path=self._GVM_SOCKET_PATH,
         )
         transform = EtreeCheckCommandTransform()
 
@@ -619,7 +615,7 @@ class OpenVASTask(_Task):
             self._finished.set()
 
     # ------------------------------------------------------------------ #
-    #  Helpers GMP (reciben el objeto gmp como parámetro)                 #
+    #  Helpers GMP                                                         #
     # ------------------------------------------------------------------ #
 
     def _get_or_create_target(self, gmp: GMP) -> str:
@@ -693,9 +689,7 @@ class OpenVASTask(_Task):
                     self.progress = max(
                         0, int(float(progress_el.text or "0"))
                     )
-                self.logger.info(
-                    f"GVM status: {gvm_status} — {self.progress}%"
-                )
+                self.logger.info(f"GVM status: {gvm_status} — {self.progress}%")
 
                 if gvm_status in ("Done", "Stopped", "Interrupted"):
                     if gvm_status != "Done":
