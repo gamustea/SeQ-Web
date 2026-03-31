@@ -491,8 +491,12 @@ class OpenVASTask(_Task):
     Tarea de escaneo OpenVAS que se conecta a gvmd a través de un túnel SSH.
 
     python-gvm SSHConnection se conecta al puerto SSH de la VM (22) y usa
-    socat internamente para acceder al Unix socket de gvmd. No hay parámetro
-    socket_path en el constructor; el path es gestionado por la librería.
+    socat internamente para tunelizar al Unix socket de gvmd.
+
+    Parámetros relevantes de SSHConnection:
+        timeout         → segundos de espera para el handshake SSH (default 60)
+        auto_accept_host→ True para aceptar automáticamente la clave del host
+                          sin input interactivo (necesario en servidores sin TTY)
 
     SecConfig.json (openvas.access):
         hostname  → IP de la VM Greenbone
@@ -500,6 +504,8 @@ class OpenVASTask(_Task):
         username  → usuario SSH del SO de la VM
         password  → contraseña SSH del SO de la VM
     """
+
+    _SSH_TIMEOUT = 60  # segundos para el banner SSH y handshake
 
     def __init__(
         self,
@@ -578,6 +584,8 @@ class OpenVASTask(_Task):
             port=self.port,
             username=self.username,
             password=self.password,
+            timeout=self._SSH_TIMEOUT,       # evita EOFError en el banner
+            auto_accept_host=True,           # evita input loop sin TTY
         )
         transform = EtreeCheckCommandTransform()
 
