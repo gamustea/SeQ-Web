@@ -484,12 +484,13 @@ class OpenVASScanManager(ScanManager):
     
     def __init__(self, user: User, session: Optional[Session] = None):
         super().__init__(user, session)
-        
         config = ConfigReader().get_openvas_config()["access"]
         self.hostname = config["hostname"]
-        self.port = int(config["port"])  # Puerto 22 — SSH, canal de transporte para GMP
-        self.username = config["username"]
-        self.password = config["password"]
+        self.port = int(config["port"])
+        self.ssh_username = config["ssh_username"]   # ← NUEVO: usuario SSH ("gmp")
+        self.ssh_password = config["ssh_password"]   # ← NUEVO: password SSH ("gmp")
+        self.username = config["username"]           # usuario GMP (web)
+        self.password = config["password"]           # password GMP (web)
     
     def run_scan(self, target: str, scan_config: str = 'full_fast') -> int:
         """Inicia un escaneo OpenVAS"""
@@ -543,10 +544,12 @@ class OpenVASScanManager(ScanManager):
             target=target,
             hostname=self.hostname,
             port=self.port,
+            ssh_username=self.ssh_username,   # ← NUEVO
+            ssh_password=self.ssh_password,   # ← NUEVO
             username=self.username,
             password=self.password,
             scan_config=scan_config,
-            port_list_id=self.PORT_LISTS['tcp_all'],  # configurable por subclase si se necesita
+            port_list_id=self.PORT_LISTS['tcp_all'],
             timeout=timeout
         )
     

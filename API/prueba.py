@@ -1,36 +1,28 @@
-import asyncio
-import sys
-from pathlib import Path
+# prueba.py
+import requests
+import urllib3
+import xml.etree.ElementTree as ET
+urllib3.disable_warnings()
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+BASE = "https://192.168.1.143"
+s = requests.Session()
+s.verify = False
 
-from src.logic.managers import AegisManager
-from src.logic.managers import UserManager  # ajusta el import a tu estructura
+login = s.post(f"{BASE}/gmp", data={
+    "cmd": "login",
+    "login": "SecOps",
+    "password": "djn38qudOdu89ADUSAHDd9831ydhg219hde19"
+})
 
-# Obtén el usuario como ya lo estás haciendo
-user_manager = UserManager()
-user = user_manager.get_user_by_id(1)
+root = ET.fromstring(login.text)
+token = root.findtext(".//token")
+print(f"Status: {login.status_code}")
+print(f"Token: {token}")
 
-manager = AegisManager(user=user)
-
-# Envuelve la corutina en asyncio.run()
-
-
-result = manager.generate(
-        topic_id=30,
-        tweaks={
-            "company":          "EMESA",
-            "sector":           "distribucion_it",
-            "audienceLevel":    "mixed",
-            "associatedBrands": ["HPE", "Sonicwall", "HP"],
-            "mentionContact":   "ciberseguridad@emesa.com",
-            "language":         "es",
-            "tone":             "formal",
-        }
-    )
-
-print(result)
-
-
-
-
+if token:
+    resp = s.post(f"{BASE}/gmp", data={
+        "cmd": "get_tasks",
+        "token": token
+    })
+    print(f"\nget_tasks status: {resp.status_code}")
+    print(f"get_tasks body: {resp.text[:300]}")

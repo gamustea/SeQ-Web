@@ -18,9 +18,10 @@ from src.misc.directorychecker import DirectoryChecker
 
 import xml.etree.ElementTree as ET
 from lxml import etree
-from gvm.connections import SSHConnection
-from gvm.protocols.gmp import GMP
-from gvm.transforms import EtreeCheckCommandTransform
+
+import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class TaskStatus(Enum):
@@ -485,31 +486,6 @@ class NiktoScanTask(_Task):
 
 
 class OpenVASTask(_Task):
-    """
-    Tarea de escaneo OpenVAS/GVM adaptada para la VM oficial de Greenbone Enterprise Trial.
-
-    HISTORIAL DE CONEXIONES:
-    ─────────────────────────────────────────────────────────────────────────
-    v1 (Docker):       TLSConnection → puerto 9390 (GMP directo sobre TLS).
-                       Funcionaba porque el contenedor exponía gvmd en red.
-
-    v2 (GSE REST API): requests HTTP → puerto 9392.
-                       Falló: la Enterprise Trial no expone ninguna REST API
-                       pública en ese puerto (Connection refused).
-
-    v3 (ACTUAL):       SSHConnection → puerto 22.
-                       Solución correcta según la documentación oficial de
-                       python-gvm para Greenbone Enterprise Appliances.
-                       La VM expone SSH en el puerto 22 y python-gvm tunela
-                       el protocolo GMP a través de ese canal cifrado.
-    ─────────────────────────────────────────────────────────────────────────
-
-    El campo "port" en SecConfig.json debe ser 22 (SSH estándar).
-    El usuario SSH de la VM de Greenbone suele ser "gmp" por convención;
-    usa el que tengas configurado en tu appliance.
-
-    Referencia: https://greenbone.github.io/python-gvm/api/connections.html
-    """
 
     def __init__(
         self,
@@ -523,264 +499,170 @@ class OpenVASTask(_Task):
         timeout: int = 300
     ):
         super().__init__(target, timeout)
+        
         self.hostname = hostname
         self.port = int(port)
         self.username = username
         self.password = password
         self.scan_config = scan_config
         self.port_list_id = port_list_id
-
         self.task_id: Optional[str] = None
         self.report_id: Optional[str] = None
         self._report_xml: Optional[str] = None
-
-    # ── Interfaz base ─────────────────────────────────────────────────────────
+        self._base_url = f"https://{self.hostname}:{self.port}"
+        self._session: Optional[requests.Session] = None
+        self._token: Optional[str] = None
 
     def _build_command(self) -> List[str]:
-        """OpenVAS no usa subprocess — retorna lista vacía."""
         return []
 
-    def _create_gmp_connection(self) -> GMP:
-        """
-        Factoría de conexiones GMP sobre SSH.
-
-        python-gvm abre un canal SSH a la VM y tunela el protocolo GMP
-        por él. Cada llamada crea una nueva sesión independiente para
-        evitar timeouts durante el polling de escaneos largos.
-        """
-        connection = SSHConnection(
-            hostname=self.hostname,
-            port=self.port,       # 22 en SecConfig.json
-            username=self.username,
-            password=self.password,
-            timeout=60            # timeout por operación individual
+    def _gmp_request(self, xml_command: str) -> ET.Element:
+        """Envía un comando GMP encapsulado en una petición HTTPS POST."""
+        response = requests.post(
+            f"{self._base_url}/gmp",
+            data=xml_command,
+            auth=(self.username, self.password),
+            verify=False,   # VM Trial usa certificado autofirmado
+            timeout=60,
+            headers={"Content-Type": "application/xml"}
         )
-        return GMP(connection=connection, transform=EtreeCheckCommandTransform())
+        response.raise_for_status()
+        return ET.fromstring(response.text)
 
-    # ── Ciclo de vida del escaneo ──────────────────────────────────────────────
+    def _get_or_create_target(self) -> str:
+        target_name = f"Target_{self.target}"
+        # Buscar target existente
+        xml = f'<get_targets filter="name=\\"{target_name}\\""/>'
+        resp = self._gmp_request(xml)
+        targets = resp.findall('target')
+        if targets:
+            return targets[0].get('id')
+        # Crear nuevo target
+        xml = (
+            f'<create_target>'
+            f'<name>{target_name}</name>'
+            f'<hosts>{self.target}</hosts>'
+            f'<port_list id="{self.port_list_id}"/>'
+            f'</create_target>'
+        )
+        resp = self._gmp_request(xml)
+        return resp.get('id')
+
+    def _get_default_scanner(self) -> str:
+        resp = self._gmp_request('<get_scanners/>')
+        for scanner in resp.findall('scanner'):
+            name_el = scanner.find('name')
+            if name_el is not None and name_el.text == 'OpenVAS Default':
+                return scanner.get('id')
+        raise RuntimeError("Scanner 'OpenVAS Default' no encontrado")
+
+    def _create_and_start_task(self, target_id: str, scanner_id: str) -> None:
+        task_name = f"Scan_{self.target}_{int(time.time())}"
+        xml = (
+            f'<create_task>'
+            f'<name>{task_name}</name>'
+            f'<config id="{self.scan_config}"/>'
+            f'<target id="{target_id}"/>'
+            f'<scanner id="{scanner_id}"/>'
+            f'</create_task>'
+        )
+        resp = self._gmp_request(xml)
+        self.task_id = resp.get('id')
+
+        resp = self._gmp_request(f'<start_task task_id="{self.task_id}"/>')
+        report_id_el = resp.find('report_id')
+        self.report_id = report_id_el.text if report_id_el is not None else None
+        self.logger.info(f"Tarea iniciada. Task ID: {self.task_id}, Report ID: {self.report_id}")
+
+    def _wait_for_completion(self, check_interval: int = 30) -> None:
+        while True:
+            if self._cancel_event.is_set():
+                self._gmp_request(f'<stop_task task_id="{self.task_id}"/>')
+                self.status = TaskStatus.CANCELLED
+                return
+            try:
+                resp = self._gmp_request(f'<get_tasks task_id="{self.task_id}"/>')
+                status_el = resp.find('task/status')
+                progress_el = resp.find('task/progress')
+                if status_el is None:
+                    time.sleep(check_interval)
+                    continue
+                status = status_el.text
+                with self._lock:
+                    self.progress = max(0, int(float(progress_el.text or "0")))
+                self.logger.info(f"Estado GVM: {status} — {self.progress}%")
+                if status in ('Done', 'Stopped', 'Interrupted'):
+                    if status != 'Done':
+                        self.status = TaskStatus.CANCELLED
+                    return
+            except Exception as e:
+                self.logger.warning(f"Error polling, reintentando: {e}")
+            time.sleep(check_interval)
+
+    def _fetch_report(self) -> None:
+        xml = (
+            f'<get_reports report_id="{self.report_id}" '
+            f'format_id="a994b278-1f62-11e1-96ac-406186ea4fc5" '
+            f'ignore_pagination="1" details="1"/>'
+        )
+        resp = self._gmp_request(xml)
+        self._report_xml = ET.tostring(resp, encoding='unicode')
+        self.logger.info("Reporte XML obtenido")
+
+    def _execute_openvas_scan(self) -> None:
+        try:
+            target_id = self._get_or_create_target()
+            scanner_id = self._get_default_scanner()
+            self._create_and_start_task(target_id, scanner_id)
+            self._wait_for_completion()
+            if self.status == TaskStatus.CANCELLED:
+                return
+            self._fetch_report()
+            self._process_results()
+            if self.results is None:
+                self.status = TaskStatus.FAILED
+            else:
+                self.status = TaskStatus.COMPLETED
+                self.progress = 100
+        except Exception as e:
+            self.status = TaskStatus.FAILED
+            self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
+        finally:
+            self._finished.set()
 
     def scan(self) -> None:
-        """
-        Inicia el escaneo OpenVAS de forma asíncrona.
-        Override del método base porque OpenVAS usa GMP/SSH en lugar de subprocess.
-        """
         try:
             self.status = TaskStatus.RUNNING
             self._started.set()
-
             self._thread = threading.Thread(
                 target=self._execute_openvas_scan,
                 daemon=True,
                 name=f"OpenVASExec-{self.target}"
             )
             self._thread.start()
-
-            self.logger.info(f"Escaneo OpenVAS iniciado para {self.target}")
-
         except Exception as e:
             self.status = TaskStatus.FAILED
-            self.logger.error(f"Error iniciando escaneo OpenVAS: {e}")
+            self.logger.error(f"Error iniciando OpenVAS: {e}")
             raise
 
-    def _execute_openvas_scan(self) -> None:
-        """Ciclo completo: setup → polling → reporte → procesado de resultados."""
-        try:
-            # Fase 1: Crear target y tarea, iniciar escaneo (conexión corta)
-            with self._create_gmp_connection() as gmp:
-                gmp.authenticate(self.username, self.password)
-                target_id = self._get_or_create_target(gmp)
-                scanner_id = self._get_default_scanner(gmp)
-                self._create_and_start_task(gmp, target_id, scanner_id)
-
-            # Fase 2: Polling largo — reconecta en cada iteración para evitar
-            # que la sesión SSH expire durante escaneos de muchas horas
-            self._wait_for_completion()
-
-            if self.status == TaskStatus.CANCELLED:
-                return
-
-            # Fase 3: Obtener reporte XML (conexión corta)
-            with self._create_gmp_connection() as gmp:
-                gmp.authenticate(self.username, self.password)
-                self._fetch_report(gmp)
-
-            # Fase 4: Procesar resultados
-            self._process_results()
-
-            if self.results is None:
-                self.status = TaskStatus.FAILED
-                self.logger.error("OpenVAS: _process_results no produjo resultados")
-            else:
-                self.status = TaskStatus.COMPLETED
-                self.progress = 100
-                self.logger.info(f"Escaneo OpenVAS completado para {self.target}")
-
-        except Exception as e:
-            self.status = TaskStatus.FAILED
-            self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
-
-        finally:
-            self._finished.set()
-
-    # ── Operaciones GMP ───────────────────────────────────────────────────────
-
-    def _get_or_create_target(self, gmp: GMP) -> str:
-        """Crea o reutiliza un target en GVM."""
-        target_name = f"Target_{self.target}"
-
-        targets = gmp.get_targets(filter_string=f'name="{target_name}"')
-        target_list = targets.xpath('target')
-        if target_list:
-            target_id = target_list[0].attrib.get('id')
-            self.logger.info(f"Reutilizando target existente: {target_id}")
-            return target_id
-
-        target_response = gmp.create_target(
-            name=target_name,
-            hosts=[self.target],
-            port_list_id=self.port_list_id,
-            comment=f"Target para {self.target}"
-        )
-        target_id = target_response.attrib.get('id') or target_response.get('id')
-        self.logger.info(f"Target creado: {target_id}")
-        return target_id
-
-    def _get_default_scanner(self, gmp: GMP) -> str:
-        """Obtiene el ID del scanner 'OpenVAS Default'."""
-        scanners = gmp.get_scanners()
-        for scanner in scanners.xpath('scanner'):
-            name_el = scanner.find('name')
-            if name_el is not None and name_el.text == 'OpenVAS Default':
-                scanner_id = scanner.get('id')
-                self.logger.info(f"Scanner encontrado: {scanner_id}")
-                return scanner_id
-        raise RuntimeError(
-            "No se encontró el scanner 'OpenVAS Default' en la VM de Greenbone"
-        )
-
-    def _create_and_start_task(self, gmp: GMP, target_id: str, scanner_id: str) -> None:
-        """Crea la tarea de escaneo y la inicia."""
-        task_name = f"Scan_{self.target}_{int(time.time())}"
-
-        task_response = gmp.create_task(
-            name=task_name,
-            config_id=self.scan_config,
-            target_id=target_id,
-            scanner_id=scanner_id,
-            comment=f"Escaneo de {self.target}"
-        )
-        self.task_id = task_response.attrib.get('id') or task_response.get('id')
-        self.logger.info(f"Tarea creada: {self.task_id}")
-
-        start_response = gmp.start_task(self.task_id)
-        self.report_id = start_response.xpath('report_id')[0].text
-        self.logger.info(f"Escaneo iniciado. Report ID: {self.report_id}")
-
-    def _wait_for_completion(self, check_interval: int = 30) -> None:
-        """
-        Polling del estado de la tarea hasta que finalice.
-        Reconecta vía SSH en cada iteración para evitar timeouts de sesión
-        en escaneos que pueden durar varias horas.
-        """
-        while True:
-            if self._cancel_event.is_set():
-                try:
-                    with self._create_gmp_connection() as gmp:
-                        gmp.authenticate(self.username, self.password)
-                        gmp.stop_task(self.task_id)
-                except Exception as e:
-                    self.logger.error(f"Error deteniendo tarea en GVM: {e}")
-                self.status = TaskStatus.CANCELLED
-                return
-
-            try:
-                with self._create_gmp_connection() as gmp:
-                    gmp.authenticate(self.username, self.password)
-                    task = gmp.get_task(self.task_id)
-            except Exception as e:
-                self.logger.warning(
-                    f"Error consultando tarea, reintentando en {check_interval}s: {e}"
-                )
-                time.sleep(check_interval)
-                continue
-
-            status_nodes = task.xpath('task/status')
-            progress_nodes = task.xpath('task/progress')
-
-            if not status_nodes or not progress_nodes:
-                self.logger.warning("Respuesta de get_task incompleta, reintentando...")
-                time.sleep(check_interval)
-                continue
-
-            status = status_nodes[0].text
-            progress_text = progress_nodes[0].text or "0"
-
-            with self._lock:
-                self.progress = max(0, int(float(progress_text)))
-
-            self.logger.info(f"Estado GVM: {status} — Progreso: {progress_text}%")
-
-            if status in ('Done', 'Stopped', 'Interrupted'):
-                if status != 'Done':
-                    self.status = TaskStatus.CANCELLED
-                return
-
-            time.sleep(check_interval)
-
-    def _fetch_report(self, gmp: GMP) -> None:
-        """Obtiene el reporte XML del escaneo."""
-        report_response = gmp.get_report(
-            report_id=self.report_id,
-            report_format_id='a994b278-1f62-11e1-96ac-406186ea4fc5',  # XML nativo GVM
-            ignore_pagination=True,
-            details=True
-        )
-        self._report_xml = etree.tostring(
-            report_response, encoding='unicode', pretty_print=True
-        )
-        self.logger.info("Reporte XML obtenido de la VM de Greenbone")
-
     def _process_results(self) -> None:
-        """Convierte el XML del reporte al formato JSON que espera el procesador."""
         try:
             if not self._report_xml:
-                raise RuntimeError("No hay reporte XML disponible para procesar")
-
+                raise RuntimeError("No hay reporte XML disponible")
             self.results = JSONManager.openvas_xml_to_json(self._report_xml)
-            self.logger.info("Resultados OpenVAS procesados correctamente")
-
         except Exception as e:
-            self.logger.error(f"Error procesando resultados OpenVAS: {e}", exc_info=True)
+            self.logger.error(f"Error procesando resultados: {e}", exc_info=True)
             self.results = None
             raise
 
-    # ── Override de wait ──────────────────────────────────────────────────────
-
     def wait(self, timeout: Optional[float] = None) -> bool:
-        """
-        Override: todo el ciclo interno (polling, reporte, procesado) se gestiona
-        en _execute_openvas_scan. Aquí solo esperamos a _finished con un tope de 8h.
-        """
         try:
             safe_timeout = min(timeout, 28800) if timeout is not None else None
-            finished = self._finished.wait(safe_timeout)
-
-            if not finished:
+            if not self._finished.wait(safe_timeout):
                 self.status = TaskStatus.TIMEOUT
-                self.logger.error("Timeout esperando finalización de OpenVAS")
                 return False
-
-            if self.status in (TaskStatus.CANCELLED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
-                return False
-
-            if self.results is None:
-                self.status = TaskStatus.FAILED
-                self.logger.error("OpenVAS finalizó pero no hay resultados")
-                return False
-
-            return True
-
+            return self.status == TaskStatus.COMPLETED
         except Exception as e:
             self.status = TaskStatus.FAILED
-            self.logger.error(f"Error en wait de OpenVAS: {e}", exc_info=True)
+            self.logger.error(f"Error en wait: {e}", exc_info=True)
             return False
