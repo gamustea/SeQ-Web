@@ -486,11 +486,9 @@ class OpenVASScanManager(ScanManager):
         super().__init__(user, session)
         config = ConfigReader().get_openvas_config()["access"]
         self.hostname = config["hostname"]
-        self.port = int(config["port"])
-        self.ssh_username = config["ssh_username"]   # ← NUEVO: usuario SSH ("gmp")
-        self.ssh_password = config["ssh_password"]   # ← NUEVO: password SSH ("gmp")
-        self.username = config["username"]           # usuario GMP (web)
-        self.password = config["password"]           # password GMP (web)
+        self.port = int(config["port"])          # debe ser 443
+        self.username = config["username"]        # usuario GSA/GMP (web)
+        self.password = config["password"]        # password GSA/GMP (web)
     
     def run_scan(self, target: str, scan_config: str = 'full_fast') -> int:
         """Inicia un escaneo OpenVAS"""
@@ -514,7 +512,6 @@ class OpenVASScanManager(ScanManager):
                 name=f"OpenVASScan-{scan_id}"
             )
 
-            # fix: registrar ANTES de start() para evitar race condition
             self._register_task(scan_id, task, thread)
             thread.start()
             
@@ -544,8 +541,6 @@ class OpenVASScanManager(ScanManager):
             target=target,
             hostname=self.hostname,
             port=self.port,
-            ssh_username=self.ssh_username,   # ← NUEVO
-            ssh_password=self.ssh_password,   # ← NUEVO
             username=self.username,
             password=self.password,
             scan_config=scan_config,
@@ -644,11 +639,10 @@ class NmapScanManager(ScanManager):
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
                 args=(scan_id, task),
-                daemon=True,  # fix: daemon=True para no bloquear shutdown
+                daemon=True,
                 name=f"NmapScan-{scan_id}"
             )
 
-            # fix: registrar ANTES de start() — ya estaba correcto en Nmap
             self._register_task(scan_id, task, thread)
             thread.start()
             
@@ -708,11 +702,10 @@ class NiktoScanManager(ScanManager):
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
                 args=(scan_id, task),
-                daemon=True,  # fix: daemon=True para no bloquear shutdown
+                daemon=True,
                 name=f"NiktoScan-{scan_id}"
             )
 
-            # fix: registrar ANTES de start() para evitar race condition
             self._register_task(scan_id, task, thread)
             thread.start()
             
@@ -2035,7 +2028,7 @@ class AegisManager(BaseManager):
         thread = threading.Thread(
             target=thread_manager._run_generate,
             args=(document_id, topic_id, tweaks),
-            daemon=True,  # fix: daemon=True para no bloquear shutdown
+            daemon=True,
             name=f"Aegis-{document_id}",
         )
         thread.start()
