@@ -19,9 +19,10 @@ from src.misc.directorychecker import DirectoryChecker
 import xml.etree.ElementTree as ET
 from lxml import etree
 
-import requests
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from gvm.connections import SSHConnection
+from gvm.protocols.gmp import GMP
+from gvm.transforms import EtreeCheckCommandTransform
+from gvm.errors import GvmError
 
 
 class TaskStatus(Enum):
@@ -486,164 +487,79 @@ class NiktoScanTask(_Task):
 
 
 class OpenVASTask(_Task):
+    """
+    Tarea de escaneo OpenVAS que se conecta a gvmd a través de un túnel SSH.
+
+    gvmd en Greenbone Community Edition solo escucha en un Unix socket
+    (/run/gvmd/gvmd.sock), por lo que no hay puerto GMP TCP disponible.
+    SSHConnection de python-gvm abre el túnel automáticamente y accede
+    al socket de forma transparente.
+
+    SecConfig.json (openvas.access):
+        hostname  → IP de la VM Greenbone
+        port      → puerto SSH de la VM (normalmente 22)
+        username  → usuario SSH del SO de la VM
+        password  → contraseña SSH del SO de la VM
+    """
+
+    _GVM_SOCKET_PATH = "/run/gvmd/gvmd.sock"
 
     def __init__(
         self,
         target: str,
         hostname: str,
-        port: int,
-        username: str,
-        password: str,
-        scan_config: str = 'daba56c8-73ec-11df-a475-002264764cea',
-        port_list_id: str = '33d0cd82-57c6-11e1-8ed1-406186ea4fc5',
-        timeout: int = 300
+        port: int = 22,
+        username: str = "",
+        password: str = "",
+        scan_config: str = "daba56c8-73ec-11df-a475-002264764cea",
+        port_list_id: str = "33d0cd82-57c6-11e1-8ed1-406186ea4fc5",
+        timeout: int = 300,
     ):
         super().__init__(target, timeout)
-        
-        self.hostname = hostname
-        self.port = int(port)
-        self.username = username
-        self.password = password
-        self.scan_config = scan_config
+        self.hostname     = hostname
+        self.port         = int(port)   # SSH port (22)
+        self.username     = username
+        self.password     = password
+        self.scan_config  = scan_config
         self.port_list_id = port_list_id
-        self.task_id: Optional[str] = None
-        self.report_id: Optional[str] = None
+        self.task_id:    Optional[str] = None
+        self.report_id:  Optional[str] = None
         self._report_xml: Optional[str] = None
-        self._base_url = f"https://{self.hostname}:{self.port}"
-        self._session: Optional[requests.Session] = None
-        self._token: Optional[str] = None
+
+    # ------------------------------------------------------------------ #
+    #  _Task interface                                                     #
+    # ------------------------------------------------------------------ #
 
     def _build_command(self) -> List[str]:
-        return []
-
-    def _gmp_request(self, xml_command: str) -> ET.Element:
-        """Envía un comando GMP encapsulado en una petición HTTPS POST."""
-        response = requests.post(
-            f"{self._base_url}/gmp",
-            data=xml_command,
-            auth=(self.username, self.password),
-            verify=False,   # VM Trial usa certificado autofirmado
-            timeout=60,
-            headers={"Content-Type": "application/xml"}
-        )
-        response.raise_for_status()
-        return ET.fromstring(response.text)
-
-    def _get_or_create_target(self) -> str:
-        target_name = f"Target_{self.target}"
-        # Buscar target existente
-        xml = f'<get_targets filter="name=\\"{target_name}\\""/>'
-        resp = self._gmp_request(xml)
-        targets = resp.findall('target')
-        if targets:
-            return targets[0].get('id')
-        # Crear nuevo target
-        xml = (
-            f'<create_target>'
-            f'<name>{target_name}</name>'
-            f'<hosts>{self.target}</hosts>'
-            f'<port_list id="{self.port_list_id}"/>'
-            f'</create_target>'
-        )
-        resp = self._gmp_request(xml)
-        return resp.get('id')
-
-    def _get_default_scanner(self) -> str:
-        resp = self._gmp_request('<get_scanners/>')
-        for scanner in resp.findall('scanner'):
-            name_el = scanner.find('name')
-            if name_el is not None and name_el.text == 'OpenVAS Default':
-                return scanner.get('id')
-        raise RuntimeError("Scanner 'OpenVAS Default' no encontrado")
-
-    def _create_and_start_task(self, target_id: str, scanner_id: str) -> None:
-        task_name = f"Scan_{self.target}_{int(time.time())}"
-        xml = (
-            f'<create_task>'
-            f'<name>{task_name}</name>'
-            f'<config id="{self.scan_config}"/>'
-            f'<target id="{target_id}"/>'
-            f'<scanner id="{scanner_id}"/>'
-            f'</create_task>'
-        )
-        resp = self._gmp_request(xml)
-        self.task_id = resp.get('id')
-
-        resp = self._gmp_request(f'<start_task task_id="{self.task_id}"/>')
-        report_id_el = resp.find('report_id')
-        self.report_id = report_id_el.text if report_id_el is not None else None
-        self.logger.info(f"Tarea iniciada. Task ID: {self.task_id}, Report ID: {self.report_id}")
-
-    def _wait_for_completion(self, check_interval: int = 30) -> None:
-        while True:
-            if self._cancel_event.is_set():
-                self._gmp_request(f'<stop_task task_id="{self.task_id}"/>')
-                self.status = TaskStatus.CANCELLED
-                return
-            try:
-                resp = self._gmp_request(f'<get_tasks task_id="{self.task_id}"/>')
-                status_el = resp.find('task/status')
-                progress_el = resp.find('task/progress')
-                if status_el is None:
-                    time.sleep(check_interval)
-                    continue
-                status = status_el.text
-                with self._lock:
-                    self.progress = max(0, int(float(progress_el.text or "0")))
-                self.logger.info(f"Estado GVM: {status} — {self.progress}%")
-                if status in ('Done', 'Stopped', 'Interrupted'):
-                    if status != 'Done':
-                        self.status = TaskStatus.CANCELLED
-                    return
-            except Exception as e:
-                self.logger.warning(f"Error polling, reintentando: {e}")
-            time.sleep(check_interval)
-
-    def _fetch_report(self) -> None:
-        xml = (
-            f'<get_reports report_id="{self.report_id}" '
-            f'format_id="a994b278-1f62-11e1-96ac-406186ea4fc5" '
-            f'ignore_pagination="1" details="1"/>'
-        )
-        resp = self._gmp_request(xml)
-        self._report_xml = ET.tostring(resp, encoding='unicode')
-        self.logger.info("Reporte XML obtenido")
-
-    def _execute_openvas_scan(self) -> None:
-        try:
-            target_id = self._get_or_create_target()
-            scanner_id = self._get_default_scanner()
-            self._create_and_start_task(target_id, scanner_id)
-            self._wait_for_completion()
-            if self.status == TaskStatus.CANCELLED:
-                return
-            self._fetch_report()
-            self._process_results()
-            if self.results is None:
-                self.status = TaskStatus.FAILED
-            else:
-                self.status = TaskStatus.COMPLETED
-                self.progress = 100
-        except Exception as e:
-            self.status = TaskStatus.FAILED
-            self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
-        finally:
-            self._finished.set()
+        return []  # OpenVAS no usa subprocess
 
     def scan(self) -> None:
+        """Lanza _execute_openvas_scan en un thread daemon."""
         try:
             self.status = TaskStatus.RUNNING
             self._started.set()
             self._thread = threading.Thread(
                 target=self._execute_openvas_scan,
                 daemon=True,
-                name=f"OpenVASExec-{self.target}"
+                name=f"OpenVASExec-{self.target}",
             )
             self._thread.start()
         except Exception as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error iniciando OpenVAS: {e}")
             raise
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        try:
+            safe_timeout = min(timeout, 86400) if timeout is not None else None
+            if not self._finished.wait(safe_timeout):
+                self.status = TaskStatus.TIMEOUT
+                return False
+            return self.status == TaskStatus.COMPLETED
+        except Exception as e:
+            self.status = TaskStatus.FAILED
+            self.logger.error(f"Error en wait: {e}", exc_info=True)
+            return False
 
     def _process_results(self) -> None:
         try:
@@ -655,14 +571,148 @@ class OpenVASTask(_Task):
             self.results = None
             raise
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
+    # ------------------------------------------------------------------ #
+    #  Core: conexión SSH + GMP                                           #
+    # ------------------------------------------------------------------ #
+
+    def _execute_openvas_scan(self) -> None:
+        connection = SSHConnection(
+            hostname=self.hostname,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            socket_path=self._GVM_SOCKET_PATH,
+        )
+        transform = EtreeCheckCommandTransform()
+
         try:
-            safe_timeout = min(timeout, 28800) if timeout is not None else None
-            if not self._finished.wait(safe_timeout):
-                self.status = TaskStatus.TIMEOUT
-                return False
-            return self.status == TaskStatus.COMPLETED
+            with GMP(connection=connection, transform=transform) as gmp:
+                gmp.authenticate(self.username, self.password)
+                self.logger.info(
+                    f"Conectado a gvmd via SSH ({self.hostname}:{self.port})"
+                )
+
+                target_id  = self._get_or_create_target(gmp)
+                scanner_id = self._get_default_scanner(gmp)
+                self._create_and_start_task(gmp, target_id, scanner_id)
+                self._wait_for_completion(gmp)
+
+                if self.status == TaskStatus.CANCELLED:
+                    return
+
+                self._fetch_report(gmp)
+                self._process_results()
+
+                if self.results is None:
+                    self.status = TaskStatus.FAILED
+                else:
+                    self.status = TaskStatus.COMPLETED
+                    self.progress = 100
+
+        except GvmError as e:
+            self.status = TaskStatus.FAILED
+            self.logger.error(f"GMP error: {e}", exc_info=True)
         except Exception as e:
             self.status = TaskStatus.FAILED
-            self.logger.error(f"Error en wait: {e}", exc_info=True)
-            return False
+            self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
+        finally:
+            self._finished.set()
+
+    # ------------------------------------------------------------------ #
+    #  Helpers GMP (reciben el objeto gmp como parámetro)                 #
+    # ------------------------------------------------------------------ #
+
+    def _get_or_create_target(self, gmp: GMP) -> str:
+        target_name = f"Target_{self.target}"
+
+        resp = gmp.get_targets(filter_string=f'name="{target_name}"')
+        targets = resp.findall("target")
+        if targets:
+            tid = targets[0].get("id")
+            self.logger.info(f"Target existente encontrado: {tid}")
+            return tid
+
+        resp = gmp.create_target(
+            name=target_name,
+            hosts=[self.target],
+            port_list_id=self.port_list_id,
+        )
+        tid = resp.get("id")
+        self.logger.info(f"Target creado: {tid}")
+        return tid
+
+    def _get_default_scanner(self, gmp: GMP) -> str:
+        resp = gmp.get_scanners()
+        for scanner in resp.findall("scanner"):
+            name_el = scanner.find("name")
+            if name_el is not None and name_el.text == "OpenVAS Default":
+                sid = scanner.get("id")
+                self.logger.info(f"Scanner encontrado: {sid}")
+                return sid
+        raise RuntimeError("Scanner 'OpenVAS Default' no encontrado")
+
+    def _create_and_start_task(self, gmp: GMP, target_id: str, scanner_id: str) -> None:
+        task_name = f"Scan_{self.target}_{int(time.time())}"
+
+        resp = gmp.create_task(
+            name=task_name,
+            config_id=self.scan_config,
+            target_id=target_id,
+            scanner_id=scanner_id,
+        )
+        self.task_id = resp.get("id")
+
+        resp = gmp.start_task(self.task_id)
+        report_id_el = resp.find("report_id")
+        self.report_id = report_id_el.text if report_id_el is not None else None
+        self.logger.info(
+            f"Tarea iniciada — Task ID: {self.task_id} | Report ID: {self.report_id}"
+        )
+
+    def _wait_for_completion(self, gmp: GMP, check_interval: int = 30) -> None:
+        while True:
+            if self._cancel_event.is_set():
+                try:
+                    gmp.stop_task(self.task_id)
+                except Exception:
+                    pass
+                self.status = TaskStatus.CANCELLED
+                return
+
+            try:
+                resp = gmp.get_task(self.task_id)
+                status_el   = resp.find("task/status")
+                progress_el = resp.find("task/progress")
+
+                if status_el is None:
+                    time.sleep(check_interval)
+                    continue
+
+                gvm_status = status_el.text
+                with self._lock:
+                    self.progress = max(
+                        0, int(float(progress_el.text or "0"))
+                    )
+                self.logger.info(
+                    f"GVM status: {gvm_status} — {self.progress}%"
+                )
+
+                if gvm_status in ("Done", "Stopped", "Interrupted"):
+                    if gvm_status != "Done":
+                        self.status = TaskStatus.CANCELLED
+                    return
+
+            except Exception as e:
+                self.logger.warning(f"Error polling, reintentando: {e}")
+
+            time.sleep(check_interval)
+
+    def _fetch_report(self, gmp: GMP) -> None:
+        resp = gmp.get_report(
+            self.report_id,
+            report_format_id="a994b278-1f62-11e1-96ac-406186ea4fc5",
+            ignore_pagination=True,
+            details=True,
+        )
+        self._report_xml = ET.tostring(resp, encoding="unicode")
+        self.logger.info("Reporte XML obtenido")
