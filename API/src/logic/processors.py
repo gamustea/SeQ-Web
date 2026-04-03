@@ -40,9 +40,10 @@ class ScanResultProcessor(ABC):
         - hostname nunca es None (cae back a la IP o al target original).
         - ip_address nunca es None (cae back al target original).
         - mac_address se establece a cadena vacía si no está disponible, evitando
-          NotNullViolation ya que la columna es NOT NULL en el modelo.
+            NotNullViolation ya que la columna es NOT NULL en el modelo.
         """
         ip, hostname = normalize_target(target)
+        self.logger.debug(f"Normalizando target '{target}' -> hostname: '{hostname}', ip: '{ip}'")
 
         # Fallbacks para evitar NOT NULL violations
         if not hostname:
@@ -50,17 +51,11 @@ class ScanResultProcessor(ABC):
         if not ip:
             ip = target
 
-        # Buscar por hostname primero; si no, por IP (host creado sin PTR)
         host = self.session.query(Host).filter(
+            Host.ip_address == ip,
             Host.hostname == hostname
-        ).one_or_none()
-
-        if not host:
-            # Buscar también por IP por si ya existe con distinto hostname
-            host = self.session.query(Host).filter(
-                Host.ip_address == ip
-            ).first()
-
+        ).first()
+            
         if not host:
             host = Host(
                 hostname=hostname,
@@ -73,16 +68,6 @@ class ScanResultProcessor(ABC):
 
         return host
     
-    def _mark_scan_finished(self, scan_id: int) -> None:
-        """Marca un escaneo como finalizado"""
-        scan: Scan = self.session.get(Scan, scan_id)
-        
-        if scan is None:
-            return
-        
-        scan.finished_at = datetime.now()
-        self.session.add(scan)
-        self.session.commit()
 
 
 class NmapResultProcessor(ScanResultProcessor):
@@ -117,11 +102,6 @@ class NmapResultProcessor(ScanResultProcessor):
             host_info = processed["host"]
             host = self._get_or_create_host_from_data(host_info)
             scan.host_id = host.id
-            
-            # Marcar como finalizado
-            self._mark_scan_finished(scan.id)
-            
-            self.logger.info(f"Escaneo Nmap {scan.id} guardado con {len(processed['ports'])} puertos")
         
         except Exception as e:
             self.logger.error(f"Error guardando resultados Nmap: {e}", exc_info=True)
@@ -260,9 +240,10 @@ class NiktoResultProcessor(ScanResultProcessor):
                 if db_incident not in scan.incidents:
                     scan.incidents.append(db_incident)
 
+            self.logger.debug(f"Buscando o creando host para target '{scan.target}'")
             host = self._get_or_create_host(scan.target)
+            self.logger.debug(f"Host asociado al escaneo Nikto {scan.id}: {host.hostname} ({host.ip_address})")
             scan.host = host
-            self._mark_scan_finished(scan.id)
             self.logger.info(
                 f"Escaneo Nikto {scan.id} guardado con {len(all_incidents)} incidentes"
             )
@@ -310,11 +291,7 @@ class OpenVASResultProcessor(ScanResultProcessor):
             scan.host_id = host.id
             
             # Crear resultados de escaneo
-            self._create_scan_results(scan, results["scan_results"], vulnerability_map)
-            
-            # Marcar como finalizado
-            self._mark_scan_finished(scan.id)
-            
+            self._create_scan_results(scan, results["scan_results"], vulnerability_map)            
             self.logger.info(f"Escaneo OpenVAS {scan.id} guardado con {len(scan.results)} resultados")
         
         except Exception as e:

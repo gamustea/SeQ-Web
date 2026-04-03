@@ -1,5 +1,6 @@
 import threading
 import uuid
+from enum import Enum
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -13,6 +14,7 @@ from src.core.model import (
     OpenVASScan,
     OpenVASScanResult,
     Scan,
+    ScanStatus,
     User,
 )
 from src.logic.processors import (
@@ -41,8 +43,6 @@ class ScanManager(BaseManager, ABC):
     def __init__(self, user: User, session: Optional[Session] = None):
         super().__init__(session)
         self.active_user = user
-
-    # ------------ Helpers de clase para el registro global ------------
 
     @classmethod
     def _register_task(cls, scan_id: int, task: _Task, thread: Optional[threading.Thread] = None) -> None:
@@ -143,12 +143,19 @@ class ScanManager(BaseManager, ABC):
         task = self._get_task(scan_id)
         if task:
             return str(task.status)
-        if self._is_scan_finished(scan_id):
+        if self.is_scan_finished(scan_id):
             return str(TaskStatus.COMPLETED)
         return None
 
     def is_scan_finished(self, scan_id: int) -> Optional[bool]:
-        return self._is_scan_finished(scan_id)
+
+        scan = self.get_scan_by_id(scan_id)
+        if not scan:
+            self.logger.warning(f"Escaneo {scan_id} no encontrado para verificar finalización")
+            return False
+
+        is_finished = scan.status == ScanStatus.FINISHED.value
+        return is_finished
 
     def cancel_scan(self, scan_id: int) -> bool:
         try:
@@ -182,7 +189,8 @@ class ScanManager(BaseManager, ABC):
                 self.logger.warning(f"No se encontró tarea en ejecución para el escaneo {scan_id}")
                 return False
 
-            self._update_scan_status(scan_id, 'cancelled')
+            self._mark_scan_as(scan, ScanStatus.CANCELLED)
+            self._safe_commit()
 
             self.logger.info(f"Escaneo {scan_id} cancelado exitosamente")
             return True
@@ -197,10 +205,6 @@ class ScanManager(BaseManager, ABC):
 
     @abstractmethod
     def _create_scan_record(self, **kwargs) -> Scan:
-        pass
-
-    @abstractmethod
-    def _create_task(self, **kwargs) -> _Task:
         pass
 
     @abstractmethod
@@ -221,19 +225,21 @@ class ScanManager(BaseManager, ABC):
             TIME_MARGIN = 30
             task.scan()
             success = task.wait(timeout=task.timeout + TIME_MARGIN)
+            has_no_results = task.results is None
 
-            if not success or task.results is None:
+            if not success or has_no_results:
                 thread_manager.logger.error(
                     f"Escaneo {scan_id} falló. Estado: {task.status}"
                 )
-                thread_manager._mark_scan_as_failed(scan)
+                thread_manager._mark_scan_as(scan, ScanStatus.FAILED)
                 return
 
-            scan.status = "finished"
-
             thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")
+        
             processor = thread_manager._get_result_processor()
             processor.process_and_save(scan, task.results)
+
+            thread_manager._mark_scan_as(scan, ScanStatus.FINISHED)
             thread_manager._safe_commit()
 
             thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
@@ -244,7 +250,8 @@ class ScanManager(BaseManager, ABC):
             try:
                 error_scan = thread_manager.get_scan_by_id(scan_id)
                 if error_scan:
-                    thread_manager._mark_scan_as_failed(error_scan)
+                    thread_manager._mark_scan_as(error_scan, ScanStatus.FAILED)
+                    thread_manager._safe_commit()
             except Exception as update_err:
                 thread_manager.logger.error(f"Error actualizando estado: {update_err}")
 
@@ -252,72 +259,11 @@ class ScanManager(BaseManager, ABC):
             thread_manager.close_session()
             self._unregister_task(scan_id)
 
-    def _mark_scan_as_failed(self, scan: Scan) -> None:
-        scan.status = "failed"
+    def _mark_scan_as(self, scan: Scan, status: ScanStatus) -> None:
+        old_status = scan.status
+        scan.status = status.value
         scan.finished_at = datetime.now()
-        self.session.add(scan)
-        self._safe_commit()
-
-    def _is_scan_finished(self, scan_id: int) -> bool:
-        try:
-            self._check_session()
-            scan = self.session.get(Scan, scan_id)
-
-            if scan is None:
-                return
-
-            return scan.finished_at is not None
-
-        except Exception as e:
-            self.logger.error(f"Error verificando estado: {e}")
-            return False
-
-    def _update_scan_status(self, scan_id: int, status: str) -> bool:
-        try:
-            self._check_session()
-            scan = self.get_scan_by_id(scan_id)
-
-            if not scan:
-                self.logger.warning(f"No se puede actualizar estado: escaneo {scan_id} no encontrado")
-                return False
-
-            old_status = scan.status
-            scan.status = status
-            self._safe_commit()
-
-            self.logger.info(f"Estado del escaneo {scan_id} actualizado: {old_status} -> {status}")
-            return True
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error actualizando estado del escaneo {scan_id}: {e}")
-            return False
-
-    def _setup_task_callbacks(self, task: _Task, scan_id: int):
-        original_wait = task.wait
-
-        def wait_with_callback(timeout: Optional[float] = None) -> bool:
-            result = original_wait(timeout)
-
-            try:
-                if task.status == TaskStatus.COMPLETED:
-                    self._update_scan_status(scan_id, 'completed')
-                elif task.status == TaskStatus.FAILED:
-                    self._update_scan_status(scan_id, 'failed')
-                elif task.status == TaskStatus.CANCELLED:
-                    self._update_scan_status(scan_id, 'cancelled')
-                elif task.status == TaskStatus.TIMEOUT:
-                    self._update_scan_status(scan_id, 'failed')
-
-                if scan_id in self._running_tasks:
-                    del self._running_tasks[scan_id]
-
-            except Exception as e:
-                self.logger.error(f"Error en callback de finalización: {e}")
-
-            return result
-
-        task.wait = wait_with_callback
+        self.logger.info(f"Estado del escaneo {scan.id} actualizado: {old_status} -> {status.value}")
 
 
 class NmapScanManager(ScanManager):
@@ -329,7 +275,7 @@ class NmapScanManager(ScanManager):
             scan = self._create_scan_record(target=target_host)
             scan_id = scan.id
 
-            task = self._create_task(
+            task = NmapScanTask(
                 target_host=target_host,
                 target_ports=target_ports,
                 timeout=timeout
@@ -362,9 +308,6 @@ class NmapScanManager(ScanManager):
         self._safe_commit()
         return scan
 
-    def _create_task(self, target_host: str, target_ports: str, timeout: int) -> NmapScanTask:
-        return NmapScanTask(target_host, target_ports, timeout)
-
     def _get_result_processor(self) -> NmapResultProcessor:
         return NmapResultProcessor(self.session, self.logger)
 
@@ -396,7 +339,10 @@ class NiktoScanManager(ScanManager):
             scan = self._create_scan_record(target=target_domain)
             scan_id = scan.id
 
-            task = self._create_task(target_domain=target_domain, timeout=timeout)
+            task = NiktoScanTask(
+                target_domain=target_domain, 
+                timeout=timeout
+            )
 
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
@@ -424,9 +370,6 @@ class NiktoScanManager(ScanManager):
         self.session.add(scan)
         self._safe_commit()
         return scan
-
-    def _create_task(self, target_domain: str, timeout: int) -> NiktoScanTask:
-        return NiktoScanTask(target_domain, timeout)
 
     def _get_result_processor(self) -> NiktoResultProcessor:
         return NiktoResultProcessor(self.session, self.logger)
@@ -483,10 +426,14 @@ class OpenVASScanManager(ScanManager):
             scan = self._create_scan_record(target=target_ip)  # type: ignore
             scan_id = scan.id
 
-            task = self._create_task(
-                target=target_ip,
-                scan_config=config_id,
-                timeout=28800
+            task = OpenVASTask(
+                target=target,
+                hostname=self.hostname,
+                port=self.port,
+                username=self.username,
+                password=self.password,
+                scan_config=scan_config,
+                timeout=timeout
             )
 
             thread = threading.Thread(
@@ -531,7 +478,10 @@ class OpenVASScanManager(ScanManager):
         )
 
     def _get_result_processor(self) -> OpenVASResultProcessor:
-        return OpenVASResultProcessor(self.session, self.logger)
+        return OpenVASResultProcessor(
+            self.session, 
+            self.logger
+        )
 
     def get_scans_for_user(self) -> List[OpenVASScan]:
         try:
@@ -574,12 +524,13 @@ class OpenVASScanManager(ScanManager):
                 thread_manager.logger.error(
                     f"Escaneo {scan_id} falló. Estado: {task.status}"
                 )
-                thread_manager._mark_scan_as_failed(scan)
+                thread_manager._mark_scan_as(scan, ScanStatus.FAILED)
+                thread_manager._safe_commit()
                 return
 
             scan.task_id = task.task_id
             scan.report_id = task.report_id
-            scan.status = "finished"
+            scan.status = ScanStatus.FINISHED.value
             thread_manager.session.add(scan)
 
             thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")

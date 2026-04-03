@@ -11,6 +11,7 @@ from .sentinel import (
     Port,
     Scan,
     ScanIncident,
+    ScanStatus,
     TargetPort,
 )
 from .acheron import Account, CreditCard, Storable, Vault
@@ -27,6 +28,7 @@ __all__ = [
     # sentinel
     "Host",
     "Scan",
+    "ScanStatus",
     "NmapScan",
     "NiktoScan",
     "NiktoIncident",

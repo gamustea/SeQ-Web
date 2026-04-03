@@ -66,152 +66,6 @@ class AegisManager(BaseManager):
             "output_dir":      output_dir,
         }
 
-    def _patched_build_prompt(self, topic, topic_id, reference, tweaks):
-        """
-        Reemplaza AegisAIWriter._build_prompt para solicitar JSON en lugar de Markdown.
-
-        Mantiene toda la lógica de contexto (empresa, sector, audiencia, etc.)
-        pero sustituye el bloque format_instruction.
-        """
-        JSON_FORMAT_INSTRUCTION = """\
-        ╔══════════════════════════════════════════════════════════════╗
-        ║        TAREA: PÍLDORA DE CONCIENCIACIÓN — SALIDA JSON        ║
-        ╚══════════════════════════════════════════════════════════════╝
-        
-        Responde ÚNICAMENTE con un objeto JSON válido.
-        Sin texto previo, sin bloques de código (```), sin explicaciones.
-        
-        SCHEMA OBLIGATORIO (todos los campos son requeridos):
-        
-        {
-        "subtitle": "<string: título atractivo y directo, máx. 80 chars>",
-        "intro": "<string: párrafo introductorio de 3-5 frases que contextualice el riesgo>",
-        "tips": [
-            {
-            "headline": "<string: acción o riesgo resumido en una frase corta, sin punto final>",
-            "body": "<string: desarrollo en 2-3 frases con motivo, consecuencia y solución práctica>",
-            "links": [
-                {"text": "<string: texto del enlace>", "url": "<string: URL completa>"}
-            ]
-            }
-        ],
-        "closing": "<string: frase de cierre con llamada a la acción clara>",
-        "contactEmail": "<string: email de contacto mencionado en el cierre, o cadena vacía>"
-        }
-        
-        REGLAS:
-        - tips: entre 5 y 7 elementos.
-        - links dentro de cada tip: puede ser [] si no hay herramientas o recursos relevantes.
-        - Todos los valores de texto en el idioma indicado en el contexto.
-        - NO incluyas campos adicionales fuera del schema.
-        - NO uses Markdown dentro de los valores de texto (sin **, sin #, sin -).
-        """
-        company  = tweaks.get("company",       "la empresa destinataria")
-        sector   = tweaks.get("sector",        "")
-        audience = tweaks.get("audienceLevel", "mixed")
-        brands   = ", ".join(tweaks.get("associatedBrands", []))
-        contact  = tweaks.get("mentionContact", "")
-        language = tweaks.get("language",      "es")
-        tone     = tweaks.get("tone",          "formal")
-        focus    = tweaks.get("topicFocus",    "")
-
-        audience_label = {
-            "technical":     "técnico (conocimiento avanzado de seguridad)",
-            "mixed":         "mixto (empleados técnicos y no técnicos)",
-            "non-technical": "no técnico (empleados de negocio sin perfil IT)",
-        }.get(audience, audience)
-
-        context_parts = [f"- Empresa destinataria: {company}"]
-        if sector:   context_parts.append(f"- Sector de actividad: {sector}")
-        if brands:   context_parts.append(f"- Tecnologías y herramientas en uso: {brands}")
-        if focus:    context_parts.append(f"- Enfoque específico solicitado: {focus}")
-        if contact:  context_parts.append(f"- Contacto de referencia para el lector: {contact}")
-        context_parts += [
-            f"- Perfil de la audiencia: {audience_label}",
-            f"- Tono: {tone}",
-            f"- Idioma de salida: {language.upper()}",
-        ]
-        context_block = "\n".join(context_parts)
-
-        if topic:
-            topic_block = f"- Título: {topic.title}"
-            if getattr(topic, "description", None):
-                topic_block += f"\n- Descripción: {topic.description}"
-        else:
-            topic_block = (
-                f"- ID de tema: {topic_id} (no encontrado en BD).\n"
-                "- Elige un tema de ciberseguridad relevante para empleados de empresa."
-            )
-
-        role_block = (
-            f"Eres un redactor senior especializado en comunicación de ciberseguridad corporativa. "
-            f"Tu trabajo es producir contenido de concienciación en {language.upper()} "
-            f"para empleados de empresas, adaptado al perfil y contexto de cada cliente. "
-            f"Escribes de forma clara, directa y práctica. "
-            f"REGLA ABSOLUTA: responde SOLO con el JSON solicitado, sin nada más."
-        )
-
-        prompt_parts = [role_block]
-        if reference:
-            prompt_parts.append(
-                "Ejemplos de píldoras reales de este cliente "
-                "(imita su estilo, tono y extensión en el contenido, "
-                "pero la SALIDA debe ser JSON):\n\n"
-                "━━━ REFERENCIAS ━━━\n"
-                + reference +
-                "\n━━━ FIN ━━━"
-            )
-        prompt_parts += [
-            f"CONTEXTO DEL CLIENTE:\n{context_block}",
-            f"TEMA A DESARROLLAR:\n{topic_block}",
-            JSON_FORMAT_INSTRUCTION,
-        ]
-        return "\n\n".join(prompt_parts)
-
-    def _parse_pill_json(self, raw: str) -> dict:
-        """
-        Extrae y valida el JSON de la respuesta del modelo.
-
-        Estrategia de limpieza:
-        1. Intentar parsear directamente.
-        2. Extraer el primer bloque JSON con regex (el modelo puede añadir texto).
-        3. Validar que contiene los campos obligatorios.
-        """
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-
-        raise ValueError(
-            f"La respuesta del modelo no contiene JSON válido. "
-            f"Primeros 200 chars: {raw[:200]!r}"
-        )
-
-    def _validate_pill_json(self, data: dict) -> None:
-        """Valida que el JSON tenga la estructura mínima esperada."""
-        required = {"subtitle", "intro", "tips", "closing"}
-        missing = required - data.keys()
-        if missing:
-            raise ValueError(f"JSON incompleto. Campos faltantes: {missing}")
-
-        if not isinstance(data["tips"], list) or len(data["tips"]) < 1:
-            raise ValueError("'tips' debe ser una lista no vacía")
-
-        for i, tip in enumerate(data["tips"]):
-            if not isinstance(tip, dict):
-                raise ValueError(f"tips[{i}] no es un objeto")
-            if "headline" not in tip or "body" not in tip:
-                raise ValueError(f"tips[{i}] falta 'headline' o 'body'")
-            if "links" not in tip:
-                tip["links"] = []
-
     def _get_topic_from_db(self, topic_id: Optional[int]) -> tuple:
         if topic_id is not None:
             topic = self.session.query(Topic).filter(Topic.id == topic_id).first()
@@ -557,3 +411,15 @@ class AegisManager(BaseManager):
             }
             for d in docs
         ]
+
+    def get_topics(self) -> list[dict]:
+        topics = self.session.query(Topic).order_by(Topic.title).all()
+        return [
+            {
+                "id":          t.id,
+                "title":       t.title,
+            }
+            for t in topics
+        ]
+
+

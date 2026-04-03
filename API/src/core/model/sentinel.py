@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 
 from sqlalchemy import (
     Boolean,
@@ -48,6 +49,11 @@ class Host(Base):
     vendor = Column(String(64))
     scans = relationship("Scan", back_populates="host", cascade="all, delete-orphan")
 
+class ScanStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    FINISHED = "finished"
+    FAILED = "failed"
 
 class Scan(Base):
     """
@@ -83,7 +89,7 @@ class Scan(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     target = Column(String(255), nullable=False)
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    status = Column(String(20), nullable=False, default="pending")
+    status = Column(String(20), nullable=False, default=ScanStatus.PENDING.value)
     user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type = Column(String(50))
     frecuent = Column(Boolean, nullable=False, default=True)

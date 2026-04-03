@@ -75,7 +75,7 @@ def aegis_generate():
     """
     Inicia la generación asíncrona de una píldora Aegis.
     Devuelve 202 Accepted con el documentId para polling de estado.
- 
+
     Body JSON:
         topicId  (int, requerido)  — ID del tema en la tabla Topic
         tweaks   (dict, opcional)  — personalizaciones:
@@ -87,21 +87,21 @@ def aegis_generate():
             "error":             "invalid_request",
             "error_description": "Content-Type must be application/json",
         }), 400
- 
+
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({
             "error":             "invalid_request",
             "error_description": "Request body must be a JSON object",
         }), 400
- 
+
     topic_id_raw = data.get("topicId")
     if topic_id_raw is None:
         err, code = create_error_response(
             MissingParameterError("topicId"), include_debug_info=False
         )
         return jsonify(err), code
- 
+
     try:
         topic_id = int(topic_id_raw)
     except (TypeError, ValueError):
@@ -114,7 +114,7 @@ def aegis_generate():
             include_debug_info=False,
         )
         return jsonify(err), code
- 
+
     tweaks = data.get("tweaks") or {}
     if not isinstance(tweaks, dict):
         err, code = create_error_response(
@@ -126,7 +126,7 @@ def aegis_generate():
             include_debug_info=False,
         )
         return jsonify(err), code
- 
+
     try:
         uid         = get_current_user_id()
         mgr         = get_aegis_manager(uid)
@@ -135,7 +135,7 @@ def aegis_generate():
             tweaks=tweaks
         )
         mgr.close_session()
- 
+
         _logger.info(
             f"Aegis generate lanzado — topicId={topic_id} "
             f"documentId={document_id} user={get_current_username()}"
@@ -147,7 +147,7 @@ def aegis_generate():
             "status":     "pending",
             "tweaks": tweaks
         }), 202
- 
+
     except (MissingParameterError, ValidationError, UserNotFoundError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
@@ -156,7 +156,7 @@ def aegis_generate():
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
- 
+
 @aegis_bp.get("/status")
 @require_oauth_token
 @limiter.limit("120 per hour; 500 per day")
@@ -243,7 +243,7 @@ def aegis_get_document():
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
- 
+
 @aegis_bp.get("/download")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
@@ -313,7 +313,7 @@ def aegis_download():
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
- 
+
 @aegis_bp.delete("/document")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
@@ -362,7 +362,7 @@ def aegis_delete_document():
 def aegis_list_documents():
     """
     Lista todos los documentos Aegis del usuario autenticado.
- 
+
     Respuesta:
         { count, documents: [{id, title, filename, format, status, generatedAt, topicId}] }
     """
@@ -371,14 +371,40 @@ def aegis_list_documents():
         mgr  = get_aegis_manager(uid)
         docs = mgr.list_documents()
         mgr.close_session()
- 
+
         return jsonify({
             "count":     len(docs),
             "documents": docs,
         }), 200
- 
+
     except Exception as exc:
         _logger.error(f"Error en /aegis/documents: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+@aegis_bp.get("/topics")
+@require_oauth_token
+@limiter.limit("120 per hour; 600 per day")
+def aegis_get_topics():
+    """
+    Devuelve la lista de temas disponibles para generar píldoras Aegis.
+    Endpoint no registrado en el blueprint, pero puede ser utilizado internamente
+    por el frontend para mostrar opciones al usuario.
+
+    Respuesta:
+        [{id, name, description}]
+    """
+    try:
+        uid = get_current_user_id()
+        manager = get_aegis_manager(uid)
+        topics = manager.get_topics()
+        manager.close_session()
+
+        return jsonify(topics), 200
+
+    except Exception as exc:
+        _logger.error(f"Error en /aegis/topics: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code

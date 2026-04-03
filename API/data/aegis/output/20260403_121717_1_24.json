@@ -1,0 +1,167 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "documentId": 2,
+    "topicId": 24,
+    "topicTitle": "Rootkits: control oculto del sistema",
+    "language": "es",
+    "company": "Frutería Paquita",
+    "generatedAt": "2026-04-03T12:17:14.441519+00:00"
+  },
+  "pill": {
+    "subtitle": "Cómo protegerte del control oculto en tu sistema",
+    "intro": "Los rootkits son una amenaza muy seria para la seguridad informática porque pueden infiltrarse y operar en tu equipo sin que te des cuenta. Aprende a reconocer los signos de un rootkit y cómo puedes proteger tu frutería Paquita.",
+    "tips": [
+      {
+        "position": 1,
+        "headline": "Date cuenta si tu sistema está lento o inestable",
+        "body": "Un rootkit puede hacer que tu equipo funcione más despacio porque está ocupado realizando tareas maliciosas en segundo plano. Observa también errores frecuentes de software.",
+        "links": []
+      },
+      {
+        "position": 2,
+        "headline": "Mantén tus sistemas actualizados",
+        "body": "Las empresas como Microsoft y Google lanzan parches regularmente para cubrir vulnerabilidades, incluyendo contra rootkits. Asegúrate siempre de instalar las actualizaciones más recientes.",
+        "links": []
+      },
+      {
+        "position": 3,
+        "headline": "Ejerce precaución al descargar software",
+        "body": "Los rootkits a menudo se distribuyen junto con otros tipos de malware en descargas ilegales o desde sitios web poco confiables. Descarga solo desde fuentes oficiales y legítimas.",
+        "links": []
+      },
+      {
+        "position": 4,
+        "headline": "Usa un software antivirus robusto",
+        "body": "El uso de una solución antimalware de calidad puede detectar rootkits en su fase inicial o incluso antes si están incluidos en tu firewall. Asegúrate de que esté actualizado y configurado adecuadamente.",
+        "links": []
+      },
+      {
+        "position": 5,
+        "headline": "Conoce las señales de un rootkit",
+        "body": "Los signos pueden ser cambios no explicados en los archivos del sistema, procesos desconocidos corriendo en segundo plano, o bloqueo para acceder a ciertas carpetas o funciones.",
+        "links": []
+      },
+      {
+        "position": 6,
+        "headline": "Actúa rápido si sospechas de un rootkit",
+        "body": "Si notaste cualquier indicio de actividad anormal, detén todo lo que estés haciendo y pide ayuda. Los expertos en seguridad informática pueden ayudarte a diagnosticar e inhabilitar el rootkit.",
+        "links": []
+      },
+      {
+        "position": 7,
+        "headline": "Educa a tu equipo sobre rootkits",
+        "body": "La conciencia es la primera línea de defensa contra los rootkits. Haz que tu equipo esté familiarizado con las amenazas y cómo prevenirlas.",
+        "links": []
+      }
+    ],
+    "closing": "Recuerda, si tienes dudas sobre cualquier cosa relacionada con la seguridad en Paquita, no dudes en contactar a patata@emesa.com. Mantente alerta y protege tu sistema contra amenazas ocultas como los rootkits.",
+    "contactEmail": "patata@emesa.com"
+  },
+  "alerts": [
+    {
+      "position": 1,
+      "source": "incibe",
+      "sourceLabel": "INCIBE-CERT",
+      "title": "Múltiples vulnerabilidades en productos de IBM",
+      "published": "2026-03-30",
+      "severity": "crítica",
+      "affectedBrands": [
+        "IBM"
+      ],
+      "description": "IBM ha informado de 7 vulnerabilidades; 2 críticas, 3 altas y 2 medias que, en caso de ser explotadas, podrían permitir a un atacante realizar un desbordamiento del búfer y contaminar los parámetros HTTP (HPP), entre otras acciones.",
+      "url": "https://www.incibe.es/incibe-cert/alerta-temprana/avisos/multiples-vulnerabilidades-en-productos-de-ibm-1"
+    },
+    {
+      "position": 2,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2026-23685 — SAP NetWeaver (JMS service)",
+      "published": "2026-02-10",
+      "severity": "media",
+      "affectedBrands": [
+        "SAP"
+      ],
+      "description": "Due to a Deserialization vulnerability in SAP NetWeaver (JMS service), an attacker authenticated as an administrator with local access could submit specially crafted content to the server. If processed by the application, this content could trigger unintended behavior during internal logic execution, potentially causing a denial of service. Successful exploitation results in a high impact on avail…",
+      "url": "https://cve.circl.lu/cve/CVE-2026-23685"
+    },
+    {
+      "position": 3,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-42968 — SAP NetWeaver (RFC enabled function module)",
+      "published": "2025-07-08",
+      "severity": "media",
+      "affectedBrands": [
+        "SAP"
+      ],
+      "description": "SAP NetWeaver allows an authenticated non-administrative user to call the remote-enabled function module which could grants access to non-sensitive information about the SAP system and OS without requiring any specific knowledge or controlled conditions. This leads to a low impact on confidentiality with no effect on integrity or availability of the application.",
+      "url": "https://cve.circl.lu/cve/CVE-2025-42968"
+    },
+    {
+      "position": 4,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2026-20125 — IOS",
+      "published": "2026-03-25",
+      "severity": "alta",
+      "affectedBrands": [
+        "Cisco"
+      ],
+      "description": "A vulnerability in the HTTP Server feature of Cisco IOS Software and Cisco IOS XE Software Release 3E could allow an authenticated, remote attacker to cause an affected device to reload unexpectedly, resulting in a denial of service (DoS) condition.\r\n\r This vulnerability is due to improper validation of user-supplied input. An attacker could exploit this vulnerability by sending malformed HTTP req…",
+      "url": "https://cve.circl.lu/cve/CVE-2026-20125"
+    },
+    {
+      "position": 5,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2026-20012 — IOS",
+      "published": "2026-03-25",
+      "severity": "alta",
+      "affectedBrands": [
+        "Cisco"
+      ],
+      "description": "A vulnerability in the Internet Key Exchange version 2 (IKEv2) feature of Cisco IOS Software, Cisco IOS XE Software, Cisco Secure Firewall Adaptive Security Appliance (ASA) Software, and Cisco Secure Firewall Threat Defense (FTD) Software could allow an unauthenticated, remote attacker to trigger a memory leak, resulting in a denial of service (DoS) condition on an affected device.\r\n\r This vulnera…",
+      "url": "https://cve.circl.lu/cve/CVE-2026-20012"
+    },
+    {
+      "position": 6,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-41239 — ESXi",
+      "published": "2025-07-15",
+      "severity": "alta",
+      "affectedBrands": [
+        "VMware"
+      ],
+      "description": "VMware ESXi, Workstation, Fusion, and VMware Tools contains an information disclosure vulnerability due to the usage of an uninitialised memory in vSockets. A malicious actor with local administrative privileges on a virtual machine may be able to exploit this issue to leak memory from processes communicating with vSockets.",
+      "url": "https://cve.circl.lu/cve/CVE-2025-41239"
+    },
+    {
+      "position": 7,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-41238 — ESXi",
+      "published": "2025-07-15",
+      "severity": "crítica",
+      "affectedBrands": [
+        "VMware"
+      ],
+      "description": "VMware ESXi, Workstation, and Fusion contain a heap-overflow vulnerability in the PVSCSI (Paravirtualized SCSI) controller that leads to an out of-bounds write. A malicious actor with local administrative privileges on a virtual machine may exploit this issue to execute code as the virtual machine's VMX process running on the host. On ESXi, the exploitation is contained within the VMX sandbox and …",
+      "url": "https://cve.circl.lu/cve/CVE-2025-41238"
+    },
+    {
+      "position": 8,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2026-28815 — macOS",
+      "published": "2026-04-03",
+      "severity": "",
+      "affectedBrands": [
+        "Apple"
+      ],
+      "description": "A remote attacker can supply a short X-Wing HPKE encapsulated key and trigger an out-of-bounds read in the C decapsulation path, potentially causing a crash or memory disclosure depending on runtime protections. This issue is fixed in swift-crypto version 4.3.1.",
+      "url": "https://cve.circl.lu/cve/CVE-2026-28815"
+    }
+  ]
+}
