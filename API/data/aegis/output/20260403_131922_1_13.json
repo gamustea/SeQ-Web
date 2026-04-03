@@ -1,0 +1,138 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "documentId": 4,
+    "topicId": 13,
+    "topicTitle": "Passkeys: el futuro sin contraseñas",
+    "language": "es",
+    "company": "Frutería Paquita",
+    "generatedAt": "2026-04-03T13:19:19.962575+00:00"
+  },
+  "pill": {
+    "subtitle": "Descubre cómo las Passkeys revolucionan la seguridad",
+    "intro": "Las contraseñas han sido una parte integral de nuestra vida digital durante décadas, pero ya es hora de darles el adiós definitivo. Las Passkeys son el futuro de la autenticación en línea y van a cambiar por completo la forma en que nos protegemos en Internet.",
+    "tips": [
+      {
+        "position": 1,
+        "headline": "¿Qué son las Passkeys?",
+        "body": "Las Passkeys son un método moderno de autenticación sin contraseña basado en criptografía. Son más seguras y fáciles de usar que las contraseñas tradicionales, ya que se generan automáticamente y están vinculadas a tu dispositivo.",
+        "links": [
+          {
+            "text": "¿Qué es Passkeys?",
+            "url": "https://www.passkeys.com/es/que-es-passkeys"
+          }
+        ]
+      },
+      {
+        "position": 2,
+        "headline": "Cómo funcionan las Passkeys",
+        "body": "Las Passkeys utilizan tecnología de clave pública para autenticar tu identidad. Cuando intentas acceder a una cuenta, el servicio solicita que te autentiques con una Passkey en lugar de pedirte un nombre de usuario y contraseña.",
+        "links": []
+      },
+      {
+        "position": 3,
+        "headline": "Beneficios de las Passkeys",
+        "body": "Las Passkeys ofrecen mayor seguridad al eliminar la necesidad de compartir contraseñas, reduciendo el riesgo de robo o divulgación accidental. También mejoran la experiencia del usuario ya que no requieren recordar ni teclear claves largas y complejas.",
+        "links": []
+      },
+      {
+        "position": 4,
+        "headline": "Cómo implementar Passkeys",
+        "body": "Para empezar a usar las Passkeys, asegúrate de tener los sistemas operativos actualizados en tus dispositivos. Microsoft y Google ya están integrando esta tecnología en sus servicios para facilitar su uso.",
+        "links": [
+          {
+            "text": "Guía definitiva sobre claves de acceso",
+            "url": "https://decodeit.app/es/security/guides/passkeys-guide"
+          }
+        ]
+      },
+      {
+        "position": 5,
+        "headline": "Seguridad adicional con Passkeys",
+        "body": "Las Passkeys pueden combinarse con otros métodos de autenticación como la biometría para un nivel aún mayor de seguridad. Esto implica que incluso si alguien consigue acceder a tu dispositivo, todavía necesitarán tu huella dactilar o reconocimiento facial para completar el proceso de inicio de sesión.",
+        "links": []
+      },
+      {
+        "position": 6,
+        "headline": "Passkeys y la privacidad",
+        "body": "Además de ser más seguras que las contraseñas, las Passkeys también respetan tu privacidad ya que no almacenan tus datos sensibles en servidores externos. Esto reduce el riesgo de brechas de seguridad.",
+        "links": []
+      },
+      {
+        "position": 7,
+        "headline": "El futuro es sin contraseñas",
+        "body": "Con la implementación creciente de Passkeys, cada vez más servicios dejarán de requerir contraseñas. Esto no solo hace que nuestra vida digital sea más segura, sino también mucho más conveniente.",
+        "links": []
+      }
+    ],
+    "closing": "Si quieres saber más sobre cómo las Passkeys pueden beneficiar a tu negocio o tienes alguna pregunta, ponte en contacto con nosotros en patata@emesa.com. ¡El futuro sin contraseñas está aquí!",
+    "contactEmail": "patata@emesa.com"
+  },
+  "alerts": [
+    {
+      "position": 1,
+      "source": "incibe",
+      "sourceLabel": "INCIBE-CERT",
+      "title": "Múltiples vulnerabilidades en productos de IBM",
+      "published": "2026-03-30",
+      "severity": "crítica",
+      "affectedBrands": [
+        "IBM"
+      ],
+      "description": "IBM ha informado de 7 vulnerabilidades; 2 críticas, 3 altas y 2 medias que, en caso de ser explotadas, podrían permitir a un atacante realizar un desbordamiento del búfer y contaminar los parámetros HTTP (HPP), entre otras acciones.",
+      "url": "https://www.incibe.es/incibe-cert/alerta-temprana/avisos/multiples-vulnerabilidades-en-productos-de-ibm-1"
+    },
+    {
+      "position": 2,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2026-20125 — IOS",
+      "published": "2026-03-25",
+      "severity": "alta",
+      "affectedBrands": [
+        "Cisco"
+      ],
+      "description": "A vulnerability in the HTTP Server feature of Cisco IOS Software and Cisco IOS XE Software Release 3E could allow an authenticated, remote attacker to cause an affected device to reload unexpectedly, resulting in a denial of service (DoS) condition.\r\n\r This vulnerability is due to improper validation of user-supplied input. An attacker could exploit this vulnerability by sending malformed HTTP req…",
+      "url": "https://cve.circl.lu/cve/CVE-2026-20125"
+    },
+    {
+      "position": 3,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2026-20012 — IOS",
+      "published": "2026-03-25",
+      "severity": "alta",
+      "affectedBrands": [
+        "Cisco"
+      ],
+      "description": "A vulnerability in the Internet Key Exchange version 2 (IKEv2) feature of Cisco IOS Software, Cisco IOS XE Software, Cisco Secure Firewall Adaptive Security Appliance (ASA) Software, and Cisco Secure Firewall Threat Defense (FTD) Software could allow an unauthenticated, remote attacker to trigger a memory leak, resulting in a denial of service (DoS) condition on an affected device.\r\n\r This vulnera…",
+      "url": "https://cve.circl.lu/cve/CVE-2026-20012"
+    },
+    {
+      "position": 4,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-62439 — FortiOS",
+      "published": "2026-02-10",
+      "severity": "baja",
+      "affectedBrands": [
+        "Fortinet"
+      ],
+      "description": "An Improper Verification of Source of a Communication Channel vulnerability [CWE-940] vulnerability in Fortinet FortiOS 7.6.0 through 7.6.4, FortiOS 7.4.0 through 7.4.9, FortiOS 7.2 all versions, FortiOS 7.0 all versions may allow an authenticated user with knowledge of FSSO policy configurations to gain unauthorized access to protected network resources via crafted requests.",
+      "url": "https://cve.circl.lu/cve/CVE-2025-62439"
+    },
+    {
+      "position": 5,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-68686 — FortiOS",
+      "published": "2026-02-10",
+      "severity": "media",
+      "affectedBrands": [
+        "Fortinet"
+      ],
+      "description": "An Exposure of Sensitive Information to an Unauthorized Actor vulnerability [CWE-200] vulnerability in Fortinet FortiOS 7.6.0 through 7.6.1, FortiOS 7.4.0 through 7.4.6, FortiOS 7.2 all versions, FortiOS 7.0 all versions, FortiOS 6.4 all versions may allow a remote unauthenticated attacker to bypass the patch developed for the symbolic link persistency mechanism observed in some post-exploit cases…",
+      "url": "https://cve.circl.lu/cve/CVE-2025-68686"
+    }
+  ]
+}

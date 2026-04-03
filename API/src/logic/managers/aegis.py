@@ -164,7 +164,7 @@ class AegisManager(BaseManager):
     def _persist_alerts(
         self,
         document_id: int,
-        alerts: list["AegisAlert"],
+        alerts: list[AegisAlert],
     ) -> None:
         """Guarda AegisDocumentAlert en BD."""
         (

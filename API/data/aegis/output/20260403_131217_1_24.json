@@ -1,0 +1,200 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "documentId": 3,
+    "topicId": 24,
+    "topicTitle": "Rootkits: control oculto del sistema",
+    "language": "es",
+    "company": "Frutería Paquita",
+    "generatedAt": "2026-04-03T13:12:13.666707+00:00"
+  },
+  "pill": {
+    "subtitle": "Cómo identificar y protegerte contra las amenazas ocultas",
+    "intro": "Un rootkit es un tipo peligroso de malware que se infiltra en tu sistema operativo para controlarlo desde la raíz, es decir, desde el nivel más profundo. Este software malicioso puede permanecer invisible a los antivirus y otras herramientas de seguridad, poniendo en riesgo toda tu información personal y profesional.",
+    "tips": [
+      {
+        "position": 1,
+        "headline": "Mantén tus sistemas actualizados",
+        "body": "Las actualizaciones suelen incluir parches para vulnerabilidades conocidas que un rootkit podría aprovechar. Asegúrate de instalar las actualizaciones tan pronto como salgan.",
+        "links": [
+          {
+            "text": "Microsoft Defender for Endpoint",
+            "url": "https://learn.microsoft.com/es-es/defender-endpoint/malware/rootkits-malware"
+          }
+        ]
+      },
+      {
+        "position": 2,
+        "headline": "Usa herramientas de detección especializadas",
+        "body": "Las soluciones de seguridad antivirus tradicionales pueden no ser suficientes para detectar rootkits. Considera usar software específico diseñado para identificar y eliminar este tipo de amenazas.",
+        "links": [
+          {
+            "text": "SentinelOne",
+            "url": "https://www.sentinelone.com/es/cybersecurity-101/cybersecurity/rootkits/"
+          }
+        ]
+      },
+      {
+        "position": 3,
+        "headline": "Cuidado con los sitios web sospechosos",
+        "body": "Los rootkits a menudo se distribuyen a través de sitios web no confiables. Evita descargar archivos o ejecutar scripts desde fuentes desconocidas para prevenir la infección.",
+        "links": []
+      },
+      {
+        "position": 4,
+        "headline": "Mantén tus contraseñas seguras",
+        "body": "El acceso rootkit a tu sistema puede ser facilitado por contraseñas débiles. Asegúrate de usar combinaciones fuertes y únicas para cada cuenta.",
+        "links": []
+      },
+      {
+        "position": 5,
+        "headline": "Educación en seguridad cibernética",
+        "body": "Conocer los peligros como el rootkit puede ser la mejor defensa. Mantente informado sobre las amenazas actuales y cómo evitarlas.",
+        "links": [
+          {
+            "text": "StartupDefense",
+            "url": "https://www.startupdefense.io/es-us/blog/rootkit-una-guia-completa-sobre-una-de-las-amenazas-mas-esquivas-de-la-ciberseguridad"
+          }
+        ]
+      },
+      {
+        "position": 6,
+        "headline": "Habilita la auditoría de sistema",
+        "body": "Permite que tu sistema registre todos los cambios importantes en el nivel del sistema operativo, lo cual puede ser útil para detectar actividades sospechosas.",
+        "links": []
+      },
+      {
+        "position": 7,
+        "headline": "Restablece tu sistema a un estado seguro",
+        "body": "Si sospechas una infección por rootkit, considera la opción de restaurar tu sistema operativo a un punto antes de que ocurriera el problema.",
+        "links": [
+          {
+            "text": "Microsoft Defender for Endpoint",
+            "url": "https://learn.microsoft.com/es-es/defender-endpoint/malware/rootkits-malware"
+          }
+        ]
+      }
+    ],
+    "closing": "Recuerda, la prevención es clave en la lucha contra las amenazas como los rootkits. Mantén tu sistema actualizado y educado sobre cómo protegerte.",
+    "contactEmail": "patata@emesa.com"
+  },
+  "alerts": [
+    {
+      "position": 1,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2021-34981 — Kernel",
+      "published": "2024-05-07",
+      "severity": "alta",
+      "affectedBrands": [
+        "Linux"
+      ],
+      "description": "Linux Kernel Bluetooth CMTP Module Double Free Privilege Escalation Vulnerability. This vulnerability allows local attackers to escalate privileges on affected installations of Linux Kernel. An attacker must first obtain the ability to execute high-privileged code on the target system in order to exploit this vulnerability.\n\nThe specific flaw exists within the CMTP module. The issue results from t…",
+      "url": "https://cve.circl.lu/cve/CVE-2021-34981"
+    },
+    {
+      "position": 2,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2024-1086 — Kernel",
+      "published": "2024-01-31",
+      "severity": "alta",
+      "affectedBrands": [
+        "Linux"
+      ],
+      "description": "A use-after-free vulnerability in the Linux kernel's netfilter: nf_tables component can be exploited to achieve local privilege escalation.\n\nThe nft_verdict_init() function allows positive values as drop error within the hook verdict, and hence the nf_hook_slow() function can cause a double free vulnerability when NF_DROP is issued with a drop error which resembles NF_ACCEPT.\n\nWe recommend upgradi…",
+      "url": "https://cve.circl.lu/cve/CVE-2024-1086"
+    },
+    {
+      "position": 3,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-41239 — ESXi",
+      "published": "2025-07-15",
+      "severity": "alta",
+      "affectedBrands": [
+        "VMware"
+      ],
+      "description": "VMware ESXi, Workstation, Fusion, and VMware Tools contains an information disclosure vulnerability due to the usage of an uninitialised memory in vSockets. A malicious actor with local administrative privileges on a virtual machine may be able to exploit this issue to leak memory from processes communicating with vSockets.",
+      "url": "https://cve.circl.lu/cve/CVE-2025-41239"
+    },
+    {
+      "position": 4,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-41238 — ESXi",
+      "published": "2025-07-15",
+      "severity": "crítica",
+      "affectedBrands": [
+        "VMware"
+      ],
+      "description": "VMware ESXi, Workstation, and Fusion contain a heap-overflow vulnerability in the PVSCSI (Paravirtualized SCSI) controller that leads to an out of-bounds write. A malicious actor with local administrative privileges on a virtual machine may exploit this issue to execute code as the virtual machine's VMX process running on the host. On ESXi, the exploitation is contained within the VMX sandbox and …",
+      "url": "https://cve.circl.lu/cve/CVE-2025-41238"
+    },
+    {
+      "position": 5,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-4615 — Cloud NGFW",
+      "published": "2025-10-09",
+      "severity": "",
+      "affectedBrands": [
+        "Palo Alto"
+      ],
+      "description": "An improper input neutralization vulnerability in the management web interface of the Palo Alto Networks PAN-OS® software enables an authenticated administrator to bypass system restrictions and execute arbitrary commands.\n\nThe security risk posed by this issue is significantly minimized when CLI access is restricted to a limited group of administrators.\n\nCloud NGFW and Prisma® Access are not affe…",
+      "url": "https://cve.circl.lu/cve/CVE-2025-4615"
+    },
+    {
+      "position": 6,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-4614 — Cloud NGFW",
+      "published": "2025-10-09",
+      "severity": "",
+      "affectedBrands": [
+        "Palo Alto"
+      ],
+      "description": "An information disclosure vulnerability in Palo Alto Networks PAN-OS® software enables an authenticated administrator to view session tokens of users authenticated to the firewall web UI. This may allow impersonation of users whose session tokens are leaked.  \n\nThe security risk posed by this issue is significantly minimized when CLI access is restricted to a limited group of administrators.\n\nClou…",
+      "url": "https://cve.circl.lu/cve/CVE-2025-4614"
+    },
+    {
+      "position": 7,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2026-28815 — macOS",
+      "published": "2026-04-03",
+      "severity": "",
+      "affectedBrands": [
+        "Apple"
+      ],
+      "description": "A remote attacker can supply a short X-Wing HPKE encapsulated key and trigger an out-of-bounds read in the C decapsulation path, potentially causing a crash or memory disclosure depending on runtime protections. This issue is fixed in swift-crypto version 4.3.1.",
+      "url": "https://cve.circl.lu/cve/CVE-2026-28815"
+    },
+    {
+      "position": 8,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-62439 — FortiOS",
+      "published": "2026-02-10",
+      "severity": "baja",
+      "affectedBrands": [
+        "Fortinet"
+      ],
+      "description": "An Improper Verification of Source of a Communication Channel vulnerability [CWE-940] vulnerability in Fortinet FortiOS 7.6.0 through 7.6.4, FortiOS 7.4.0 through 7.4.9, FortiOS 7.2 all versions, FortiOS 7.0 all versions may allow an authenticated user with knowledge of FSSO policy configurations to gain unauthorized access to protected network resources via crafted requests.",
+      "url": "https://cve.circl.lu/cve/CVE-2025-62439"
+    },
+    {
+      "position": 9,
+      "source": "circl",
+      "sourceLabel": "NVD/CVE",
+      "title": "CVE-2025-68686 — FortiOS",
+      "published": "2026-02-10",
+      "severity": "media",
+      "affectedBrands": [
+        "Fortinet"
+      ],
+      "description": "An Exposure of Sensitive Information to an Unauthorized Actor vulnerability [CWE-200] vulnerability in Fortinet FortiOS 7.6.0 through 7.6.1, FortiOS 7.4.0 through 7.4.6, FortiOS 7.2 all versions, FortiOS 7.0 all versions, FortiOS 6.4 all versions may allow a remote unauthenticated attacker to bypass the patch developed for the symbolic link persistency mechanism observed in some post-exploit cases…",
+      "url": "https://cve.circl.lu/cve/CVE-2025-68686"
+    }
+  ]
+}

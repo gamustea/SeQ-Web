@@ -67,7 +67,6 @@ class ScanResultProcessor(ABC):
             self.logger.info(f"Host creado: {hostname} ({ip})")
 
         return host
-    
 
 
 class NmapResultProcessor(ScanResultProcessor):
@@ -275,7 +274,7 @@ class NiktoResultProcessor(ScanResultProcessor):
         self.session.add(incident)
         self.session.flush()
         return incident
-    
+
 
 class OpenVASResultProcessor(ScanResultProcessor):
     """Procesa y guarda resultados de escaneos OpenVAS"""
