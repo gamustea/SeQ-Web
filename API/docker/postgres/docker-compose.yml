@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?La variable POSTGRES_PASSWORD es obligatoria}
 
     ports:
-      - "127.0.0.1:5432:5432"          # solo accesible desde localhost, NO expuesto públicamente
+      - "127.0.0.1:15432:5432"          # solo accesible desde localhost, NO expuesto públicamente
 
     volumes:
       - postgres_data:/var/lib/postgresql/data    # datos persistentes

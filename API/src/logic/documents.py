@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
+import json
 from datetime import datetime
 from abc import ABC, abstractmethod
 from enum import Enum
 import random
 from typing import Optional, Dict, Any
+from ddgs import DDGS
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -17,7 +19,7 @@ from reportlab.platypus import (
     Spacer,
     Image,
     PageBreak,
-    CondPageBreak,  # <- IMPORTANTE
+    CondPageBreak
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
@@ -474,22 +476,22 @@ class PDFCreator:
         elements.append(title)
 
         consent_text = """
-El usuario declara y confirma que ha otorgado su consentimiento expreso e
-inequívoco para la realización del escaneo de seguridad sobre el sitio web
-y/o sistema informático objeto del presente informe. El usuario acepta y
-reconoce que es el titular legítimo o cuenta con la autorización necesaria
-de los equipos, sistemas y redes escaneados.
+        El usuario declara y confirma que ha otorgado su consentimiento expreso e
+        inequívoco para la realización del escaneo de seguridad sobre el sitio web
+        y/o sistema informático objeto del presente informe. El usuario acepta y
+        reconoce que es el titular legítimo o cuenta con la autorización necesaria
+        de los equipos, sistemas y redes escaneados.
 
-El usuario asume la plena responsabilidad sobre las consecuencias derivadas
-del escaneo realizado, incluyendo cualquier resultado, hallazgo o
-vulnerabilidad identificada en el proceso. Asimismo, el usuario exonera
-de toda responsabilidad a los ejecutores del análisis de seguridad respecto
-al uso que se haga de la información contenida en este documento.
+        El usuario asume la plena responsabilidad sobre las consecuencias derivadas
+        del escaneo realizado, incluyendo cualquier resultado, hallazgo o
+        vulnerabilidad identificada en el proceso. Asimismo, el usuario exonera
+        de toda responsabilidad a los ejecutores del análisis de seguridad respecto
+        al uso que se haga de la información contenida en este documento.
 
-Este documento contiene información sensible de carácter confidencial y
-debe ser tratado con las medidas de seguridad apropiadas conforme a la
-normativa vigente en materia de protección de datos.
-"""
+        Este documento contiene información sensible de carácter confidencial y
+        debe ser tratado con las medidas de seguridad apropiadas conforme a la
+        normativa vigente en materia de protección de datos.
+        """
         paragraph = Paragraph(consent_text.strip(), text_style)
         table = Table([[paragraph]], colWidths=[6 * inch])
         table.setStyle(TableStyle([
@@ -1227,15 +1229,69 @@ class NiktoPrintingStrategy(_PrintingStrategy):
 
 
 @dataclass
+class AegisTipData:
+    """Consejo individual estructurado."""
+    headline: str
+    body: str
+    links: list[dict] = field(default_factory=list)
+
+@dataclass
 class AegisContent:
-    """Resultado estructurado de generate_content."""
+    """Resultado estructurado de generate_pill."""
     topic_id: int
     topic_title: str
-    body: str          # Markdown
     language: str
     company: str
-    generated_at: str  # ISO-8601 UTC
+    generated_at: str
     topic_note: str
+    subtitle: str = ""
+    intro: str = ""
+    tips: list[AegisTipData] = field(default_factory=list)
+    closing: str = ""
+    contact_email: str = ""
+
+    def to_json_dict(self, document_id: int, alerts: list) -> dict:
+        """Serializa el contenido completo a un dict exportable como .json."""
+        return {
+            "version": "1.0",
+            "metadata": {
+                "documentId": document_id,
+                "topicId": self.topic_id,
+                "topicTitle": self.topic_title,
+                "language": self.language,
+                "company": self.company,
+                "generatedAt": self.generated_at,
+            },
+            "pill": {
+                "subtitle": self.subtitle,
+                "intro": self.intro,
+                "tips": [
+                    {
+                        "position": i + 1,
+                        "headline": t.headline,
+                        "body": t.body,
+                        "links": t.links,
+                    }
+                    for i, t in enumerate(self.tips)
+                ],
+                "closing": self.closing,
+                "contactEmail": self.contact_email,
+            },
+            "alerts": [
+                {
+                    "position": i + 1,
+                    "source": a.source,
+                    "sourceLabel": "INCIBE-CERT" if a.source == "incibe" else "NVD/CVE",
+                    "title": a.title,
+                    "published": a.published,
+                    "severity": a.severity,
+                    "affectedBrands": a.brands,
+                    "description": a.description,
+                    "url": a.url,
+                }
+                for i, a in enumerate(alerts)
+            ],
+        }
 
 
 class AegisAIWriter:
@@ -1276,30 +1332,32 @@ class AegisAIWriter:
         topic_id: int,
         reference: str,
         tweaks: dict[str, Any],
+        verified_resources: str = "",
     ) -> str:
-        company  = tweaks.get("company",       "la empresa destinataria")
-        sector   = tweaks.get("sector",        "")
+        company = tweaks.get("company", "la empresa destinataria")
+        sector = tweaks.get("sector", "")
         audience = tweaks.get("audienceLevel", "mixed")
-        brands   = ", ".join(tweaks.get("associatedBrands", []))
-        contact  = tweaks.get("mentionContact", "")
-        language = tweaks.get("language",      "es")
-        tone     = tweaks.get("tone",          "formal")
-        focus    = tweaks.get("topicFocus",    "")
+        brands = ", ".join(tweaks.get("associatedBrands", []))
+        contact = tweaks.get("mentionContact", "")
+        language = tweaks.get("language", "es")
+        tone = tweaks.get("tone", "formal")
+        focus = tweaks.get("topicFocus", "")
 
         audience_label = {
-            "technical":     "técnico (conocimiento avanzado de seguridad)",
-            "mixed":         "mixto (empleados técnicos y no técnicos)",
+            "technical": "técnico (conocimiento avanzado de seguridad)",
+            "mixed": "mixto (empleados técnicos y no técnicos)",
             "non-technical": "no técnico (empleados de negocio sin perfil IT)",
         }.get(audience, audience)
 
         context_parts = [f"- Empresa destinataria: {company}"]
-        if sector:  context_parts.append(f"- Sector de actividad: {sector}")
-        if brands:  context_parts.append(f"- Tecnologías y herramientas en uso: {brands}")
-        if focus:   context_parts.append(f"- Enfoque específico solicitado: {focus}")
-        if contact: context_parts.append(f"- Contacto de referencia para el lector: {contact}")
+        if sector:   context_parts.append(f"- Sector de actividad: {sector}")
+        if brands:   context_parts.append(f"- Tecnologías y herramientas en uso: {brands}")
+        if focus:    context_parts.append(f"- Enfoque específico solicitado: {focus}")
+        if contact:  context_parts.append(f"- Contacto de referencia para el lector: {contact}")
         context_parts += [
             f"- Perfil de la audiencia: {audience_label}",
             f"- Tono: {tone}",
+            f"- Idioma de salida: {language.upper()}",
         ]
         context_block = "\n".join(context_parts)
 
@@ -1313,98 +1371,72 @@ class AegisAIWriter:
                 "- Elige un tema de ciberseguridad relevante para empleados de empresa."
             )
 
+        # Incluir recursos verificados si existen
+        resources_block = ""
+        if verified_resources and "No se encontraron resultados" not in verified_resources:
+            resources_block = (
+                "\n\nRECURSOS VERIFICADOS DISPONIBLES (usa estos si son relevantes):\n"
+                "━━━\n"
+                + verified_resources[:1500] +  # Limitar para no saturar el contexto
+                "\n━━━\n"
+            )
+
         role_block = (
             f"Eres un redactor senior especializado en comunicación de ciberseguridad corporativa. "
-            f"Tu trabajo es producir píldoras de concienciación en {language.upper()} "
-            f"para empleados de empresas españolas, adaptadas al perfil y contexto de cada cliente. "
-            f"Escribes de forma clara, directa y práctica: explicas el riesgo, das contexto real "
-            f"y ofreces pasos concretos que el empleado puede aplicar de inmediato. "
-            f"Nunca usas jerga técnica innecesaria con audiencias no técnicas. "
-            f"REGLA ABSOLUTA: empieza a escribir el documento directamente en la primera línea, "
-            f"sin preámbulos ni frases introductorias como 'A continuación...', 'En esta píldora...'. "
-            f"NUNCA respondas en otro idioma distinto a {language.upper()}."
+            f"Tu trabajo es producir contenido de concienciación en {language.upper()} "
+            f"para empleados de empresas. Escribes de forma clara, directa y práctica. "
+            f"Das información amplia sobre lo que estás hablando, aprotando contenido extenso y de calidad. "
+            f"REGLA ABSOLUTA: responde SOLO con el JSON solicitado, sin nada más."
         )
 
-        example = (
-            "# Píldora de concienciación:\n"
-            "**Borra bien la información**\n\n"
-            "La información sensible de la empresa no solo está en el contenido visible de los "
-            "documentos. Los metadatos —características ocultas de un fichero— y una eliminación "
-            "incorrecta de archivos pueden exponer datos críticos sin que te des cuenta. "
-            "Aquí tienes algunos consejos para proteger adecuadamente la información:\n\n"
-            "- **No compartas capturas de pantalla sin revisarlas antes.** Además del contenido "
-            "principal, pueden verse nombres de usuario, rutas de archivos u otras ventanas abiertas "
-            "que revelen información corporativa.\n"
-            "- **Borrar un archivo y vaciar la papelera no es suficiente.** Los datos siguen siendo "
-            "recuperables con herramientas especializadas. Para información sensible, usa aplicaciones "
-            "de borrado seguro como [Eraser](https://www.incibe.es/ciudadania/herramientas/eraser).\n"
-            "- **Antes de deshacerte de un dispositivo, elimina su contenido de forma segura** "
-            "o, si es necesario, destruye físicamente el soporte.\n"
-            "- **Los documentos en papel también requieren tratamiento adecuado.** No los tires a la "
-            "basura común; usa las destructoras o los contenedores de documentación confidencial "
-            "que la empresa pone a tu disposición.\n"
-            "- **Los metadatos revelan más de lo que crees.** Cada documento contiene información "
-            "oculta: autor, fecha de creación, historial de cambios e incluso comentarios eliminados. "
-            "Revísalos y límpialos antes de compartir documentos fuera de la organización.\n\n"
-            "Si tienes dudas sobre cómo eliminar información de algún dispositivo o soporte, "
-            "consúltalo con ciberseguridad@emesa.com. Un error en el proceso puede dejar expuesta "
-            "información que creías eliminada.\n\n"
-            "Para quienes quieran ampliar el tema, pueden acceder a esta "
-            "[guía de INCIBE](https://www.incibe.es/sites/default/files/contenidos/guias/doc/"
-            "guia_ciberseguridad_borrado_seguro_metad_0.pdf) sobre borrado seguro de la información."
-        )
+        json_instruction = """\
+        Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin bloques de código, sin explicaciones.
 
-        format_instruction = (
-            "╔══════════════════════════════════════════════════════════════╗\n"
-            "║           TAREA: PÍLDORA DE CONCIENCIACIÓN FINAL            ║\n"
-            "╚══════════════════════════════════════════════════════════════╝\n\n"
-            f"Escribe en {language.upper()} una píldora de concienciación corporativa en Markdown, "
-            "lista para distribuir a los empleados. El documento debe poder enviarse tal cual, "
-            "sin ninguna edición posterior.\n\n"
-            "ESTRUCTURA OBLIGATORIA:\n\n"
-            "1. ENCABEZADO\n"
-            "   Línea 1: '# Píldora de concienciación:'\n"
-            "   Línea 2: subtítulo en negrita con un título atractivo y directo.\n\n"
-            "2. PÁRRAFO INTRODUCTORIO (3-5 frases)\n"
-            "   - Contextualiza el riesgo y explica por qué importa a los empleados de esta empresa.\n"
-            "   - Si el sector o las tecnologías tienen relación con el tema, mencíonalo.\n"
-            "   - Anticipa el tipo de consejos que vendrán.\n\n"
-            "3. LISTA DE CONSEJOS (5-7 bullets)\n"
-            "   Cada bullet debe:\n"
-            "   a) Empezar con la acción o el riesgo en negrita.\n"
-            "   b) Desarrollar en 2-3 frases el motivo y la consecuencia real si no se aplica.\n"
-            "   c) Incluir, si existe, una herramienta o recurso con enlace Markdown.\n"
-            "   d) Estar en segunda persona y ser aplicable sin conocimientos técnicos.\n\n"
-            "4. FRASE DE CIERRE\n"
-            "   - Llamada a la acción clara.\n"
-            + (f"   - Incluye el contacto de referencia: {contact}\n" if contact else "") +
-            "   - Opcional: enlace a guía externa de ampliación.\n\n"
-            "CRITERIOS DE CALIDAD:\n"
-            "- Longitud: entre 350 y 550 palabras.\n"
-            "- Tono cercano pero profesional.\n"
-            "- Sin tecnicismos para audiencia no técnica.\n"
-            "- No reproduzcas ninguna frase del ejemplo.\n\n"
-            "--- EJEMPLO DE REFERENCIA (imita estructura, tono y extensión; NO copies el contenido) ---\n"
-            f"{example}\n"
-            "--- FIN DEL EJEMPLO ---"
-        )
+        SCHEMA OBLIGATORIO:
+        {
+        "subtitle": "string - título atractivo de la píldora",
+        "intro": "string - párrafo introductorio de 3-5 frases",
+        "tips": [
+            {
+            "headline": "string - acción o riesgo en una frase corta",
+            "body": "string - desarrollo en 2-3 frases",
+            "links": [{"text": "string", "url": "string"}]
+            }
+        ],
+        "closing": "string - frase de cierre con llamada a la acción",
+        "contactEmail": "string - email de contacto o vacío"
+        }
+
+        REGLAS CRÍTICAS SOBRE ENLACES:
+        1. El campo "links" es OPCIONAL. Si no tienes URLs reales y verificadas, usa un array vacío: []
+        2. NUNCA inventes URLs, uses "example.com", "placeholder.com" o dominios genéricos.
+        3. SOLO incluye enlaces si son URLs reales que empiecen con https:// y provengan de fuentes oficiales (gov, org, empresas reconocidas).
+        4. Si no estás 100% seguro de que una URL es real y accesible, NO la incluyas.
+        5. Prioriza los recursos verificados proporcionados arriba si son relevantes para el tip.
+        6. tips: entre 5 y 7 elementos.
+        7. Todos los valores en el idioma indicado.
+        8. NO uses Markdown dentro de los valores (sin **, sin #, sin -).
+        """
 
         prompt_parts = [role_block]
         if reference:
             prompt_parts.append(
-                "Píldoras reales publicadas anteriormente por este cliente "
-                "(imita su estilo, tono y extensión):\n\n"
-                "━━━ PÍLDORAS DE REFERENCIA ━━━\n"
+                "Ejemplos de píldoras reales de este cliente (imita su estilo):\n\n"
+                "━━━ REFERENCIAS ━━━\n"
                 + reference +
-                "\n━━━ FIN DE LAS REFERENCIAS ━━━"
+                "\n━━━ FIN ━━━"
             )
+        
+        if resources_block:
+            prompt_parts.append(resources_block)
+            
         prompt_parts += [
             f"CONTEXTO DEL CLIENTE:\n{context_block}",
             f"TEMA A DESARROLLAR:\n{topic_block}",
-            format_instruction,
+            json_instruction,
         ]
         return "\n\n".join(prompt_parts)
-
+    
     def _call_ollama(self, prompt: str) -> str:
         """Llama a Ollama con tool calling (misma lógica que tu _call_ollama)."""
         client = ollama.Client(host=self.host)
@@ -1415,6 +1447,7 @@ class AegisAIWriter:
             "Si necesitas contexto actualizado (noticias recientes, vulnerabilidades activas), "
             "usa la herramienta web_search antes de redactar."
         )
+
         tools = [
             {
                 "type": "function",
@@ -1447,12 +1480,12 @@ class AegisAIWriter:
             {"role": "user", "content": prompt},
         ]
 
-        # 1ª llamada
         try:
             resp = client.chat(
                 model=self.model,
                 messages=messages,
                 tools=tools,
+                format="json",
                 options={"num_predict": 4096, "temperature": 0.7},
             )
         except ollama.ResponseError as e:
@@ -1462,7 +1495,6 @@ class AegisAIWriter:
             self.logger.error(f"Error conectando Ollama en {self.host}: {e}")
             raise RuntimeError(f"No se pudo conectar con Ollama en {self.host}") from e
 
-        # tool calling
         tool_calls = getattr(resp.message, "tool_calls", None) or []
         if tool_calls:
             self.logger.info(
@@ -1481,7 +1513,6 @@ class AegisAIWriter:
                 self.logger.info(f"AegisAIWriter: búsqueda ejecutada → '{query}'")
                 messages.append({"role": "tool", "content": result})
 
-            # 2ª llamada
             try:
                 resp = client.chat(
                     model=self.model,
@@ -1502,7 +1533,55 @@ class AegisAIWriter:
             raise RuntimeError("El modelo devolvió una respuesta vacía")
         return content
 
-    # --- API pública ---------------------------------------------------
+    def _filter_valid_links(self, links: list[dict]) -> list[dict]:
+        """
+        Filtra links para eliminar placeholders y URLs inválidas.
+        Solo permite URLs reales con dominios válidos.
+        """
+        if not links:
+            return []
+        
+        # Patrones que indican URLs inventadas/placeholders
+        invalid_patterns = [
+            "example.com", "placeholder", "link.com", "url.com", 
+            "sitio-web.com", "tu-sitio.com", "domain.com",
+            "http://localhost", "https://localhost",
+            "herramienta-ejemplo", "recurso-ejemplo"
+        ]
+        
+        valid_links = []
+        for link in links:
+            if not isinstance(link, dict):
+                continue
+            url = link.get("url", "").lower().strip()
+            text = link.get("text", "").strip()
+            
+            # Debe tener URL y texto
+            if not url or not text:
+                continue
+            
+            # Debe empezar con http/https
+            if not url.startswith(("http://", "https://")):
+                continue
+            
+            # Verificar que no sea placeholder
+            if any(pattern in url for pattern in invalid_patterns):
+                self.logger.debug(f"Filtrando URL placeholder: {url}")
+                continue
+            
+            # Verificar que el dominio sea válido (tiene al menos un punto y TLD)
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                domain = parsed.netloc.replace("www.", "")
+                if "." not in domain or len(domain.split(".")[-1]) < 2:
+                    continue
+            except Exception:
+                continue
+            
+            valid_links.append({"text": text, "url": link["url"]})
+        
+        return valid_links
 
     def generate_pill(
         self,
@@ -1514,22 +1593,69 @@ class AegisAIWriter:
         reference: str,
         tweaks: dict[str, Any],
     ) -> AegisContent:
-        """Genera el cuerpo Markdown de una píldora."""
-        prompt = self._build_prompt(topic, resolved_topic_id, reference, tweaks)
+        # Buscar recursos reales sobre el tema antes de generar
+        self.logger.info(f"Buscando recursos verificados para: {topic_title}")
+        search_query = f"{topic_title} ciberseguridad guía oficial consejos"
+        verified_resources = self._web_search(search_query, max_results=5)
+        
+        prompt = self._build_prompt(
+            topic, resolved_topic_id, reference, tweaks, verified_resources
+        )
         self.logger.info(
             f"AegisAIWriter generando píldora | topic_id={resolved_topic_id} "
             f"| modelo={self.model}"
         )
-        body = self._call_ollama(prompt)
+        
+        raw_response = self._call_ollama(prompt)
+        
+        # Parsear JSON...
+        try:
+            data = json.loads(raw_response)
+        except json.JSONDecodeError:
+            import re
+            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Respuesta no es JSON válido: {raw_response[:200]}") from e
+            else:
+                raise ValueError(f"Respuesta no contiene JSON: {raw_response[:200]}")
+
+        # Validar campos requeridos
+        required = {"subtitle", "intro", "tips", "closing"}
+        missing = required - data.keys()
+        if missing:
+            raise ValueError(f"JSON incompleto. Faltan: {missing}")
+
+        # Convertir tips y filtrar links inválidos/placeholders
+        tips = []
+        for i, tip_data in enumerate(data.get("tips", [])):
+            if not isinstance(tip_data, dict):
+                continue
+            
+            raw_links = tip_data.get("links", []) or []
+            # Filtrar solo links con URLs reales (no placeholders)
+            valid_links = self._filter_valid_links(raw_links)
+            
+            tips.append(AegisTipData(
+                headline=tip_data.get("headline", f"Consejo {i+1}"),
+                body=tip_data.get("body", ""),
+                links=valid_links
+            ))
 
         return AegisContent(
             topic_id=resolved_topic_id,
             topic_title=topic_title,
-            body=body,
             language=tweaks.get("language", "es"),
             company=tweaks.get("company", "la empresa destinataria"),
             generated_at=datetime.now(timezone.utc).isoformat(),
             topic_note=topic_note,
+            subtitle=data.get("subtitle", ""),
+            intro=data.get("intro", ""),
+            tips=tips,
+            closing=data.get("closing", ""),
+            contact_email=data.get("contactEmail", ""),
         )
 
 

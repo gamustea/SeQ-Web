@@ -41,6 +41,7 @@ dnspython
 python-gvm
 ollama
 requests
+ddgs
 duckduckgo-search>=6.0
 
 # NOTA IMPORTANTE:

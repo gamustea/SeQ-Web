@@ -97,7 +97,7 @@ def _register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(429)
     def too_many_requests(error):
-        _logger.warning(f"Rate limit superado: {request.remote_addr}")
+        _logger.warning("Rate limit superado: %s", request.remote_addr)
         return jsonify({
             "error":   "too_many_requests",
             "message": "Has superado el límite de peticiones. Espera un momento e inténtalo de nuevo.",
