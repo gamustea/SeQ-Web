@@ -6,6 +6,7 @@
   <title>Sentinel — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="icon" type="image/png" href="/resources/images/favicon.ico" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -278,6 +279,21 @@
 </head>
 <body>
 <div class="layout">
+<script>
+  (function () {
+    const raw = sessionStorage.getItem('seq_session');
+    if (!raw) { window.location.href = '/pages/login.html'; return; }
+    try {
+      const s = JSON.parse(raw);
+      if (!s.accessToken || Date.now() > s.expiresAt) {
+        sessionStorage.removeItem('seq_session');
+        window.location.href = '/pages/login.html';
+      }
+    } catch {
+      window.location.href = '/pages/login.html';
+    }
+  })();
+</script>
 
   <!-- ── TOPBAR ── -->
   <nav class="topbar">

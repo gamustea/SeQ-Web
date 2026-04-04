@@ -23,6 +23,7 @@ from .sentinel import sentinel_bp
 from .acheron import acheron_bp
 from .aegis_endpoints import aegis_bp
 from .health import health_bp
+from .pages import pages_bp
 
 
 def register_blueprints(app: Flask) -> None:
@@ -31,5 +32,6 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(oauth_bp,    url_prefix="/oauth")
     app.register_blueprint(users_bp,    url_prefix="/users")
     app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
-    app.register_blueprint(acheron_bp)
+    app.register_blueprint(acheron_bp,  url_prefix="/acheron")
     app.register_blueprint(aegis_bp,    url_prefix="/aegis")
+    app.register_blueprint(pages_bp,    url_prefix="/pages")

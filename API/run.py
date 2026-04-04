@@ -36,7 +36,6 @@ _UI_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
 )
 
-
 def _graceful_shutdown(signum, frame) -> None:
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
@@ -107,11 +106,16 @@ def _register_ui_route(app: Flask) -> None:
     @app.route("/", defaults={"path": ""})
     @app.route("/<path:path>")
     def serve_ui(path: str):
+        # No interceptar rutas de la API ni del blueprint /pages
+        if path.startswith(("pages/", "oauth/", "sentinel/", "aegis/", "users/", "acheron/")):
+            from flask import abort
+            abort(404)
+
         target = os.path.join(_UI_DIR, path)
         if path and os.path.isfile(target):
             return send_from_directory(_UI_DIR, path)
-        # Ruta desconocida → hub principal
-        return send_from_directory(_UI_DIR, "hub/index.html")
+
+        return send_from_directory(_UI_DIR, "pages/hub.html")
 
 
 def _register_error_handlers(app: Flask) -> None:
