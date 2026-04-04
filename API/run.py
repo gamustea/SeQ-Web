@@ -2,12 +2,12 @@
 run.py — Punto de entrada de la API SeQ
 ════════════════════════════════════════
 Responsabilidades de este fichero:
-  1. Crear la aplicación Flask.
-  2. Configurar CORS y rate limiting (via init_app del limiter de _shared).
-  3. Registrar los blueprints (via endpoints.register_blueprints).
-  4. Instalar manejadores de error globales.
-  5. Gestionar el apagado graceful (SIGTERM / SIGINT).
-  6. Arrancar el servidor de desarrollo si se ejecuta directamente.
+    1. Crear la aplicación Flask.
+    2. Configurar CORS y rate limiting (via init_app del limiter de _shared).
+    3. Registrar los blueprints (via endpoints.register_blueprints).
+    4. Instalar manejadores de error globales.
+    5. Gestionar el apagado graceful (SIGTERM / SIGINT).
+    6. Arrancar el servidor de desarrollo si se ejecuta directamente.
 
 Toda la lógica de rutas vive en el paquete `endpoints/`.
 """
@@ -115,5 +115,4 @@ def _register_error_handlers(app: Flask) -> None:
 app = create_app()
 
 if __name__ == "__main__":
-    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
-    app.run(debug=debug_mode, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)

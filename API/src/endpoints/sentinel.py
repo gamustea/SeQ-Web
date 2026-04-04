@@ -4,25 +4,25 @@ endpoints/sentinel.py
 Blueprint de escaneos (Sentinel). Registrado en /sentinel.
 
 Estado y control
-  GET  /sentinel/is-finished              — ¿ha finalizado un escaneo?
-  GET  /sentinel/scan-status              — estado/progreso de un escaneo
-  POST /sentinel/scans/<scan_id>/cancel   — cancelar un escaneo en curso
+    GET  /sentinel/is-finished              — ¿ha finalizado un escaneo?
+    GET  /sentinel/scan-status              — estado/progreso de un escaneo
+    POST /sentinel/scans/<scan_id>/cancel   — cancelar un escaneo en curso
 
 Lanzamiento
-  POST /sentinel/nmap                     — lanzar escaneo Nmap
-  POST /sentinel/nikto                    — lanzar escaneo Nikto
-  POST /sentinel/openvas                  — lanzar escaneo OpenVAS
+    POST /sentinel/nmap                     — lanzar escaneo Nmap
+    POST /sentinel/nikto                    — lanzar escaneo Nikto
+    POST /sentinel/openvas                  — lanzar escaneo OpenVAS
 
 Resultados
-  GET  /sentinel/results                  — todos los escaneos del usuario
-  GET  /sentinel/results/<scan_id>        — un escaneo concreto
+    GET  /sentinel/results                  — todos los escaneos del usuario
+    GET  /sentinel/results/<scan_id>        — un escaneo concreto
 
 PDF
-  GET  /sentinel/generate-pdf             — descargar PDF
-  GET  /sentinel/generate-pdf-base64      — obtener PDF en base64
+    GET  /sentinel/generate-pdf             — descargar PDF
+    GET  /sentinel/generate-pdf-base64      — obtener PDF en base64
 
 Eliminación
-  DELETE /sentinel/<scan_id>              — eliminar escaneo
+    DELETE /sentinel/<scan_id>              — eliminar escaneo
 """
 
 from __future__ import annotations
@@ -63,13 +63,12 @@ from ._shared import (
     verify_scan_ownership,
 )
 
+
+
 sentinel_bp = Blueprint("sentinel", __name__)
 _logger     = SecOpsLogger("sentinel").get_logger()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ESTADO Y CONTROL
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @sentinel_bp.get("/is-finished")
 @require_oauth_token
@@ -186,10 +185,6 @@ def cancel_scan(scan_id: int):
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LANZAMIENTO DE ESCANEOS
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @sentinel_bp.post("/nmap")
 @require_oauth_token
@@ -340,10 +335,6 @@ def start_openvas_scan():
         return jsonify(err), code
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# RESULTADOS
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @sentinel_bp.get("/results")
 @require_oauth_token
 @limiter.limit("300 per hour; 2000 per day")
@@ -428,10 +419,6 @@ def retrieve_scan_by_id(scan_id: int):
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PDF
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @sentinel_bp.get("/generate-pdf")
 @require_oauth_token
@@ -519,10 +506,6 @@ def generate_pdf_base64():
         return jsonify(err), code
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ELIMINACIÓN
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @sentinel_bp.delete("/<int:scan_id>")
 @require_oauth_token
 @limiter.limit("60 per hour; 200 per day")
@@ -558,10 +541,6 @@ def delete_scan(scan_id: int):
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HELPERS PRIVADOS
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def _require_json():
     if not request.is_json:

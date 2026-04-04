@@ -48,6 +48,4 @@ local.properties
 
 API/src/config/SecConfig.json
 
-.claude
-CLAUDE.md
-VMs/*
+API/data

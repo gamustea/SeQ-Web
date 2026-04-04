@@ -4,7 +4,7 @@ from .scan_reports import (
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy
 )
-from.pills import (
+from .aegis_pills import (
     AegisAIWriter,
     AegisContent,
     AegisAlert,

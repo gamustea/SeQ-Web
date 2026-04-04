@@ -15,7 +15,7 @@ from .sentinel import (
     TargetPort,
 )
 from .acheron import Account, CreditCard, Storable, Vault
-from .aegis import AegisDocument, AegisDocumentAlert, AegisPill, AegisTip, Topic
+from .aegis_model import AegisDocument, AegisDocumentAlert, AegisTip, Topic
 from .general import AccessToken, RefreshToken, Person, Rol, User
 
 __all__ = [

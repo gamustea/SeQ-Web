@@ -21,7 +21,7 @@ from .oauth import oauth_bp
 from .users import users_bp
 from .sentinel import sentinel_bp
 from .acheron import acheron_bp
-from .aegis import aegis_bp
+from .aegis_endpoints import aegis_bp
 from .health import health_bp
 
 

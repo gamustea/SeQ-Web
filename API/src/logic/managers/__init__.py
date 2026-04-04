@@ -1,7 +1,7 @@
 from ._base import BaseManager, initialize_engine
 from .sentinel import ScanManager, NmapScanManager, NiktoScanManager, OpenVASScanManager
 from .acheron import VaultManager
-from .aegis import AegisManager
+from .aegis_managers import AegisManager
 from .general import (
     UserManager,
     OAuthTokenManager,
