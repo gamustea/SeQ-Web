@@ -19,14 +19,13 @@ import com.seq.acheronmobile.ui.theme.AcheronMobileTheme
 
 class MainActivity : ComponentActivity() {
 
-    // Factory manual — sin Hilt, instanciamos el grafo de dependencias aquí
     private val loginViewModel: LoginViewModel by lazy {
         val tokenRepo = TokenRepository(applicationContext)
         val authRepo  = AuthRepository(tokenRepo)
         ViewModelProvider(this, object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                LoginViewModel(authRepo) as T
+                LoginViewModel(authRepo, tokenRepo) as T  // ← pasar tokenRepo
         })[LoginViewModel::class.java]
     }
 

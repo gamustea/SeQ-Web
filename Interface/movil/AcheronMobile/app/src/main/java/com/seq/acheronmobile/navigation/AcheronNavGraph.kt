@@ -19,13 +19,19 @@ fun AcheronNavGraph(
     navController: NavHostController,
     loginViewModel: LoginViewModel
 ) {
+    // Decide la pantalla inicial ANTES de que Compose dibuje nada
+    val startDestination = if (loginViewModel.hasActiveSession)
+        Routes.MASTER_KEY
+    else
+        Routes.LOGIN
+
     NavHost(
-        navController = navController,
-        startDestination = Routes.LOGIN
+        navController    = navController,
+        startDestination = startDestination
     ) {
         composable(Routes.LOGIN) {
             LoginScreen(
-                viewModel = loginViewModel,
+                viewModel    = loginViewModel,
                 onLoginSuccess = {
                     navController.navigate(Routes.MASTER_KEY) {
                         popUpTo(Routes.LOGIN) { inclusive = true }

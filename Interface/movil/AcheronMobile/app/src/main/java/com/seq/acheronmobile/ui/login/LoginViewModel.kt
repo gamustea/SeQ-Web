@@ -3,6 +3,7 @@ package com.seq.acheronmobile.ui.login
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.seq.acheronmobile.data.repository.AuthRepository
+import com.seq.acheronmobile.data.repository.TokenRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,12 +19,16 @@ data class LoginUiState(
 )
 
 class LoginViewModel(
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val tokenRepository: TokenRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+    val hasActiveSession: Boolean
+        get() = tokenRepository.hasValidSession()
 
+    
     fun onUsernameChange(value: String) {
         _uiState.update { it.copy(username = value, errorMessage = null) }
     }
@@ -63,7 +68,6 @@ class LoginViewModel(
         }
     }
 
-    /** Llamado por la UI una vez que ha navegado, para resetear el flag. */
     fun onNavigatedToVault() {
         _uiState.update { it.copy(loginSuccess = false) }
     }
