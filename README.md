@@ -3,7 +3,7 @@
 **SeQ** es una plataforma de operaciones de seguridad compuesta por tres módulos principales:
 
 - **Sentinel** — API REST de escaneo de vulnerabilidades (operativo).
-- **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (en desarrollo).
+- **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (operativo, en expansión).
 - **Aegis** — Módulo de concienciación en ciberseguridad y vigilancia de vulnerabilidades, basado en IA local (en desarrollo avanzado).
 
 ---
@@ -21,7 +21,8 @@
   - [Consulta de resultados](#consulta-de-resultados)
   - [Generación de informes PDF](#generación-de-informes-pdf)
 - [Módulo Aegis — Concienciación y alertas](#módulo-aegis--concienciación-y-alertas)
-- [Módulo Acheron — Vault (En desarrollo)](#módulo-acheron--vault-en-desarrollo)
+- [Módulo Acheron — Vault](#módulo-acheron--vault)
+- [Infraestructura Docker](#infraestructura-docker)
 - [Estructura del proyecto](#estructura-del-proyecto)
 - [Stack tecnológico](#stack-tecnológico)
 
@@ -32,10 +33,11 @@
 Antes de ejecutar el proyecto, asegúrate de tener instalado:
 
 - Python 3.10+
-- MySQL
+- PostgreSQL
 - Nmap (`sudo apt install nmap`)
 - Nikto (`sudo apt install nikto`)
 - OpenVAS / Greenbone Vulnerability Manager (GVM)
+- Docker y Docker Compose (para levantar los servicios de infraestructura)
 - (Opcional, para Aegis) **Ollama** con al menos un modelo de lenguaje compatible con tool calling (por ejemplo, `llama3.1`)
 
 Instala las dependencias de Python:
@@ -51,6 +53,7 @@ pip install -r REQUIREMENTS.txt
 ```bash
 git clone https://github.com/gamustea/SeQ.git
 cd SeQ/API
+python init_db.py   # Inicializa el esquema de la base de datos
 python run.py
 ```
 
@@ -361,26 +364,109 @@ Devuelve el fichero `.md` como descarga (`Content-Type: text/markdown`). El cuer
 
 ---
 
-## Módulo Acheron — Vault (En desarrollo)
+## Módulo Acheron — Vault
 
-> 🚧 **Este módulo está actualmente en desarrollo activo.**
+> 🔐 **Acheron** es el sistema de gestión de secretos cifrados de SeQ. La API REST del vault está **operativa**. Las interfaces móvil y web están en desarrollo.
 
-**Acheron** es el sistema de gestión de secretos cifrados de SeQ. Su objetivo es proporcionar a los usuarios un almacén seguro (Vault) donde guardar credenciales, tarjetas de crédito y otros datos sensibles, con cifrado en cliente antes de almacenarse.
+Acheron permite a cada usuario gestionar un vault cifrado con credenciales (`Account`) y tarjetas de crédito (`CreditCard`), con soporte de **vault de recuperación** (`isRecovery`).
 
-### Componentes planificados
+### Endpoints
+
+Todos los endpoints requieren autenticación OAuth (`Authorization: Bearer <access_token>`).
+
+#### Vault
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/acheron/vault` | Obtener el vault del usuario |
+| `POST` | `/acheron/vault` | Crear o reemplazar el vault completo (upsert) |
+| `PATCH` | `/acheron/storables` | Actualizar en bulk uno o varios Storables |
+
+> El parámetro de query `?isRecovery=true` permite operar sobre el vault de recuperación en lugar del principal.
+
+#### Storables (objetos del vault)
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/vaults/storables` | Añadir un `Account` o `CreditCard` al vault |
+| `DELETE` | `/vaults/storables` | Eliminar un Storable por `internalId` |
+
+#### Ejemplo: añadir una cuenta
+
+```http
+POST /vaults/storables
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "kind": "account",
+  "title": "GitHub",
+  "username": "usuario",
+  "domain": "github.com",
+  "password": "secreto",
+  "isRecovery": false
+}
+```
+
+**Respuesta:**
+```json
+{
+  "message": "Storable created",
+  "storableId": 7,
+  "internalId": "ACC-001",
+  "vaultId": 1,
+  "isRecovery": false,
+  "kind": "account"
+}
+```
+
+#### Ejemplo: añadir una tarjeta de crédito
+
+```http
+POST /vaults/storables
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "kind": "creditcard",
+  "title": "Visa Personal",
+  "cardHolderName": "Gabriel Musteata",
+  "cardNumber": "4111111111111111",
+  "expirationDate": "12/27",
+  "postalCode": "26360",
+  "cvv": "123",
+  "isRecovery": false
+}
+```
+
+### Componentes
 
 | Componente | Tecnología | Estado |
 |---|---|---|
-| `AcheronCore` | Java (lógica de cifrado y modelo de dominio) | 🔨 En desarrollo |
+| `AcheronAPI` | Python / Flask (endpoints y lógica de vault) | ✅ Operativo |
 | `AcheronMobile` | Android / Kotlin + Jetpack Compose | 🔨 En desarrollo |
 | `AcheronWeb` | Web (interfaz de escritorio) | 🔨 En desarrollo |
+| `AcheronCore` | Java (lógica de cifrado y modelo de dominio) | 🔨 En desarrollo |
 
-### Funcionalidades previstas
+---
 
-- **Vault cifrado**: Almacén de objetos sensibles (`Account`, `CreditCard`, etc.) cifrados mediante estrategias de cifrado simétricas (`VaultEncryptingStrategy`).
-- **Control de acceso**: Compartición de objetos del vault con otros usuarios del sistema mediante listas de control de acceso (ACL).
-- **Identificación única**: Cada objeto del vault recibe un ID compuesto por un código de tipo (e.g., `ACC`, `CDC`) y un número secuencial.
-- **Integración con la API**: Los vaults se conectarán con el backend de Sentinel para autenticación unificada vía OAuth 2.0.
+## Infraestructura Docker
+
+El directorio `API/docker/` contiene los archivos Docker Compose para levantar los servicios de apoyo necesarios:
+
+```bash
+# Levantar OpenVAS / GVM
+cd API/docker/openvas
+docker-compose up -d
+
+# Levantar PostgreSQL
+cd API/docker/postgres
+docker-compose up -d
+
+# Levantar Ollama (IA local para Aegis)
+cd API/docker/ollama
+docker-compose up -d
+```
 
 ---
 
@@ -388,18 +474,35 @@ Devuelve el fichero `.md` como descarga (`Content-Type: text/markdown`). El cuer
 
 ```
 SeQ/
-├── API/                        # API REST Flask (Sentinel + Aegis)
-│   ├── run.py                  # Punto de entrada y definición de endpoints
+├── API/                        # API REST Flask (Sentinel + Aegis + Acheron)
+│   ├── run.py                  # Punto de entrada de la aplicación
+│   ├── init_db.py              # Inicialización del esquema de base de datos
+│   ├── docker/
+│   │   ├── openvas/            # Docker Compose para OpenVAS/GVM
+│   │   ├── postgres/           # Docker Compose para PostgreSQL
+│   │   └── ollama/             # Docker Compose para Ollama (IA local)
 │   └── src/
 │       ├── core/               # Modelos ORM y excepciones
-│       ├── logic/              # Managers (Nmap, Nikto, OpenVAS, Aegis), documentos y procesadores
-│       ├── config/             # Configuración de la aplicación
-│       └── misc/               # Logging y validación
+│       │   └── model/          # acheron.py, sentinel.py, aegis_model.py, general.py
+│       ├── endpoints/          # Blueprints Flask por módulo
+│       │   ├── sentinel.py     # Endpoints de escaneo
+│       │   ├── aegis_endpoints.py
+│       │   ├── acheron.py      # Endpoints del vault (operativo)
+│       │   ├── oauth.py
+│       │   ├── users.py
+│       │   └── health.py       # Health check
+│       ├── logic/              # Managers y lógica de negocio
+│       │   ├── managers/       # sentinel.py, acheron.py, aegis_managers.py, general.py
+│       │   ├── tasks.py        # Tareas asíncronas (escaneos, generación Aegis)
+│       │   ├── processors.py   # Procesadores de resultados (patrón Strategy)
+│       │   └── secrets.py      # Gestión de secretos de aplicación
+│       └── misc/               # Logging y utilidades
 ├── Interface/
 │   ├── AcheronMobile/          # App Android (Kotlin) — Vault
 │   │   └── AcheronCore/        # Lógica de dominio del vault (Java)
 │   ├── AcheronWeb/             # Interfaz web del vault
 │   └── index.html              # Portal de entrada
+├── seq-landing/                # Landing page del proyecto
 ├── shared/
 │   └── resources/              # Recursos compartidos
 └── REQUIREMENTS.txt
@@ -423,3 +526,4 @@ SeQ/
 | App móvil | Android / Kotlin |
 | Lógica de vault | Java + Lombok |
 | Rate limiting | Flask-Limiter |
+| Infraestructura | Docker + Docker Compose |
