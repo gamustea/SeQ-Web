@@ -11,6 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.rememberNavController
+import com.seq.acheronmobile.ui.theme.AcheronMobileTheme
+import com.seq.acheronmobile.data.network.NetworkModule
 import com.seq.acheronmobile.data.repository.AuthRepository
 import com.seq.acheronmobile.data.repository.TokenRepository
 import com.seq.acheronmobile.navigation.AcheronNavGraph
@@ -25,15 +27,17 @@ class MainActivity : ComponentActivity() {
         ViewModelProvider(this, object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                LoginViewModel(authRepo, tokenRepo) as T  // ← pasar tokenRepo
+                LoginViewModel(authRepo, tokenRepo) as T
         })[LoginViewModel::class.java]
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val tokenRepo = TokenRepository(applicationContext)
+        NetworkModule.initialize(tokenRepo)
         enableEdgeToEdge()
         setContent {
-            AcheronMobileTheme {
+            AcheronMobileTheme(dynamicColor = false) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

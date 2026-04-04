@@ -28,7 +28,7 @@ class LoginViewModel(
     val hasActiveSession: Boolean
         get() = tokenRepository.hasValidSession()
 
-    
+
     fun onUsernameChange(value: String) {
         _uiState.update { it.copy(username = value, errorMessage = null) }
     }
@@ -61,6 +61,14 @@ class LoginViewModel(
                         it.copy(
                             isLoading = false,
                             errorMessage = "Sin conexión. Comprueba tu red."
+                        )
+                    }
+                }
+                AuthRepository.AuthResult.SessionExpired -> {   // ← AÑADIR ESTO
+                    _uiState.update {
+                        it.copy(
+                            isLoading    = false,
+                            errorMessage = "Tu sesión ha expirado. Inicia sesión de nuevo."
                         )
                     }
                 }

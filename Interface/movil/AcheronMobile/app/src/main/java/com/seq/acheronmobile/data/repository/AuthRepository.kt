@@ -14,9 +14,10 @@ class AuthRepository(
     private val api = NetworkModule.seqApiService
 
     sealed class AuthResult {
-        data object Success : AuthResult()
+        data object Success       : AuthResult()
+        data object SessionExpired : AuthResult()   // ← NUEVO
         data class Error(val message: String) : AuthResult()
-        data object NetworkError : AuthResult()
+        data object NetworkError  : AuthResult()
     }
 
     /**

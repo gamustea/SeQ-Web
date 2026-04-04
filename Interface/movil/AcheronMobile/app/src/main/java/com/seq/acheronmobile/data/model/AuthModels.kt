@@ -3,7 +3,7 @@ package com.seq.acheronmobile.data.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Cuerpo del POST /oauth/token con grant_type password */
+
 @Serializable
 data class LoginRequest(
     @SerialName("grantType") val grantType: String = "password",
@@ -11,7 +11,6 @@ data class LoginRequest(
     @SerialName("password")  val password: String
 )
 
-/** Respuesta exitosa de /oauth/token */
 @Serializable
 data class TokenResponse(
     @SerialName("access_token")  val accessToken: String,
@@ -20,9 +19,14 @@ data class TokenResponse(
     @SerialName("refresh_token") val refreshToken: String? = null
 )
 
-/** Respuesta de error OAuth estándar */
 @Serializable
 data class OAuthErrorResponse(
     @SerialName("error")             val error: String,
     @SerialName("error_description") val errorDescription: String? = null
+)
+
+@Serializable
+data class RefreshTokenRequest(
+    @SerialName("grantType")      val grantType: String = "refresh_token",
+    @SerialName("refresh_token")  val refreshToken: String
 )

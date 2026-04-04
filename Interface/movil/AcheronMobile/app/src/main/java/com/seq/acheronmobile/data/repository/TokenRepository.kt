@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import androidx.core.content.edit
+import com.seq.acheronmobile.data.model.RefreshTokenRequest
+import com.seq.acheronmobile.data.network.SeqApiService
+import kotlinx.coroutines.runBlocking
 
 /**
  * Almacena y recupera los tokens OAuth de forma segura usando
@@ -64,6 +67,30 @@ class TokenRepository(context: Context) {
             remove(KEY_ACCESS_TOKEN)
                 .remove(KEY_REFRESH_TOKEN)
                 .remove(KEY_EXPIRES_AT)
+        }
+    }
+
+    fun refreshAccessTokenSync(apiService: SeqApiService): String? {
+        val currentRefresh = getRefreshToken() ?: return null
+
+        return try {
+            val response = runBlocking {
+                apiService.refreshToken(RefreshTokenRequest(refreshToken = currentRefresh))
+            }
+            if (response.isSuccessful) {
+                val body = response.body()!!
+                saveTokens(
+                    accessToken = body.accessToken,
+                    refreshToken = body.refreshToken ?: currentRefresh, // conservar el refresh si la API no devuelve uno nuevo
+                    expiresIn = body.expiresIn
+                )
+                body.accessToken
+            } else {
+                clearTokens()
+                null
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 }

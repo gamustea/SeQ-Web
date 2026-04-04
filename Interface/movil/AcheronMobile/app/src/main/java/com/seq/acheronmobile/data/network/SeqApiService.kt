@@ -1,6 +1,7 @@
 package com.seq.acheronmobile.data.network
 
 import com.seq.acheronmobile.data.model.LoginRequest
+import com.seq.acheronmobile.data.model.RefreshTokenRequest
 import com.seq.acheronmobile.data.model.TokenResponse
 import retrofit2.Response
 import retrofit2.http.Body
@@ -16,5 +17,10 @@ interface SeqApiService {
     @POST("oauth/token")
     suspend fun getToken(
         @Body body: LoginRequest
+    ): Response<TokenResponse>
+
+    @POST("oauth/token")
+    suspend fun refreshToken(
+        @Body body: RefreshTokenRequest
     ): Response<TokenResponse>
 }
