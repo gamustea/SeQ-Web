@@ -44,6 +44,7 @@ public class CreditCard extends VaultObject {
     private String postalCode;
 
 
+
     /**
      * Creates a new credit card.
      *
@@ -93,7 +94,6 @@ public class CreditCard extends VaultObject {
         this.postalCode = postalCode;
     }
 
-
     public CreditCard(
             @NotNull String title,
             @NotNull String cardHolderName,
@@ -137,14 +137,14 @@ public class CreditCard extends VaultObject {
 
 
     @Override
-    public String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
+    String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
         CreditCard oldCreditCard = (CreditCard) this.copy();
-
+        super.transform(encryptor, encrypt);
+        
         try {
             cardHolderName = encrypt
                     ? encryptor.encrypt(cardHolderName)
                     : encryptor.decrypt(cardHolderName);
-
             cardNumber = encrypt
                     ? encryptor.encrypt(cardNumber)
                     : encryptor.decrypt(cardNumber);
@@ -161,7 +161,6 @@ public class CreditCard extends VaultObject {
                     ? encryptor.encrypt(postalCode)
                     : encryptor.decrypt(postalCode);
 
-            isEncrypted = encrypt;
         } catch (GeneralSecurityException e) {
             throw new RuntimeException("Error transforming credit card fields", e);
         }

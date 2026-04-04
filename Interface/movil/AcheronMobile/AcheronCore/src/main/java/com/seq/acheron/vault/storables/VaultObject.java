@@ -12,6 +12,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
+import java.security.GeneralSecurityException;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
@@ -82,6 +83,22 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
             throw new IllegalStateException("Cannot decrypt: object is not encrypted (id=" + id + ")");
         }
         return transform(encryptor, false);
+    }
+
+    String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
+        VaultObject oldVaultObject = (VaultObject) copy();
+
+        try {
+            title = encrypt ?
+                    encryptor.encrypt(title) :
+                    encryptor.decrypt(title);
+
+            isEncrypted = encrypt;
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException("Error transforming account fields", e);
+        }
+
+        return oldVaultObject.toString();
     }
 
     @Override
@@ -167,5 +184,4 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
                 + "\"allowedUsers\": " + userList + ", ";
     }
 
-    abstract String transform(VaultEncryptingStrategy encryptor, boolean encrypt);
 }
