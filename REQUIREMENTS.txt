@@ -43,6 +43,7 @@ ollama
 requests
 ddgs
 duckduckgo-search>=6.0
+flask-jwt-extended>=4.6.0
 
 # NOTA IMPORTANTE:
 # Nmap y Nikto deben instalarse directamente en el sistema operativo:
