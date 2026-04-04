@@ -21,18 +21,19 @@ public class Main {
                 )
         );
 
-        Vault mockVault = vf.mockVault().encryptAll();
+        Vault mockVault = vf.mockVault();
         System.out.println("Vault mock desencriptado:\n" +
-                mockVault
-                        .decryptAll()
-                        .toJson()
+                mockVault.toJson()
         );
-        Vault newVault = vf.fromJson(mockVault.encryptAll().toJson(), "Contraseña");
+        Vault newVault = vf.fromJson(
+                mockVault.encryptAll()
+                        .toJson(),
+                "Contraseña"
+        );
         System.out.println("Vault encriptado: \n" + mockVault);
         System.out.println("Vault derivado desencriptado:\n" +
-                newVault
-                .decryptAll()
-                .toJson()
+                newVault.decryptAll()
+                        .toJson()
         );
         System.out.println("Son el mismo Vault: " + (newVault.equals(mockVault.decryptAll())));
     }
