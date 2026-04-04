@@ -140,7 +140,7 @@ public class CreditCard extends VaultObject {
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
         CreditCard oldCreditCard = (CreditCard) this.copy();
         super.transform(encryptor, encrypt);
-        
+
         try {
             cardHolderName = encrypt
                     ? encryptor.encrypt(cardHolderName)

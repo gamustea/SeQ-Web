@@ -1,6 +1,5 @@
 package com.seq.acheron.vault;
 
-import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
@@ -119,7 +118,7 @@ public class VaultTest {
         @DisplayName("El VaultFactory genera el mockVault esperado")
         void testFactoryMockVault() throws GeneralSecurityException {
             VaultFactory factory = VaultFactory.getInstance(testUser);
-            Vault mockVault = factory.mockVault();
+            Vault mockVault = factory.getMockVault();
 
             assertNotNull(mockVault);
             assertFalse(mockVault.isEncrypted(), "El mockVault debe estar descifrado por defecto");
@@ -145,7 +144,7 @@ public class VaultTest {
         void testVaultFullLifecycle() throws GeneralSecurityException {
             // 1. Configuramos el Factory y obtenemos el vault original
             VaultFactory factory = VaultFactory.getInstance(testUser);
-            Vault originalVault = factory.mockVault();
+            Vault originalVault = factory.getMockVault();
 
             // 2. Modificamos y añadimos nuestros propios valores al mockVault base
             Account customAcc = new Account("CUSTOM_ID", "Account1", "gabriel", "test.com", "SecretPass!1", false);

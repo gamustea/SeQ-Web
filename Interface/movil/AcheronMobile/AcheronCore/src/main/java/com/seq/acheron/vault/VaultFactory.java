@@ -93,8 +93,8 @@ public record VaultFactory(User user) {
      *
      * @return a demo {@link Vault} instance
      */
-    public Vault mockVault() throws GeneralSecurityException {
-        return mockVault(user);
+    public Vault getMockVault() throws GeneralSecurityException {
+        return getMockVault(user);
     }
 
 
@@ -107,7 +107,7 @@ public record VaultFactory(User user) {
      * @param user logical owner for the returned vault
      * @return a demo {@link Vault} instance
      */
-    public Vault mockVault(User user) throws GeneralSecurityException {
+    public Vault getMockVault(User user) throws GeneralSecurityException {
         Objects.requireNonNull(user, "user must not be null");
 
         Vault vault = new Vault(new PBKDF2VaultEncryptingStrategy(
