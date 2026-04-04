@@ -338,7 +338,7 @@
   <!-- ── TOPBAR ── -->
   <nav class="topbar">
     <div class="topbar-left">
-      <a href="../hub/index.html" class="back-link">
+      <a href="/hub/index.html" class="back-link">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 12H5M12 5l-7 7 7 7"/>
         </svg>
@@ -421,7 +421,6 @@
             <label>Puertos</label>
             <input type="text" id="nmap-ports" placeholder="80,443 o 1-1000" />
           </div>
-          <!-- ── NUEVO: campo timeout Nmap ── -->
           <div class="field" style="max-width:130px">
             <label>Timeout (s)</label>
             <input type="number" id="nmap-timeout" value="300" min="30" max="86400" />
@@ -536,8 +535,8 @@
   /* ============================================================
      CONFIG
   ============================================================ */
-  const API_BASE   = 'http://localhost:5000';
-  const LOGIN_URL  = '../auth/login.html';
+  const API_BASE   = '';
+  const LOGIN_URL  = '/auth/login.html';
 
 
   /* ============================================================
@@ -792,7 +791,6 @@
     const isFinished = st === 'done' || st === 'finished';
 
 
-    /* Botón PDF — sólo activo si el escaneo terminó */
     const pdfBtn = `
       <button class="action-btn" title="${isFinished ? 'Descargar PDF' : 'PDF disponible al finalizar'}"
               onclick="${isFinished ? `downloadPDF(${id})` : ''}"
@@ -806,7 +804,6 @@
       </button>`;
 
 
-    /* Botón cancelar — sólo visible si está activo */
     const cancelBtn = isActive ? `
       <button class="action-btn" title="Cancelar escaneo" onclick="cancelScan(${id})" style="color:var(--amber)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -817,7 +814,6 @@
       </button>` : '';
 
 
-    /* Botón eliminar — siempre disponible */
     const deleteBtn = `
       <button class="action-btn" title="Eliminar" onclick="deleteScan(${id})" style="color:var(--red)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -940,7 +936,6 @@
     const res = await fetch(`${API_BASE}/sentinel/${id}`, { method: 'DELETE', headers });
     if (res.ok) {
       loadStats();
-      /* Refrescar el tab activo */
       const active = document.querySelector('.tab.active')?.dataset?.panel;
       if (active) loadScans(active);
     } else {
