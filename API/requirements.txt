@@ -42,6 +42,7 @@ python-gvm
 ollama
 requests
 ddgs
+psutil
 duckduckgo-search>=6.0
 flask-jwt-extended>=4.6.0
 
