@@ -63,6 +63,8 @@ services:
       -c shared_buffers=128MB
       -c effective_cache_size=256MB
       -c log_min_duration_statement=200
+    networks:
+      - secops-net
 
   # ────────────────────────────────────────────────────────────────────────────
   # Ollama  (modelo LLM local para generación de píldoras Aegis)
@@ -77,6 +79,13 @@ services:
     environment:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-mistral}
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     entrypoint: ["/bin/sh", "-c"]
     command: >
       "ollama serve & 
@@ -90,6 +99,8 @@ services:
       timeout: 10s
       retries: 10
       start_period: 120s
+    networks:
+      - secops-net
 
   # ────────────────────────────────────────────────────────────────────────────
   # OpenVAS / Greenbone Vulnerability Manager
