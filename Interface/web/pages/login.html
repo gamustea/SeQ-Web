@@ -4,14 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SecOps — Inicio de sesión</title>
-  <link rel="stylesheet" href="login.css" />
+  <link rel="stylesheet" href="/resources/css/login.css" />
+  <link rel="icon" type="image/png" href="/resources/images/favicon.ico" />
 </head>
 <body>
 
 <main class="card" role="main">
 
   <div class="logo-wrap">
-    <img src="../../../shared/resources/images/SecOps-Logo-BlueDark.png" alt="SecOps Logo" />
+    <img src="/resources/images/SecOps-Logo-BlueDark.png" alt="SecOps Logo" />
   </div>
 
   <h1 class="card-title">Bienvenido a SecOps</h1>
@@ -63,18 +64,9 @@
 </main>
 
 <script>
-  /* ============================================================
-     CONFIG
-  ============================================================ */
-  const API_BASE  = 'http://localhost:5000';
-  const HUB_URL   = '../hub/index.html';
+  const API_BASE  = '';
+  const HUB_URL   = '/pages/hub.html';
 
-  /* ============================================================
-     TOKEN STORE (in-memory durante la sesión del login)
-     Tras el login exitoso los tokens se pasan al hub via
-     sessionStorage con clave 'seq_session' y se borran
-     de memoria inmediatamente después de la redirección.
-  ============================================================ */
   const TokenStore = (() => {
     let _access  = null;
     let _refresh = null;
@@ -87,8 +79,6 @@
       getRefresh()         { return _refresh; },
       expiresAt()          { return _exp; },
       hasSession()         { return !!_access; },
-
-      /* Persiste la sesión en sessionStorage y redirige */
       persist(redirectUrl) {
         sessionStorage.setItem('seq_session', JSON.stringify({
           accessToken:  _access,
@@ -101,9 +91,6 @@
     };
   })();
 
-  /* ============================================================
-     DOM
-  ============================================================ */
   const form          = document.getElementById('login-form');
   const usernameInput = document.getElementById('username');
   const passwordInput = document.getElementById('password');
@@ -113,9 +100,6 @@
   const iconEye       = document.getElementById('icon-eye');
   const iconEyeOff    = document.getElementById('icon-eye-off');
 
-  /* ============================================================
-     TOGGLE PASSWORD
-  ============================================================ */
   togglePwBtn.addEventListener('click', () => {
     const show = passwordInput.type === 'password';
     passwordInput.type       = show ? 'text'  : 'password';
@@ -123,9 +107,6 @@
     iconEyeOff.style.display = show ? 'block' : 'none';
   });
 
-  /* ============================================================
-     ALERTS
-  ============================================================ */
   function showAlert(msg, type = 'error') {
     const isErr = type === 'error';
     alertEl.className = `alert ${isErr ? 'alert-error' : 'alert-success'}`;
@@ -142,9 +123,6 @@
   }
   function hideAlert() { alertEl.classList.remove('visible'); }
 
-  /* ============================================================
-     LOADING
-  ============================================================ */
   function setLoading(on) {
     btnSubmit.disabled = on;
     btnSubmit.classList.toggle('loading', on);
@@ -157,9 +135,6 @@
     input.addEventListener('input', () => input.classList.remove('input-error'), { once: true });
   }
 
-  /* ============================================================
-     VALIDATION
-  ============================================================ */
   function validate(username, password) {
     if (!username.trim()) {
       showAlert('El nombre de usuario es obligatorio.');
@@ -172,9 +147,6 @@
     return true;
   }
 
-  /* ============================================================
-     API: LOGIN
-  ============================================================ */
   async function login(username, password) {
     const res  = await fetch(`${API_BASE}/oauth/token`, {
       method:  'POST',
@@ -188,28 +160,21 @@
       if (res.status === 429) throw new Error('Demasiados intentos. Espera unos minutos e inténtalo de nuevo.');
       throw new Error(data.error_description || `Error del servidor (${res.status}).`);
     }
-    return data; // { access_token, refresh_token, expires_in }
+    return data;
   }
 
-  /* ============================================================
-     SUBMIT
-  ============================================================ */
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     hideAlert();
-
     const username = usernameInput.value;
     const password = passwordInput.value;
     if (!validate(username, password)) return;
-
     setLoading(true);
     try {
       const data = await login(username, password);
       TokenStore.save(data.access_token, data.refresh_token, data.expires_in);
-
       showAlert('Sesión iniciada. Redirigiendo…', 'success');
       setTimeout(() => TokenStore.persist(HUB_URL), 800);
-
     } catch (err) {
       showAlert(err.message || 'Error desconocido. Inténtalo de nuevo.');
       if (err.message?.includes('Credenciales')) {

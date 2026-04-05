@@ -1,20 +1,20 @@
 /* =====================================================
-   hub.js — SeQ Hub
+   resources/js/hub.js — SeQ Hub
    Guarda de sesión + generación del starfield
    ===================================================== */
 
 /* ─── SESSION GUARD ─── */
 (function () {
   const raw = sessionStorage.getItem('seq_session');
-  if (!raw) { window.location.href = '../auth/login.html'; return; }
+  if (!raw) { window.location.href = '/pages/login.html'; return; }
   try {
     const s = JSON.parse(raw);
     if (!s.accessToken || Date.now() > s.expiresAt) {
       sessionStorage.removeItem('seq_session');
-      window.location.href = '../auth/login.html';
+      window.location.href = '/pages/login.html';
     }
   } catch {
-    window.location.href = '../auth/login.html';
+    window.location.href = '/pages/login.html';
   }
 })();
 

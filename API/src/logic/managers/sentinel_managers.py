@@ -423,7 +423,7 @@ class OpenVASScanManager(ScanManager):
             target_ip, _ = normalize_target(target)
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
 
-            scan = self._create_scan_record(target=target_ip)  # type: ignore
+            scan = self._create_scan_record(target=target_ip)
             scan_id = scan.id
 
             task = OpenVASTask(
@@ -432,8 +432,7 @@ class OpenVASScanManager(ScanManager):
                 port=self.port,
                 username=self.username,
                 password=self.password,
-                scan_config=scan_config,
-                timeout=timeout
+                scan_config=config_id  # ✅ ahora sí pasa el UUID
             )
 
             thread = threading.Thread(
