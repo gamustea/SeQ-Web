@@ -29,12 +29,3 @@ def serve_page(page_name: str):
     if not os.path.isfile(target):
         return jsonify({"error": "not_found", "message": f"La página '{filename}' no existe."}), 404
     return send_from_directory(_PAGES_DIR, filename)
-
-@pages_bp.route("/debug-path")
-def debug_path():
-    import os
-    return jsonify({
-        "pages_dir": _PAGES_DIR,
-        "exists": os.path.isdir(_PAGES_DIR),
-        "files": os.listdir(_PAGES_DIR) if os.path.isdir(_PAGES_DIR) else []
-    })

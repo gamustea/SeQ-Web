@@ -17,13 +17,13 @@ Blueprints disponibles
 
 from flask import Flask
 
-from .oauth import oauth_bp
-from .users import users_bp
-from .sentinel import sentinel_bp
-from .acheron import acheron_bp
+from .oauth_endpoints import oauth_bp
+from .users_endpoints import users_bp
+from .sentinel_endpoints import sentinel_bp
+from .acheron_endpoints import acheron_bp
 from .aegis_endpoints import aegis_bp
-from .health import health_bp
-from .pages import pages_bp
+from .health_endpoints import health_bp
+from .pages_endpoints import pages_bp
 
 
 def register_blueprints(app: Flask) -> None:

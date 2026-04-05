@@ -568,7 +568,7 @@ class OpenVASTask(_Task):
         password: str,
         scan_config: str = 'daba56c8-73ec-11df-a475-002264764cea',
         port_list_id: str = '33d0cd82-57c6-11e1-8ed1-406186ea4fc5',
-        timeout: int = 3000
+        timeout: int = 14400
     ):
         super().__init__(target, timeout)
         self.hostname = hostname
