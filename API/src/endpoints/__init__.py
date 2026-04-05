@@ -17,12 +17,13 @@ Blueprints disponibles
 
 from flask import Flask
 
-from .oauth import oauth_bp
-from .users import users_bp
-from .sentinel import sentinel_bp
-from .acheron import acheron_bp
+from .oauth_endpoints import oauth_bp
+from .users_endpoints import users_bp
+from .sentinel_endpoints import sentinel_bp
+from .acheron_endpoints import acheron_bp
 from .aegis_endpoints import aegis_bp
-from .health import health_bp
+from .health_endpoints import health_bp
+from .pages_endpoints import pages_bp
 
 
 def register_blueprints(app: Flask) -> None:
@@ -31,5 +32,6 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(oauth_bp,    url_prefix="/oauth")
     app.register_blueprint(users_bp,    url_prefix="/users")
     app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
-    app.register_blueprint(acheron_bp)
+    app.register_blueprint(acheron_bp,  url_prefix="/acheron")
     app.register_blueprint(aegis_bp,    url_prefix="/aegis")
+    app.register_blueprint(pages_bp,    url_prefix="/pages")

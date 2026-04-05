@@ -7,9 +7,9 @@ services:
       - NET_ADMIN
       - NET_RAW
     security_opt:
-    - seccomp:unconfined
+      - seccomp:unconfined
     ports:
-      - "8080:9392"
+      - "9392:9392"
       - "9390:9390"
     environment:
       - FEED_SYNC=true
