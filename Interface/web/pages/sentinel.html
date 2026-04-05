@@ -6,11 +6,10 @@
   <title>Sentinel — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="icon" type="image/png" href="/resources/images/favicon.ico" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
-    /* ── Reset & variables ── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 
     :root {
       --bg:           #080c14;
@@ -34,27 +33,19 @@
       --transition:   0.2s ease;
     }
 
-
     html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; }
-
-
-    /* ── Layout ── */
     .layout { display: flex; flex-direction: column; min-height: 100vh; }
 
-
-    /* ── Topbar ── */
     .topbar {
       position: sticky; top: 0; z-index: 100;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 0 2rem;
-      height: 56px;
+      padding: 0 2rem; height: 56px;
       background: rgba(8,12,20,0.85);
       backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
     }
     .topbar-left  { display: flex; align-items: center; gap: 0.75rem; }
     .topbar-right { display: flex; align-items: center; gap: 0.75rem; }
-
 
     .back-link {
       display: flex; align-items: center; gap: 0.4rem;
@@ -64,7 +55,6 @@
     }
     .back-link:hover { color: var(--text); }
     .back-link svg   { width: 14px; height: 14px; }
-
 
     .topbar-title {
       font-size: 0.95rem; font-weight: 700; letter-spacing: 0.03em;
@@ -76,8 +66,6 @@
       background: var(--green-dim); color: var(--green);
     }
 
-
-    /* Session pill */
     .session-pill {
       display: flex; align-items: center; gap: 0.4rem;
       padding: 4px 10px; border-radius: 20px;
@@ -91,7 +79,6 @@
     }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
 
-
     .btn-logout-top {
       display: flex; align-items: center; gap: 0.35rem;
       background: transparent; border: 1px solid rgba(248,113,113,0.3);
@@ -102,17 +89,12 @@
     .btn-logout-top:hover { background: var(--red-dim); }
     .btn-logout-top svg   { width: 13px; height: 13px; }
 
-
-    /* ── Main content ── */
     .main { flex: 1; padding: 2rem; max-width: 1200px; margin: 0 auto; width: 100%; }
 
-
-    /* ── Stats row ── */
     .stats-row {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
+      gap: 1rem; margin-bottom: 2rem;
     }
     .stat-card {
       background: var(--surface); border: 1px solid var(--border);
@@ -126,21 +108,13 @@
     .stat-card.blue  .stat-value { color: var(--blue);  }
     .stat-sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.25rem; }
 
-
-    /* ── Section header ── */
-    .section-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 1rem;
-    }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
     .section-title { font-size: 1rem; font-weight: 700; }
 
-
-    /* ── Tabs ── */
     .tabs {
       display: flex; gap: 0.25rem;
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 4px;
-      margin-bottom: 1.5rem;
+      border-radius: var(--radius); padding: 4px; margin-bottom: 1.5rem;
     }
     .tab {
       flex: 1; padding: 0.5rem 1rem; border: none; border-radius: var(--radius-sm);
@@ -159,25 +133,18 @@
     .nikto-dot   { background: var(--amber); }
     .openvas-dot { background: var(--red);   }
 
-
-    /* ── Panel ── */
     .panel { display: none; }
     .panel.active { display: block; }
 
-
-    /* ── Launch form ── */
     .launch-card {
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 1.25rem 1.5rem;
-      margin-bottom: 1.5rem;
+      border-radius: var(--radius); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
     }
     .launch-title {
       font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 1rem;
     }
-    .launch-fields {
-      display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;
-    }
+    .launch-fields { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; }
     .field { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; min-width: 160px; }
     .field label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
     .field input, .field select {
@@ -194,7 +161,6 @@
     .field input::placeholder { color: var(--text-muted); opacity: 0.5; }
     .field select option       { background: var(--surface); }
 
-
     .btn-launch {
       padding: 0.55rem 1.25rem; border: none; border-radius: var(--radius-sm);
       font-family: 'Inter', sans-serif; font-size: 0.85rem; font-weight: 700;
@@ -209,20 +175,15 @@
     .btn-launch.openvas-btn { background: var(--red);   color: #1f0606; }
     .btn-launch svg { width: 14px; height: 14px; }
 
-
-    /* Spinner in button */
     .btn-spin {
       width: 12px; height: 12px;
       border: 2px solid rgba(0,0,0,0.2); border-top-color: currentColor;
-      border-radius: 50%; animation: spin 0.6s linear infinite;
-      display: none;
+      border-radius: 50%; animation: spin 0.6s linear infinite; display: none;
     }
     .btn-launch.loading .btn-spin  { display: inline-block; }
     .btn-launch.loading .btn-label { display: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-
-    /* ── Inline alert ── */
     .panel-alert {
       padding: 0.65rem 1rem; border-radius: var(--radius-sm);
       font-size: 0.82rem; margin-bottom: 1rem;
@@ -233,16 +194,13 @@
     .panel-alert.error   { background: var(--red-dim);   border: 1px solid rgba(248,113,113,0.25); color: var(--red); }
     .panel-alert.info    { background: var(--blue-dim);  border: 1px solid rgba(96,165,250,0.25);  color: var(--blue); }
 
-
-    /* ── Results table ── */
     .table-wrap {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius); overflow: hidden;
     }
     .table-toolbar {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 0.85rem 1.25rem;
-      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border);
     }
     .table-toolbar-title { font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em; }
     .btn-refresh {
@@ -256,7 +214,6 @@
     .btn-refresh:hover { color: var(--text); border-color: var(--text-muted); }
     .btn-refresh svg   { width: 12px; height: 12px; }
 
-
     table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
     thead { background: var(--surface-2); }
     th {
@@ -269,12 +226,10 @@
       padding: 0.75rem 1.25rem;
       border-bottom: 1px solid var(--border);
       font-family: 'JetBrains Mono', monospace;
-      color: var(--text);
-      vertical-align: middle;
+      color: var(--text); vertical-align: middle;
     }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: rgba(255,255,255,0.02); }
-
 
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: 12px;
@@ -287,7 +242,6 @@
     .badge-error    { background: var(--red-dim);   color: var(--red);   }
     .badge-cancelled{ background: rgba(100,116,139,0.15); color: var(--text-muted); }
 
-
     .action-btn {
       background: transparent; border: none; color: var(--text-muted);
       cursor: pointer; padding: 4px; border-radius: 4px;
@@ -297,30 +251,22 @@
     .action-btn:hover { color: var(--text); }
     .action-btn svg { width: 14px; height: 14px; }
 
-
-    /* Empty state */
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      gap: 0.5rem; padding: 3rem; color: var(--text-muted);
-      font-size: 0.85rem;
+      gap: 0.5rem; padding: 3rem; color: var(--text-muted); font-size: 0.85rem;
     }
     .empty-state svg { opacity: 0.3; }
 
-
-    /* ── Severity pills (OpenVAS) ── */
     .sev-critical { color: #f43f5e; font-weight: 700; }
     .sev-high     { color: var(--red); }
     .sev-medium   { color: var(--amber); }
     .sev-low      { color: var(--green); }
 
-
-    /* ── Footer ── */
     footer {
       text-align: center; padding: 1.25rem;
       font-size: 0.75rem; color: var(--text-muted);
       border-top: 1px solid var(--border);
     }
-
 
     @media (max-width: 640px) {
       .main { padding: 1rem; }
@@ -333,12 +279,26 @@
 </head>
 <body>
 <div class="layout">
-
+<script>
+  (function () {
+    const raw = sessionStorage.getItem('seq_session');
+    if (!raw) { window.location.href = '/pages/login.html'; return; }
+    try {
+      const s = JSON.parse(raw);
+      if (!s.accessToken || Date.now() > s.expiresAt) {
+        sessionStorage.removeItem('seq_session');
+        window.location.href = '/pages/login.html';
+      }
+    } catch {
+      window.location.href = '/pages/login.html';
+    }
+  })();
+</script>
 
   <!-- ── TOPBAR ── -->
   <nav class="topbar">
     <div class="topbar-left">
-      <a href="../hub/index.html" class="back-link">
+      <a href="/pages/hub.html" class="back-link">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 12H5M12 5l-7 7 7 7"/>
         </svg>
@@ -364,214 +324,94 @@
     </div>
   </nav>
 
-
   <!-- ── MAIN ── -->
   <main class="main">
-
-
-    <!-- Stats -->
     <div class="stats-row">
-      <div class="stat-card green">
-        <div class="stat-label">Escaneos totales</div>
-        <div class="stat-value" id="stat-total">—</div>
-        <div class="stat-sub">todos los tipos</div>
-      </div>
-      <div class="stat-card blue">
-        <div class="stat-label">Nmap</div>
-        <div class="stat-value" id="stat-nmap">—</div>
-        <div class="stat-sub">escaneos de red</div>
-      </div>
-      <div class="stat-card amber">
-        <div class="stat-label">Nikto</div>
-        <div class="stat-value" id="stat-nikto">—</div>
-        <div class="stat-sub">escaneos web</div>
-      </div>
-      <div class="stat-card red">
-        <div class="stat-label">OpenVAS</div>
-        <div class="stat-value" id="stat-openvas">—</div>
-        <div class="stat-sub">análisis de vulns</div>
-      </div>
+      <div class="stat-card green"><div class="stat-label">Escaneos totales</div><div class="stat-value" id="stat-total">—</div><div class="stat-sub">todos los tipos</div></div>
+      <div class="stat-card blue"><div class="stat-label">Nmap</div><div class="stat-value" id="stat-nmap">—</div><div class="stat-sub">escaneos de red</div></div>
+      <div class="stat-card amber"><div class="stat-label">Nikto</div><div class="stat-value" id="stat-nikto">—</div><div class="stat-sub">escaneos web</div></div>
+      <div class="stat-card red"><div class="stat-label">OpenVAS</div><div class="stat-value" id="stat-openvas">—</div><div class="stat-sub">análisis de vulns</div></div>
     </div>
 
-
-    <!-- Tabs -->
     <div class="tabs" role="tablist">
-      <button class="tab nmap active" role="tab" data-panel="nmap" onclick="switchTab('nmap')">
-        <span class="tab-dot nmap-dot"></span> Nmap
-      </button>
-      <button class="tab nikto" role="tab" data-panel="nikto" onclick="switchTab('nikto')">
-        <span class="tab-dot nikto-dot"></span> Nikto
-      </button>
-      <button class="tab openvas" role="tab" data-panel="openvas" onclick="switchTab('openvas')">
-        <span class="tab-dot openvas-dot"></span> OpenVAS
-      </button>
+      <button class="tab nmap active" role="tab" data-panel="nmap" onclick="switchTab('nmap')"><span class="tab-dot nmap-dot"></span> Nmap</button>
+      <button class="tab nikto" role="tab" data-panel="nikto" onclick="switchTab('nikto')"><span class="tab-dot nikto-dot"></span> Nikto</button>
+      <button class="tab openvas" role="tab" data-panel="openvas" onclick="switchTab('openvas')"><span class="tab-dot openvas-dot"></span> OpenVAS</button>
     </div>
 
-
-    <!-- ══ PANEL: NMAP ══ -->
     <div class="panel active" id="panel-nmap">
       <div class="launch-card">
         <div class="launch-title">Nuevo escaneo Nmap</div>
         <div class="launch-fields">
-          <div class="field">
-            <label>Target (IP / CIDR)</label>
-            <input type="text" id="nmap-target" placeholder="192.168.1.0/24" />
-          </div>
-          <div class="field">
-            <label>Puertos</label>
-            <input type="text" id="nmap-ports" placeholder="80,443 o 1-1000" />
-          </div>
-          <!-- ── NUEVO: campo timeout Nmap ── -->
-          <div class="field" style="max-width:130px">
-            <label>Timeout (s)</label>
-            <input type="number" id="nmap-timeout" value="300" min="30" max="86400" />
-          </div>
-          <button class="btn-launch nmap-btn" id="btn-nmap" onclick="launchNmap()">
-            <span class="btn-label">&#9654; Lanzar</span>
-            <span class="btn-spin"></span>
-          </button>
+          <div class="field"><label>Target (IP / CIDR)</label><input type="text" id="nmap-target" placeholder="192.168.1.0/24" /></div>
+          <div class="field"><label>Puertos</label><input type="text" id="nmap-ports" placeholder="80,443 o 1-1000" /></div>
+          <div class="field" style="max-width:130px"><label>Timeout (s)</label><input type="number" id="nmap-timeout" value="300" min="30" max="86400" /></div>
+          <button class="btn-launch nmap-btn" id="btn-nmap" onclick="launchNmap()"><span class="btn-label">&#9654; Lanzar</span><span class="btn-spin"></span></button>
         </div>
       </div>
       <div class="panel-alert" id="alert-nmap"></div>
       <div class="table-wrap">
-        <div class="table-toolbar">
-          <span class="table-toolbar-title">Resultados Nmap</span>
-          <button class="btn-refresh" onclick="loadScans('nmap')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-            Actualizar
-          </button>
-        </div>
+        <div class="table-toolbar"><span class="table-toolbar-title">Resultados Nmap</span><button class="btn-refresh" onclick="loadScans('nmap')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Actualizar</button></div>
         <div id="table-nmap"></div>
       </div>
     </div>
 
-
-    <!-- ══ PANEL: NIKTO ══ -->
     <div class="panel" id="panel-nikto">
       <div class="launch-card">
         <div class="launch-title">Nuevo escaneo Nikto</div>
         <div class="launch-fields">
-          <div class="field" style="flex:2">
-            <label>Target URL</label>
-            <input type="text" id="nikto-target" placeholder="http://example.com" />
-          </div>
-          <div class="field" style="max-width:130px">
-            <label>Timeout (s)</label>
-            <input type="number" id="nikto-timeout" value="180" min="10" max="600" />
-          </div>
-          <button class="btn-launch nikto-btn" id="btn-nikto" onclick="launchNikto()">
-            <span class="btn-label">&#9654; Lanzar</span>
-            <span class="btn-spin"></span>
-          </button>
+          <div class="field" style="flex:2"><label>Target URL</label><input type="text" id="nikto-target" placeholder="http://example.com" /></div>
+          <div class="field" style="max-width:130px"><label>Timeout (s)</label><input type="number" id="nikto-timeout" value="180" min="10" max="600" /></div>
+          <button class="btn-launch nikto-btn" id="btn-nikto" onclick="launchNikto()"><span class="btn-label">&#9654; Lanzar</span><span class="btn-spin"></span></button>
         </div>
       </div>
       <div class="panel-alert" id="alert-nikto"></div>
       <div class="table-wrap">
-        <div class="table-toolbar">
-          <span class="table-toolbar-title">Resultados Nikto</span>
-          <button class="btn-refresh" onclick="loadScans('nikto')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-            Actualizar
-          </button>
-        </div>
+        <div class="table-toolbar"><span class="table-toolbar-title">Resultados Nikto</span><button class="btn-refresh" onclick="loadScans('nikto')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Actualizar</button></div>
         <div id="table-nikto"></div>
       </div>
     </div>
 
-
-    <!-- ══ PANEL: OPENVAS ══ -->
     <div class="panel" id="panel-openvas">
       <div class="launch-card">
         <div class="launch-title">Nuevo escaneo OpenVAS</div>
         <div class="launch-fields">
-          <div class="field" style="flex:2">
-            <label>Target (IP única)</label>
-            <input type="text" id="openvas-target" placeholder="192.168.1.1" />
-          </div>
-          <div class="field" style="max-width:180px">
-            <label>Configuración</label>
-            <select id="openvas-config">
-              <option value="full_fast">Full &amp; Fast</option>
-              <option value="full_deep">Full &amp; Deep</option>
-              <option value="full_ultimate">Full &amp; Ultimate</option>
-            </select>
-          </div>
-          <button class="btn-launch openvas-btn" id="btn-openvas" onclick="launchOpenvas()">
-            <span class="btn-label">&#9654; Lanzar</span>
-            <span class="btn-spin"></span>
-          </button>
+          <div class="field" style="flex:2"><label>Target (IP única)</label><input type="text" id="openvas-target" placeholder="192.168.1.1" /></div>
+          <div class="field" style="max-width:180px"><label>Configuración</label><select id="openvas-config"><option value="full_fast">Full &amp; Fast</option><option value="full_deep">Full &amp; Deep</option><option value="full_ultimate">Full &amp; Ultimate</option></select></div>
+          <button class="btn-launch openvas-btn" id="btn-openvas" onclick="launchOpenvas()"><span class="btn-label">&#9654; Lanzar</span><span class="btn-spin"></span></button>
         </div>
       </div>
       <div class="panel-alert" id="alert-openvas"></div>
       <div class="table-wrap">
-        <div class="table-toolbar">
-          <span class="table-toolbar-title">Resultados OpenVAS</span>
-          <button class="btn-refresh" onclick="loadScans('openvas')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-            Actualizar
-          </button>
-        </div>
+        <div class="table-toolbar"><span class="table-toolbar-title">Resultados OpenVAS</span><button class="btn-refresh" onclick="loadScans('openvas')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Actualizar</button></div>
         <div id="table-openvas"></div>
       </div>
     </div>
-
-
   </main>
-
 
   <footer>SeQ Platform &mdash; Sentinel &mdash; Security Operations Suite</footer>
 </div>
 
-
 <script>
-  /* ============================================================
-     CONFIG
-  ============================================================ */
-  const API_BASE   = 'http://localhost:5000';
-  const LOGIN_URL  = '../auth/login.html';
+  const API_BASE   = '';
+  const LOGIN_URL  = '/pages/login.html';
 
-
-  /* ============================================================
-     SESSION — leer desde sessionStorage (puesto por login.html)
-  ============================================================ */
   const Session = (() => {
     let _data = null;
-
 
     function load() {
       const raw = sessionStorage.getItem('seq_session');
       if (!raw) return false;
-      try {
-        _data = JSON.parse(raw);
-        return !!_data.accessToken;
-      } catch { return false; }
+      try { _data = JSON.parse(raw); return !!_data.accessToken; } catch { return false; }
     }
 
-
-    function save() {
-      sessionStorage.setItem('seq_session', JSON.stringify(_data));
-    }
-
+    function save() { sessionStorage.setItem('seq_session', JSON.stringify(_data)); }
 
     async function getToken() {
       if (!_data) return null;
-      /* Si queda menos de 60 s, intenta renovar */
-      if (Date.now() >= _data.expiresAt - 60_000) {
-        const ok = await refresh();
-        if (!ok) return null;
-      }
+      if (Date.now() >= _data.expiresAt - 60_000) { const ok = await refresh(); if (!ok) return null; }
       return _data.accessToken;
     }
-
 
     async function refresh() {
       if (!_data?.refreshToken) return false;
@@ -584,11 +424,9 @@
         const d = await res.json();
         _data.accessToken = d.access_token;
         _data.expiresAt   = Date.now() + d.expires_in * 1000;
-        save();
-        return true;
+        save(); return true;
       } catch { return false; }
     }
-
 
     async function authHeaders() {
       const t = await getToken();
@@ -596,44 +434,26 @@
       return { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' };
     }
 
-
     function logout() {
       const token = _data?.accessToken;
       _data = null;
       sessionStorage.removeItem('seq_session');
-      if (token) {
-        fetch(`${API_BASE}/oauth/revoke`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-        }).catch(() => {});
-      }
+      if (token) fetch(`${API_BASE}/oauth/revoke`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }).catch(() => {});
       window.location.href = LOGIN_URL;
     }
 
-
     function username() {
-      /* El JWT payload está en Base64 en la parte central */
       if (!_data?.accessToken) return '—';
-      try {
-        const payload = JSON.parse(atob(_data.accessToken.split('.')[1]));
-        return payload.username || payload.sub || '—';
-      } catch { return '—'; }
+      try { const payload = JSON.parse(atob(_data.accessToken.split('.')[1])); return payload.username || payload.sub || '—'; } catch { return '—'; }
     }
-
 
     return { load, authHeaders, logout, username };
   })();
 
-
-  /* Guardia de sesión */
   if (!Session.load()) window.location.href = LOGIN_URL;
   document.getElementById('session-user').textContent = Session.username();
   document.getElementById('btn-logout').addEventListener('click', Session.logout);
 
-
-  /* ============================================================
-     TABS
-  ============================================================ */
   function switchTab(name) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -642,10 +462,6 @@
     loadScans(name);
   }
 
-
-  /* ============================================================
-     ALERT HELPERS
-  ============================================================ */
   function showPanelAlert(type, msg, kind = 'error') {
     const el = document.getElementById(`alert-${type}`);
     el.className = `panel-alert visible ${kind}`;
@@ -653,10 +469,6 @@
     if (kind === 'success') setTimeout(() => el.classList.remove('visible'), 4000);
   }
 
-
-  /* ============================================================
-     STATS
-  ============================================================ */
   async function loadStats() {
     const headers = await Session.authHeaders();
     if (!headers) return;
@@ -669,26 +481,14 @@
       document.getElementById('stat-nmap').textContent    = results.filter(r => r.scanType === 'nmap').length;
       document.getElementById('stat-nikto').textContent   = results.filter(r => r.scanType === 'nikto').length;
       document.getElementById('stat-openvas').textContent = results.filter(r => r.scanType === 'openvas').length;
-    } catch { /* noop */ }
+    } catch { }
   }
 
-
-  /* ============================================================
-     BADGE
-  ============================================================ */
   function statusBadge(status) {
-    const map = {
-      running:   ['badge-running',   'Ejecutando'],
-      done:      ['badge-done',      'Completado'],
-      finished:  ['badge-done',      'Completado'],
-      pending:   ['badge-pending',   'Pendiente'],
-      error:     ['badge-error',     'Error'],
-      cancelled: ['badge-cancelled', 'Cancelado']
-    };
+    const map = { running:['badge-running','Ejecutando'], done:['badge-done','Completado'], finished:['badge-done','Completado'], pending:['badge-pending','Pendiente'], error:['badge-error','Error'], cancelled:['badge-cancelled','Cancelado'] };
     const [cls, label] = map[(status || '').toLowerCase()] || ['badge-pending', status || '—'];
     return `<span class="badge ${cls}">${label}</span>`;
   }
-
 
   function fmtDate(iso) {
     if (!iso) return '—';
@@ -696,169 +496,59 @@
     return d.toLocaleDateString('es-ES') + ' ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
   }
 
-
-  /* ============================================================
-     LOAD SCANS
-  ============================================================ */
   async function loadScans(type) {
     const headers = await Session.authHeaders();
     if (!headers) return;
     const wrap = document.getElementById(`table-${type}`);
     wrap.innerHTML = '<div class="empty-state"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Cargando…</span></div>';
-
-
     try {
       const res  = await fetch(`${API_BASE}/sentinel/results?type=${type}`, { headers });
       if (!res.ok) { wrap.innerHTML = '<div class="empty-state">Error al cargar los datos.</div>'; return; }
       const data = await res.json();
-      const rows = data.results || [];
-      renderTable(type, rows, wrap);
+      renderTable(type, data.results || [], wrap);
       loadStats();
-    } catch {
-      wrap.innerHTML = '<div class="empty-state">No se pudo conectar con la API.</div>';
-    }
+    } catch { wrap.innerHTML = '<div class="empty-state">No se pudo conectar con la API.</div>'; }
   }
 
-
-  /* ============================================================
-     RENDER TABLES
-  ============================================================ */
   function renderTable(type, rows, wrap) {
-    if (!rows.length) {
-      wrap.innerHTML = `<div class="empty-state">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        <span>No hay escaneos todavía. ¡Lanza el primero!</span></div>`;
-      return;
-    }
-
-
+    if (!rows.length) { wrap.innerHTML = `<div class="empty-state"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>No hay escaneos todavía. ¡Lanza el primero!</span></div>`; return; }
     let html = '<table><thead><tr>';
-
-
     if (type === 'nmap') {
-      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Puertos abiertos</th><th>Fecha</th><th>Acciones</th>';
-      html += '</tr></thead><tbody>';
-      for (const r of rows) {
-        html += `<tr>
-          <td>#${r.id}</td>
-          <td>${r.target}</td>
-          <td>${statusBadge(r.status)}</td>
-          <td>${r.totalOpenPorts ?? 0} <span style="color:var(--text-muted)">puertos</span></td>
-          <td>${fmtDate(r.startedAt)}</td>
-          <td>${actionBtns(r.id, r.status)}</td>
-        </tr>`;
-      }
+      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Puertos abiertos</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
+      for (const r of rows) html += `<tr><td>#${r.id}</td><td>${r.target}</td><td>${statusBadge(r.status)}</td><td>${r.totalOpenPorts ?? 0} <span style="color:var(--text-muted)">puertos</span></td><td>${fmtDate(r.startedAt)}</td><td>${actionBtns(r.id, r.status)}</td></tr>`;
     } else if (type === 'nikto') {
-      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Incidencias</th><th>Fecha</th><th>Acciones</th>';
-      html += '</tr></thead><tbody>';
-      for (const r of rows) {
-        html += `<tr>
-          <td>#${r.id}</td>
-          <td>${r.target}</td>
-          <td>${statusBadge(r.status)}</td>
-          <td>${r.totalIncidents ?? 0} <span style="color:var(--text-muted)">hallazgos</span></td>
-          <td>${fmtDate(r.startedAt)}</td>
-          <td>${actionBtns(r.id, r.status)}</td>
-        </tr>`;
-      }
-    } else { /* openvas */
-      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Vulnerabilidades</th><th>Críticas</th><th>Altas</th><th>Fecha</th><th>Acciones</th>';
-      html += '</tr></thead><tbody>';
-      for (const r of rows) {
-        const crit = r.criticalCount ?? 0;
-        const high = r.highCount ?? 0;
-        html += `<tr>
-          <td>#${r.id}</td>
-          <td>${r.target}</td>
-          <td>${statusBadge(r.status)}</td>
-          <td>${r.totalVulnerabilities ?? 0}</td>
-          <td class="sev-critical">${crit > 0 ? crit : '<span style="color:var(--text-muted)">0</span>'}</td>
-          <td class="sev-high">${high > 0 ? high : '<span style="color:var(--text-muted)">0</span>'}</td>
-          <td>${fmtDate(r.startedAt)}</td>
-          <td>${actionBtns(r.id, r.status)}</td>
-        </tr>`;
-      }
+      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Incidencias</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
+      for (const r of rows) html += `<tr><td>#${r.id}</td><td>${r.target}</td><td>${statusBadge(r.status)}</td><td>${r.totalIncidents ?? 0} <span style="color:var(--text-muted)">hallazgos</span></td><td>${fmtDate(r.startedAt)}</td><td>${actionBtns(r.id, r.status)}</td></tr>`;
+    } else {
+      html += '<th>ID</th><th>Target</th><th>Estado</th><th>Vulnerabilidades</th><th>Críticas</th><th>Altas</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
+      for (const r of rows) { const crit = r.criticalCount ?? 0; const high = r.highCount ?? 0; html += `<tr><td>#${r.id}</td><td>${r.target}</td><td>${statusBadge(r.status)}</td><td>${r.totalVulnerabilities ?? 0}</td><td class="sev-critical">${crit > 0 ? crit : '<span style="color:var(--text-muted)">0</span>'}</td><td class="sev-high">${high > 0 ? high : '<span style="color:var(--text-muted)">0</span>'}</td><td>${fmtDate(r.startedAt)}</td><td>${actionBtns(r.id, r.status)}</td></tr>`; }
     }
-
-
     html += '</tbody></table>';
     wrap.innerHTML = html;
   }
-
 
   function actionBtns(id, status) {
     const st = (status || '').toLowerCase();
     const isActive   = st === 'running' || st === 'pending';
     const isFinished = st === 'done' || st === 'finished';
-
-
-    /* Botón PDF — sólo activo si el escaneo terminó */
-    const pdfBtn = `
-      <button class="action-btn" title="${isFinished ? 'Descargar PDF' : 'PDF disponible al finalizar'}"
-              onclick="${isFinished ? `downloadPDF(${id})` : ''}"
-              style="${!isFinished ? 'opacity:0.35;cursor:not-allowed' : ''}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="12" y1="18" x2="12" y2="12"/>
-          <line x1="9" y1="15" x2="15" y2="15"/>
-        </svg>
-      </button>`;
-
-
-    /* Botón cancelar — sólo visible si está activo */
-    const cancelBtn = isActive ? `
-      <button class="action-btn" title="Cancelar escaneo" onclick="cancelScan(${id})" style="color:var(--amber)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="15" y1="9" x2="9" y2="15"/>
-          <line x1="9" y1="9" x2="15" y2="15"/>
-        </svg>
-      </button>` : '';
-
-
-    /* Botón eliminar — siempre disponible */
-    const deleteBtn = `
-      <button class="action-btn" title="Eliminar" onclick="deleteScan(${id})" style="color:var(--red)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="3 6 5 6 21 6"/>
-          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-          <path d="M10 11v6M14 11v6"/>
-          <path d="M9 6V4h6v2"/>
-        </svg>
-      </button>`;
-
-
+    const pdfBtn = `<button class="action-btn" title="${isFinished ? 'Descargar PDF' : 'PDF disponible al finalizar'}" onclick="${isFinished ? `downloadPDF(${id})` : ''}" style="${!isFinished ? 'opacity:0.35;cursor:not-allowed' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg></button>`;
+    const cancelBtn = isActive ? `<button class="action-btn" title="Cancelar escaneo" onclick="cancelScan(${id})" style="color:var(--amber)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></button>` : '';
+    const deleteBtn = `<button class="action-btn" title="Eliminar" onclick="deleteScan(${id})" style="color:var(--red)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>`;
     return pdfBtn + cancelBtn + deleteBtn;
   }
 
-
-  /* ============================================================
-     LAUNCH SCANS
-  ============================================================ */
-  function setLaunching(btnId, on) {
-    const btn = document.getElementById(btnId);
-    btn.disabled = on;
-    btn.classList.toggle('loading', on);
-  }
-
+  function setLaunching(btnId, on) { const btn = document.getElementById(btnId); btn.disabled = on; btn.classList.toggle('loading', on); }
 
   async function launchNmap() {
     const target  = document.getElementById('nmap-target').value.trim();
     const ports   = document.getElementById('nmap-ports').value.trim();
     const timeout = parseInt(document.getElementById('nmap-timeout').value, 10);
-
     if (!target || !ports) { showPanelAlert('nmap', 'Rellena el target y los puertos.'); return; }
     if (!timeout || timeout <= 0) { showPanelAlert('nmap', 'El timeout debe ser un número positivo.'); return; }
-
     setLaunching('btn-nmap', true);
-    const headers = await Session.authHeaders();
-    if (!headers) return;
+    const headers = await Session.authHeaders(); if (!headers) return;
     try {
-      const res  = await fetch(`${API_BASE}/sentinel/nmap`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ target, ports, timeout })
-      });
+      const res  = await fetch(`${API_BASE}/sentinel/nmap`, { method: 'POST', headers, body: JSON.stringify({ target, ports, timeout }) });
       const data = await res.json();
       if (!res.ok) { showPanelAlert('nmap', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
       showPanelAlert('nmap', `Escaneo Nmap iniciado (ID: ${(data.scanIds || []).join(', ')}) — timeout: ${timeout}s`, 'success');
@@ -867,21 +557,14 @@
     finally   { setLaunching('btn-nmap', false); }
   }
 
-
   async function launchNikto() {
     const target  = document.getElementById('nikto-target').value.trim();
     const timeout = parseInt(document.getElementById('nikto-timeout').value, 10);
     if (!target) { showPanelAlert('nikto', 'Introduce una URL de destino.'); return; }
-
-
     setLaunching('btn-nikto', true);
-    const headers = await Session.authHeaders();
-    if (!headers) return;
+    const headers = await Session.authHeaders(); if (!headers) return;
     try {
-      const res  = await fetch(`${API_BASE}/sentinel/nikto`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ target, timeout })
-      });
+      const res  = await fetch(`${API_BASE}/sentinel/nikto`, { method: 'POST', headers, body: JSON.stringify({ target, timeout }) });
       const data = await res.json();
       if (!res.ok) { showPanelAlert('nikto', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
       showPanelAlert('nikto', `Escaneo Nikto iniciado (ID: ${data.scanId})`, 'success');
@@ -890,21 +573,14 @@
     finally   { setLaunching('btn-nikto', false); }
   }
 
-
   async function launchOpenvas() {
     const target = document.getElementById('openvas-target').value.trim();
     const config = document.getElementById('openvas-config').value;
     if (!target) { showPanelAlert('openvas', 'Introduce una IP de destino.'); return; }
-
-
     setLaunching('btn-openvas', true);
-    const headers = await Session.authHeaders();
-    if (!headers) return;
+    const headers = await Session.authHeaders(); if (!headers) return;
     try {
-      const res  = await fetch(`${API_BASE}/sentinel/openvas`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ target, scanConfig: config })
-      });
+      const res  = await fetch(`${API_BASE}/sentinel/openvas`, { method: 'POST', headers, body: JSON.stringify({ target, scanConfig: config }) });
       const data = await res.json();
       if (!res.ok) { showPanelAlert('openvas', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
       showPanelAlert('openvas', `Escaneo OpenVAS iniciado (ID: ${data.scanId}). Puede tardar varios minutos.`, 'info');
@@ -913,13 +589,8 @@
     finally   { setLaunching('btn-openvas', false); }
   }
 
-
-  /* ============================================================
-     PDF DOWNLOAD
-  ============================================================ */
   async function downloadPDF(id) {
-    const headers = await Session.authHeaders();
-    if (!headers) return;
+    const headers = await Session.authHeaders(); if (!headers) return;
     const res = await fetch(`${API_BASE}/sentinel/generate-pdf?id=${id}`, { headers });
     if (!res.ok) { alert('No se pudo generar el PDF. ¿El escaneo está terminado?'); return; }
     const blob = await res.blob();
@@ -929,51 +600,25 @@
     URL.revokeObjectURL(url);
   }
 
-
-  /* ============================================================
-     DELETE SCAN
-  ============================================================ */
   async function deleteScan(id) {
     if (!confirm(`¿Eliminar el escaneo #${id}? Esta acción no se puede deshacer.`)) return;
-    const headers = await Session.authHeaders();
-    if (!headers) return;
+    const headers = await Session.authHeaders(); if (!headers) return;
     const res = await fetch(`${API_BASE}/sentinel/${id}`, { method: 'DELETE', headers });
-    if (res.ok) {
-      loadStats();
-      /* Refrescar el tab activo */
-      const active = document.querySelector('.tab.active')?.dataset?.panel;
-      if (active) loadScans(active);
-    } else {
-      alert('No se pudo eliminar el escaneo.');
-    }
+    if (res.ok) { loadStats(); const active = document.querySelector('.tab.active')?.dataset?.panel; if (active) loadScans(active); }
+    else { alert('No se pudo eliminar el escaneo.'); }
   }
 
-
-  /* ============================================================
-     CANCEL SCAN
-  ============================================================ */
   async function cancelScan(id) {
     if (!confirm(`¿Cancelar el escaneo #${id}?`)) return;
-    const headers = await Session.authHeaders();
-    if (!headers) return;
+    const headers = await Session.authHeaders(); if (!headers) return;
     const res = await fetch(`${API_BASE}/sentinel/scans/${id}/cancel`, { method: 'POST', headers });
-    if (res.ok) {
-      const active = document.querySelector('.tab.active')?.dataset?.panel;
-      if (active) loadScans(active);
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.message || 'No se pudo cancelar el escaneo.');
-    }
+    if (res.ok) { const active = document.querySelector('.tab.active')?.dataset?.panel; if (active) loadScans(active); }
+    else { const data = await res.json().catch(() => ({})); alert(data.message || 'No se pudo cancelar el escaneo.'); }
   }
 
-
-  /* ============================================================
-     INIT
-  ============================================================ */
   loadStats();
   loadScans('nmap');
 </script>
-
 
 </body>
 </html>

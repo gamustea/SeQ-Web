@@ -1,5 +1,5 @@
 /* ============================================================
-   Interface/auth/login.css
+   resources/css/login.css
    Estilos para la página de inicio de sesión de SecOps
 ============================================================ */
 
@@ -47,7 +47,6 @@ body {
     radial-gradient(ellipse at 80% 70%, rgba(99, 102, 241, 0.05) 0%, transparent 60%);
 }
 
-/* ── Card ── */
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -64,7 +63,6 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Logo ── */
 .logo-wrap {
   display: flex;
   justify-content: center;
@@ -78,7 +76,6 @@ body {
   filter: drop-shadow(0 0 12px rgba(59, 130, 246, 0.3));
 }
 
-/* ── Headings ── */
 .card-title {
   font-size: 1.4rem;
   font-weight: 700;
@@ -95,7 +92,6 @@ body {
   margin-bottom: 2rem;
 }
 
-/* ── Form ── */
 .form-group {
   margin-bottom: 1.1rem;
 }
@@ -141,7 +137,6 @@ input.input-error {
   box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.14);
 }
 
-/* ── Toggle password ── */
 .toggle-pw {
   position: absolute;
   right: 0.7rem;
@@ -158,7 +153,6 @@ input.input-error {
 }
 .toggle-pw:hover { color: var(--text-primary); }
 
-/* ── Alert ── */
 .alert {
   border-radius: var(--radius);
   padding: 0.75rem 1rem;
@@ -177,7 +171,6 @@ input.input-error {
 .alert-success       { background: var(--success-bg); border: 1px solid var(--success-border); color: var(--success-text); }
 .alert svg           { flex-shrink: 0; margin-top: 1px; }
 
-/* ── Submit button ── */
 .btn-login {
   width: 100%;
   background: var(--accent);
@@ -203,7 +196,6 @@ input.input-error {
 .btn-login:active:not(:disabled) { transform: translateY(0); }
 .btn-login:disabled               { opacity: 0.55; cursor: not-allowed; }
 
-/* ── Spinner ── */
 .spinner {
   width: 16px;
   height: 16px;
@@ -217,7 +209,6 @@ input.input-error {
 .btn-login.loading .btn-text { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Footer ── */
 .card-footer {
   margin-top: 1.75rem;
   border-top: 1px solid var(--border);
