@@ -33,7 +33,7 @@ import ollama
 from ddgs import DDGS
 
 from src.core.model import Topic
-from src.misc.logging import SecOpsLogger
+from src.misc import SecOpsLogger
 
 
 # ============================================================================

@@ -24,8 +24,7 @@ from src.logic.processors import (
     ScanResultProcessor,
 )
 from src.logic.tasks import NiktoScanTask, NmapScanTask, OpenVASTask, TaskStatus, _Task
-from src.misc.configread import ConfigReader
-from src.misc.inetutils import normalize_target
+from src.misc import ConfigReader, normalize_target
 
 from ._base import BaseManager
 

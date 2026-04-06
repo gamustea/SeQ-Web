@@ -1,15 +1,15 @@
+
 import json
 import os
+import logging
+
 from pathlib import Path
-from typing import Optional
 from enum import Enum
-
 from dotenv import load_dotenv
+from typing import List,Optional
+from pathlib import Path
 
-# Carga el .env si existe (dev local sin Docker).
-# En Docker las variables ya están en el entorno, load_dotenv() las respeta.
 load_dotenv()
-
 
 class DirectoryType(Enum):
     """Enumeración de tipos de directorios disponibles"""
@@ -17,6 +17,18 @@ class DirectoryType(Enum):
     LOG      = "logdir"
     RESULT   = "resultdir"
     RESOURCE = "resourcedir"
+
+
+class DirectoryChecker:
+
+    def __init__(self):
+        self.config_reader = ConfigReader()
+
+    def verify_directory(self, directory: DirectoryType) -> Path:
+        dir_path = Path(self.config_reader.get_directory_of(directory)).resolve()
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        return dir_path
 
 
 class ConfigReader:
@@ -153,3 +165,39 @@ class ConfigReader:
             cfg["host"] = ollama_host
 
         return cfg
+
+
+class SecOpsLogger:
+
+    def __init__(self, name=None, level=logging.DEBUG):
+        """
+        Inicializa un logger con nombre, nivel y archivo de log opcional.
+        """
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(level)
+
+        reader = ConfigReader()
+
+        if not self.logger.hasHandlers():
+            formatter = logging.Formatter(
+                "[+] [%(levelname)s] (%(asctime)s) %(message)s"
+            )
+
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+
+            path = Path(reader.get_directory_of(DirectoryType.LOG)).resolve()
+            path.mkdir(parents=True, exist_ok=True)
+            log_file = path / "secops.log"
+
+            if log_file:
+                file_handler = logging.FileHandler(log_file)
+                file_handler.setFormatter(formatter)
+                self.logger.addHandler(file_handler)
+
+    def get_logger(self):
+        """
+        Devuelve el logger configurado.
+        """
+        return self.logger

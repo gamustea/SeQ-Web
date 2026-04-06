@@ -1,3 +1,5 @@
+
+import time
 import urllib.parse
 from typing import Optional
 
@@ -5,8 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from src.misc.configread import ConfigReader
-from src.misc.logging import SecOpsLogger
+from src.misc import ConfigReader, SecOpsLogger
 
 _ENGINE = None
 _SESSION_FACTORY = None
@@ -20,6 +21,7 @@ def initialize_engine(database_url: Optional[str] = None):
     global _ENGINE, _SESSION_FACTORY
 
     if _ENGINE is None:
+        t0 = time.perf_counter()
         if database_url is None:
             (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_credentials()
             database_url = (
@@ -43,6 +45,16 @@ def initialize_engine(database_url: Optional[str] = None):
             )
         )
 
+def warmup_connection() -> None:
+    """Abre y cierra una conexión real para precalentar el pool."""
+    global _SESSION_FACTORY
+    if _SESSION_FACTORY is None:
+        initialize_engine()
+    from sqlalchemy import text
+    session = _SESSION_FACTORY()
+    session.execute(text("SELECT 1"))
+    session.close()
+    _SESSION_FACTORY.remove()
 
 class BaseManager:
     """
