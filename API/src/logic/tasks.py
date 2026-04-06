@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from gvm.connections import TLSConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeTransform
+from gvm.protocols.gmp.requests.v226 import AliveTest
 
 
 class TaskStatus(Enum):
@@ -567,7 +568,7 @@ class OpenVASTask(_Task):
         password: str,
         scan_config: str = 'daba56c8-73ec-11df-a475-002264764cea',
         port_list_id: str = '33d0cd82-57c6-11e1-8ed1-406186ea4fc5',
-        timeout: int = 300
+        timeout: int = 14400
     ):
         super().__init__(target, timeout)
         self.hostname = hostname
@@ -607,6 +608,15 @@ class OpenVASTask(_Task):
     
     def _execute_openvas_scan(self) -> None:
         try:
+            with self._create_gmp_connection() as gmp:
+                gmp.authenticate(self.username, self.password)
+                configs = gmp.get_scan_configs()
+                for cfg in configs.xpath('config'):
+                    self.logger.info(f"[CONFIG] id={cfg.get('id')} | name={cfg.find('name').text}")
+                scanners = gmp.get_scanners()
+                for sc in scanners.xpath('scanner'):
+                    self.logger.info(f"[SCANNER] id={sc.get('id')} | name={sc.find('name').text}")
+
             # Fase 1: setup (conexión corta)
             with self._create_gmp_connection() as gmp:
                 gmp.authenticate(self.username, self.password)
@@ -634,10 +644,8 @@ class OpenVASTask(_Task):
             self._finished.set()
     
     def _get_or_create_target(self, gmp: Gmp) -> str:
-        """Crea o reutiliza un target en OpenVAS"""
         target_name = f"Target_{self.target}"
         
-        # Buscar target existente
         targets = gmp.get_targets(filter_string=f'name="{target_name}"')
         target_list = targets.xpath('target')
         
@@ -646,16 +654,24 @@ class OpenVASTask(_Task):
             self.logger.info(f"Reutilizando target: {target_id}")
             return target_id
         
-        # Crear nuevo target
+        self.logger.info(f"Creando target con CONSIDER_ALIVE para {self.target}")
+        
         target_response = gmp.create_target(
             name=target_name,
             hosts=[self.target],
             port_list_id=self.port_list_id,
-            comment=f"Target para {self.target}"
+            comment=f"Target para {self.target}",
+            alive_test=AliveTest.CONSIDER_ALIVE
         )
         
+        try:
+            from lxml import etree
+            self.logger.info(f"[DEBUG] create_target response: {etree.tostring(target_response, encoding='unicode')}")
+        except Exception:
+            pass
+        
         target_id = target_response.attrib.get('id') or target_response.get('id')
-        self.logger.info(f"Target creado: {target_id}")
+        self.logger.info(f"Target creado con id: {target_id}")
         return target_id
     
     def _get_default_scanner(self, gmp: Gmp) -> str:
@@ -671,9 +687,8 @@ class OpenVASTask(_Task):
         raise RuntimeError("No se encontró el scanner 'OpenVAS Default'")
     
     def _create_and_start_task(self, gmp: Gmp, target_id: str, scanner_id: str) -> None:
-        """Crea la tarea de escaneo y la inicia"""
         task_name = f"Scan_{self.target}_{int(time.time())}"
-        
+
         task_response = gmp.create_task(
             name=task_name,
             config_id=self.scan_config,
@@ -681,11 +696,30 @@ class OpenVASTask(_Task):
             scanner_id=scanner_id,
             comment=f"Escaneo de {self.target}"
         )
-        
-        self.task_id = task_response.attrib.get('id') or task_response.get('id')
+
+        # Intento 1: atributo directo en el elemento raíz
+        self.task_id = task_response.get('id')
+
+        # Intento 2: xpath @id
+        if not self.task_id:
+            ids = task_response.xpath('@id')
+            self.task_id = ids[0] if ids else None
+
+        # Intento 3: subelemento <id>
+        if not self.task_id:
+            id_el = task_response.find('id')
+            self.task_id = id_el.text.strip() if id_el is not None and id_el.text else None
+
+        # Intento 4: atributo en subelemento <task>
+        if not self.task_id:
+            task_el = task_response.find('task')
+            self.task_id = task_el.get('id') if task_el is not None else None
+
+        if not self.task_id:
+            raise RuntimeError("No se pudo obtener el task_id de la respuesta de create_task")
+
         self.logger.info(f"Tarea creada: {self.task_id}")
-        
-        # Iniciar escaneo
+
         start_response = gmp.start_task(self.task_id)
         self.report_id = start_response.xpath('report_id')[0].text
         self.logger.info(f"Escaneo iniciado. Report ID: {self.report_id}")

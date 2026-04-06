@@ -1,5 +1,5 @@
 /* =====================================================
-   hub.css — SeQ Hub
+   resources/css/hub.css — SeQ Hub
    ===================================================== */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -32,7 +32,6 @@ html, body {
   overflow-x: hidden;
 }
 
-/* ── Starfield ── */
 .stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
 .star {
   position: absolute;
@@ -43,7 +42,6 @@ html, body {
 }
 @keyframes twinkle { 0%,100%{opacity:0} 50%{opacity:0.6} }
 
-/* ── Header ── */
 .hub-header {
   position: relative; z-index: 1;
   text-align: center;
@@ -65,7 +63,6 @@ html, body {
   letter-spacing: 0.18em;
 }
 
-/* ── Grid ── */
 .hub-grid {
   position: relative; z-index: 1;
   display: grid;
@@ -76,7 +73,6 @@ html, body {
   padding: 16px 32px 64px;
 }
 
-/* ── Card ── */
 .module-card {
   position: relative;
   display: flex; flex-direction: column; gap: 20px;
@@ -105,7 +101,6 @@ html, body {
   box-shadow: 0 20px 60px rgba(52,211,153,0.15);
 }
 
-/* ── Glow blob ── */
 .card-glow {
   position: absolute; top: -60px; right: -60px;
   width: 200px; height: 200px; border-radius: 50%;
@@ -115,7 +110,6 @@ html, body {
 .module-acheron .card-glow { background: var(--acheron); }
 .module-sentinel .card-glow { background: var(--sentinel); }
 
-/* ── Icon ── */
 .card-icon {
   width: 52px; height: 52px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
@@ -126,11 +120,9 @@ html, body {
 .module-acheron  .card-icon { background: var(--acheron-dim);  color: var(--acheron);  }
 .module-sentinel .card-icon { background: var(--sentinel-dim); color: var(--sentinel); }
 
-/* ── Content ── */
 .card-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 6px; }
 .card-desc  { font-size: 0.875rem; color: var(--text-muted); line-height: 1.6; }
 
-/* ── Badge ── */
 .card-badge {
   display: inline-block; margin-top: 12px;
   padding: 3px 10px; border-radius: 20px;
@@ -141,7 +133,6 @@ html, body {
 .card-badge--wip    { background: rgba(245,158,11,0.15);  color: var(--wip);      }
 .card-badge--later  { background: rgba(148,163,184,0.12); color: var(--later);    }
 
-/* ── Arrow ── */
 .card-arrow {
   position: absolute; bottom: 28px; right: 28px;
   opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
@@ -152,7 +143,6 @@ html, body {
   opacity: 1; transform: translateX(4px);
 }
 
-/* ── Disabled ── */
 .module-disabled { cursor: default; pointer-events: none; }
 .module-disabled .card-glow { opacity: 0.15; }
 .module-disabled .card-icon,
@@ -173,7 +163,6 @@ html, body {
 .module-disabled { pointer-events: auto !important; }
 .module-disabled:hover .wip-overlay { opacity: 1; }
 
-/* ── Footer ── */
 .hub-footer {
   position: relative; z-index: 1;
   text-align: center; padding: 24px;

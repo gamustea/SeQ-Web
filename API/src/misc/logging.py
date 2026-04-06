@@ -1,6 +1,5 @@
 import logging
 
-from src.misc.configread import ConfigReader, DirectoryType
 from pathlib import Path
 
 
@@ -13,6 +12,7 @@ class SecOpsLogger:
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
 
+        from src.misc.configread import ConfigReader, DirectoryType
         reader = ConfigReader()
 
         if not self.logger.hasHandlers():
