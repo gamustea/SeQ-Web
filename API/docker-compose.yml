@@ -17,17 +17,12 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # La API detecta Linux automáticamente → nmap/nikto se ejecutan de forma nativa
       FLASK_ENV: ${FLASK_ENV:-production}
-      # Sobreescrituras opcionales del detector de plataforma (raramente necesarias)
-      # WSL_DISTRO_NAME_OVERRIDE: Ubuntu
-      # WSL_USER_OVERRIDE: gmiga
     volumes:
-      - ./API/data:/app/data            # output de Aegis, stack de referencias
+      - ./API/data:/app/data
       - ./API/src/config:/app/src/config:ro
-      - scan_temp:/app/temp             # XMLs temporales de Nmap/Nikto
+      - scan_temp:/app/temp
       - scan_logs:/app/logs
-    # Nmap necesita NET_ADMIN + NET_RAW para enviar paquetes raw en Linux
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -38,40 +33,30 @@ services:
   # PostgreSQL 16
   # ────────────────────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine          # alpine = imagen más ligera y segura
+    image: postgres:16-alpine
     container_name: PostgresSeQ
     restart: unless-stopped
-
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-seq_db}
       POSTGRES_USER: ${POSTGRES_USER:-seq_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?La variable POSTGRES_PASSWORD es obligatoria}
-
     ports:
-      - "127.0.0.1:15432:5432"          # solo accesible desde localhost, NO expuesto públicamente
-
+      - "127.0.0.1:15432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data    # datos persistentes
-      - ./init:/docker-entrypoint-initdb.d:ro     # scripts SQL ejecutados al crear la BD
-
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seq_user} -d ${POSTGRES_DB:-seq_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-
     deploy:
       resources:
         limits:
           memory: 512M
         reservations:
           memory: 256M
-
-    # Seguridad: ejecuta como usuario no-root
-    # user: "999:999"
-
-    # Parámetros de rendimiento de PostgreSQL
     command: >
       postgres
       -c max_connections=100
@@ -122,6 +107,8 @@ services:
       - "9392:9392"
       - "9390:9390"
     environment:
+      - USERNAME=${OPENVAS_USERNAME}
+      - PASSWORD=${OPENVAS_PASSWORD}
       - FEED_SYNC=true
     volumes:
       - openvas_data:/data
@@ -143,11 +130,11 @@ volumes:
     driver: local
   ollama_models:
   openvas_data:
-  scan_temp:     # XMLs temporales de Nmap/Nikto (pueden borrarse entre reinicios)
+  scan_temp:
   scan_logs:
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Red interna (los servicios se comunican por nombre de contenedor)
+# Red interna
 # ──────────────────────────────────────────────────────────────────────────────
 networks:
   secops-net:
