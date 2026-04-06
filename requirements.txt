@@ -45,11 +45,5 @@ ddgs
 psutil
 duckduckgo-search>=6.0
 flask-jwt-extended>=4.6.0
+dotenv>=1.2.2
 
-# NOTA IMPORTANTE:
-# Nmap y Nikto deben instalarse directamente en el sistema operativo:
-# 
-# Windows:
-#   Descargar instaladores desde:
-#   - Nmap: https://nmap.org/download.html
-#   - Nikto: https://github.com/sullo/nikto

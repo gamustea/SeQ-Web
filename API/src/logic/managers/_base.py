@@ -1,3 +1,5 @@
+
+import time
 import urllib.parse
 from typing import Optional
 
@@ -20,8 +22,9 @@ def initialize_engine(database_url: Optional[str] = None):
     global _ENGINE, _SESSION_FACTORY
 
     if _ENGINE is None:
+        t0 = time.perf_counter()
         if database_url is None:
-            (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_crendetials()
+            (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_credentials()
             database_url = (
                 f"postgresql+psycopg2://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}:{15432}/{DBNAME}"
             )
@@ -43,6 +46,16 @@ def initialize_engine(database_url: Optional[str] = None):
             )
         )
 
+def warmup_connection() -> None:
+    """Abre y cierra una conexión real para precalentar el pool."""
+    global _SESSION_FACTORY
+    if _SESSION_FACTORY is None:
+        initialize_engine()
+    from sqlalchemy import text
+    session = _SESSION_FACTORY()
+    session.execute(text("SELECT 1"))
+    session.close()
+    _SESSION_FACTORY.remove()
 
 class BaseManager:
     """

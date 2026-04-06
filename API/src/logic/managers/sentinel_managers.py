@@ -411,7 +411,7 @@ class OpenVASScanManager(ScanManager):
     def __init__(self, user: User, session: Optional[Session] = None):
         super().__init__(user, session)
 
-        config = ConfigReader().get_openvas_config()["access"]
+        config = ConfigReader().get_openvas_config()
         self.hostname = config["hostname"]  # type: ignore
         self.port = config["port"]          # type: ignore
         self.username = config["username"]  # type: ignore
