@@ -3,7 +3,7 @@ services:
   # ────────────────────────────────────────────────────────────────────────────
   # API Flask  (SeQ backend)
   # ────────────────────────────────────────────────────────────────────────────
-  api:
+  seq:
     build:
       context: .
       dockerfile: Dockerfile
@@ -91,7 +91,8 @@ services:
       "ollama serve & 
       sleep 15; 
       echo 'Verificando modelo '$$OLLAMA_MODEL'...'; 
-      ollama list | grep -q $$OLLAMA_MODEL && echo 'Modelo ya existe' || (echo 'Descargando modelo...' && ollama pull $$OLLAMA_MODEL); 
+      ollama list | grep -q $$OLLAMA_MODEL && echo 'El modelo se ha verificado correctamente, y existe en el contenedor actual; no se instalará ningun modelo adicional' 
+      || (echo 'Descargando modelo $$OLLAMA_MODEL...' && ollama pull $$OLLAMA_MODEL); 
       wait"
     healthcheck:
       test: ["CMD-SHELL", "ollama list | grep -q $${OLLAMA_MODEL}"]
@@ -118,8 +119,6 @@ services:
       - "9392:9392"
       - "9390:9390"
     environment:
-      - USERNAME=${OPENVAS_USERNAME}
-      - PASSWORD=${OPENVAS_PASSWORD}
       - FEED_SYNC=true
     volumes:
       - openvas_data:/data
@@ -128,8 +127,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:9392"]
       interval: 60s
       timeout: 30s
-      retries: 10
-      start_period: 300s
+      retries: 5
+      start_period: 900s  # 15 minutos para inicialización completa
     networks:
       - secops-net
 
