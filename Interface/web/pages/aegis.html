@@ -4,25 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Aegis — Píldoras de Concienciación</title>
+  <!-- shared primero; aegis.css solo añade lo específico del módulo -->
+  <link rel="stylesheet" href="/resources/css/shared.css" />
   <link rel="stylesheet" href="/resources/css/aegis.css" />
   <link rel="icon" type="image/png" href="/resources/images/favicon.ico" />
 </head>
-<body>
-<script>
-  (function () {
-    const raw = sessionStorage.getItem('seq_session');
-    if (!raw) { window.location.href = '/pages/login.html'; return; }
-    try {
-      const s = JSON.parse(raw);
-      if (!s.accessToken || Date.now() > s.expiresAt) {
-        sessionStorage.removeItem('seq_session');
-        window.location.href = '/pages/login.html';
-      }
-    } catch {
-      window.location.href = '/pages/login.html';
-    }
-  })();
-</script>
+<body data-module="aegis">
+
 <div class="layout">
 
   <!-- ── TOPBAR ── -->
@@ -43,7 +31,7 @@
         <div class="session-dot"></div>
         <span id="session-user"></span>
       </div>
-      <button class="btn-logout-top" id="btn-logout">
+      <button class="btn-logout" id="btn-logout">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
           <polyline points="16 17 21 12 16 7"/>
@@ -206,6 +194,8 @@
 
 <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
 
+<!-- shared primero, aegis.js después -->
+<script src="/resources/js/shared.js"></script>
 <script src="/resources/js/aegis.js"></script>
 </body>
 </html>
