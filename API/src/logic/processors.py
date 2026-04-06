@@ -4,9 +4,7 @@ from typing import List
 
 from sqlalchemy.orm import Session
 
-
-from src.misc.inetutils import normalize_target
-from src.misc.conversion import JSONManager
+from src.misc import JSONManager, normalize_target
 from src.core.model import (
     Host,
     Scan,

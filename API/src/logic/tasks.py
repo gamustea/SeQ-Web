@@ -11,10 +11,13 @@ from enum import Enum, auto
 from abc import ABC, abstractmethod
 from nmap import PortScanner
 
-from src.misc.configread import ConfigReader, DirectoryType
-from src.misc.logging import SecOpsLogger
-from src.misc.conversion import JSONManager
-from src.misc.directorychecker import DirectoryChecker
+from src.misc import (
+    ConfigReader, 
+    DirectoryType, 
+    SecOpsLogger, 
+    JSONManager,
+    DirectoryChecker
+)
 
 import xml.etree.ElementTree as ET
 from gvm.connections import TLSConnection

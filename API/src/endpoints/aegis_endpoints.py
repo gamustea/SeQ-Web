@@ -38,7 +38,7 @@ from src.logic.documents.aegis_exporters import (
     JsonExporter,
     get_exporter_for_format,
 )
-from src.misc.logging import SecOpsLogger
+from src.misc import SecOpsLogger
 
 from ._shared import (
     get_aegis_manager,

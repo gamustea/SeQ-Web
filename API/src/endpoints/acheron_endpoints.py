@@ -25,7 +25,7 @@ from src.core.exceptions import (
     ValidationError,
     create_error_response,
 )
-from src.misc.logging import SecOpsLogger
+from src.misc import SecOpsLogger
 
 from ._shared import (
     get_current_user_id,

@@ -6,7 +6,7 @@ Blueprint de salud. Sirve el endpoint /say-hello sin autenticación,
 """
 
 from flask import Blueprint, jsonify
-from src.misc.logging import SecOpsLogger
+from src.misc import SecOpsLogger
 from ._shared import limiter
 import psutil
 
