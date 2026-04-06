@@ -25,7 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from src.misc.logging import SecOpsLogger
+from src.misc import SecOpsLogger
 
 _logger = SecOpsLogger(name="AegisExporters").get_logger()
 

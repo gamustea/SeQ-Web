@@ -7,8 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from src.misc.configread import ConfigReader
-from src.misc.logging import SecOpsLogger
+from src.misc import ConfigReader, SecOpsLogger
 
 _ENGINE = None
 _SESSION_FACTORY = None

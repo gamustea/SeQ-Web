@@ -37,7 +37,7 @@ from src.logic.managers import (
     UserManager,
     VaultManager,
 )
-from src.misc.logging import SecOpsLogger
+from src.misc import SecOpsLogger
 
 _logger = SecOpsLogger(name="API").get_logger()
 

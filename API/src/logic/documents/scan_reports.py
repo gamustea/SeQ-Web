@@ -26,8 +26,7 @@ from reportlab.platypus import (
     CondPageBreak,
 )
 
-from src.misc.configread import ConfigReader, DirectoryType
-from src.misc.logging import SecOpsLogger
+from src.misc import ConfigReader, DirectoryType, SecOpsLogger
 from src.core.model import NmapScan, NiktoScan, Scan, Host, Topic
 
 

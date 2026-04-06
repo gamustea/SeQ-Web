@@ -29,8 +29,7 @@ from src.logic.documents.aegis_pills import (
     AegisContent,
     AlertSource,
 )
-from src.misc.configread import ConfigReader
-from src.misc.logging import SecOpsLogger
+from src.misc import ConfigReader, SecOpsLogger
 from ._base import BaseManager
 
 
