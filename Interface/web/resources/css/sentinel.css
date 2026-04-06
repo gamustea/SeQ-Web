@@ -1,0 +1,357 @@
+/* ============================================================
+   sentinel.css — Estilos específicos del módulo Sentinel
+   Requiere: shared.css cargado previamente.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ── Variables locales (complementan los tokens de shared.css) ── */
+:root {
+  --green:        #34d399;
+  --green-dim:    rgba(52,211,153,0.10);
+  --amber:        #f59e0b;
+  --amber-dim:    rgba(245,158,11,0.10);
+  --red:          #f87171;
+  --red-dim:      rgba(248,113,113,0.10);
+  --blue:         #60a5fa;
+  --blue-dim:     rgba(96,165,250,0.10);
+  --purple:       #a78bfa;
+
+  --font-code: 'JetBrains Mono', monospace;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   LAYOUT
+══════════════════════════════════════════════════════════════ */
+.layout { display: flex; flex-direction: column; min-height: 100vh; }
+
+.main {
+  flex: 1;
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+footer {
+  text-align: center;
+  padding: 1.25rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   STAT CARDS
+══════════════════════════════════════════════════════════════ */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+}
+
+.stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.stat-value {
+  font-size: 1.9rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.stat-card.green .stat-value { color: var(--green); }
+.stat-card.amber .stat-value { color: var(--amber); }
+.stat-card.red   .stat-value { color: var(--red);   }
+.stat-card.blue  .stat-value { color: var(--blue);  }
+
+.stat-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TABS
+══════════════════════════════════════════════════════════════ */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  margin-bottom: 1.5rem;
+}
+
+.tab {
+  flex: 1;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--surface-2); color: var(--text); }
+
+.tab.active.nmap    { color: var(--green); }
+.tab.active.nikto   { color: var(--amber); }
+.tab.active.openvas { color: var(--red);   }
+
+.tab-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.nmap-dot    { background: var(--green); }
+.nikto-dot   { background: var(--amber); }
+.openvas-dot { background: var(--red);   }
+
+/* ══════════════════════════════════════════════════════════════
+   PANELS
+══════════════════════════════════════════════════════════════ */
+.panel         { display: none; }
+.panel.active  { display: block; }
+
+/* ══════════════════════════════════════════════════════════════
+   LAUNCH CARD
+══════════════════════════════════════════════════════════════ */
+.launch-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.launch-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.launch-fields {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 160px;
+}
+
+.field label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.field input,
+.field select {
+  background: var(--bg);
+  border: 1px solid var(--border-solid);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-size: 0.85rem;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(52,211,153,0.12);
+}
+
+.field input::placeholder { color: var(--text-muted); opacity: 0.5; }
+.field select option       { background: var(--surface); }
+
+/* ── Botones de lanzar ── */
+.btn-launch {
+  padding: 0.55rem 1.25rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: opacity var(--transition), transform var(--transition);
+}
+
+.btn-launch:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+.btn-launch:disabled              { opacity: 0.45; cursor: not-allowed; }
+
+.nmap-btn    { background: var(--green); color: #061a10; }
+.nikto-btn   { background: var(--amber); color: #1c0f00; }
+.openvas-btn { background: var(--red);   color: #1f0606; }
+
+.btn-launch svg { width: 14px; height: 14px; }
+
+/* Spinner del btn-launch (reutiliza la animación seq-spin de shared.css) */
+.btn-launch .btn-spin {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(0,0,0,0.2); border-top-color: currentColor;
+  border-radius: 50%;
+  animation: seq-spin 0.6s linear infinite;
+  display: none;
+}
+.btn-launch.loading .btn-spin  { display: inline-block; }
+.btn-launch.loading .btn-label { display: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   PANEL ALERTS (inline, distintas del toast)
+══════════════════════════════════════════════════════════════ */
+.panel-alert {
+  padding: 0.65rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  margin-bottom: 1rem;
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panel-alert.visible  { display: flex; }
+.panel-alert.success  { background: var(--green-dim); border: 1px solid rgba(52,211,153,0.25);  color: var(--green); }
+.panel-alert.error    { background: var(--red-dim);   border: 1px solid rgba(248,113,113,0.25); color: var(--red);   }
+.panel-alert.info     { background: var(--blue-dim);  border: 1px solid rgba(96,165,250,0.25);  color: var(--blue);  }
+
+/* ══════════════════════════════════════════════════════════════
+   TABLE
+══════════════════════════════════════════════════════════════ */
+.table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.table-toolbar-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.btn-refresh {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: transparent;
+  border: 1px solid var(--border-solid);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: color var(--transition), border-color var(--transition);
+}
+.btn-refresh:hover { color: var(--text); border-color: var(--text-muted); }
+.btn-refresh svg   { width: 12px; height: 12px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+
+thead { background: var(--surface-2); }
+
+th {
+  text-align: left;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+td {
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-code);
+  color: var(--text);
+  vertical-align: middle;
+}
+
+tr:last-child td { border-bottom: none; }
+tr:hover td      { background: rgba(255,255,255,0.02); }
+
+/* Texto auxiliar dentro de celdas */
+td .muted { color: var(--text-muted); }
+
+/* ── Severidad ── */
+.sev-critical { color: #f43f5e; font-weight: 700; }
+.sev-high     { color: var(--red);   }
+.sev-medium   { color: var(--amber); }
+.sev-low      { color: var(--green); }
+
+/* ── Botones de acción en fila ── */
+.action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color var(--transition);
+  display: inline-flex;
+  align-items: center;
+}
+.action-btn:hover { color: var(--text); }
+.action-btn svg   { width: 14px; height: 14px; }
+
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE
+══════════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  .main           { padding: 1rem; }
+  .stats-row      { grid-template-columns: repeat(2, 1fr); }
+  .launch-fields  { flex-direction: column; }
+  .tabs           { flex-direction: column; }
+}

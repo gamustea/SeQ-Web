@@ -1,107 +1,26 @@
 /* ============================================================
-   aegis.js — Lógica de la interfaz de píldoras Aegis
+   aegis.js — Lógica específica del módulo Aegis
+   Depende de: shared.js  (SeqSession, SeqUI, SeqToast, apiFetch)
    ============================================================ */
 'use strict';
 
-/* ── CONFIG ── */
-const API_BASE  = 'http://localhost:5000';
-const LOGIN_URL = '../auth/login.html';
-
-const POLL_INTERVAL_MS  = 60000;  // 1 minuto
-const POLL_MAX_ATTEMPTS = 30;     // 30 minutos máximo
-
-/* ══════════════════════════════════════════════════════════════
-   SESSION
-══════════════════════════════════════════════════════════════ */
-const Session = (() => {
-  let data = null;
-
-  function load() {
-    const raw = sessionStorage.getItem('seq_session');
-    if (!raw) return false;
-    try { data = JSON.parse(raw); return !!data.accessToken; }
-    catch { return false; }
-  }
-
-  function save() {
-    sessionStorage.setItem('seq_session', JSON.stringify(data));
-  }
-
-  async function getToken() {
-    if (!data) return null;
-    if (Date.now() > data.expiresAt - 60_000) {
-      const ok = await refresh();
-      if (!ok) return null;
-    }
-    return data.accessToken;
-  }
-
-  async function refresh() {
-    if (!data?.refreshToken) return false;
-    try {
-      const res = await fetch(`${API_BASE}/oauth/token`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ grantType: 'refresh_token', refreshToken: data.refreshToken }),
-      });
-      if (!res.ok) return false;
-      const d = await res.json();
-      data.accessToken = d.access_token;
-      data.expiresAt   = Date.now() + d.expires_in * 1000;
-      save();
-      return true;
-    } catch { return false; }
-  }
-
-  async function authHeaders() {
-    const t = await getToken();
-    if (!t) { logout(); return null; }
-    return { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' };
-  }
-
-  function logout() {
-    const token = data?.accessToken;
-    data = null;
-    sessionStorage.removeItem('seq_session');
-    if (token) {
-      fetch(`${API_BASE}/oauth/revoke`, {
-        method:  'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      }).catch(() => {});
-    }
-    window.location.href = LOGIN_URL;
-  }
-
-  function username() {
-    if (!data?.accessToken) return '';
-    try {
-      const payload = JSON.parse(atob(data.accessToken.split('.')[1]));
-      return payload.username || payload.sub || '';
-    } catch { return ''; }
-  }
-
-  return { load, authHeaders, logout, username };
-})();
-
-/* ── Guardia de sesión ── */
-if (!Session.load()) window.location.href = LOGIN_URL;
+/* ── CONFIG local ── */
+const POLL_INTERVAL_MS  = 60_000;   // 1 minuto
+const POLL_MAX_ATTEMPTS = 30;       // 30 minutos máximo
 
 /* ══════════════════════════════════════════════════════════════
    DOM ELEMENTS
 ══════════════════════════════════════════════════════════════ */
-const topicGrid      = document.getElementById('topic-grid');
-const btnGenerate    = document.getElementById('btn-generate');
-const btnRefresh     = document.getElementById('btn-refresh-status');
-const progressBlock  = document.getElementById('progress-block');
-const progressBar    = document.getElementById('progress-bar');
-const progressText   = document.getElementById('progress-text');
-const viewerEmpty    = document.getElementById('viewer-empty');
-const viewerContent  = document.getElementById('viewer-content');
-const historyList    = document.getElementById('history-list');
-const historyEmpty   = document.getElementById('history-empty');
-const toastEl        = document.getElementById('toast');
-const sessionUser    = document.getElementById('session-user');
-const btnLogout      = document.getElementById('btn-logout');
+const topicGrid     = document.getElementById('topic-grid');
+const btnGenerate   = document.getElementById('btn-generate');
+const btnRefresh    = document.getElementById('btn-refresh-status');
+const progressBlock = document.getElementById('progress-block');
+const progressBar   = document.getElementById('progress-bar');
+const progressText  = document.getElementById('progress-text');
+const viewerEmpty   = document.getElementById('viewer-empty');
+const viewerContent = document.getElementById('viewer-content');
+const historyList   = document.getElementById('history-list');
+const historyEmpty  = document.getElementById('history-empty');
 
 /* ══════════════════════════════════════════════════════════════
    STATE
@@ -115,81 +34,29 @@ let allDocs           = [];
 let sortMode          = 'date-desc';
 
 /* ══════════════════════════════════════════════════════════════
-   UTILS & HELPERS (Definidos primero para evitar hoisting issues)
+   PROGRESS
 ══════════════════════════════════════════════════════════════ */
-function escHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function formatDate(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('es-ES', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
-}
-
-function statusLabel(s) {
-  return { done: 'Listo', pending: 'Generando', error: 'Error' }[s] ?? s;
-}
-
-/* ── Toast ── */
-let _toastTimer;
-function toast(msg, type = '') {
-  clearTimeout(_toastTimer);
-  toastEl.textContent = msg;
-  toastEl.className = `toast visible${type ? ' toast--' + type : ''}`;
-  _toastTimer = setTimeout(() => toastEl.classList.remove('visible'), 3400);
-}
-
-/* ── Progress helpers (Definidos ANTES de usarlos) ── */
 function showProgress(visible) {
-  if (progressBlock) {
-    progressBlock.style.display = visible ? 'flex' : 'none';
-  }
+  if (progressBlock) progressBlock.style.display = visible ? 'flex' : 'none';
 }
 
 function setProgress(pct, msg) {
-  if (progressBar) progressBar.style.width = `${pct}%`;
-  if (progressText) progressText.textContent = msg;
-}
-
-/* ── API Helper ── */
-async function apiFetch(path, options = {}) {
-  const authH = await Session.authHeaders();
-  if (!authH) return null;
-  const headers = { ...authH, ...(options.headers || {}) };
-  if (options.body instanceof FormData) delete headers['Content-Type'];
-  try {
-    return await fetch(`${API_BASE}${path}`, { ...options, headers });
-  } catch (e) {
-    console.error('API Fetch error:', e);
-    return null;
-  }
+  if (progressBar)  progressBar.style.width    = `${pct}%`;
+  if (progressText) progressText.textContent   = msg;
 }
 
 /* ══════════════════════════════════════════════════════════════
-   POLLING & STATUS LOGIC
+   POLLING
 ══════════════════════════════════════════════════════════════ */
 async function checkStatusNow(docId) {
   if (isChecking || !docId) return;
-  
   isChecking = true;
-  console.log(`[Aegis] Checking status for doc ${docId}...`);
-  
+
   try {
     const res = await apiFetch(`/aegis/status?id=${docId}`);
-    if (!res || !res.ok) {
-      console.warn('[Aegis] Status check failed:', res?.status);
-      return;
-    }
-    
+    if (!res?.ok) return;
     const data = await res.json();
-    console.log('[Aegis] Status:', data.status);
     await handleStatusUpdate(data, docId);
-    
   } catch (e) {
     console.error('[Aegis] Error checking status:', e);
   } finally {
@@ -199,68 +66,50 @@ async function checkStatusNow(docId) {
 
 async function handleStatusUpdate(data, docId) {
   pollAttempts++;
-  
-  // Calcular porcentaje estimado: empieza en 10%, sube 3% por intento, max 95%
-  const estimatedPercent = Math.min(95, 10 + (pollAttempts * 3));
-  
+  const estimatedPercent = Math.min(95, 10 + pollAttempts * 3);
+
   if (data.status === 'done') {
     stopPolling();
     localStorage.removeItem('aegis_pending_doc');
-    
     setProgress(100, '¡Píldora completada!');
-    toast('Píldora generada correctamente', 'success');
-    
+    SeqToast.show('Píldora generada correctamente', 'success');
     setTimeout(async () => {
       showProgress(false);
       if (btnGenerate) btnGenerate.disabled = false;
       await loadAndShowDocument(docId);
       await loadHistory();
     }, 800);
-    
+
   } else if (data.status === 'error') {
     stopPolling();
     localStorage.removeItem('aegis_pending_doc');
-    
     setProgress(0, 'Error en la generación');
     showProgress(false);
     if (btnGenerate) btnGenerate.disabled = false;
-    toast('Error durante la generación', 'error');
-    
+    SeqToast.show('Error durante la generación', 'error');
+
   } else {
-    // Aún pendiente
-    let msg = data.message || `Generando... (${pollAttempts} min)`;
-    
-    // Si hay información de etapa, mostrar mensaje amigable
-    if (data.stage) {
-      const stageMessages = {
-        'researching': '🔍 Investigando alertas de seguridad...',
-        'analyzing': '📊 Analizando vulnerabilidades...',
-        'writing': '✍️ Redactando contenido...',
-        'reviewing': '🔍 Revisando estructura...',
-        'finalizing': '✅ Finalizando documento...'
-      };
-      msg = stageMessages[data.stage] || msg;
-    }
-    
+    const STAGE_MSG = {
+      researching: '🔍 Investigando alertas de seguridad…',
+      analyzing:   '📊 Analizando vulnerabilidades…',
+      writing:     '✍️ Redactando contenido…',
+      reviewing:   '🔍 Revisando estructura…',
+      finalizing:  '✅ Finalizando documento…',
+    };
+    const msg = (data.stage && STAGE_MSG[data.stage])
+      || data.message
+      || `Generando… (${pollAttempts} min)`;
     setProgress(estimatedPercent, msg);
   }
 }
 
 function startPolling(docId) {
-  // Limpiar timer anterior si existe
   stopPolling();
-  
   pollAttempts = 0;
-  console.log(`[Aegis] Starting polling for doc ${docId}, interval: ${POLL_INTERVAL_MS}ms`);
-  
-  // Primer chequeo inmediato (opcional, comentado para respetar el minuto desde el inicio)
-  // checkStatusNow(docId);
-  
-  // Configurar intervalo de 1 minuto
   pollTimer = setInterval(() => {
     if (pollAttempts >= POLL_MAX_ATTEMPTS) {
       stopPolling();
-      toast('Tiempo máximo de espera agotado (30 min)', 'warn');
+      SeqToast.show('Tiempo máximo de espera agotado (30 min)', 'warn');
       if (btnGenerate) btnGenerate.disabled = false;
       return;
     }
@@ -269,35 +118,22 @@ function startPolling(docId) {
 }
 
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-    console.log('[Aegis] Polling stopped');
-  }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
 /* ── Botón de actualización manual ── */
 if (btnRefresh) {
   btnRefresh.addEventListener('click', async () => {
-    if (!currentDocumentId || isChecking) {
-      console.log('[Aegis] Refresh blocked:', { currentDocumentId, isChecking });
-      return;
-    }
-    
-    console.log('[Aegis] Manual refresh triggered');
+    if (!currentDocumentId || isChecking) return;
     btnRefresh.classList.add('spinning');
     progressText.classList.add('updating');
-    progressText.textContent = 'Consultando estado...';
-    
+    progressText.textContent = 'Consultando estado…';
     await checkStatusNow(currentDocumentId);
-    
     setTimeout(() => {
       btnRefresh.classList.remove('spinning');
       progressText.classList.remove('updating');
     }, 500);
   });
-} else {
-  console.error('[Aegis] Refresh button not found! Check ID: btn-refresh-status');
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -306,7 +142,7 @@ if (btnRefresh) {
 async function loadTopics() {
   try {
     const res = await apiFetch('/aegis/topics');
-    if (!res || !res.ok) throw new Error(res?.status ?? 'sin respuesta');
+    if (!res?.ok) throw new Error(res?.status ?? 'sin respuesta');
     const data   = await res.json();
     const topics = Array.isArray(data) ? data : (data.topics || []);
     renderTopics(topics);
@@ -319,20 +155,16 @@ async function loadTopics() {
 function renderTopics(topics) {
   if (!topicGrid) return;
   topicGrid.innerHTML = '';
-  
-  if (!topics.length) {
-    topicGrid.innerHTML = '<p class="viewer-empty__text">Sin temas disponibles</p>';
-    return;
-  }
-  
+  if (!topics.length) { topicGrid.innerHTML = '<p class="viewer-empty__text">Sin temas disponibles</p>'; return; }
+
   topics.forEach(t => {
     const btn = document.createElement('button');
     btn.className  = 'topic-btn';
     btn.dataset.id = t.id;
     btn.innerHTML  = `
-      <span class="topic-btn__id">#${String(t.id).padStart(2,'0')}</span>
-      <span class="topic-btn__name">${escHtml(t.name || t.title || 'Sin nombre')}</span>
-      ${t.description ? `<span class="topic-btn__desc">${escHtml(t.description)}</span>` : ''}`;
+      <span class="topic-btn__id">#${String(t.id).padStart(2, '0')}</span>
+      <span class="topic-btn__name">${SeqUI.escHtml(t.name || t.title || 'Sin nombre')}</span>
+      ${t.description ? `<span class="topic-btn__desc">${SeqUI.escHtml(t.description)}</span>` : ''}`;
     btn.addEventListener('click', () => selectTopic(t.id, btn));
     topicGrid.appendChild(btn);
   });
@@ -365,14 +197,11 @@ function buildTweaks() {
 
 if (btnGenerate) {
   btnGenerate.addEventListener('click', async () => {
-    if (!selectedTopicId) { 
-      toast('Selecciona un tema primero', 'warn'); 
-      return; 
-    }
+    if (!selectedTopicId) { SeqToast.show('Selecciona un tema primero', 'warn'); return; }
 
     btnGenerate.disabled = true;
     showProgress(true);
-    setProgress(10, 'Generación iniciada...');
+    setProgress(10, 'Generación iniciada…');
     stopPolling();
 
     try {
@@ -380,9 +209,7 @@ if (btnGenerate) {
         method: 'POST',
         body:   JSON.stringify({ topicId: selectedTopicId, tweaks: buildTweaks() }),
       });
-      
       if (!res) throw new Error('No hay conexión con el servidor');
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error_description || err.message || `HTTP ${res.status}`);
@@ -390,28 +217,21 @@ if (btnGenerate) {
 
       const data = await res.json();
       currentDocumentId = data.documentId;
-      
-      // Guardar en localStorage para recuperar si cierra la pestaña
+
       localStorage.setItem('aegis_pending_doc', JSON.stringify({
-        docId: currentDocumentId,
-        startedAt: Date.now(),
-        topicId: selectedTopicId
+        docId: currentDocumentId, startedAt: Date.now(), topicId: selectedTopicId,
       }));
-      
-      toast(`Generación iniciada (doc #${currentDocumentId})`, 'success');
-      
-      // Primera comprobación
+
+      SeqToast.show(`Generación iniciada (doc #${currentDocumentId})`, 'success');
       await checkStatusNow(currentDocumentId);
-      
-      // Iniciar polling cada minuto
       startPolling(currentDocumentId);
-      
+
     } catch (e) {
       console.error('[Aegis] Generation error:', e);
       showProgress(false);
       btnGenerate.disabled = false;
       stopPolling();
-      toast(`Error al generar: ${e.message}`, 'error');
+      SeqToast.show(`Error al generar: ${e.message}`, 'error');
     }
   });
 }
@@ -422,27 +242,20 @@ if (btnGenerate) {
 async function checkPendingGeneration() {
   const pending = localStorage.getItem('aegis_pending_doc');
   if (!pending) return;
-  
   try {
     const { docId, startedAt } = JSON.parse(pending);
-    const elapsed = Date.now() - startedAt;
-    
-    // Si pasaron menos de 30 minutos, recuperamos
-    if (elapsed < 30 * 60 * 1000) {
+    if (Date.now() - startedAt < 30 * 60 * 1000) {
       currentDocumentId = docId;
       if (btnGenerate) btnGenerate.disabled = true;
       showProgress(true);
-      setProgress(10, 'Recuperando generación en curso...');
-      
+      setProgress(10, 'Recuperando generación en curso…');
       await checkStatusNow(docId);
       startPolling(docId);
-      
-      toast('Generación en curso recuperada', 'info');
+      SeqToast.show('Generación en curso recuperada', 'info');
     } else {
       localStorage.removeItem('aegis_pending_doc');
     }
-  } catch (e) {
-    console.error('[Aegis] Recovery error:', e);
+  } catch {
     localStorage.removeItem('aegis_pending_doc');
   }
 }
@@ -452,102 +265,85 @@ async function checkPendingGeneration() {
 ══════════════════════════════════════════════════════════════ */
 const STATUS_ORDER = { done: 0, pending: 1, error: 2 };
 const SORT_FNS = {
-  'date-desc': (a,b) => new Date(b.generatedAt||0) - new Date(a.generatedAt||0),
-  'date-asc':  (a,b) => new Date(a.generatedAt||0) - new Date(b.generatedAt||0),
-  'name-asc':  (a,b) => (a.title||'').localeCompare(b.title||'','es'),
-  'status':    (a,b) => (STATUS_ORDER[a.status]??9) - (STATUS_ORDER[b.status]??9)
-                     || new Date(b.generatedAt||0) - new Date(a.generatedAt||0),
+  'date-desc': (a, b) => new Date(b.generatedAt || 0) - new Date(a.generatedAt || 0),
+  'date-asc':  (a, b) => new Date(a.generatedAt || 0) - new Date(b.generatedAt || 0),
+  'name-asc':  (a, b) => (a.title || '').localeCompare(b.title || '', 'es'),
+  'status':    (a, b) => ((STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9))
+                      || (new Date(b.generatedAt || 0) - new Date(a.generatedAt || 0)),
 };
 
 async function loadHistory() {
-  try {
-    const res = await apiFetch('/aegis/documents');
-    if (!res || !res.ok) return;
-    const data = await res.json();
-    allDocs = data.documents || [];
-    renderHistory();
-  } catch (e) {
-    console.error('[Aegis] Error loading history:', e);
-  }
+  const res = await apiFetch('/aegis/documents');
+  if (!res?.ok) return;
+  const data = await res.json();
+  allDocs = data.documents || [];
+  renderHistory();
+}
+
+function statusLabel(s) {
+  return { done: 'Listo', pending: 'Generando', error: 'Error' }[s] ?? s;
 }
 
 function renderHistory() {
   const countEl = document.getElementById('history-count');
-  
   if (!allDocs.length) {
     if (historyEmpty) historyEmpty.style.display = 'block';
     historyList.innerHTML = '';
     if (countEl) countEl.textContent = '';
     return;
   }
-  
   if (historyEmpty) historyEmpty.style.display = 'none';
   if (countEl) countEl.textContent = `${allDocs.length} doc${allDocs.length !== 1 ? 's' : ''}`;
 
   const sorted = [...allDocs].sort(SORT_FNS[sortMode] || SORT_FNS['date-desc']);
-  
-  // Render optimizado: solo actualizar cambios
-  const existingIds = new Set(Array.from(historyList.children).map(el => el.dataset.docId));
   const newIds = new Set(sorted.map(d => String(d.id)));
-  
-  // Eliminar elementos que ya no existen
-  Array.from(historyList.children).forEach(el => {
-    if (!newIds.has(el.dataset.docId)) el.remove();
-  });
+
+  Array.from(historyList.children).forEach(el => { if (!newIds.has(el.dataset.docId)) el.remove(); });
 
   const frag = document.createDocumentFragment();
-  
   sorted.forEach(doc => {
     let item = historyList.querySelector(`.history-item[data-doc-id="${doc.id}"]`);
-    
     if (item) {
-      // Actualizar estado si existe
       const badge = item.querySelector('.history-item__status');
       if (badge && !badge.classList.contains(`status--${doc.status}`)) {
         badge.className = `history-item__status status--${doc.status}`;
         badge.textContent = statusLabel(doc.status);
       }
     } else {
-      // Crear nuevo elemento
       item = document.createElement('div');
       item.className = 'history-item';
       item.dataset.docId = doc.id;
       item.innerHTML = `
         <div class="history-item__header">
-          <span class="history-item__title">${escHtml(doc.title || 'Sin título')}</span>
+          <span class="history-item__title">${SeqUI.escHtml(doc.title || 'Sin título')}</span>
           <span class="history-item__status status--${doc.status}">${statusLabel(doc.status)}</span>
         </div>
         <div class="history-item__meta">
           <span class="history-item__topic">Tema #${doc.topicId ?? '—'}</span>
-          <span class="history-item__date">${formatDate(doc.generatedAt)}</span>
+          <span class="history-item__date">${SeqUI.formatDate(doc.generatedAt)}</span>
         </div>
         <div class="history-item__actions">
           ${doc.status === 'done' ? `
-            <button class="btn btn--sm btn--ghost" data-action="view" data-id="${doc.id}">Ver</button>
-            <button class="btn btn--sm btn--ghost" data-action="dl-md" data-id="${doc.id}">MD</button>
+            <button class="btn btn--sm btn--ghost" data-action="view"    data-id="${doc.id}">Ver</button>
+            <button class="btn btn--sm btn--ghost" data-action="dl-md"   data-id="${doc.id}">MD</button>
             <button class="btn btn--sm btn--ghost" data-action="dl-json" data-id="${doc.id}">JSON</button>
           ` : ''}
           <button class="btn btn--sm btn--ghost btn--danger" data-action="delete" data-id="${doc.id}">✕</button>
         </div>`;
-      
-      item.querySelectorAll('[data-action]').forEach(b =>
-        b.addEventListener('click', handleHistoryAction));
+      item.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', handleHistoryAction));
     }
     frag.appendChild(item);
   });
-  
   historyList.appendChild(frag);
 }
 
 function handleHistoryAction(e) {
-  const btn = e.currentTarget;
-  const action = btn.dataset.action;
-  const id = parseInt(btn.dataset.id, 10);
-  
-  if (action === 'view') loadAndShowDocument(id);
-  else if (action === 'dl-md') downloadExport(id, 'md');
-  else if (action === 'dl-json') downloadExport(id, 'json');
-  else if (action === 'delete') confirmDelete(id);
+  const { action, id } = e.currentTarget.dataset;
+  const docId = parseInt(id, 10);
+  if      (action === 'view')    loadAndShowDocument(docId);
+  else if (action === 'dl-md')   downloadExport(docId, 'md');
+  else if (action === 'dl-json') downloadExport(docId, 'json');
+  else if (action === 'delete')  confirmDelete(docId);
 }
 
 document.getElementById('sort-select')?.addEventListener('change', e => {
@@ -559,31 +355,22 @@ document.getElementById('sort-select')?.addEventListener('change', e => {
    DOCUMENT VIEWER
 ══════════════════════════════════════════════════════════════ */
 async function loadAndShowDocument(docId) {
-  try {
-    const res = await apiFetch(`/aegis/document?id=${docId}`);
-    if (!res || !res.ok) { 
-      toast('No se pudo cargar el documento', 'error'); 
-      return; 
-    }
-    const doc = await res.json();
-    currentDocumentId = docId;
-    renderDocument(doc);
-    
-    document.querySelectorAll('.history-item').forEach(el => {
-      el.classList.toggle('active', parseInt(el.dataset.docId) === docId);
-    });
-  } catch (e) {
-    toast(`Error al cargar documento: ${e.message}`, 'error');
-  }
+  const res = await apiFetch(`/aegis/document?id=${docId}`);
+  if (!res?.ok) { SeqToast.show('No se pudo cargar el documento', 'error'); return; }
+  const doc = await res.json();
+  currentDocumentId = docId;
+  renderDocument(doc);
+  document.querySelectorAll('.history-item').forEach(el =>
+    el.classList.toggle('active', parseInt(el.dataset.docId) === docId));
 }
 
 function renderDocument(doc) {
-  const pill = doc.pill || {};
+  const pill   = doc.pill   || {};
   const alerts = doc.alerts || [];
 
-  viewerEmpty.style.display = 'none';
+  viewerEmpty.style.display  = 'none';
   viewerContent.style.display = 'block';
-  viewerContent.innerHTML = '';
+  viewerContent.innerHTML     = '';
 
   /* Header */
   const header = document.createElement('div');
@@ -592,30 +379,29 @@ function renderDocument(doc) {
     <div class="pill-header__meta">
       <span class="pill-header__id">Doc #${doc.id}</span>
       <span class="pill-header__topic">Tema #${doc.topicId ?? '—'}</span>
-      <span class="pill-header__date">${formatDate(doc.generatedAt)}</span>
+      <span class="pill-header__date">${SeqUI.formatDate(doc.generatedAt)}</span>
     </div>
-    <h2 class="pill-header__title">${escHtml(pill.subtitle || doc.title || 'Sin título')}</h2>
+    <h2 class="pill-header__title">${SeqUI.escHtml(pill.subtitle || doc.title || 'Sin título')}</h2>
     <div class="pill-header__actions">
       <button class="btn btn--sm btn--primary" id="btn-dl-md">⬇ Markdown</button>
-      <button class="btn btn--sm btn--ghost" id="btn-dl-json">⬇ JSON</button>
-      <button class="btn btn--sm btn--ghost" id="btn-preview-md">👁 Preview</button>
+      <button class="btn btn--sm btn--ghost"   id="btn-dl-json">⬇ JSON</button>
+      <button class="btn btn--sm btn--ghost"   id="btn-preview-md">👁 Preview</button>
     </div>`;
   viewerContent.appendChild(header);
-  
-  header.querySelector('#btn-dl-md')?.addEventListener('click', () => downloadExport(doc.id, 'md'));
-  header.querySelector('#btn-dl-json')?.addEventListener('click', () => downloadExport(doc.id, 'json'));
+  header.querySelector('#btn-dl-md')?.addEventListener('click',      () => downloadExport(doc.id, 'md'));
+  header.querySelector('#btn-dl-json')?.addEventListener('click',    () => downloadExport(doc.id, 'json'));
   header.querySelector('#btn-preview-md')?.addEventListener('click', () => previewMarkdown(doc.id));
 
   /* Divider */
-  const div = document.createElement('div');
-  div.className = 'pill-divider';
-  viewerContent.appendChild(div);
+  const divEl = document.createElement('div');
+  divEl.className = 'pill-divider';
+  viewerContent.appendChild(divEl);
 
   /* Intro */
   if (pill.intro) {
     const el = document.createElement('div');
     el.className = 'pill-intro';
-    el.innerHTML = `<p>${escHtml(pill.intro)}</p>`;
+    el.innerHTML = `<p>${SeqUI.escHtml(pill.intro)}</p>`;
     viewerContent.appendChild(el);
   }
 
@@ -624,19 +410,17 @@ function renderDocument(doc) {
     const section = document.createElement('div');
     section.className = 'pill-tips';
     section.innerHTML = '<p class="pill-tips__heading">💡 Consejos Prácticos</p>';
-    
     pill.tips.forEach((tip, i) => {
-      const links = (tip.links || []).map(lk =>
-        `<a href="${escHtml(lk.url)}" target="_blank" rel="noopener noreferrer">${escHtml(lk.text)}</a>`
-      ).join(' · ');
-      
+      const links = (tip.links || [])
+        .map(lk => `<a href="${SeqUI.escHtml(lk.url)}" target="_blank" rel="noopener noreferrer">${SeqUI.escHtml(lk.text)}</a>`)
+        .join(' · ');
       const el = document.createElement('div');
       el.className = 'pill-tip';
       el.innerHTML = `
         <div class="pill-tip__num">${i + 1}</div>
         <div class="pill-tip__body">
-          <strong class="pill-tip__headline">${escHtml(tip.headline || '')}</strong>
-          <p>${escHtml(tip.body || '')}</p>
+          <strong class="pill-tip__headline">${SeqUI.escHtml(tip.headline || '')}</strong>
+          <p>${SeqUI.escHtml(tip.body || '')}</p>
           ${links ? `<div class="pill-tip__links">${links}</div>` : ''}
         </div>`;
       section.appendChild(el);
@@ -648,35 +432,32 @@ function renderDocument(doc) {
   if (pill.closing) {
     const el = document.createElement('div');
     el.className = 'pill-closing';
-    el.innerHTML = `<p>${escHtml(pill.closing)}</p>`;
+    el.innerHTML = `<p>${SeqUI.escHtml(pill.closing)}</p>`;
     viewerContent.appendChild(el);
   }
 
   /* Alerts */
-  if (alerts?.length) {
+  if (alerts.length) {
     const section = document.createElement('div');
     section.className = 'pill-alerts';
     section.innerHTML = '<p class="pill-alerts__heading">🔴 Alertas de Seguridad</p>';
-    
     const SEV_ICON = { crítica:'🔴', alta:'🟠', media:'🟡', baja:'🟢', informativa:'🔵' };
-    
     alerts.forEach(a => {
-      const icon = SEV_ICON[(a.severity||'').toLowerCase()] ?? '⚪';
+      const icon   = SEV_ICON[(a.severity || '').toLowerCase()] ?? '⚪';
       const brands = (a.affectedBrands || a.brands || []).join(', ');
-      
       const el = document.createElement('div');
-      el.className = `pill-alert pill-alert--${(a.severity||'info').toLowerCase()}`;
+      el.className = `pill-alert pill-alert--${(a.severity || 'info').toLowerCase()}`;
       el.innerHTML = `
         <div class="pill-alert__header">
           <span class="pill-alert__icon">${icon}</span>
-          <a class="pill-alert__title" href="${escHtml(a.url||'#')}" target="_blank" rel="noopener noreferrer">${escHtml(a.title||'Alerta')}</a>
-          ${a.severity ? `<span class="pill-alert__severity">${escHtml(a.severity.toUpperCase())}</span>` : ''}
+          <a class="pill-alert__title" href="${SeqUI.escHtml(a.url || '#')}" target="_blank" rel="noopener noreferrer">${SeqUI.escHtml(a.title || 'Alerta')}</a>
+          ${a.severity ? `<span class="pill-alert__severity">${SeqUI.escHtml(a.severity.toUpperCase())}</span>` : ''}
         </div>
-        ${a.description ? `<p class="pill-alert__desc">${escHtml(a.description)}</p>` : ''}
+        ${a.description ? `<p class="pill-alert__desc">${SeqUI.escHtml(a.description)}</p>` : ''}
         <div class="pill-alert__meta">
-          <span>${escHtml(a.sourceLabel||a.source||'')}</span>
-          ${a.published ? `<span>${escHtml(a.published)}</span>` : ''}
-          ${brands ? `<span>${escHtml(brands)}</span>` : ''}
+          <span>${SeqUI.escHtml(a.sourceLabel || a.source || '')}</span>
+          ${a.published ? `<span>${SeqUI.escHtml(a.published)}</span>` : ''}
+          ${brands       ? `<span>${SeqUI.escHtml(brands)}</span>`     : ''}
         </div>`;
       section.appendChild(el);
     });
@@ -690,48 +471,32 @@ function renderDocument(doc) {
 async function downloadExport(docId, format = 'md') {
   try {
     const res = await apiFetch(`/aegis/export/${docId}/download?format=${format}&inline=false`);
-    if (!res || !res.ok) throw new Error(`HTTP ${res?.status ?? '?'}`);
-    
+    if (!res?.ok) throw new Error(`HTTP ${res?.status ?? '?'}`);
     const blob = await res.blob();
-    const cd = res.headers.get('Content-Disposition') || '';
-    const match = cd.match(/filename="?([^";\n]+)"?/i);
-    const filename = match ? match[1] : `aegis_doc_${docId}.${format}`;
-    
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
-    
-    toast(`Descargando ${format.toUpperCase()}…`, 'info');
+    const cd   = res.headers.get('Content-Disposition') || '';
+    const name = cd.match(/filename="?([^";\n]+)"?/i)?.[1] ?? `aegis_doc_${docId}.${format}`;
+    _triggerDownload(blob, name);
+    SeqToast.show(`Descargando ${format.toUpperCase()}…`, 'info');
   } catch (e) {
-    toast(`Error al descargar: ${e.message}`, 'error');
+    SeqToast.show(`Error al descargar: ${e.message}`, 'error');
   }
 }
 
 async function previewMarkdown(docId) {
   try {
     const res = await apiFetch(`/aegis/export/md/${docId}?inline=true`);
-    if (!res || !res.ok) throw new Error(`HTTP ${res?.status}`);
+    if (!res?.ok) throw new Error(`HTTP ${res?.status}`);
     const text = await res.text();
-    
-    const win = window.open('', '_blank');
-    if (!win) { 
-      toast('Permite ventanas emergentes para el preview', 'warn'); 
-      return; 
-    }
-    
+    const win  = window.open('', '_blank');
+    if (!win) { SeqToast.show('Permite ventanas emergentes para el preview', 'warn'); return; }
     win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
 <title>Preview Markdown</title>
 <style>body{font-family:monospace;max-width:820px;margin:2rem auto;padding:0 1rem;
-background:#080c14;color:#e2e8f0;line-height:1.7}
-pre{white-space:pre-wrap;word-break:break-word}</style>
-</head><body><pre>${escHtml(text)}</pre></body></html>`);
+background:#080c14;color:#e2e8f0;line-height:1.7}pre{white-space:pre-wrap;word-break:break-word}</style>
+</head><body><pre>${SeqUI.escHtml(text)}</pre></body></html>`);
     win.document.close();
   } catch (e) {
-    toast(`Error al previsualizar: ${e.message}`, 'error');
+    SeqToast.show(`Error al previsualizar: ${e.message}`, 'error');
   }
 }
 
@@ -746,42 +511,46 @@ function confirmDelete(docId) {
 async function deleteDocument(docId) {
   try {
     const res = await apiFetch(`/aegis/document?id=${docId}`, { method: 'DELETE' });
-    if (!res || !res.ok) {
+    if (!res?.ok) {
       const err = await res?.json().catch(() => ({}));
       throw new Error(err?.message || `HTTP ${res?.status}`);
     }
-    
-    toast(`Documento #${docId} eliminado`, 'info');
+    SeqToast.show(`Documento #${docId} eliminado`, 'info');
     allDocs = allDocs.filter(d => d.id !== docId);
     renderHistory();
-    
     if (currentDocumentId === docId) {
       viewerContent.style.display = 'none';
-      viewerContent.innerHTML = '';
-      viewerEmpty.style.display = 'flex';
+      viewerContent.innerHTML     = '';
+      viewerEmpty.style.display   = 'flex';
       currentDocumentId = null;
     }
   } catch (e) {
-    toast(`Error al eliminar: ${e.message}`, 'error');
+    SeqToast.show(`Error al eliminar: ${e.message}`, 'error');
   }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   UTIL LOCAL
+══════════════════════════════════════════════════════════════ */
+function _triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 
 /* ══════════════════════════════════════════════════════════════
    INIT
 ══════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', async () => {
-  // Inicializar UI básica
-  if (sessionUser) sessionUser.textContent = Session.username();
-  if (btnLogout) btnLogout.addEventListener('click', Session.logout);
+  if (!SeqUI.requireSession()) return;
+  SeqUI.initTopbar();
   if (btnGenerate) btnGenerate.disabled = true;
-  
   showProgress(false);
-  
-  // Cargar datos iniciales
+
   await Promise.all([loadTopics(), loadHistory()]);
-  
-  // Verificar si hay generación pendiente
   await checkPendingGeneration();
-  
+
   console.log('[Aegis] Initialized');
 });
