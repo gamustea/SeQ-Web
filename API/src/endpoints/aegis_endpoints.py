@@ -91,7 +91,6 @@ def _get_document_checked(manager, doc_id: int, user_id: int) -> dict:
     Lanza PermissionError si el estado no es 'done'.
     """
     doc = manager.get_document(doc_id)
-    _logger.debug(f"Documento recuperado para doc_id={doc_id}: {doc}")
     if not doc or doc.get("userId") != user_id:
         _logger.warning(f"Documento {doc_id} no encontrado o acceso denegado para user {get_current_username()} (userId={user_id})")
         raise ValueError(f"Documento {doc_id} no encontrado")

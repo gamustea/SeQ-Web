@@ -1,27 +1,36 @@
 import json
+import os
 from pathlib import Path
 from typing import Optional
 from enum import Enum
 
+from dotenv import load_dotenv
+
+# Carga el .env si existe (dev local sin Docker).
+# En Docker las variables ya están en el entorno, load_dotenv() las respeta.
+load_dotenv()
+
+
 class DirectoryType(Enum):
     """Enumeración de tipos de directorios disponibles"""
-    TEMP = "tempdir"
-    LOG = "logdir"
-    RESULT = "resultdir"
+    TEMP     = "tempdir"
+    LOG      = "logdir"
+    RESULT   = "resultdir"
     RESOURCE = "resourcedir"
 
 
 class ConfigReader:
     """
-    Lee SecConfig.json sin importar desde dónde se ejecute el proceso.
+    Fuente de configuración con prioridad: entorno > SecConfig.json
 
-    Estrategia de búsqueda (primera que exista gana):
-        1. Ruta explícita pasada al constructor (si existe en disco)
-        2. Relativa a la raíz del paquete: <repo>/API/src/config/SecConfig.json
-            (útil cuando se ejecuta desde la raíz del repositorio en Windows)
-        3. Relativa a este mismo fichero: subiendo hasta encontrar src/config/
-            (útil dentro del contenedor Docker donde WORKDIR=/app y el código
-            está en /app/src/…)
+    Orden de resolución:
+        1. Variables de entorno (inyectadas por Docker o cargadas desde .env).
+        2. Fallback al SecConfig.json (desarrollo local sin .env).
+
+    Estrategia de búsqueda del JSON (primera ruta que exista gana):
+        1. Ruta explícita pasada al constructor.
+        2. Relativa a la raíz del paquete: API/src/config/SecConfig.json.
+        3. Relativa a este fichero: subiendo hasta src/config/SecConfig.json.
     """
 
     _DEFAULT_RELATIVE = "API/src/config/SecConfig.json"
@@ -33,7 +42,6 @@ class ConfigReader:
 
     @staticmethod
     def _resolve(configs_file: str) -> Path:
-        # 1. Ruta tal cual (absoluta o relativa al CWD)
         explicit = Path(configs_file)
         if explicit.is_absolute() and explicit.exists():
             return explicit
@@ -41,42 +49,45 @@ class ConfigReader:
         if resolved.exists():
             return resolved
 
-        # 2. Relativo a este fichero: sube configread.py → misc/ → src/ → app_root
-        #    En el contenedor: /app/src/misc/configread.py → /app/src/config/SecConfig.json
-        #    En el repo:       API/src/misc/configread.py  → API/src/config/SecConfig.json
-        this_file = Path(__file__).resolve()           # …/src/misc/configread.py
-        src_dir   = this_file.parent.parent            # …/src/
+        this_file = Path(__file__).resolve()
+        src_dir   = this_file.parent.parent
         from_src  = src_dir / "config" / "SecConfig.json"
         if from_src.exists():
             return from_src
 
-        # 3. Fallback: devolver la ruta resuelta aunque no exista (lanzará error al leer)
         return resolved
 
-    # ── Lectura ───────────────────────────────────────────────────────────────
+    # ── Lectura del JSON (solo para fallback) ─────────────────────────────────
 
-    def read_configs(self) -> dict:
-        with open(self.configs_path, "r") as config_file:
-            configs = json.load(config_file)
-        return configs
+    def _read_configs(self) -> dict:
+        with open(self.configs_path, "r") as f:
+            return json.load(f)
 
-    # ── Getters de sección ────────────────────────────────────────────────────
+    # ── Getters ───────────────────────────────────────────────────────────────
 
-    def get_db_crendetials(self) -> tuple:
-        configs = self.read_configs()
-        username = configs["dbconfig"]["username"]
-        password = configs["dbconfig"]["password"]
-        host     = configs["dbconfig"]["host"]
-        database = configs["dbconfig"]["dbname"]
-        return (username, password, host, database)
+    def get_db_credentials(self) -> tuple:
+        """
+        Prioridad: variables de entorno → SecConfig.json
+        Variables esperadas: POSTGRES_USER, POSTGRES_PASSWORD,
+                            POSTGRES_HOST, POSTGRES_DB
+        """
+        user     = os.getenv("POSTGRES_USER")
+        password = os.getenv("POSTGRES_PASSWORD")
+        host     = os.getenv("POSTGRES_HOST", "postgres")
+        database = os.getenv("POSTGRES_DB")
+
+        if all([user, password, host, database]):
+            return (user, password, host, database)
+
+        raise ValueError("Faltan variables de entorno para la base de datos. "
+                        "Asegúrate de definir POSTGRES_USER, POSTGRES_PASSWORD, "
+                        "POSTGRES_HOST y POSTGRES_DB.")
 
     def get_directory_of(self, directory_type: DirectoryType) -> str:
         """
-        Devuelve la ruta del directorio especificado en la configuración.
-        Si la ruta guardada en el JSON es relativa, se interpreta como
-        relativa a la raíz del paquete (directorio padre de src/).
+        Los directorios no son secretos → siempre desde el JSON.
         """
-        configs    = self.read_configs()
+        configs    = self._read_configs()
         directories = configs["directories"]
 
         dir_key = directory_type.value
@@ -93,17 +104,52 @@ class ConfigReader:
         return str(path)
 
     def get_oauth_config(self) -> tuple[float, float, str, str]:
-        configs       = self.read_configs()
-        oauth_configs = configs.get("oauth", {})
-        return (
-            float(oauth_configs["access_token_expiry_minutes"]),
-            float(oauth_configs["refresh_token_expiry_days"]),
-            oauth_configs["jwt_secret_key"],
-            oauth_configs["jwt_algorithm"],
-        )
+        """
+        Prioridad: variables de entorno → SecConfig.json
+        Variables esperadas: JWT_SECRET_KEY, JWT_ALGORITHM,
+                            ACCESS_TOKEN_EXPIRY_MINUTES, REFRESH_TOKEN_EXPIRY_DAYS
+        """
+        secret    = os.getenv("JWT_SECRET_KEY")
+        algorithm = os.getenv("JWT_ALGORITHM")
+        access    = os.getenv("ACCESS_TOKEN_EXPIRY_MINUTES")
+        refresh   = os.getenv("REFRESH_TOKEN_EXPIRY_DAYS")
+
+        if all([secret, algorithm, access, refresh]):
+            return (float(access), float(refresh), secret, algorithm)
+
+        raise ValueError("Faltan variables de entorno para OAuth. "
+                        "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
+                        "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS.")
 
     def get_openvas_config(self) -> dict[str, str]:
-        return self.read_configs()["openvas"]
+        """ 
+        Prioridad: variables de entorno → SecConfig.json
+        Variables esperadas: OPENVAS_HOST, OPENVAS_PORT,
+                            OPENVAS_USERNAME, OPENVAS_PASSWORD
+        """
+        hostname = os.getenv("OPENVAS_HOST")
+        port     = os.getenv("OPENVAS_PORT")
+        user     = os.getenv("OPENVAS_USERNAME")
+        password = os.getenv("OPENVAS_PASSWORD")
+
+        if all([hostname, port, user, password]):
+            return {"hostname": hostname, "port": port,
+                    "username": user, "password": password}
+        
+        raise ValueError("Faltan variables de entorno para OpenVAS. "
+                        "Asegúrate de definir OPENVAS_HOST, OPENVAS_PORT, "
+                        "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
 
     def get_aegis_config(self) -> dict[str, str]:
-        return self.read_configs()["aegis"]
+        """
+        La config de Aegis (parámetros del modelo, rutas, etc.)
+        no son secretos → siempre desde el JSON.
+        Excepción: OLLAMA_HOST si se define en el entorno.
+        """
+        cfg = self._read_configs()["aegis"]
+
+        ollama_host = os.getenv("OLLAMA_HOST")
+        if ollama_host:
+            cfg["host"] = ollama_host
+
+        return cfg

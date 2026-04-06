@@ -22,7 +22,7 @@ _config = ConfigReader()
     ACCESS_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_EXPIRE_DAYS,
     JWT_SECRET_KEY,
-    JWT_ALGORITHM,
+    JWT_ALGORITHM
 ) = _config.get_oauth_config()
 
 
