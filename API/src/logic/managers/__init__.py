@@ -1,4 +1,4 @@
-from ._base import BaseManager, initialize_engine
+from ._base import BaseManager, initialize_engine, warmup_connection
 from .sentinel_managers import ScanManager, NmapScanManager, NiktoScanManager, OpenVASScanManager
 from .acheron_managers import VaultManager
 from .aegis_managers import AegisManager
