@@ -2,7 +2,9 @@ from .enviroment_utils import (
     DirectoryChecker,
     DirectoryType,
     ConfigReader,
-    SecOpsLogger
+    SecOpsLogger,
+    PlatformDetector,
+    PlatformType
 )
 from .inet_utils import (
     resolve_domain,
@@ -18,6 +20,8 @@ __all__ = [
     "DirectoryType",
     "ConfigReader",
     "SecOpsLogger",
+    "PlatformDetector",
+    "PlatformType",
     "resolve_domain",
 
     "reverse_dns_lookup",
