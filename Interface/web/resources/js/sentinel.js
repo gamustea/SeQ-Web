@@ -4,6 +4,14 @@
    ============================================================ */
 'use strict';
 
+const PAGE_SIZE = 10;
+
+const paginationState = {
+  nmap:   { page: 1, total: 0 },
+  nikto:  { page: 1, total: 0 },
+  openvas:{ page: 1, total: 0 }
+};
+
 /* ── Guardia + UI inicial ── */
 document.addEventListener('DOMContentLoaded', () => {
   if (!SeqUI.requireSession()) return;
@@ -13,14 +21,15 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /* ══════════════════════════════════════════════════════════════
-   TABS
-══════════════════════════════════════════════════════════════ */
+    TABS
+    ══════════════════════════════════════════════════════════════ */
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelector(`.tab.${name}`)?.classList.add('active');
   document.getElementById(`panel-${name}`)?.classList.add('active');
-  loadScans(name);
+  paginationState[name].page = 1;
+  loadScans(name, 1);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -48,10 +57,11 @@ async function loadStats() {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   TABLA DE RESULTADOS
-══════════════════════════════════════════════════════════════ */
-async function loadScans(type) {
+    TABLA DE RESULTADOS + PAGINACIÓN
+    ══════════════════════════════════════════════════════════════ */
+async function loadScans(type, page = 1) {
   const wrap = document.getElementById(`table-${type}`);
+  const pagWrap = document.getElementById(`pagination-${type}`);
   if (!wrap) return;
 
   wrap.innerHTML = `
@@ -66,7 +76,11 @@ async function loadScans(type) {
   if (!res?.ok) { wrap.innerHTML = '<div class="empty-state">Error al cargar los datos.</div>'; return; }
 
   const { results = [] } = await res.json();
+  paginationState[type].total = results.length;
+  paginationState[type].page = page;
+  
   renderTable(type, results, wrap);
+  renderPagination(type, pagWrap, results.length, page);
   loadStats();
 }
 
@@ -83,11 +97,15 @@ function renderTable(type, rows, wrap) {
     return;
   }
 
+  const page = paginationState[type].page;
+  const start = (page - 1) * PAGE_SIZE;
+  const paged = rows.slice(start, start + PAGE_SIZE);
+
   let html = '<table><thead><tr>';
 
   if (type === 'nmap') {
     html += '<th>ID</th><th>Target</th><th>Estado</th><th>Puertos abiertos</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
-    for (const r of rows) {
+    for (const r of paged) {
       html += `<tr>
         <td>#${r.id}</td><td>${r.target}</td>
         <td>${SeqUI.statusBadge(r.status)}</td>
@@ -98,7 +116,7 @@ function renderTable(type, rows, wrap) {
     }
   } else if (type === 'nikto') {
     html += '<th>ID</th><th>Target</th><th>Estado</th><th>Incidencias</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
-    for (const r of rows) {
+    for (const r of paged) {
       html += `<tr>
         <td>#${r.id}</td><td>${r.target}</td>
         <td>${SeqUI.statusBadge(r.status)}</td>
@@ -109,7 +127,7 @@ function renderTable(type, rows, wrap) {
     }
   } else {
     html += '<th>ID</th><th>Target</th><th>Estado</th><th>Vulns</th><th>Críticas</th><th>Altas</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
-    for (const r of rows) {
+    for (const r of paged) {
       const crit = r.criticalCount ?? 0;
       const high = r.highCount ?? 0;
       html += `<tr>
@@ -271,4 +289,40 @@ function _triggerDownload(blob, filename) {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+
+/* ══════════════════════════════════════════════════════════════
+    PAGINATION
+    ══════════════════════════════════════════════════════════════ */
+function renderPagination(type, container, total, currentPage) {
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+  const state = paginationState[type];
+  let html = '';
+
+  html += `<button class="pagination-btn" onclick="goToPage('${type}', ${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>‹</button>`;
+
+  const maxVisible = 5;
+  let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+  let end = Math.min(totalPages, start + maxVisible - 1);
+  if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
+
+  for (let i = start; i <= end; i++) {
+    html += `<button class="pagination-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage('${type}', ${i})">${i}</button>`;
+  }
+
+  html += `<button class="pagination-btn" onclick="goToPage('${type}', ${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>›</button>`;
+  html += `<span class="pagination-info">${currentPage}/${totalPages}</span>`;
+
+  container.innerHTML = html;
+}
+
+function goToPage(type, page) {
+  if (page < 1) return;
+  const total = paginationState[type].total;
+  const maxPage = Math.ceil(total / PAGE_SIZE);
+  if (page > maxPage) return;
+  paginationState[type].page = page;
+  loadScans(type, page);
 }
