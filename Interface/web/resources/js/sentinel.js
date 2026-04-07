@@ -5,6 +5,8 @@
 'use strict';
 
 const PAGE_SIZE = 10;
+const POLL_INTERVAL_MS = 10_000;
+const POLL_MAX_ATTEMPTS = 180;
 
 const paginationState = {
   nmap:   { page: 1, total: 0 },
@@ -12,13 +14,89 @@ const paginationState = {
   openvas:{ page: 1, total: 0 }
 };
 
+let pollTimer = null;
+let pollAttempts = 0;
+
 /* ── Guardia + UI inicial ── */
 document.addEventListener('DOMContentLoaded', () => {
   if (!SeqUI.requireSession()) return;
   SeqUI.initTopbar();
   loadStats();
   loadScans('nmap');
+  startPolling();
 });
+
+/* ══════════════════════════════════════════════════════════════
+    POLLING — Auto-refresh para escaneos en curso
+    ══════════════════════════════════════════════════════════════ */
+function startPolling() {
+  stopPolling();
+  pollAttempts = 0;
+  pollTimer = setInterval(async () => {
+    pollAttempts++;
+    if (pollAttempts >= POLL_MAX_ATTEMPTS) {
+      stopPolling();
+      SeqToast.show('Tiempo máximo de espera alcanzado (30 min)', 'warn');
+      return;
+    }
+    await checkAndRefreshScans();
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function checkAndRefreshScans() {
+  try {
+    const res = await apiFetch('/sentinel/results?type=all');
+    if (!res?.ok) return;
+    const data = await res.json();
+    const results = data.results || [];
+    
+    const hasRunningScans = results.some(r => 
+      r.status === 'running' || r.status === 'pending'
+    );
+    
+    if (hasRunningScans) {
+      const activeTab = document.querySelector('.tab.active')?.dataset?.panel;
+      if (activeTab) {
+        const page = paginationState[activeTab]?.page || 1;
+        await loadScans(activeTab, page, false);
+      }
+      loadStats();
+      pollAttempts = 0;
+    } else {
+      stopPolling();
+    }
+  } catch (e) {
+    console.error('[Sentinel] Polling error:', e);
+  }
+}
+
+function refreshCurrentTab() {
+  const activeTab = document.querySelector('.tab.active')?.dataset?.panel;
+  if (activeTab) {
+    const page = paginationState[activeTab]?.page || 1;
+    loadScans(activeTab, page, true);
+  }
+  loadStats();
+}
+
+function refreshWithFeedback(btn) {
+  const originalContent = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;animation:seq-spin 0.6s linear infinite">
+    <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+  </svg> Actualizando...`;
+  
+  refreshCurrentTab();
+  
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.innerHTML = originalContent;
+  }, 800);
+}
 
 /* ══════════════════════════════════════════════════════════════
     TABS
@@ -30,6 +108,7 @@ function switchTab(name) {
   document.getElementById(`panel-${name}`)?.classList.add('active');
   paginationState[name].page = 1;
   loadScans(name, 1);
+  checkAndRefreshScans();
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -59,18 +138,20 @@ async function loadStats() {
 /* ══════════════════════════════════════════════════════════════
     TABLA DE RESULTADOS + PAGINACIÓN
     ══════════════════════════════════════════════════════════════ */
-async function loadScans(type, page = 1) {
+async function loadScans(type, page = 1, showLoading = true) {
   const wrap = document.getElementById(`table-${type}`);
   const pagWrap = document.getElementById(`pagination-${type}`);
   if (!wrap) return;
 
-  wrap.innerHTML = `
-    <div class="empty-state">
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
-      </svg>
-      <span>Cargando…</span>
-    </div>`;
+  if (showLoading) {
+    wrap.innerHTML = `
+      <div class="empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+        </svg>
+        <span>Cargando…</span>
+      </div>`;
+  }
 
   const res = await apiFetch(`/sentinel/results?type=${type}`);
   if (!res?.ok) { wrap.innerHTML = '<div class="empty-state">Error al cargar los datos.</div>'; return; }
@@ -207,7 +288,8 @@ async function launchNmap() {
     const data = await res.json();
     if (!res.ok) { showPanelAlert('nmap', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
     showPanelAlert('nmap', `Escaneo Nmap iniciado (ID: ${(data.scanIds || []).join(', ')}) — timeout: ${timeout}s`, 'success');
-    setTimeout(() => loadScans('nmap'), 1200);
+    refreshCurrentTab();
+    startPolling();
   } catch { showPanelAlert('nmap', 'No se pudo conectar con la API.'); }
   finally   { setLaunching('btn-nmap', false); }
 }
@@ -223,7 +305,8 @@ async function launchNikto() {
     const data = await res.json();
     if (!res.ok) { showPanelAlert('nikto', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
     showPanelAlert('nikto', `Escaneo Nikto iniciado (ID: ${data.scanId})`, 'success');
-    setTimeout(() => loadScans('nikto'), 1200);
+    refreshCurrentTab();
+    startPolling();
   } catch { showPanelAlert('nikto', 'No se pudo conectar con la API.'); }
   finally   { setLaunching('btn-nikto', false); }
 }
@@ -239,7 +322,8 @@ async function launchOpenvas() {
     const data = await res.json();
     if (!res.ok) { showPanelAlert('openvas', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
     showPanelAlert('openvas', `Escaneo OpenVAS iniciado (ID: ${data.scanId}). Puede tardar varios minutos.`, 'info');
-    setTimeout(() => loadScans('openvas'), 1200);
+    refreshCurrentTab();
+    startPolling();
   } catch { showPanelAlert('openvas', 'No se pudo conectar con la API.'); }
   finally   { setLaunching('btn-openvas', false); }
 }

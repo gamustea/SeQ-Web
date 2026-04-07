@@ -416,10 +416,10 @@ class OpenVASScanManager(ScanManager):
         self.username = config["username"]  # type: ignore
         self.password = config["password"]  # type: ignore
 
-    def run_scan(self, target: str, scan_config: str = 'full_fast') -> int:
+    def run_scan(self, target: str, scan_config: str = 'full_fast', skip_normalize: bool = False) -> int:
         """Inicia un escaneo OpenVAS"""
         try:
-            target_ip, _ = normalize_target(target)
+            target_ip = target if skip_normalize else normalize_target(target)[0]
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
 
             scan = self._create_scan_record(target=target_ip)

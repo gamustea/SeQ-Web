@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import os
 import time
+import ipaddress
 from datetime import datetime
 from typing import Optional
 
@@ -233,7 +234,6 @@ def start_nmap_scan():
             )
             scan_ids.append(scan_id)
             _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={get_current_username()}")
-            time.sleep(0.10)
 
         return jsonify({
             "message":    "Escaneo(s) Nmap iniciado(s) correctamente",
@@ -320,9 +320,16 @@ def start_openvas_scan():
 
         uid = get_current_user_id()
         _, _, openvas_manager = get_user_managers(uid)
-        scan_id = openvas_manager.run_scan(hosts[0], scan_config=scan_config)
-        _logger.info(f"OpenVAS lanzado: ID={scan_id} target={hosts[0]} config={scan_config} user={get_current_username()}")
-        return jsonify({"message": "Escaneo OpenVAS iniciado correctamente", "scanId": scan_id, "target": hosts[0], "scanConfig": scan_config, "user": get_current_username(), "note": "Use /sentinel/scan-status para verificar el progreso."}), 201
+        
+        target_ip = hosts[0]
+        try:
+            ipaddress.ip_address(target_ip)
+        except ValueError:
+            _, target_ip = normalize_target(target_ip)
+        
+        scan_id = openvas_manager.run_scan(target_ip, scan_config=scan_config, skip_normalize=True)
+        _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={get_current_username()}")
+        return jsonify({"message": "Escaneo OpenVAS iniciado correctamente", "scanId": scan_id, "target": target_ip, "scanConfig": scan_config, "user": get_current_username(), "note": "Use /sentinel/scan-status para verificar el progreso."}), 201
 
     except (ValidationError, ScanExecutionError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
@@ -338,11 +345,16 @@ def start_openvas_scan():
 @require_oauth_token
 @limiter.limit("300 per hour; 2000 per day")
 def retrieve_all_scans():
-    """Lista todos los escaneos del usuario. Filtrable por ?type=nmap|nikto|openvas|all."""
+    """Lista todos los escaneos del usuario. Filtrable por ?type=nmap|nikto|openvas|all. Soporta paginación con ?page=1&per_page=20."""
     try:
         scan_type = request.args.get("type", "all").lower()
         if scan_type not in VALID_SCAN_TYPES:
             raise ValidationError(field="type", message="Tipo de escaneo inválido", value=scan_type, expected="nmap, nikto, openvas o all")
+
+        page = request.args.get("page", 1, type=int)
+        per_page = request.args.get("per_page", 50, type=int)
+        page = max(1, page)
+        per_page = min(max(1, per_page), 100)
 
         uid = get_current_user_id()
         nmap_mgr, nikto_mgr, openvas_mgr = get_user_managers(uid)
@@ -366,7 +378,22 @@ def retrieve_all_scans():
             except Exception as exc:
                 _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
 
-        return jsonify({"message": "Escaneos obtenidos correctamente", "filter": scan_type, "count": len(all_results), "results": all_results, "user": get_current_username()}), 200
+        total_results = len(all_results)
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated_results = all_results[start:end]
+
+        return jsonify({
+            "message": "Escaneos obtenidos correctamente",
+            "filter": scan_type,
+            "count": len(paginated_results),
+            "total": total_results,
+            "page": page,
+            "perPage": per_page,
+            "totalPages": (total_results + per_page - 1) // per_page,
+            "results": paginated_results,
+            "user": get_current_username()
+        }), 200
 
     except ValidationError as exc:
         err, code = create_error_response(exc, include_debug_info=False)

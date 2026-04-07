@@ -313,10 +313,12 @@ class PortValidator:
 
 
 class IPValidator:
+    MAX_HOSTS_TO_EXPAND = 256
+
     @staticmethod
     def validate(ips_str: str) -> tuple[bool, List[str], str]:
         """
-        Valida que una cadena de IPs sea vÃ¡lida para Nmap y devuelve la lista expandida.
+        Valida que una cadena de IPs sea válida para Nmap y devuelve la lista expandida.
 
         Formatos soportados:
         - IP individual: "192.168.1.1"
@@ -326,43 +328,49 @@ class IPValidator:
         - Wildcards: "192.168.1.*" (equivalente a 192.168.1.0-255)
 
         Args:
-            ips_str (str): String con especificaciÃ³n de IPs
+            ips_str (str): String con especificación de IPs
 
         Returns:
-            tuple: (bool, list, str) - (es_vÃ¡lido, lista_ips, mensaje)
+            tuple: (bool, list, str) - (es_válido, lista_ips, mensaje)
         """
 
         if not ips_str or not isinstance(ips_str, str):
-            return False, [], "El parÃ¡metro debe ser una cadena no vacÃ­a"
+            return False, [], "El parámetro debe ser una cadena no vacía"
 
         ips_str = ips_str.strip()
 
         if not ips_str:
-            return False, [], "La cadena de IPs estÃ¡ vacÃ­a"
+            return False, [], "La cadena de IPs está vacía"
 
         segmentos = [s.strip() for s in ips_str.split(",")]
         lista_ips = []
         for segmento in segmentos:
             if not segmento:
-                return False, [], "Segmento vacÃ­o encontrado"
+                return False, [], "Segmento vacío encontrado"
 
             if "/" in segmento:
                 try:
                     red = ipaddress.ip_network(segmento, strict=False)
-                    # Expandir la red a todas las IPs
-                    lista_ips.extend([str(ip) for ip in red.hosts()])
-                    # Si es /32 o /31, hosts() puede estar vacÃ­o, incluir la IP de red
-                    if not lista_ips or red.prefixlen >= 31:
-                        lista_ips.extend([str(ip) for ip in red])
+                    num_hosts = red.num_addresses - 2 if red.num_addresses > 2 else red.num_addresses
+                    
+                    if num_hosts > IPValidator.MAX_HOSTS_TO_EXPAND:
+                        lista_ips.append(segmento)
+                    else:
+                        lista_ips.extend([str(ip) for ip in red.hosts()])
+                        if not lista_ips or red.prefixlen >= 31:
+                            lista_ips.extend([str(ip) for ip in red])
                 except ValueError as e:
-                    return False, [], f"NotaciÃ³n CIDR invÃ¡lida '{segmento}': {str(e)}"
+                    return False, [], f"Notación CIDR inválida '{segmento}': {str(e)}"
 
             elif "-" in segmento:
                 try:
                     ips_expandidas = _expand_octal(segmento)
                     if ips_expandidas is None:
-                        return False, [], f"Formato de rango invÃ¡lido: '{segmento}'"
-                    lista_ips.extend(ips_expandidas)
+                        return False, [], f"Formato de rango inválido: '{segmento}'"
+                    if len(ips_expandidas) > IPValidator.MAX_HOSTS_TO_EXPAND:
+                        lista_ips.append(segmento)
+                    else:
+                        lista_ips.extend(ips_expandidas)
                 except Exception as e:
                     return False, [], f"Error al procesar rango '{segmento}': {str(e)}"
 
@@ -371,16 +379,15 @@ class IPValidator:
                     ip = ipaddress.ip_address(segmento)
                     lista_ips.append(str(ip))
                 except ValueError:
-                    return False, [], f"DirecciÃ³n IP invÃ¡lida: '{segmento}'"
+                    return False, [], f"Dirección IP inválida: '{segmento}'"
 
         if not lista_ips:
-            return False, [], "No se generaron IPs vÃ¡lidas"
+            return False, [], "No se generaron IPs válidas"
 
-        # Eliminar duplicados manteniendo el orden
         lista_ips_unicas = list(dict.fromkeys(lista_ips))
 
         return (
             True,
             lista_ips_unicas,
-            f"EspecificaciÃ³n vÃ¡lida con {len(lista_ips_unicas)} IPs",
+            f"Especificación válida con {len(lista_ips_unicas)} IPs",
         )
