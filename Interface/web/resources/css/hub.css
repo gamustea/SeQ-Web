@@ -1,37 +1,17 @@
-/* =====================================================
-   resources/css/hub.css — SeQ Hub
-   ===================================================== */
+/* ============================================================
+   hub.css — Estilos para la página hub de módulos
+   Requiere: shared.css cargado previamente.
+   ============================================================ */
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --bg:           #080c14;
-  --surface:      #0e1520;
-  --surface-2:    #151e2e;
-  --border:       rgba(99,179,237,0.12);
-  --text:         #e2e8f0;
-  --text-muted:   #64748b;
-
-  --aegis:        #38bdf8;
-  --aegis-dim:    rgba(56,189,248,0.08);
-  --acheron:      #818cf8;
-  --acheron-dim:  rgba(129,140,248,0.08);
-  --sentinel:     #34d399;
-  --sentinel-dim: rgba(52,211,153,0.08);
-
-  --wip:   #f59e0b;
-  --later: #94a3b8;
-  --radius: 16px;
+body {
+  background-image:
+    radial-gradient(ellipse at 20% 30%, rgba(56,189,248,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 70%, rgba(129,140,248,0.05) 0%, transparent 60%);
 }
 
-html, body {
-  min-height: 100vh;
-  background: var(--bg);
-  color: var(--text);
-  font-family: Inter, system-ui, sans-serif;
-  overflow-x: hidden;
-}
-
+/* ══════════════════════════════════════════════════════════════
+   STARFIELD
+   ══════════════════════════════════════════════════════════════ */
 .stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
 .star {
   position: absolute;
@@ -42,19 +22,25 @@ html, body {
 }
 @keyframes twinkle { 0%,100%{opacity:0} 50%{opacity:0.6} }
 
+/* ══════════════════════════════════════════════════════════════
+   HEADER
+   ══════════════════════════════════════════════════════════════ */
 .hub-header {
   position: relative; z-index: 1;
   text-align: center;
   padding: 64px 24px 32px;
 }
+
 .hub-logo {
   font-size: clamp(2.5rem, 6vw, 4rem);
   font-weight: 800;
   letter-spacing: 0.05em;
   line-height: 1;
 }
-.logo-bracket { color: var(--aegis); }
+
+.logo-bracket { color: var(--accent); }
 .logo-text    { color: var(--text); }
+
 .hub-subtitle {
   margin-top: 10px;
   font-size: 0.95rem;
@@ -63,6 +49,9 @@ html, body {
   letter-spacing: 0.18em;
 }
 
+/* ══════════════════════════════════════════════════════════════
+   GRID DE MÓDULOS
+   ══════════════════════════════════════════════════════════════ */
 .hub-grid {
   position: relative; z-index: 1;
   display: grid;
@@ -89,36 +78,43 @@ html, body {
   transform: translateY(-4px);
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
 }
-.module-aegis:not(.module-disabled):hover {
-  border-color: var(--aegis);
-  box-shadow: 0 20px 60px rgba(56,189,248,0.15);
-}
-.module-acheron:not(.module-disabled):hover {
-  border-color: var(--acheron);
-}
-.module-sentinel:not(.module-disabled):hover {
-  border-color: var(--sentinel);
-  box-shadow: 0 20px 60px rgba(52,211,153,0.15);
-}
 
+/* Glow por módulo */
 .card-glow {
   position: absolute; top: -60px; right: -60px;
   width: 200px; height: 200px; border-radius: 50%;
   filter: blur(60px); opacity: 0.35; pointer-events: none;
 }
-.module-aegis   .card-glow { background: var(--aegis); }
-.module-acheron .card-glow { background: var(--acheron); }
-.module-sentinel .card-glow { background: var(--sentinel); }
+.module-aegis   .card-glow { background: var(--accent); }
+.module-acheron .card-glow { background: #818cf8; }
+.module-sentinel .card-glow { background: var(--success); }
 
+/* Hover states */
+.module-sentinel:not(.module-disabled):hover {
+  border-color: var(--success);
+  box-shadow: 0 20px 60px rgba(52,211,153,0.15);
+}
+.module-aegis:not(.module-disabled):hover {
+  border-color: var(--accent);
+  box-shadow: 0 20px 60px rgba(56,189,248,0.15);
+}
+.module-acheron:not(.module-disabled):hover {
+  border-color: #818cf8;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CARD CONTENT
+   ══════════════════════════════════════════════════════════════ */
 .card-icon {
   width: 52px; height: 52px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
 .card-icon svg { width: 28px; height: 28px; }
-.module-aegis    .card-icon { background: var(--aegis-dim);    color: var(--aegis);    }
-.module-acheron  .card-icon { background: var(--acheron-dim);  color: var(--acheron);  }
-.module-sentinel .card-icon { background: var(--sentinel-dim); color: var(--sentinel); }
+
+.module-sentinel .card-icon { background: var(--success-dim); color: var(--success); }
+.module-aegis   .card-icon { background: var(--accent-dim);   color: var(--accent);   }
+.module-acheron .card-icon { background: rgba(129,140,248,0.15); color: #818cf8; }
 
 .card-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 6px; }
 .card-desc  { font-size: 0.875rem; color: var(--text-muted); line-height: 1.6; }
@@ -129,20 +125,23 @@ html, body {
   font-size: 0.72rem; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase;
 }
-.card-badge--active { background: rgba(52,211,153,0.15); color: var(--sentinel); }
-.card-badge--wip    { background: rgba(245,158,11,0.15);  color: var(--wip);      }
-.card-badge--later  { background: rgba(148,163,184,0.12); color: var(--later);    }
+.card-badge--active { background: rgba(52,211,153,0.15); color: var(--success); }
+.card-badge--wip    { background: rgba(245,158,11,0.15);  color: var(--warn);      }
+.card-badge--later  { background: rgba(148,163,184,0.12); color: var(--text-muted);    }
 
 .card-arrow {
   position: absolute; bottom: 28px; right: 28px;
   opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
 }
-.card-arrow svg { width: 20px; height: 20px; color: var(--sentinel); }
-.module-aegis .card-arrow svg { color: var(--aegis); }
+.card-arrow svg { width: 20px; height: 20px; color: var(--success); }
+.module-aegis .card-arrow svg { color: var(--accent); }
 .module-card:not(.module-disabled):hover .card-arrow {
   opacity: 1; transform: translateX(4px);
 }
 
+/* ══════════════════════════════════════════════════════════════
+   DISABLED / WIP
+   ══════════════════════════════════════════════════════════════ */
 .module-disabled { cursor: default; pointer-events: none; }
 .module-disabled .card-glow { opacity: 0.15; }
 .module-disabled .card-icon,
@@ -159,10 +158,13 @@ html, body {
   opacity: 0; transition: opacity 0.25s ease;
   border-radius: var(--radius); pointer-events: none;
 }
-.module-acheron .wip-overlay { color: var(--later); }
+.module-acheron .wip-overlay { color: var(--text-muted); }
 .module-disabled { pointer-events: auto !important; }
 .module-disabled:hover .wip-overlay { opacity: 1; }
 
+/* ══════════════════════════════════════════════════════════════
+   FOOTER
+   ══════════════════════════════════════════════════════════════ */
 .hub-footer {
   position: relative; z-index: 1;
   text-align: center; padding: 24px;
@@ -170,6 +172,9 @@ html, body {
   border-top: 1px solid var(--border);
 }
 
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ══════════════════════════════════════════════════════════════ */
 @media (max-width: 600px) {
   .hub-grid { padding: 16px 16px 48px; gap: 16px; }
   .module-card { padding: 24px; }
