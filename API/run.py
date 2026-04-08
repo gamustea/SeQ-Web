@@ -22,6 +22,7 @@ import time
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from sqlalchemy import text  
 
 from src.endpoints import register_blueprints
 from src.endpoints._shared import limiter
@@ -41,7 +42,6 @@ _UI_DIR = os.path.abspath(
 def _graceful_shutdown(signum, frame) -> None:
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
-
     try:
         from src.logic.managers import ScanManager
         _logger.info(
@@ -54,6 +54,7 @@ def _graceful_shutdown(signum, frame) -> None:
 
     _logger.info("[Shutdown] Proceso terminado.")
     sys.exit(0)
+
 
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT,  _graceful_shutdown)
@@ -70,15 +71,15 @@ def create_app() -> Flask:
     _configure_rate_limiting(app)
 
     _logger.info("Añadiendo endpoints...")
-    register_blueprints(app)   # /oauth/*, /sentinel/*, etc. — primero
-    _register_ui_route(app)    # comodín /* — siempre el último
+    register_blueprints(app)
+    _register_ui_route(app)
 
     _logger.info("Registrando manejadores de error globales...")
     _register_error_handlers(app)
 
     _logger.info("Inicializando base de datos...")
-    initialize_engine()
-    _warmup_db() 
+    engine = initialize_engine()
+    warmup_connection()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
@@ -168,22 +169,7 @@ def _register_error_handlers(app: Flask) -> None:
         }), 500
 
 
-def _warmup_db() -> None:
-    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-        return
-    try:
-        t0 = time.perf_counter()
-        warmup_connection()
-        _logger.info(f"Conexión BD precalentada en {time.perf_counter()-t0:.3f}s")
-    except Exception as e:
-        _logger.warning(f"Warmup de BD falló (la app arrancará igualmente): {e}")
-
-
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(
-        debug=False, 
-        host="0.0.0.0",
-        port=5000
-    )
+    app.run(debug=False, host='0.0.0.0', port=5000)
