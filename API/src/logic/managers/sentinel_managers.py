@@ -421,8 +421,7 @@ class OpenVASScanManager(ScanManager):
         try:
             target_ip, _ = normalize_target(target)
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
-
-            scan = self._create_scan_record(target=target_ip)
+            scan = self._create_scan_record(target=target)
             scan_id = scan.id
 
             task = OpenVASTask(
@@ -431,12 +430,12 @@ class OpenVASScanManager(ScanManager):
                 port=self.port,
                 username=self.username,
                 password=self.password,
-                scan_config=config_id  # ✅ ahora sí pasa el UUID
+                scan_config=config_id
             )
 
             thread = threading.Thread(
                 target=self._execute_scan_in_thread,
-                args=(scan_id, task),
+                args=(scan_id, task, skip_normalize),
                 daemon=True,
                 name=f"OpenVASScan-{scan_id}"
             )
@@ -500,7 +499,12 @@ class OpenVASScanManager(ScanManager):
             self.logger.error(f"Error obteniendo escaneos OpenVAS: {e}", exc_info=True)
             raise
 
-    def _execute_scan_in_thread(self, scan_id: int, task: OpenVASTask) -> None:
+    def _execute_scan_in_thread(
+        self, 
+        scan_id: int, 
+        task: OpenVASTask, 
+        skip_normalize: bool = False
+    ) -> None:
         """
         Override para OpenVAS: necesita actualizar task_id y report_id
         después de que la tarea se ejecute.
@@ -508,6 +512,9 @@ class OpenVASScanManager(ScanManager):
         thread_manager = self.__class__(self.active_user)
 
         try:
+            if not skip_normalize:
+                target_ip, _ = normalize_target(task.target)
+                task.target = target_ip
             scan = thread_manager.get_scan_by_id(scan_id)
             if not scan:
                 thread_manager.logger.error(f"Escaneo {scan_id} no encontrado")
@@ -544,7 +551,7 @@ class OpenVASScanManager(ScanManager):
             try:
                 error_scan = thread_manager.get_scan_by_id(scan_id)
                 if error_scan:
-                    thread_manager._mark_scan_as_failed(error_scan)
+                    thread_manager._mark_scan_as(error_scan, ScanStatus.FAILED)
             except Exception as update_err:
                 thread_manager.logger.error(f"Error actualizando estado: {update_err}")
 

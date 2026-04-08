@@ -320,9 +320,16 @@ def start_openvas_scan():
 
         uid = get_current_user_id()
         _, _, openvas_manager = get_user_managers(uid)
-        scan_id = openvas_manager.run_scan(hosts[0], scan_config=scan_config)
-        _logger.info(f"OpenVAS lanzado: ID={scan_id} target={hosts[0]} config={scan_config} user={get_current_username()}")
-        return jsonify({"message": "Escaneo OpenVAS iniciado correctamente", "scanId": scan_id, "target": hosts[0], "scanConfig": scan_config, "user": get_current_username(), "note": "Use /sentinel/scan-status para verificar el progreso."}), 201
+        
+        target_ip = hosts[0]
+        try:
+            ipaddress.ip_address(target_ip)
+        except ValueError:
+            target_ip, _ = normalize_target(target_ip)
+        
+        scan_id = openvas_manager.run_scan(target_ip, scan_config=scan_config, skip_normalize=True)
+        _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={get_current_username()}")
+        return jsonify({"message": "Escaneo OpenVAS iniciado correctamente", "scanId": scan_id, "target": target_ip, "scanConfig": scan_config, "user": get_current_username(), "note": "Use /sentinel/scan-status para verificar el progreso."}), 201
 
     except (ValidationError, ScanExecutionError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)

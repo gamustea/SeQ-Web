@@ -629,15 +629,6 @@ class OpenVASTask(_Task):
     
     def _execute_openvas_scan(self) -> None:
         try:
-            with self._create_gmp_connection() as gmp:
-                gmp.authenticate(self.username, self.password)
-                configs = gmp.get_scan_configs()
-                for cfg in configs.xpath('config'):
-                    self.logger.info(f"[CONFIG] id={cfg.get('id')} | name={cfg.find('name').text}")
-                scanners = gmp.get_scanners()
-                for sc in scanners.xpath('scanner'):
-                    self.logger.info(f"[SCANNER] id={sc.get('id')} | name={sc.find('name').text}")
-
             # Fase 1: setup (conexión corta)
             with self._create_gmp_connection() as gmp:
                 gmp.authenticate(self.username, self.password)
@@ -737,6 +728,13 @@ class OpenVASTask(_Task):
             self.task_id = task_el.get('id') if task_el is not None else None
 
         if not self.task_id:
+            try:
+                from lxml import etree
+                self.logger.error(
+                    f"[DEBUG] create_task response: {etree.tostring(task_response, encoding='unicode')}"
+                )
+            except Exception:
+                self.logger.error(f"[DEBUG] create_task response attrib: {dict(task_response.attrib)}")
             raise RuntimeError("No se pudo obtener el task_id de la respuesta de create_task")
 
         self.logger.info(f"Tarea creada: {self.task_id}")
