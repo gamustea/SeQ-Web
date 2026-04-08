@@ -45,7 +45,9 @@ def initialize_engine(database_url: Optional[str] = None):
             )
         )
 
-def warmup_connection() -> None:
+    return _ENGINE
+
+def warmup_connection(engine=None) -> None:
     """Abre y cierra una conexión real para precalentar el pool."""
     global _SESSION_FACTORY
     if _SESSION_FACTORY is None:

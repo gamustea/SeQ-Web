@@ -40,7 +40,7 @@ class ScanResultProcessor(ABC):
         - mac_address se establece a cadena vacía si no está disponible, evitando
             NotNullViolation ya que la columna es NOT NULL en el modelo.
         """
-        ip, hostname = normalize_target(target)
+        ip, hostname = normalize_target(target, resolve_hostname=True)
         self.logger.debug(f"Normalizando target '{target}' -> hostname: '{hostname}', ip: '{ip}'")
 
         # Fallbacks para evitar NOT NULL violations
