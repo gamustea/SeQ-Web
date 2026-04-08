@@ -11,6 +11,9 @@ from src.core.model import Port
 from typing import Optional, Tuple, List
 
 
+_DNS_TIMEOUT = 3.0
+
+
 def resolve_domain(domain: str) -> list[str]:
     """Resolve a domain name to its IP addresses."""
     try:
@@ -48,21 +51,43 @@ def reverse_dns_lookup(ip_address: str) -> Optional[str]:
         print(f"Error: {e}")
         return None
 
-def normalize_target(user_input: str) -> Tuple[Optional[str], Optional[str]]:
+def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optional[str]:
+    """
+    Wrapper de socket.gethostbyaddr con timeout explícito.
+    Devuelve el hostname o None si falla o supera el tiempo límite.
+    """
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(socket.gethostbyaddr, ip)
+        try:
+            return future.result(timeout=timeout)[0]
+        except FuturesTimeout:
+            return None
+        except (socket.herror, socket.gaierror):
+            return None
+
+def normalize_target(
+    user_input: str,
+    resolve_hostname: bool = False,
+    dns_timeout: float = _DNS_TIMEOUT,
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Normaliza el target del usuario a IP + hostname.
     Acepta IPs, dominios o URLs completas (http://, https://).
-    
+
     Args:
-        user_input: Puede ser IP (8.8.8.8), dominio (google.com) 
-                   o URL completa (https://google.com/path)
-    
+        user_input:        IP, dominio o URL completa.
+        resolve_hostname:  Si es True y el input es una IP, intenta resolver
+                           el hostname vía reverse DNS (con timeout acotado).
+                           Si es False, el hostname se omite (se devuelve la IP
+                           también en esa posición). Por defecto False.
+        dns_timeout:       Segundos máximos para la resolución DNS inversa.
+
     Returns:
-        (ip, hostname): Tupla con IP y hostname. Si no se puede resolver, lanza excepción.
+        (ip, hostname): hostname == ip cuando no se resuelve o resolve_hostname=False.
     """
-    
     cleaned_input = user_input.strip()
-    
+
+    # Extraer host de una URL completa
     if "://" in cleaned_input:
         parsed = urlparse(cleaned_input)
         if not parsed.netloc and parsed.path:
@@ -71,27 +96,27 @@ def normalize_target(user_input: str) -> Tuple[Optional[str], Optional[str]]:
             cleaned_input = parsed.netloc.split(':')[0]
     else:
         cleaned_input = cleaned_input.split(':')[0].split('/')[0]
-    
+
     ip: Optional[str] = None
     hostname: Optional[str] = None
-    
+
     try:
         ip_obj = ipaddress.ip_address(cleaned_input)
         ip = str(ip_obj)
-        
-        try:
-            hostname = socket.gethostbyaddr(ip)[0]
-        except (socket.herror, socket.gaierror):
-            hostname = ip
-            
+
+        if resolve_hostname:
+            # Reverse lookup acotado en tiempo; fallback a la propia IP
+            hostname = _gethostbyaddr_with_timeout(ip, dns_timeout) or ip
+        else:
+            hostname = ip   # No se necesita hostname: evitar la llamada bloqueante
+
     except ValueError:
         hostname = cleaned_input
-
         try:
-            ip = socket.gethostbyname(hostname)
+            ip = socket.gethostbyname(hostname)  # Forward lookup: rápido y necesario
         except socket.gaierror as e:
             raise ValueError(f"No se pudo resolver '{user_input}': {e}")
-    
+
     return ip, hostname
 
 def _expand_octal(rango_str):

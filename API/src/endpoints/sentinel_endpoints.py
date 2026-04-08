@@ -325,7 +325,7 @@ def start_openvas_scan():
         try:
             ipaddress.ip_address(target_ip)
         except ValueError:
-            _, target_ip = normalize_target(target_ip)
+            target_ip, _ = normalize_target(target_ip)
         
         scan_id = openvas_manager.run_scan(target_ip, scan_config=scan_config, skip_normalize=True)
         _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={get_current_username()}")
