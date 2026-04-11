@@ -112,6 +112,16 @@ class ReportTheme:
             fontName="Helvetica-Bold",
         )
 
+        # Info / notice text
+        self.info = ParagraphStyle(
+            "Info",
+            parent=base_styles["Normal"],
+            fontSize=9,
+            leading=12,
+            textColor=main,
+            alignment=TA_LEFT,
+        )
+
         # Cuerpo
         self.body = ParagraphStyle(
             "Body",
