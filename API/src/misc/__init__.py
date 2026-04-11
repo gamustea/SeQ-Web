@@ -4,7 +4,7 @@ from .enviroment_utils import (
     ConfigReader,
     SecOpsLogger,
     PlatformDetector,
-    PlatformType
+    PlatformType,
 )
 from .inet_utils import (
     resolve_domain,

@@ -5,8 +5,7 @@ from typing import Any, Optional
 import ollama
 from ollama import ChatResponse
 
-from src.misc import SecOpsLogger, get_ollama_config
-
+from src.misc import SecOpsLogger, ConfigReader
 
 class AIWriter(ABC):
     """
@@ -28,18 +27,19 @@ class AIWriter(ABC):
         self,
         host: Optional[str] = None,
         model: Optional[str] = None,
-        logger: Optional[SecOpsLogger] = None,
     ) -> None:
-        # Si no se proporcionan, obtener de variables de entorno
+
+        config_reader = ConfigReader()
+        env_host, env_model = config_reader.get_ollama_config()
+        
         if host is None or model is None:
-            env_host, env_model = get_ollama_config()
             self.host = host or env_host
             self.model = model or env_model
         else:
             self.host = host
             self.model = model
             
-        self.logger = logger or SecOpsLogger(self.__class__.__name__)
+        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
         self._client = ollama.Client(host=self.host)
 
     # ── Búsqueda web ───────────────────────────────────────────────────────────

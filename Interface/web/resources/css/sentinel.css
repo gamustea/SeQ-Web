@@ -388,3 +388,162 @@ td .muted { color: var(--text-muted); }
   color: var(--text-muted);
   margin: 0 0.5rem;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   MODAL DE DETALLES DEL ESCANEO
+   ══════════════════════════════════════════════════════════════ */
+.scan-details-modal {
+  max-width: 700px;
+  max-height: 85vh;
+  width: 95%;
+}
+
+.scan-details-modal .modal-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.detail-section {
+  margin-bottom: 1.5rem;
+}
+
+.detail-section h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+
+.detail-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.detail-value {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.ports-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+}
+
+.ports-table th,
+.ports-table td {
+  padding: 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.ports-table th {
+  background: var(--surface);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.ports-table td {
+  color: var(--text);
+}
+
+.incident-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.incident-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.incident-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.severity-badge {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.severity-badge.critical { background: #ffebee; color: #c62828; }
+.severity-badge.high { background: #fff3e0; color: #e65100; }
+.severity-badge.medium { background: #fff8e1; color: #f57f17; }
+.severity-badge.low { background: #e8f5e9; color: #2e7d32; }
+
+.incident-url {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin: 0.5rem 0;
+}
+
+.incident-desc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DOCUMENTO / PDF STATUS
+   ══════════════════════════════════════════════════════════════ */
+.document-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.document-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+}
+
+.document-status .status-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.document-status.pending .status-icon { color: var(--text-muted); }
+.document-status.running .status-icon { color: var(--info); animation: seq-spin 1s linear infinite; }
+.document-status.done .status-icon { color: var(--success); }
+.document-status.error .status-icon { color: var(--danger); }
+
+.ai-report-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.ai-report-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}

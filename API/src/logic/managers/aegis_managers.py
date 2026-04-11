@@ -208,11 +208,7 @@ class AegisManager(BaseManager):
             reference = self._load_reference_stack(cfg["stack_dir"])
 
             # 3. Generación de contenido con el modelo
-            writer = AegisAIWriter(
-                host   = cfg["ollama_host"],
-                model  = cfg["ollama_model"],
-                logger = self.logger,
-            )
+            writer = AegisAIWriter()
             content: AegisContent = writer.generate(
                 topic             = topic,
                 resolved_topic_id = resolved_id,

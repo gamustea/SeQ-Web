@@ -47,6 +47,7 @@ class _PrintingStrategy(ABC):
         super().__init__()
         self.scan = scan
         self.color_palette: Dict[ColorType, str] = {}
+        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
     @abstractmethod
     def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
@@ -196,11 +197,13 @@ class ReportTheme:
 
         # Píldora centrada
         pill_para = Paragraph(tag_text.upper(), self.pill)
-        pill_table = Table([[pill_para]], colWidths=[1.2 * inch])
+        pill_table = Table([[pill_para]], colWidths=[1.8 * inch]) # Ancho ajustado para tags largos
         pill_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), main),
             ("BOX", (0, 0), (-1, -1), 0.7, main),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ]))
 
         pill_wrapper = Table([[pill_table]], colWidths=[6 * inch])
@@ -226,12 +229,19 @@ class ReportTheme:
         divider = Table([[""]], colWidths=[2.5 * inch], rowHeights=[0.035 * inch])
         divider.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), accent),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
+        
         divider_wrapper = Table([[divider]], colWidths=[6 * inch])
         divider_wrapper.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
 
         return [pill_wrapper, title_wrapper, divider_wrapper]
@@ -241,18 +251,22 @@ class ReportTheme:
         Envuelve un bloque (vuln/incidente) en una 'card' con borde, padding
         y banda de color opcional a la izquierda.
         """
-        white = colors.HexColor(self.palette[ColorType.WHITE])        
+        white = colors.HexColor(self.palette[ColorType.WHITE]) 
         border = colors.HexColor("#DDDDDD")
         band_color = severity_color or colors.HexColor(self.palette[ColorType.MAIN])
-
+        
         # banda vertical + contenido
         band = Table([[""]], colWidths=[0.12 * inch])
         band.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), band_color),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
 
-        content = Table([[inner_flowables]], colWidths=[5.8 * inch])
-        content.setStyle(TableStyle([
+        content_table = Table([[inner_flowables]], colWidths=[5.8 * inch])
+        content_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.white),
             ("TOPPADDING", (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
@@ -260,10 +274,14 @@ class ReportTheme:
             ("RIGHTPADDING", (0, 0), (-1, -1), 8),
         ]))
 
-        outer = Table([[band, content]], colWidths=[0.12 * inch, 5.88 * inch])
+        outer = Table([[band, content_table]], colWidths=[0.12 * inch, 5.88 * inch])
         outer.setStyle(TableStyle([
             ("BOX", (0, 0), (-1, -1), 0.7, border),
             ("BACKGROUND", (0, 0), (-1, -1), white),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
         return outer
 
@@ -330,7 +348,6 @@ class PDFCreator:
         canv.drawRightString(width - 40, 28, f"Página {page_num}")
 
         canv.restoreState()
-
 
     def append_cover_page(
         self,
@@ -572,7 +589,6 @@ class NmapPrintingStrategy(_PrintingStrategy):
             ColorType.LIGHT: "#4A90E2",
             ColorType.WHITE: "#E1E8F0",
         }
-        self.logger = SecOpsLogger("nmap_printing_strategy")
 
     def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
         scan = self.scan
@@ -674,85 +690,106 @@ class NmapPrintingStrategy(_PrintingStrategy):
         elements.append(port_table)
 
         if ai_report:
-            try:
-                writer = NmapAIWriter()
-                ai_analysis = writer.generate(scan)
-                
-                elements.append(Spacer(1, 0.3 * inch))
-                elements.append(Paragraph("Análisis de Seguridad IA", theme.title))
+            writer = NmapAIWriter()
+            ai_analysis = writer.generate(scan)
+
+            # 1) Salto de página para que el informe de IA empiece en una nueva
+            elements.append(PageBreak())
+            
+            # 2) Usar la cabecera estilizada de ReportTheme
+            elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
+            elements.append(Spacer(1, 0.15 * inch))
+
+            risk = ai_analysis.get("risk_level", "MEDIO")
+            
+            # PALETA COMPLETA DE COLORES DE RIESGO (incluye INFORMATIVO)
+            risk_colors = {
+                "CRÍTICO": colors.HexColor("#b71c1c"),      # Rojo oscuro
+                "ALTO": colors.HexColor("#d32f2f"),        # Rojo
+                "MEDIO": colors.HexColor("#f57c00"),       # Naranja
+                "BAJO": colors.HexColor("#388e3c"),        # Verde
+                "INFORMATIVO": colors.HexColor("#1976d2"), # Azul (distintivo, no confundir con MEDIO)
+            }
+            
+            # Color por defecto gris neutro si el valor no está en la paleta
+            risk_color = risk_colors.get(risk.upper(), colors.HexColor("#757575"))
+            
+            # 3) Badge de riesgo mejorado usando Table
+            risk_para = Paragraph(f"NIVEL DE RIESGO: {risk.upper()}", theme.pill)
+            risk_table = Table([[risk_para]], colWidths=[2 * inch])
+            risk_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), risk_color),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("BOX", (0, 0), (-1, -1), 0.5, risk_color),
+            ]))
+            
+            risk_wrapper = Table([[risk_table]], colWidths=[6 * inch])
+            risk_wrapper.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ]))
+            elements.append(risk_wrapper)
+            elements.append(Spacer(1, 0.1 * inch))
+
+            exec_summary = ai_analysis.get("executive_summary", "")
+            if exec_summary:
+                elements.append(Paragraph("Resumen Ejecutivo", theme.subtitle))
+                elements.append(Spacer(1, 0.05 * inch))
+                elements.append(Paragraph(exec_summary, theme.body))
+                elements.append(Spacer(1, 0.15 * inch))
+
+            tech_analysis = ai_analysis.get("technical_analysis", "")
+            if tech_analysis:
+                elements.append(Paragraph("Análisis Técnico", theme.subtitle))
+                elements.append(Spacer(1, 0.05 * inch))
+                elements.append(Paragraph(tech_analysis, theme.body))
+                elements.append(Spacer(1, 0.15 * inch))
+
+            recommendations = ai_analysis.get("recommendations", [])
+            if recommendations:
+                elements.append(Paragraph("Recomendaciones de Seguridad", theme.subtitle))
                 elements.append(Spacer(1, 0.1 * inch))
-                
-                risk = ai_analysis.get("risk_level", "MEDIO")
-                risk_colors = {
-                    "CRÍTICO": colors.HexColor("#d32f2f"),
-                    "ALTO": colors.HexColor("#f57c00"),
-                    "MEDIO": colors.HexColor("#fbc02d"),
-                    "BAJO": colors.HexColor("#388e3c"),
+
+                # MAPEO DE PRIORIDADES DE RECOMENDACIONES A COLORES
+                # Las recomendaciones usan ALTA/MEDIA/BAJA, no los mismos que el risk_level general
+                priority_colors = {
+                    "ALTA": colors.HexColor("#d32f2f"),      # Rojo (equivalente a ALTO/CRÍTICO)
+                    "MEDIA": colors.HexColor("#f57c00"),     # Naranja (equivalente a MEDIO)
+                    "BAJA": colors.HexColor("#388e3c"),      # Verde (equivalente a BAJO)
+                    "INFORMATIVA": colors.HexColor("#1976d2"), # Azul para recomendaciones informativas
                 }
-                risk_color = risk_colors.get(risk.upper(), colors.HexColor("#fbc02d"))
-                risk_style = ParagraphStyle(
-                    "RiskBadge",
-                    parent=theme.pill,
-                    textColor=colors.white,
-                    backgroundColor=risk_color,
-                    fontSize=10,
-                    leading=12,
-                    alignment=TA_CENTER,
-                )
-                elements.append(Paragraph(f"Nivel de Riesgo: {risk}", risk_style))
-                elements.append(Spacer(1, 0.2 * inch))
-                
-                exec_summary = ai_analysis.get("executive_summary", "")
-                if exec_summary:
-                    elements.append(Paragraph("Resumen Ejecutivo", theme.subtitle))
-                    elements.append(Paragraph(exec_summary, theme.body))
-                    elements.append(Spacer(1, 0.15 * inch))
-                
-                tech_analysis = ai_analysis.get("technical_analysis", "")
-                if tech_analysis:
-                    elements.append(Paragraph("Análisis Técnico", theme.subtitle))
-                    elements.append(Paragraph(tech_analysis, theme.body))
-                    elements.append(Spacer(1, 0.15 * inch))
-                
-                recommendations = ai_analysis.get("recommendations", [])
-                if recommendations:
-                    elements.append(Paragraph("Recomendaciones de Seguridad", theme.subtitle))
-                    
-                    priority_styles = {
-                        "ALTA": ParagraphStyle("HighPriority", parent=theme.body, textColor=colors.HexColor("#d32f2f"), fontName="Helvetica-Bold"),
-                        "MEDIA": ParagraphStyle("MedPriority", parent=theme.body, textColor=colors.HexColor("#f57c00"), fontName="Helvetica-Bold"),
-                        "BAJA": ParagraphStyle("LowPriority", parent=theme.body, textColor=colors.HexColor("#388e3c"), fontName="Helvetica-Bold"),
-                    }
-                    
-                    for i, rec in enumerate(recommendations, 1):
-                        title = rec.get("title", "Recomendación")
-                        desc = rec.get("description", "")
-                        priority = rec.get("priority", "MEDIA")
-                        remediation = rec.get("remediation", "")
+
+                for i, rec in enumerate(recommendations, 1):
+                    title = rec.get("title", "Recomendación")
+                    desc = rec.get("description", "")
+                    priority = rec.get("priority", "MEDIA")
+                    remediation = rec.get("remediation", "")
+
+                    # Usar el mapeo de prioridades, no el de risk_level
+                    pri_color = priority_colors.get(priority.upper(), colors.HexColor("#757575"))
+
+                    # 4) Construir el contenido de la recomendación dentro de una tarjeta (card)
+                    rec_flowables = []
+                    rec_flowables.append(Paragraph(f"<b>{i}. {title}</b> — Prioridad: {priority}", theme.info))
+                    if desc:
+                        rec_flowables.append(Spacer(1, 0.05 * inch))
+                        rec_flowables.append(Paragraph(desc, theme.body))
+                    if remediation:
+                        rec_flowables.append(Spacer(1, 0.05 * inch))
+                        rec_flowables.append(Paragraph(f"<b>Acción:</b> {remediation}", theme.body))
                         
-                        priority_style = priority_styles.get(priority.upper(), theme.body)
-                        
-                        elements.append(Paragraph(f"{i}. {title}", theme.label))
-                        elements.append(Paragraph(f"Prioridad: {priority}", priority_style))
-                        if desc:
-                            elements.append(Paragraph(desc, theme.body))
-                        if remediation:
-                            elements.append(Paragraph(f"Acción: {remediation}", theme.info))
-                        elements.append(Spacer(1, 0.1 * inch))
-                
-                conclusions = ai_analysis.get("conclusions", "")
-                if conclusions:
-                    elements.append(Spacer(1, 0.2 * inch))
-                    elements.append(Paragraph("Conclusiones", theme.subtitle))
-                    elements.append(Paragraph(conclusions, theme.body))
-                    
-            except Exception as exc:
-                self.logger.error(f"Error generando análisis IA: {exc}")
-                elements.append(Spacer(1, 0.2 * inch))
-                elements.append(Paragraph(
-                    f"El análisis IA no estuvo disponible: {str(exc)[:100]}",
-                    theme.info
-                ))
+                    elements.append(theme.card(rec_flowables, severity_color=pri_color))
+                    elements.append(Spacer(1, 0.1 * inch))
+
+            conclusions = ai_analysis.get("conclusions", "")
+            if conclusions:
+                elements.append(Spacer(1, 0.1 * inch))
+                elements.append(Paragraph("Conclusiones", theme.subtitle))
+                elements.append(Spacer(1, 0.05 * inch))
+                elements.append(Paragraph(conclusions, theme.body))
 
     def get_filename_suffix(self) -> str:
         return "_Nmap.pdf"
@@ -1328,27 +1365,58 @@ class NmapAIWriter(AIWriter):
     def __init__(
         self,
         host: Optional[str] = None,
-        model: Optional[str] = None,
-        logger: Optional[SecOpsLogger] = None,
+        model: Optional[str] = None
     ) -> None:
-        super().__init__(host, model, logger)
+        super().__init__()
 
     def _build_system_prompt(self) -> str:
         return """\
-        Eres un experto en ciberseguridad con más de 20 años de experiencia en auditoría
-        de redes y análisis de vulnerabilidades. Has trabajado para empresas Fortune 500
-        y organismos gubernamentales.
-
-        Tu especialidad es transformar datos técnicos de escaneos Nmap en informes ejecutivos
-        comprensibles y accionables para equipos de seguridad y dirección.
-
-        REGLAS ABSOLUTAS:
-        1. Generas EXCLUSIVAMENTE JSON válido, sin markdown, sin explicaciones previas ni posteriores.
-        2. Proporcionas recomendaciones concretas y priorizadas según el riesgo.
-        3. Consideras el contexto empresarial: qué servicios son críticos, cuáles son aceptables.
-        4. Traduces datos técnicos a lenguaje accesible pero preciso.
-        5. Incluyes solo URLs de fuentes oficiales verificables.
-        6. Las recomendaciones deben ser prácticas y aplicables.
+        Eres un analista de seguridad de infraestructura con enfoque en evaluación objetiva de superficies de ataque.
+        
+        PARADIGMA FUNDAMENTAL:
+        Un puerto abierto es un canal de comunicación configurado intencionalmente, no inherentemente una vulnerabilidad. 
+        Tu misión es distinguir entre:
+        - Superficie de ataque (qué se expone)
+        - Vulnerabilidad confirmada (weakness técnica verificable)
+        - Riesgo operacional (contexto de negocio/operación)
+        
+        PRINCIPIOS UNIVERSALES DE ANÁLISIS:
+        
+        1. NORMA vs. ANOMALÍA:
+           - Puertos bajo 1024 (sistema): Requieren privilegios root para abrirse. Su presencia indica servicios de sistema deliberadamente configurados.
+           - Puertos altos (>1024): Asignados dinámicamente o para servicios de usuario/aplicación.
+           - Un host con 3-6 puertos estándar (SSH, HTTP, HTTPS, DNS) representa una configuración mínima funcional, no "excesiva exposición".
+        
+        2. EVALUACIÓN DE RIESGO POR TIPO DE EXPOSICIÓN:
+           - Riesgo inherente a protocolo: Telnet (texto plano), FTP anónimo, SNMP con community 'public' = Alto por diseño.
+           - Riesgo de configuración: SSH con métodos débiles, HTTP sin redirección a HTTPS = Medio, mitigable.
+           - Riesgo de versionado: Solo marcar como crítico si existe CVE específico y público con exploit verificado para la versión EXACTA detectada.
+           - Riesgo de combinación: Un solo puerto SSH (22) es estándar. SSH (22) + Telnet (23) sí es anómalo (redundancia insegura).
+        
+        3. CLASIFICACIÓN FUNCIONAL (sin inventar vulnerabilidades):
+           - Identifica el PROPÓSITO del host según el perfil de puertos:
+             * "Gestión/Sistema": SSH, RDP, SNMP, IPMI, iDRAC, Proxmox, VMware
+             * "Servicio de red": DNS, DHCP, NTP, LDAP, Kerberos
+             * "Aplicación/Web": HTTP, HTTPS, APIs en puertos estándar/alternativos
+             * "Datos": MySQL, PostgreSQL, MongoDB, Redis, Elasticsearch
+             * "Infraestructura": Kubernetes, Docker, Consul, etcd
+        
+        4. REGLA DE ORO PARA RECOMENDACIONES:
+           - NUNCA recomiendes "actualizar software" salvo que exista CVE específico documentado.
+           - NUNCA asumas que la autenticación está ausente sin evidencia (un servicio web en puerto 80 puede tener autenticación robusta en el backend).
+           - Prioriza el "hardening de configuración" sobre el "miedo a lo desconocido".
+        
+        5. NIVELES DE RIESGO - DEFINICIONES ESTRICTAS:
+           - CRÍTICO: Exposición de datos sensibles sin autenticación, o servicios obsoletos con vulnerabilidades día-cero activas (ej. log4j en versiones afectadas).
+           - ALTO: Protocolos inseguros por diseño (Telnet, FTP sin cifrado), o versiones con CVEs de ejecución remota confirmados.
+           - MEDIO: Configuraciones que aumentan superficie de ataque innecesariamente (ej. servicios de debug expuestos, paneles de admin en interfaces públicas sin IP whitelist).
+           - BAJO: Servicios legítimos pero que podrían beneficiarse de hardening (ej. ocultar versiones en banners, implementar rate limiting).
+           - INFORMATIVO: Perfil estándar de servicios sin desviaciones de seguridad detectables desde el escaneo.
+        
+        PROHIBICIONES ABSOLUTAS:
+        - NO generes CVEs genéricos o hipotéticos (ej. "CVE-2024-BIND" o "Posible Buffer Overflow").
+        - NO uses lenguaje alarmista ("críticamente expuesto", "altamente vulnerable", "brecha de seguridad") sin evidencia de vulnerabilidad real.
+        - NO confundas "puerto abierto" con "backdoor" o "malware".
         """
 
     def _build_user_prompt(self, scan_data: dict, open_ports: list) -> str:
@@ -1356,78 +1424,155 @@ class NmapAIWriter(AIWriter):
         started = scan_data.get("started_at", "N/A")
         finished = scan_data.get("finished_at", "N/A")
         
+        # Análisis de patrones universales (heurísticas de comportamiento, no listas hardcodeadas)
+        analysis_context = self._analyze_port_patterns(open_ports)
+        
         ports_info = []
         for op in open_ports:
             port_num = op.get("port", {}).get("port", "N/A")
-            protocol = op.get("port", {}).get("protocol", "")
-            service = op.get("given_use", "desconocido")
+            protocol = op.get("port", {}).get("protocol", "tcp")
+            service = op.get("given_use", "unknown")
             product = op.get("product", "")
             version = op.get("version", "")
-            reason = op.get("reason", "")
+            
+            # Determinar si es puerto privilegiado/sistema
+            port_type = "sistema" if isinstance(port_num, int) and port_num < 1024 else "usuario"
             
             ports_info.append({
                 "puerto": f"{port_num}/{protocol}",
                 "servicio": service,
-                "producto": f"{product} {version}".strip() or "N/A",
-                "razon": reason,
+                "implementacion": f"{product} {version}".strip() if (product or version) else "No identificada",
+                "tipo_puerto": port_type,
+                "categoria_funcional": self._infer_functional_category(service, port_num)
             })
         
         return f"""\
-            Analiza el siguiente resultado de escaneo Nmap y genera un análisis de seguridad.
+        Analiza el siguiente escaneo Nmap aplicando los principios universales de evaluación de riesgo.
 
-            DATOS DEL ESCANEO:
-            - Target: {target}
-            - Fecha inicio: {started}
-            - Fecha fin: {finished}
-            - Total puertos abiertos: {len(ports_info)}
+        CONTEXTO DEL ESCANEO:
+        - Target: {target}
+        - Timestamp: {started}
+        - Total puertos abiertos: {len(ports_info)}
+        - Distribución: {analysis_context['distribution']}
+        - Perfil heurístico: {analysis_context['profile_type']}
 
-            PUERTOS ABIERTOS DETECTADOS:
-            {json.dumps(ports_info, indent=2, ensure_ascii=False)}
+        SERVICOS DETECTADOS:
+        {json.dumps(ports_info, indent=2, ensure_ascii=False)}
 
-            INSTRUCCIONES DE GENERACIÓN:
+        ANÁLISIS REQUERIDO:
 
-            1. RESUMEN EJECUTIVO (executive_summary):
-            - Max 300 caracteres
-            - Síntesis del estado de seguridad del host
-            - Nivel de riesgo general (CRÍTICO/ALTO/MEDIO/BAJO)
+        1. RESUMEN EJECUTIVO (executive_summary):
+           - Describe el tipo de sistema basado en el PATRÓN de puertos (no en suposiciones individuales).
+           - Ejemplos válidos: "Host Linux con stack de administración remota estándar (SSH) y servicios web", 
+             "Infraestructura de virtualización detectada por API REST y panel web",
+             "Servidor de datos con exposición de gestión (SSH) y motor de base de datos".
+           - Máximo 350 caracteres. Sé específico sobre la función del host, no sobre "riesgos".
 
-            2. ANÁLISIS TÉCNICO (technical_analysis):
-            - Identifica servicios críticos y potencialmente riesgosos
-            - Destaca versiones con vulnerabilidades conocidas
-            - Comenta la exposición del sistema
+        2. NIVEL DE RIESGO (risk_level):
+           - Aplica las definiciones estrictas del system prompt.
+           - Si ves SSH(22) + HTTP(80) + HTTPS(443): es INFORMATIVO/BAJO (configuración estándar).
+           - Solo sube a MEDIO/ALTO si detectas:
+             * Protocolos inseguros (Telnet, FTP sin cifrar)
+             * Servicios de debug/diagnóstico expuestos
+             * Versiones con CVEs confirmados (que debes verificar)
+           - Default seguro: BAJO/INFORMATIVO para configuraciones estándar.
 
-            3. RECOMENDACIONES (recommendations):
-            - Array de 4-6 recomendaciones priorizadas
-            - Cada recomendación debe tener:
-                * title: Título descriptivo (max 60 caracteres)
-                * description: Explicación detallada (100-200 caracteres)
-                * priority: ALTA/MEDIA/BAJA
-                * cve_refs: Referencias a CVEs si aplica (array de strings)
-                * remediation: Acción recomendada concreta
+        3. ANÁLISIS TÉCNICO (technical_analysis):
+           - Analiza la coherencia del conjunto: "El puerto X complementa al puerto Y formando un sistema de Z".
+           - Identifica qué servicio es el primario vs. secundarios de soporte.
+           - Evalúa si la exposición es mínima necesaria o si hay servicios redundantes/innecesarios.
+           - Menciona versiones SOLO para confirmar que son recientes/estables, no para inventar riesgos.
+           - Máximo 700 caracteres.
 
-            4. CONCLUSIONES (conclusions):
-            - Síntesis final para el equipo de seguridad
-            - Próximos pasos recomendados
+        4. RECOMENDACIONES (recommendations):
+           - Prioridad ALTA: Solo para protocolos inseguros por diseño o autenticación ausente evidente.
+           - Prioridad MEDIA: Hardening estándar aplicable a cualquier servicio (ej. "Implementar fail2ban en servicios de shell remoto").
+           - Prioridad BAJA: Buenas prácticas generales.
+           - IMPORTANTE: Deja cve_refs como array vacío [] a menos que cites un CVE específico verificado.
+           - Las recomendaciones deben ser genéricas pero aplicables (ej. "Restringir acceso administrativo a rangos IP específicos" aplica a cualquier panel de admin).
 
-            FORMATO JSON REQUERIDO:
-            {{
-                "executive_summary": "...",
-                "risk_level": "ALTO|MEDIO|BAJO",
-                "technical_analysis": "...",
-                "recommendations": [
-                    {{
-                        "title": "...",
-                        "description": "...",
-                        "priority": "ALTA|MEDIA|BAJA",
-                        "cve_refs": [],
-                        "remediation": "..."
-                    }}
-                ],
-                "conclusions": "..."
-            }}
+        5. CONCLUSIONES (conclusions):
+           - Evaluación final objetiva: ¿Representa este host una configuración estándar aceptable o requiere atención prioritaria?
+           - Máximo 250 caracteres.
 
-            Responde ÚNICAMENTE con el JSON, sin texto adicional.
-            """
+        FORMATO JSON ESTRICTO:
+        {{
+            "executive_summary": "...",
+            "risk_level": "INFORMATIVO|BAJO|MEDIO|ALTO|CRÍTICO",
+            "technical_analysis": "...",
+            "recommendations": [
+                {{
+                    "title": "...",
+                    "description": "...",
+                    "priority": "ALTA|MEDIA|BAJA",
+                    "cve_refs": [],
+                    "remediation": "..."
+                }}
+            ],
+            "conclusions": "..."
+        }}
+
+        RECUERDA: 
+        - "Puerto abierto ≠ Vulnerabilidad"
+        - Es preferible subestimar el riesgo y recomendar hardening que sobreestimar y generar falsos positivos.
+        """
+
+    def _analyze_port_patterns(self, open_ports: list) -> dict:
+        """
+        Analiza patrones universales en los puertos para inferir contexto sin hardcodear servicios específicos.
+        Esto proporciona metadatos al modelo para que él infiera el tipo de sistema.
+        """
+        if not open_ports:
+            return {"distribution": "ninguno", "profile_type": "Host sin servicios detectados"}
+        
+        ports = []
+        for op in open_ports:
+            p = op.get("port", {}).get("port", 0)
+            if isinstance(p, int):
+                ports.append(p)
+        
+        priviliged = sum(1 for p in ports if p < 1024)
+        userland = sum(1 for p in ports if p >= 1024)
+        web_like = any(p in [80, 443, 8080, 8443] for p in ports)
+        admin_like = any(p in [22, 23, 3389, 5900] for p in ports)  # SSH, Telnet, RDP, VNC
+        
+        # Inferencia de patrón
+        if priviliged >= 3 and userland <= 2:
+            profile = "Servidor de infraestructura (mix privilegiado estándar)"
+        elif web_like and admin_like:
+            profile = "Servidor web con gestión remota"
+        elif userland > priviliged:
+            profile = "Aplicación/Servicio específico (puertos dinámicos predominantes)"
+        elif priviliged == 1 and not userland:
+            profile = "Servicio único dedicado"
+        else:
+            profile = "Configuración híbrida estándar"
+            
+        return {
+            "distribution": f"{priviliged} sistema / {userland} aplicación",
+            "profile_type": profile
+        }
+
+    def _infer_functional_category(self, service_name: str, port: int) -> str:
+        """
+        Categorización funcional basada en comportamiento, no en listas exhaustivas.
+        Esto es una sugerencia semántica, no una clasificación de riesgo.
+        """
+        service = str(service_name).lower()
+        
+        # Heurísticas de comportamiento, no identidades específicas
+        if any(x in service for x in ['ssh', 'telnet', 'rdp', 'vnc', 'shell']):
+            return "acceso_remoto"
+        elif any(x in service for x in ['http', 'www', 'web', 'proxy']):
+            return "web_api"
+        elif any(x in service for x in ['dns', 'domain', 'dhcp', 'ntp', 'ldap']):
+            return "servicio_red"
+        elif any(x in service for x in ['sql', 'db', 'mongo', 'redis', 'postgres', 'mysql']):
+            return "almacenamiento_datos"
+        elif port in [111, 2049, 445, 139, 21]:  # NFS, SMB, FTP
+            return "comparticion_archivos"
+        else:
+            return "servicio_especifico"
 
     def generate(self, scan: NmapScan) -> dict:
         """
@@ -1442,13 +1587,13 @@ class NmapAIWriter(AIWriter):
         """
         scan_data = {
             "target": scan.target,
-            "started_at": scan.started_at.isoformat() if scan.started_at else "N/A",
-            "finished_at": scan.finished_at.isoformat() if scan.finished_at else "N/A",
-            "status": scan.status,
+            "started_at": scan.started_at.isoformat() if getattr(scan, 'started_at', None) else "N/A",
+            "finished_at": scan.finished_at.isoformat() if getattr(scan, 'finished_at', None) else "N/A",
+            "status": getattr(scan, 'status', 'unknown'),
         }
         
         open_ports = []
-        for relation in (scan.open_ports_relation or []):
+        for relation in (getattr(scan, 'open_ports_relation', None) or []):
             port_obj = getattr(relation, "port", None)
             open_ports.append({
                 "port": {
@@ -1463,14 +1608,15 @@ class NmapAIWriter(AIWriter):
         
         prompt = self._build_user_prompt(scan_data, open_ports)
         
+        # Tool disponible pero con descripción restrictiva
         tools = [{
             "type": "function",
             "function": {
                 "name":        "web_search",
-                "description": "Busca información sobre vulnerabilidades de servicios específicos",
+                "description": "Buscar CVEs específicos para versiones exactas de software SOLO si se detectan versiones obsoletas o con vulnerabilidades conocidas documentadas.",
                 "parameters": {
                     "type":       "object",
-                    "properties": {"query": {"type": "string", "description": "Términos de búsqueda"}},
+                    "properties": {"query": {"type": "string", "description": "Término de búsqueda CVE específico"}},
                     "required":   ["query"],
                 },
             },
@@ -1489,10 +1635,10 @@ class NmapAIWriter(AIWriter):
                     tools    = tools,
                     format   = "json",
                     options  = {
-                        "num_predict":    4096,
-                        "temperature":    0.4,
-                        "top_p":          0.9,
-                        "repeat_penalty": 1.1,
+                        "num_predict":    2048,  # Reducido porque queremos respuestas concisas
+                        "temperature":    0.15,  # Muy bajo para máxima precisión factual
+                        "top_p":          0.8,
+                        "repeat_penalty": 1.2,
                     },
                 )
                 
@@ -1511,7 +1657,7 @@ class NmapAIWriter(AIWriter):
                         model    = self.model,
                         messages = messages,
                         format   = "json",
-                        options  = {"num_predict": 4096, "temperature": 0.5},
+                        options  = {"num_predict": 2048, "temperature": 0.15},
                     )
                 
                 raw_response = resp.message.content.strip()
@@ -1519,7 +1665,6 @@ class NmapAIWriter(AIWriter):
                     break
                     
             except Exception as exc:
-                self.logger.error(f"Intento {attempt + 1} fallido: {exc}")
                 if attempt == 2:
                     raise RuntimeError(f"Fallo tras 3 intentos: {exc}")
                 time.sleep(1.5 ** attempt)
@@ -1527,20 +1672,41 @@ class NmapAIWriter(AIWriter):
         return self._parse_response(raw_response)
 
     def _parse_response(self, raw: str) -> dict:
-        """Parseo robusto de la respuesta JSON."""
+        """Parseo robusto de la respuesta JSON con validación de integridad."""
         if not raw:
             raise ValueError("Respuesta vacía del modelo")
         
         try:
-            return json.loads(raw)
+            result = json.loads(raw)
+            
+            # Validación de integridad: asegurar estructura y limpiar CVEs
+            if isinstance(result.get("recommendations"), list):
+                for rec in result["recommendations"]:
+                    if not isinstance(rec.get("cve_refs"), list):
+                        rec["cve_refs"] = []
+                    else:
+                        # Filtrar solo CVEs con formato válido
+                        rec["cve_refs"] = [
+                            cve for cve in rec["cve_refs"] 
+                            if isinstance(cve, str) and re.match(r'^CVE-\d{4}-\d{4,}$', cve)
+                        ]
+            
+            # Normalizar nivel de riesgo si está fuera de rango
+            valid_levels = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
+            if result.get("risk_level", "").upper() not in valid_levels:
+                result["risk_level"] = "INFORMATIVO"
+                
+            return result
+            
         except json.JSONDecodeError:
             pass
         
-        for pattern in [r'\{[\s\S]*\}', r'```(?:json)?\s*([\s\S]*?)\s*```']:
-            match = re.search(pattern, raw)
+        for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
+            match = re.search(pattern, raw, re.MULTILINE)
             if match:
                 try:
-                    return json.loads(match.group(1) if match.groups() else match.group())
+                    json_str = match.group(1) if match.groups() else match.group()
+                    return json.loads(json_str)
                 except json.JSONDecodeError:
                     continue
         
@@ -1550,6 +1716,3 @@ class NmapAIWriter(AIWriter):
             return json.loads(cleaned)
         except json.JSONDecodeError:
             raise ValueError(f"No se pudo parsear la respuesta: {raw[:200]}")
-
-
-

@@ -333,7 +333,7 @@ class SentinelDocument(Document):
     __tablename__ = "SentinelDocument"
 
     id        = Column(Integer, ForeignKey("Document.id"), primary_key=True)
-    scan_id   = Column(Integer, ForeignKey("Scan.id"),     nullable=False)
+    scan_id   = Column(Integer, ForeignKey("Scan.id", ondelete="CASCADE"), nullable=False)
     scan_type = Column(String(20),  nullable=False)
 
     enrichment_json = Column(JSONB, nullable=True)

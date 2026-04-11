@@ -460,7 +460,8 @@ def generate_pdf():
     """Solicita la generación asíncrona de un PDF."""
     try:
         scan_id = _parse_scan_id_from_args()
-        ai_report = request.args.get("ai_report", "false").lower() == "true"
+        ai_report_str = request.args.get("aiReport", "false").lower()
+        ai_report = ai_report_str == "true"
         
         uid     = get_current_user_id()
         nmap, nikto, openvas = get_user_managers(uid)
@@ -468,87 +469,23 @@ def generate_pdf():
         scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
         if not scan:
             raise ScanNotFoundError(scan_id)
+        
         verify_scan_ownership(scan, uid, scan_id)
 
         manager = resolve_manager(scan_type, nmap, nikto, openvas)
         if not manager.is_scan_finished(scan.id):
             raise ValidationError(field="scan_id", message=f"El escaneo {scan_id} no está finalizado aún", value=scan_id)
-        
-        doc = SentinelDocument(
-            scan_id=scan.id,
-            scan_type=scan_type,
-            document_type="sentinel",
-            filename="",
-            format="pdf",
-            status="pending",
-            user_id=uid
-        )
-        nmap.session.add(doc)
-        nmap._safe_commit()
-
-        def _generate_pdf_async(document_id: int, scan_id: int, scan_tipo: str, ai_report: bool = False):
-            from src.logic.managers import UserManager
-            from src.core.model import NmapScan, NiktoScan, OpenVASScan
-            
-            um = UserManager()
-            try:
-                session = um.session
-                
-                document = session.query(SentinelDocument).filter(SentinelDocument.id == document_id).first()
-                if not document:
-                    return
-                
-                document.status = "running"
-                session.commit()
-                
-                if scan_tipo == "nmap":
-                    scan_obj = session.query(NmapScan).filter(NmapScan.id == scan_id).first()
-                    if not scan_obj:
-                        raise ValueError(f"NmapScan {scan_id} no encontrado")
-                    
-                    strategy = NmapPrintingStrategy(scan_obj)
-                elif scan_tipo == "openvas":
-                    scan_obj = session.query(OpenVASScan).filter(OpenVASScan.id == scan_id).first()
-                    if not scan_obj:
-                        raise ValueError(f"OpenVASScan {scan_id} no encontrado")
-                    strategy = OpenVASPrintingStrategy(scan_obj)
-                else:
-                    scan_obj = session.query(NiktoScan).filter(NiktoScan.id == scan_id).first()
-                    if not scan_obj:
-                        raise ValueError(f"NiktoScan {scan_id} no encontrado")
-                    strategy = NiktoPrintingStrategy(scan_obj)
-
-                pdf_creator = PDFCreator(strategy)
-                pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
-
-                document.filename = pdf_path
-                document.status = "done"
-                document.generated_at = datetime.utcnow()
-                session.commit()
-                _logger.info(f"PDF generado asíncronamente para documento {document_id}")
-                
-            except Exception as e:
-                _logger.error(f"Error generando PDF async para documento {document_id}: {e}")
-                try:
-                    document = session.query(SentinelDocument).filter(SentinelDocument.id == document_id).first()
-                    if document:
-                        document.status = "error"
-                        session.commit()
-                except:
-                    pass
-            finally:
-                um.close_session()
-
-        thread = threading.Thread(target=_generate_pdf_async, args=(doc.id, scan.id, scan_type, ai_report), daemon=True)
-        thread.start()
+    
+        doc_id = manager.generate_report(scan_id=scan_id, ai_report=ai_report)   
+        _logger.info(f"Generación de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {get_current_username()} con AI Report: {ai_report}")
 
         return jsonify({
             "message": "Generación de PDF iniciada",
-            "documentId": doc.id,
+            "documentId": doc_id,
             "scanId": scan_id,
             "status": "pending",
             "aiReport": ai_report,
-            "downloadUrl": f"/sentinel/document/{doc.id}/download"
+            "downloadUrl": f"/sentinel/document/{doc_id}/download"
         }), 202
 
     except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:

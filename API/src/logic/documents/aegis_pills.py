@@ -670,9 +670,8 @@ class AegisAIWriter(AIWriter):
         self,
         host: Optional[str] = None,
         model: Optional[str] = None,
-        logger: Optional[SecOpsLogger] = None,
     ) -> None:
-        super().__init__(host, model, logger)
+        super().__init__()
 
     # ── Prompts ───────────────────────────────────────────────────────────────
 

@@ -96,11 +96,7 @@ def _configure_rate_limiting(app: Flask) -> None:
     """
     Asocia el único Limiter de la aplicación (definido en _shared.py)
     a esta instancia de Flask.
-
-    NO se crea un segundo Limiter aquí: tener dos instancias provoca que
-    Flask-Limiter aplique ambos default_limits y gane el más restrictivo,
-    lo que generaba 429 con solo 4-5 escaneos en paralelo.
-    """
+    """ 
     limiter.init_app(app)
 
 
