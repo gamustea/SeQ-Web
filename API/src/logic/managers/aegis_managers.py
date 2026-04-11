@@ -213,7 +213,7 @@ class AegisManager(BaseManager):
                 model  = cfg["ollama_model"],
                 logger = self.logger,
             )
-            content: AegisContent = writer.generate_pill(
+            content: AegisContent = writer.generate(
                 topic             = topic,
                 resolved_topic_id = resolved_id,
                 topic_title       = resolved_title,

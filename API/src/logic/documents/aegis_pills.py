@@ -1,13 +1,13 @@
 """
 aegis_pills.py
-──────────────
+─────────────
 Lógica de generación de píldoras de concienciación.
 
 Contiene:
     — Dataclasses de tránsito: AegisTipData, AegisContent, AegisAlert
     — Decoradores de resiliencia: retry_on_failure, circuit_breaker
     — AegisAlertFetcher: fetch concurrente de INCIBE y CIRCL
-    — AegisAIWriter: generación de contenido con Ollama
+    — AegisAIWriter: generación de contenido con Ollama (hereda de AIWriter)
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ from ddgs import DDGS
 
 from src.core.model import Topic
 from src.misc import SecOpsLogger
+
+from src.logic.documents._base import AIWriter
 
 
 # ============================================================================
@@ -655,37 +657,14 @@ class AegisAlertFetcher:
 # WRITER DE CONTENIDO
 # ============================================================================
 
-class AegisAIWriter:
+class AegisAIWriter(AIWriter):
     """
     Genera el contenido de una píldora mediante Ollama con few-shot prompting,
     tool calling para búsqueda web y validación estructural del JSON resultante.
     """
 
     def __init__(self, host: str, model: str, logger: SecOpsLogger) -> None:
-        self.host    = host
-        self.model   = model
-        self.logger  = logger
-        self._client = ollama.Client(host=host)
-
-    # ── Búsqueda web ──────────────────────────────────────────────────────────
-
-    def _web_search(self, query: str, max_results: int = 5) -> str:
-        try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=max_results))
-            if not results:
-                return f"[BÚSQUEDA] Sin resultados para: {query}"
-            lines = [f"### Resultados de búsqueda: '{query}'\n"]
-            for i, r in enumerate(results, 1):
-                lines.append(
-                    f"{i}. **{r.get('title', 'Sin título')}**\n"
-                    f"   {r.get('body', '')[:200]}\n"
-                    f"   URL: {r.get('href', '')}\n"
-                )
-            return "\n".join(lines)
-        except Exception as exc:
-            self.logger.error(f"Error búsqueda web: {exc}")
-            return f"[ERROR BÚSQUEDA] {exc}"
+        super().__init__(host, model, logger)
 
     # ── Prompts ───────────────────────────────────────────────────────────────
 
@@ -794,7 +773,7 @@ class AegisAIWriter:
     # ── Generación ────────────────────────────────────────────────────────────
 
     @circuit_breaker(threshold=3, timeout=60)
-    def generate_pill(
+    def generate(
         self,
         *,
         topic:             Topic | None,
@@ -807,6 +786,8 @@ class AegisAIWriter:
         """
         Genera el contenido de la píldora con tool calling y reintentos.
         Devuelve un AegisContent validado listo para persistir.
+        
+        Implementa el método abstracto generate() de AIWriter.
         """
         # Enriquecimiento de contexto con búsqueda web
         search_queries = [

@@ -1,4 +1,4 @@
-from .scan_reports import (
+from .sentinel_reports import (
     PDFCreator,
     NmapPrintingStrategy,
     NiktoPrintingStrategy,

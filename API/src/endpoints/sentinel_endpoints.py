@@ -96,6 +96,7 @@ from src.core.exceptions import (
     create_error_response,
 )
 from src.misc import IPValidator, PortValidator, SecOpsLogger
+from src.logic.documents.sentinel_reports import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
 
 from ._shared import (
     CANCELLABLE_STATES,
@@ -507,22 +508,19 @@ def generate_pdf():
                     scan_obj = session.query(NmapScan).filter(NmapScan.id == scan_id).first()
                     if not scan_obj:
                         raise ValueError(f"NmapScan {scan_id} no encontrado")
-                    from src.logic.documents.scan_reports import NmapPrintingStrategy
+                    
                     strategy = NmapPrintingStrategy(scan_obj)
                 elif scan_tipo == "openvas":
                     scan_obj = session.query(OpenVASScan).filter(OpenVASScan.id == scan_id).first()
                     if not scan_obj:
                         raise ValueError(f"OpenVASScan {scan_id} no encontrado")
-                    from src.logic.documents.scan_reports import OpenVASPrintingStrategy
                     strategy = OpenVASPrintingStrategy(scan_obj)
                 else:
                     scan_obj = session.query(NiktoScan).filter(NiktoScan.id == scan_id).first()
                     if not scan_obj:
                         raise ValueError(f"NiktoScan {scan_id} no encontrado")
-                    from src.logic.documents.scan_reports import NiktoPrintingStrategy
                     strategy = NiktoPrintingStrategy(scan_obj)
 
-                from src.logic.documents.scan_reports import PDFCreator
                 pdf_creator = PDFCreator(strategy)
                 pdf_path = pdf_creator.print_pdf()
 

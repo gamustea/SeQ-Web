@@ -1228,3 +1228,8 @@ class NiktoPrintingStrategy(_PrintingStrategy):
     def get_report_title(self) -> str:
         return "Análisis de Vulnerabilidades Web"
 
+
+
+
+
+

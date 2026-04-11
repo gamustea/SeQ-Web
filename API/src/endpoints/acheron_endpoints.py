@@ -1,16 +1,69 @@
 """
-endpoints/acheron.py
-────────────────────
+acheron_endpoints.py
+══════════════════════════════════════════════════════════════════════════════
+
 Blueprint de gestión de bóvedas (Acheron). Gestiona dos prefijos de URL:
   /acheron  — operaciones sobre Vaults
   /vaults   — operaciones sobre Storables individuales
 
-Rutas:
-  GET    /acheron/vault           — obtener vault del usuario
-  POST   /acheron/vault           — crear/actualizar vault completo (upsert)
-  PATCH  /acheron/storables       — actualizar bulk de Storables
-  POST   /vaults/storables        — añadir un Storable al vault
-  DELETE /vaults/storables        — eliminar un Storable del vault
+Este módulo proporciona endpoints para gestionar el vault del usuario,
+incluyendo la creación, actualización, eliminación de storables (accounts
+y credit cards) y operaciones de bulk.
+
+────────────────────────────────────────────────────────────────────────────────
+ENDPOINTS DISPONIBLES
+────────────────────────────────────────────────────────────────────────────────
+
+Vault
+    GET    /acheron/vault           — Obtener vault del usuario
+    POST   /acheron/vault           — Crear/actualizar vault completo (upsert)
+    PATCH  /acheron/storables      — Actualizar bulk de Storables
+
+Storables
+    POST   /vaults/storables        — Añadir un Storable al vault
+    DELETE /vaults/storables        — Eliminar un Storable del vault
+
+────────────────────────────────────────────────────────────────────────────────
+AUTENTICACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+Todos los endpoints requieren un token OAuth2 válido en el header:
+    Authorization: Bearer <access_token>
+
+Límites de tasa:
+    • /acheron/vault (GET): 120/hour, 500/day
+    • /acheron/vault (POST): 60/hour, 300/day
+    • /acheron/storables: 60/hour, 300/day
+    • /vaults/storables (POST): 60/hour, 300/day
+    • /vaults/storables (DELETE): 60/hour, 200/day
+
+────────────────────────────────────────────────────────────────────────────────
+EJEMPLOS DE USO
+────────────────────────────────────────────────────────────────────────────────
+
+# Obtener vault
+curl "https://api.example.com/acheron/vault" \\
+     -H "Authorization: Bearer <token>"
+
+# Crear vault
+curl -X POST "https://api.example.com/acheron/vault" \\
+     -H "Authorization: Bearer <token>" \\
+     -H "Content-Type: application/json" \\
+     -d '{...vault_json...}'
+
+# Añadir account
+curl -X POST "https://api.example.com/vaults/storables" \\
+     -H "Authorization: Bearer <token>" \\
+     -H "Content-Type: application/json" \\
+     -d '{"kind": "account", "title": "Gmail", "username": "user", "password": "pass"}'
+
+# Eliminar storable
+curl -X DELETE "https://api.example.com/vaults/storables" \\
+     -H "Authorization: Bearer <token>" \\
+     -H "Content-Type: application/json" \\
+     -d '{"internalId": "abc123"}'
+
+────────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
@@ -47,7 +100,25 @@ _logger    = SecOpsLogger("acheron").get_logger()
 @require_oauth_token
 @limiter.limit("120 per hour; 500 per day")
 def get_vault():
-    """Devuelve el vault del usuario en formato JSON."""
+    """Devuelve el vault del usuario en formato JSON.
+
+    Args (query params):
+        recovery (bool, optional): Si true, devuelve el vault de recuperación.
+            Por defecto false.
+
+    Returns:
+        200 — Vault del usuario en formato JSON.
+        404 — Vault no encontrado.
+        403 — Acceso denegado (recovery vault bloqueado).
+
+    Example:
+        curl "https://api.example.com/acheron/vault" \\
+             -H "Authorization: Bearer <token>"
+
+        # Obtener recovery vault
+        curl "https://api.example.com/acheron/vault?recovery=true" \\
+             -H "Authorization: Bearer <token>"
+    """
     try:
         uid         = get_current_user_id()
         is_recovery = _parse_is_recovery()
@@ -77,7 +148,28 @@ def get_vault():
 @require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
 def upsert_vault():
-    """Crea o reemplaza completamente el vault del usuario."""
+    """Crea o reemplaza completamente el vault del usuario.
+
+    Args (query params):
+        recovery (bool, optional): Si true, opera sobre el vault de recuperación.
+
+    Args (JSON body):
+        Estructura completa del vault (storables, metadata, etc.).
+
+    Returns:
+        201 — Vault creado exitosamente.
+            {"message": "Vault created", "vaultId": 1, "isRecovery": false}
+        200 — Vault actualizado exitosamente.
+            {"message": "Vault updated", "vaultId": 1, "isRecovery": false}
+        400 — Error de validación en el JSON del vault.
+        403 — Acceso denegado.
+
+    Example:
+        curl -X POST "https://api.example.com/acheron/vault" \\
+             -H "Authorization: Bearer <token>" \\
+             -H "Content-Type: application/json" \\
+             -d '{...vault_json...}'
+    """
     data = _require_json()
     if isinstance(data, tuple):
         return data
@@ -109,7 +201,26 @@ def upsert_vault():
 @require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
 def patch_vault_storables():
-    """Actualiza en bulk uno o varios Storables del usuario."""
+    """Actualiza en bulk uno o varios Storables del usuario.
+
+    Args (JSON body):
+        Array de operaciones de actualización.
+        Cada operación debe contener: op, path, value.
+
+    Returns:
+        200 — Actualización completada.
+            {"message": "Bulk storable update completed", "results": [...]}
+        400 — Formato de operaciones inválido.
+
+    Example:
+        curl -X PATCH "https://api.example.com/acheron/storables" \\
+             -H "Authorization: Bearer <token>" \\
+             -H "Content-Type: application/json" \\
+             -d '[
+                 {"op": "update", "path": "/1/password", "value": "newpass"},
+                 {"op": "delete", "path": "/2"}
+               ]'
+    """
     if not request.is_json:
         return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
 
@@ -149,7 +260,44 @@ def patch_vault_storables():
 @require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
 def add_vault_storable():
-    """Añade un nuevo Account o CreditCard al vault del usuario."""
+    """Añade un nuevo Account o CreditCard al vault del usuario.
+
+    Args (JSON body):
+        kind (str): "account" o "creditcard"
+        title (str): Título del storable
+        isRecovery (bool, optional): Si true, añade al vault de recuperación.
+        
+        Para account:
+            username (str): Nombre de usuario
+            domain (str): Dominio del servicio
+            password (str): Contraseña
+            internalId (str, optional): ID interno único
+        
+        Para creditcard:
+            cardHolderName (str): Nombre del titular
+            cardNumber (str): Número de tarjeta
+            expirationDate (str): Fecha de expiración (MM/YY)
+            postalCode (str): Código postal
+            cvv (str): Código CVV
+
+    Returns:
+        201 — Storable creado.
+            {"message": "Storable created", "storableId": 1, "internalId": "abc", ...}
+        400 — Error de validación.
+        409 — El internalId ya existe.
+
+    Example:
+        curl -X POST "https://api.example.com/vaults/storables" \\
+             -H "Authorization: Bearer <token>" \\
+             -H "Content-Type: application/json" \\
+             -d '{
+                 "kind": "account",
+                 "title": "Gmail",
+                 "username": "user@gmail.com",
+                 "domain": "gmail.com",
+                 "password": "mypassword"
+               }'
+    """
     data = _require_json()
     if isinstance(data, tuple):
         return data
@@ -198,7 +346,27 @@ def add_vault_storable():
 @require_oauth_token
 @limiter.limit("60 per hour; 200 per day")
 def delete_vault_storable():
-    """Elimina un Storable del vault del usuario por su internalId."""
+    """Elimina un Storable del vault del usuario por su internalId.
+
+    Args (JSON body):
+        internalId (str): ID interno del storable a eliminar.
+        isRecovery (bool, optional): Si true, opera sobre el vault de recuperación.
+
+    Returns:
+        200 — Storable eliminado.
+            {"message": "Storable deleted", "storableId": 1, "internalId": "abc", ...}
+        400 — internalId faltante.
+        404 — Storable no encontrado.
+
+    Warning:
+        Esta acción es irreversible.
+
+    Example:
+        curl -X DELETE "https://api.example.com/vaults/storables" \\
+             -H "Authorization: Bearer <token>" \\
+             -H "Content-Type: application/json" \\
+             -d '{"internalId": "abc123"}'
+    """
     data = _require_json()
     if isinstance(data, tuple):
         return data
@@ -239,6 +407,7 @@ def delete_vault_storable():
 # ── Helpers privados ──────────────────────────────────────────────────────────
 
 def _require_json():
+    """Extrae y valida el body JSON de la petición."""
     if not request.is_json:
         return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
     data = request.get_json(silent=True)
@@ -248,11 +417,13 @@ def _require_json():
 
 
 def _parse_is_recovery() -> bool:
+    """Extrae el parámetro 'isRecovery' de la query string."""
     val = request.args.get("isRecovery", "false").lower()
     return val in ("true", "1", "yes")
 
 
 def _parse_dt(value: str | None) -> datetime:
+    """Convierte un string ISO a datetime, o devuelve utcnow() si es inválido."""
     if not value:
         return datetime.utcnow()
     try:
