@@ -463,7 +463,7 @@ def generate_pdf():
         ai_report_str = request.args.get("aiReport", "false").lower()
         ai_report = ai_report_str == "true"
         
-        uid     = get_current_user_id()
+        uid = get_current_user_id()
         nmap, nikto, openvas = get_user_managers(uid)
 
         scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
@@ -623,22 +623,16 @@ def download_document(document_id: int):
 
     Example:
         curl "http://localhost:5000/sentinel/document/123/download" \\
-             -H "Authorization: Bearer <token>" \\
-             -o reporte.pdf
+                -H "Authorization: Bearer <token>" \\
+                -o reporte.pdf
     """
     try:
         uid = get_current_user_id()
         nmap_mgr, _, _ = get_user_managers(uid)
-        
-        from src.core.model import SentinelDocument
-        
-        doc = nmap_mgr.session.query(SentinelDocument).filter(
-            SentinelDocument.id == document_id,
-            SentinelDocument.user_id == uid
-        ).first()
-        
-        if not doc:
-            raise ScanNotFoundError(document_id)
+
+        doc = nmap_mgr.get_document_by_id(document_id)
+        if not doc or doc.user_id != uid:
+            raise ValueError("Documento no encontrado o acceso denegado")
         
         if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
             raise ValidationError(field="document_id", message=f"El documento {document_id} aún no está disponible para descarga", value=document_id)
