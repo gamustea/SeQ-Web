@@ -462,9 +462,6 @@ def generate_pdf():
         scan_id = _parse_scan_id_from_args()
         ai_report = request.args.get("ai_report", "false").lower() == "true"
         
-        if ai_report:
-            _logger.warning("Solicitud de generación con IA recibida. Funcionalidad pendiente de implementación.")
-        
         uid     = get_current_user_id()
         nmap, nikto, openvas = get_user_managers(uid)
 
@@ -489,7 +486,7 @@ def generate_pdf():
         nmap.session.add(doc)
         nmap._safe_commit()
 
-        def _generate_pdf_async(document_id: int, scan_id: int, scan_tipo: str):
+        def _generate_pdf_async(document_id: int, scan_id: int, scan_tipo: str, ai_report: bool = False):
             from src.logic.managers import UserManager
             from src.core.model import NmapScan, NiktoScan, OpenVASScan
             
@@ -522,7 +519,7 @@ def generate_pdf():
                     strategy = NiktoPrintingStrategy(scan_obj)
 
                 pdf_creator = PDFCreator(strategy)
-                pdf_path = pdf_creator.print_pdf()
+                pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
 
                 document.filename = pdf_path
                 document.status = "done"
@@ -542,7 +539,7 @@ def generate_pdf():
             finally:
                 um.close_session()
 
-        thread = threading.Thread(target=_generate_pdf_async, args=(doc.id, scan.id, scan_type), daemon=True)
+        thread = threading.Thread(target=_generate_pdf_async, args=(doc.id, scan.id, scan_type, ai_report), daemon=True)
         thread.start()
 
         return jsonify({

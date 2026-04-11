@@ -1,11 +1,11 @@
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 import ollama
 from ollama import ChatResponse
 
-from src.misc import SecOpsLogger
+from src.misc import SecOpsLogger, get_ollama_config
 
 
 class AIWriter(ABC):
@@ -19,13 +19,28 @@ class AIWriter(ABC):
         - _build_system_prompt(): Prompt del sistema específico del dominio
         - _build_user_prompt(): Prompt de usuario con parámetros específicos
         - generate(): Método principal de generación que retorna contenido específico
+    
+    Si host o model son None, se obtienen de las variables de entorno OLLAMA_HOST
+    y OLLAMA_MODEL (o valores por defecto).
     """
 
-    def __init__(self, host: str, model: str, logger: SecOpsLogger) -> None:
-        self.host    = host
-        self.model   = model
-        self.logger  = logger
-        self._client = ollama.Client(host=host)
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None,
+        logger: Optional[SecOpsLogger] = None,
+    ) -> None:
+        # Si no se proporcionan, obtener de variables de entorno
+        if host is None or model is None:
+            env_host, env_model = get_ollama_config()
+            self.host = host or env_host
+            self.model = model or env_model
+        else:
+            self.host = host
+            self.model = model
+            
+        self.logger = logger or SecOpsLogger(self.__class__.__name__)
+        self._client = ollama.Client(host=self.host)
 
     # ── Búsqueda web ───────────────────────────────────────────────────────────
 

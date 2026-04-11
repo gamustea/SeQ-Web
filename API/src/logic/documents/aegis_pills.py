@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import ollama
@@ -661,9 +661,17 @@ class AegisAIWriter(AIWriter):
     """
     Genera el contenido de una píldora mediante Ollama con few-shot prompting,
     tool calling para búsqueda web y validación estructural del JSON resultante.
+    
+    Si no se proporcionan host o model, se obtienen de las variables de entorno
+    OLLAMA_HOST y OLLAMA_MODEL (o valores por defecto).
     """
 
-    def __init__(self, host: str, model: str, logger: SecOpsLogger) -> None:
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None,
+        logger: Optional[SecOpsLogger] = None,
+    ) -> None:
         super().__init__(host, model, logger)
 
     # ── Prompts ───────────────────────────────────────────────────────────────

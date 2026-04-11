@@ -250,6 +250,22 @@ class ConfigReader:
         return cfg
 
 
+def get_ollama_config() -> tuple[str, str]:
+    """
+    Obtiene la configuración de Ollama (host y modelo) desde variables de entorno.
+    
+    Variables de entorno:
+        OLLAMA_HOST: URL del servidor Ollama (default: http://localhost:11434)
+        OLLAMA_MODEL: Nombre del modelo a usar (default: llama3.2)
+    
+    Returns:
+        tuple[str, str]: (host, model)
+    """
+    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    model = os.getenv("OLLAMA_MODEL", "llama3.2")
+    return host, model
+
+
 class SecOpsLogger:
 
     def __init__(self, name=None, level=logging.DEBUG):

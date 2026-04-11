@@ -1,6 +1,8 @@
 import os
 import json
 import random
+import re
+import time
 
 from enum import Enum
 from abc import ABC, abstractmethod
@@ -28,6 +30,7 @@ from reportlab.platypus import (
 
 from src.misc import ConfigReader, DirectoryType, SecOpsLogger
 from src.core.model import NmapScan, NiktoScan, Scan, Host, Topic
+from src.logic.documents._base import AIWriter
 
 
 class ColorType(Enum):
@@ -46,7 +49,7 @@ class _PrintingStrategy(ABC):
         self.color_palette: Dict[ColorType, str] = {}
 
     @abstractmethod
-    def append_body(self, theme: "ReportTheme", elements: list) -> None:
+    def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
         """Añade el cuerpo específico del informe (propio de cada herramienta)."""
         ...
 
@@ -280,9 +283,6 @@ class ReportTheme:
         ]))
         return t
 
-# ----------------------------------------------------------------------
-# PDFCreator con maquetación más profesional
-# ----------------------------------------------------------------------
 
 class PDFCreator:
     def __init__(self, printing_strategy: _PrintingStrategy) -> None:
@@ -513,7 +513,10 @@ class PDFCreator:
         elements.append(Spacer(1, 0.2 * inch))
         elements.append(Paragraph(footer_text, theme.footer))
 
-    def print_pdf(self, client_name: Optional[str] = None) -> str:
+    def print_pdf(self, 
+        ai_report: bool = False, 
+        client_name: Optional[str] = None
+    ) -> str:
         os.makedirs(self.directory, exist_ok=True)
 
         filename = os.path.join(
@@ -544,7 +547,7 @@ class PDFCreator:
 
         # Logo y cuerpo del informe
         self.append_logo(elements, is_cover=False)
-        self.printing_strategy.append_body(theme=theme, elements=elements)
+        self.printing_strategy.append_body(theme=theme, elements=elements, ai_report=ai_report)
 
         # Consentimiento y pie
         self.append_consent(elements, theme)
@@ -560,17 +563,18 @@ class PDFCreator:
 class NmapPrintingStrategy(_PrintingStrategy):
     def __init__(self, scan: NmapScan) -> None:
         super().__init__(scan)
-        # Misma paleta que tenías antes
+        
         self.color_palette = {
-            ColorType.BLACK: "#121212",    # negro neutro cálido
-            ColorType.DARK: "#01375A",     # azul océano más oscuro
-            ColorType.MAIN: "#014F86",     # azul océano principal
+            ColorType.BLACK: "#121212",
+            ColorType.DARK: "#01375A",
+            ColorType.MAIN: "#014F86",
             ColorType.SECONDARY: "#555B6E",
             ColorType.LIGHT: "#4A90E2",
             ColorType.WHITE: "#E1E8F0",
         }
+        self.logger = SecOpsLogger("nmap_printing_strategy")
 
-    def append_body(self, theme: "ReportTheme", elements: list) -> None:
+    def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
         scan = self.scan
         palette = self.color_palette
         main = colors.HexColor(palette[ColorType.MAIN])
@@ -669,6 +673,87 @@ class NmapPrintingStrategy(_PrintingStrategy):
         ]))
         elements.append(port_table)
 
+        if ai_report:
+            try:
+                writer = NmapAIWriter()
+                ai_analysis = writer.generate(scan)
+                
+                elements.append(Spacer(1, 0.3 * inch))
+                elements.append(Paragraph("Análisis de Seguridad IA", theme.title))
+                elements.append(Spacer(1, 0.1 * inch))
+                
+                risk = ai_analysis.get("risk_level", "MEDIO")
+                risk_colors = {
+                    "CRÍTICO": colors.HexColor("#d32f2f"),
+                    "ALTO": colors.HexColor("#f57c00"),
+                    "MEDIO": colors.HexColor("#fbc02d"),
+                    "BAJO": colors.HexColor("#388e3c"),
+                }
+                risk_color = risk_colors.get(risk.upper(), colors.HexColor("#fbc02d"))
+                risk_style = ParagraphStyle(
+                    "RiskBadge",
+                    parent=theme.pill,
+                    textColor=colors.white,
+                    backgroundColor=risk_color,
+                    fontSize=10,
+                    leading=12,
+                    alignment=TA_CENTER,
+                )
+                elements.append(Paragraph(f"Nivel de Riesgo: {risk}", risk_style))
+                elements.append(Spacer(1, 0.2 * inch))
+                
+                exec_summary = ai_analysis.get("executive_summary", "")
+                if exec_summary:
+                    elements.append(Paragraph("Resumen Ejecutivo", theme.subtitle))
+                    elements.append(Paragraph(exec_summary, theme.body))
+                    elements.append(Spacer(1, 0.15 * inch))
+                
+                tech_analysis = ai_analysis.get("technical_analysis", "")
+                if tech_analysis:
+                    elements.append(Paragraph("Análisis Técnico", theme.subtitle))
+                    elements.append(Paragraph(tech_analysis, theme.body))
+                    elements.append(Spacer(1, 0.15 * inch))
+                
+                recommendations = ai_analysis.get("recommendations", [])
+                if recommendations:
+                    elements.append(Paragraph("Recomendaciones de Seguridad", theme.subtitle))
+                    
+                    priority_styles = {
+                        "ALTA": ParagraphStyle("HighPriority", parent=theme.body, textColor=colors.HexColor("#d32f2f"), fontName="Helvetica-Bold"),
+                        "MEDIA": ParagraphStyle("MedPriority", parent=theme.body, textColor=colors.HexColor("#f57c00"), fontName="Helvetica-Bold"),
+                        "BAJA": ParagraphStyle("LowPriority", parent=theme.body, textColor=colors.HexColor("#388e3c"), fontName="Helvetica-Bold"),
+                    }
+                    
+                    for i, rec in enumerate(recommendations, 1):
+                        title = rec.get("title", "Recomendación")
+                        desc = rec.get("description", "")
+                        priority = rec.get("priority", "MEDIA")
+                        remediation = rec.get("remediation", "")
+                        
+                        priority_style = priority_styles.get(priority.upper(), theme.body)
+                        
+                        elements.append(Paragraph(f"{i}. {title}", theme.label))
+                        elements.append(Paragraph(f"Prioridad: {priority}", priority_style))
+                        if desc:
+                            elements.append(Paragraph(desc, theme.body))
+                        if remediation:
+                            elements.append(Paragraph(f"Acción: {remediation}", theme.info))
+                        elements.append(Spacer(1, 0.1 * inch))
+                
+                conclusions = ai_analysis.get("conclusions", "")
+                if conclusions:
+                    elements.append(Spacer(1, 0.2 * inch))
+                    elements.append(Paragraph("Conclusiones", theme.subtitle))
+                    elements.append(Paragraph(conclusions, theme.body))
+                    
+            except Exception as exc:
+                self.logger.error(f"Error generando análisis IA: {exc}")
+                elements.append(Spacer(1, 0.2 * inch))
+                elements.append(Paragraph(
+                    f"El análisis IA no estuvo disponible: {str(exc)[:100]}",
+                    theme.info
+                ))
+
     def get_filename_suffix(self) -> str:
         return "_Nmap.pdf"
 
@@ -692,7 +777,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
             ColorType.WHITE: "#E8F5E9",
         }
 
-    def append_body(self, theme: "ReportTheme", elements: list) -> None:
+    def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
         scan = self.scan
         palette = self.color_palette
         main = colors.HexColor(palette[ColorType.MAIN])
@@ -1003,7 +1088,7 @@ class NiktoPrintingStrategy(_PrintingStrategy):
             ColorType.WHITE: "#FFF5F0",
         }
 
-    def append_body(self, theme: "ReportTheme", elements: list) -> None:
+    def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
         scan = self.scan
         palette = self.color_palette
         main = colors.HexColor(palette[ColorType.MAIN])
@@ -1229,7 +1314,242 @@ class NiktoPrintingStrategy(_PrintingStrategy):
         return "Análisis de Vulnerabilidades Web"
 
 
+class NmapAIWriter(AIWriter):
+    """
+    Genera análisis y recomendaciones de seguridad para escaneos Nmap.
+    
+    Utiliza Ollama para analizar los resultados del escaneo y proporcionar
+    un resumen ejecutivo y recomendaciones de un experto.
+    
+    Si no se proporcionan host o model, se obtienen de las variables de entorno
+    OLLAMA_HOST y OLLAMA_MODEL (o valores por defecto).
+    """
 
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None,
+        logger: Optional[SecOpsLogger] = None,
+    ) -> None:
+        super().__init__(host, model, logger)
+
+    def _build_system_prompt(self) -> str:
+        return """\
+        Eres un experto en ciberseguridad con más de 20 años de experiencia en auditoría
+        de redes y análisis de vulnerabilidades. Has trabajado para empresas Fortune 500
+        y organismos gubernamentales.
+
+        Tu especialidad es transformar datos técnicos de escaneos Nmap en informes ejecutivos
+        comprensibles y accionables para equipos de seguridad y dirección.
+
+        REGLAS ABSOLUTAS:
+        1. Generas EXCLUSIVAMENTE JSON válido, sin markdown, sin explicaciones previas ni posteriores.
+        2. Proporcionas recomendaciones concretas y priorizadas según el riesgo.
+        3. Consideras el contexto empresarial: qué servicios son críticos, cuáles son aceptables.
+        4. Traduces datos técnicos a lenguaje accesible pero preciso.
+        5. Incluyes solo URLs de fuentes oficiales verificables.
+        6. Las recomendaciones deben ser prácticas y aplicables.
+        """
+
+    def _build_user_prompt(self, scan_data: dict, open_ports: list) -> str:
+        target = scan_data.get("target", "desconocido")
+        started = scan_data.get("started_at", "N/A")
+        finished = scan_data.get("finished_at", "N/A")
+        
+        ports_info = []
+        for op in open_ports:
+            port_num = op.get("port", {}).get("port", "N/A")
+            protocol = op.get("port", {}).get("protocol", "")
+            service = op.get("given_use", "desconocido")
+            product = op.get("product", "")
+            version = op.get("version", "")
+            reason = op.get("reason", "")
+            
+            ports_info.append({
+                "puerto": f"{port_num}/{protocol}",
+                "servicio": service,
+                "producto": f"{product} {version}".strip() or "N/A",
+                "razon": reason,
+            })
+        
+        return f"""\
+            Analiza el siguiente resultado de escaneo Nmap y genera un análisis de seguridad.
+
+            DATOS DEL ESCANEO:
+            - Target: {target}
+            - Fecha inicio: {started}
+            - Fecha fin: {finished}
+            - Total puertos abiertos: {len(ports_info)}
+
+            PUERTOS ABIERTOS DETECTADOS:
+            {json.dumps(ports_info, indent=2, ensure_ascii=False)}
+
+            INSTRUCCIONES DE GENERACIÓN:
+
+            1. RESUMEN EJECUTIVO (executive_summary):
+            - Max 300 caracteres
+            - Síntesis del estado de seguridad del host
+            - Nivel de riesgo general (CRÍTICO/ALTO/MEDIO/BAJO)
+
+            2. ANÁLISIS TÉCNICO (technical_analysis):
+            - Identifica servicios críticos y potencialmente riesgosos
+            - Destaca versiones con vulnerabilidades conocidas
+            - Comenta la exposición del sistema
+
+            3. RECOMENDACIONES (recommendations):
+            - Array de 4-6 recomendaciones priorizadas
+            - Cada recomendación debe tener:
+                * title: Título descriptivo (max 60 caracteres)
+                * description: Explicación detallada (100-200 caracteres)
+                * priority: ALTA/MEDIA/BAJA
+                * cve_refs: Referencias a CVEs si aplica (array de strings)
+                * remediation: Acción recomendada concreta
+
+            4. CONCLUSIONES (conclusions):
+            - Síntesis final para el equipo de seguridad
+            - Próximos pasos recomendados
+
+            FORMATO JSON REQUERIDO:
+            {{
+                "executive_summary": "...",
+                "risk_level": "ALTO|MEDIO|BAJO",
+                "technical_analysis": "...",
+                "recommendations": [
+                    {{
+                        "title": "...",
+                        "description": "...",
+                        "priority": "ALTA|MEDIA|BAJA",
+                        "cve_refs": [],
+                        "remediation": "..."
+                    }}
+                ],
+                "conclusions": "..."
+            }}
+
+            Responde ÚNICAMENTE con el JSON, sin texto adicional.
+            """
+
+    def generate(self, scan: NmapScan) -> dict:
+        """
+        Genera el análisis de IA para un escaneo Nmap.
+        
+        Args:
+            scan: Objeto NmapScan con los datos del escaneo
+            
+        Returns:
+            dict con las claves: executive_summary, risk_level, technical_analysis,
+                                recommendations, conclusions
+        """
+        scan_data = {
+            "target": scan.target,
+            "started_at": scan.started_at.isoformat() if scan.started_at else "N/A",
+            "finished_at": scan.finished_at.isoformat() if scan.finished_at else "N/A",
+            "status": scan.status,
+        }
+        
+        open_ports = []
+        for relation in (scan.open_ports_relation or []):
+            port_obj = getattr(relation, "port", None)
+            open_ports.append({
+                "port": {
+                    "port": getattr(port_obj, "port", "N/A") if port_obj else "N/A",
+                    "protocol": getattr(port_obj, "protocol", "") if port_obj else "",
+                },
+                "given_use": getattr(relation, "given_use", ""),
+                "product": getattr(relation, "product", ""),
+                "version": getattr(relation, "version", ""),
+                "reason": getattr(relation, "reason", ""),
+            })
+        
+        prompt = self._build_user_prompt(scan_data, open_ports)
+        
+        tools = [{
+            "type": "function",
+            "function": {
+                "name":        "web_search",
+                "description": "Busca información sobre vulnerabilidades de servicios específicos",
+                "parameters": {
+                    "type":       "object",
+                    "properties": {"query": {"type": "string", "description": "Términos de búsqueda"}},
+                    "required":   ["query"],
+                },
+            },
+        }]
+        
+        raw_response = None
+        for attempt in range(3):
+            try:
+                messages = [
+                    {"role": "system", "content": self._build_system_prompt()},
+                    {"role": "user",   "content": prompt},
+                ]
+                resp = self._client.chat(
+                    model    = self.model,
+                    messages = messages,
+                    tools    = tools,
+                    format   = "json",
+                    options  = {
+                        "num_predict":    4096,
+                        "temperature":    0.4,
+                        "top_p":          0.9,
+                        "repeat_penalty": 1.1,
+                    },
+                )
+                
+                if getattr(resp.message, "tool_calls", None):
+                    messages.append({
+                        "role":       "assistant",
+                        "content":    resp.message.content or "",
+                        "tool_calls": resp.message.tool_calls,
+                    })
+                    for tc in resp.message.tool_calls:
+                        query         = tc.function.arguments.get("query", "")
+                        search_result = self._web_search(query)
+                        messages.append({"role": "tool", "content": search_result})
+                    
+                    resp = self._client.chat(
+                        model    = self.model,
+                        messages = messages,
+                        format   = "json",
+                        options  = {"num_predict": 4096, "temperature": 0.5},
+                    )
+                
+                raw_response = resp.message.content.strip()
+                if raw_response:
+                    break
+                    
+            except Exception as exc:
+                self.logger.error(f"Intento {attempt + 1} fallido: {exc}")
+                if attempt == 2:
+                    raise RuntimeError(f"Fallo tras 3 intentos: {exc}")
+                time.sleep(1.5 ** attempt)
+        
+        return self._parse_response(raw_response)
+
+    def _parse_response(self, raw: str) -> dict:
+        """Parseo robusto de la respuesta JSON."""
+        if not raw:
+            raise ValueError("Respuesta vacía del modelo")
+        
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+        
+        for pattern in [r'\{[\s\S]*\}', r'```(?:json)?\s*([\s\S]*?)\s*```']:
+            match = re.search(pattern, raw)
+            if match:
+                try:
+                    return json.loads(match.group(1) if match.groups() else match.group())
+                except json.JSONDecodeError:
+                    continue
+        
+        cleaned = re.sub(r'^[^{]*', '', raw)
+        cleaned = re.sub(r'[^}]*$', '', cleaned)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            raise ValueError(f"No se pudo parsear la respuesta: {raw[:200]}")
 
 
 
