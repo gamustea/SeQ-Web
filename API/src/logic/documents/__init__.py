@@ -11,9 +11,38 @@ from .aegis_pills import (
     AegisAlertFetcher
 )
 
+from .exceptions import (
+    DocumentError,
+    DocumentGenerationError,
+    AIConnectionError,
+    AIResponseError,
+    AIFallbackExhaustedError,
+    CircuitBreakerOpenError,
+    AegisValidationError,
+    AegisInsufficientContentError,
+    AegisFetchError,
+    ExporterError,
+    ExporterFormatError,
+    ExporterConfigurationError,
+    PDFGenerationError,
+)
+
 __all__ = [
     "PDFCreator",
     "NmapPrintingStrategy",
     "NiktoPrintingStrategy",
-    "OpenVASPrintingStrategy"
+    "OpenVASPrintingStrategy",
+    "DocumentError",
+    "DocumentGenerationError",
+    "AIConnectionError",
+    "AIResponseError",
+    "AIFallbackExhaustedError",
+    "CircuitBreakerOpenError",
+    "AegisValidationError",
+    "AegisInsufficientContentError",
+    "AegisFetchError",
+    "ExporterError",
+    "ExporterFormatError",
+    "ExporterConfigurationError",
+    "PDFGenerationError",
 ]

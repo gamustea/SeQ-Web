@@ -1,0 +1,80 @@
+from .base import ErrorCode, ErrorSeverity, SecOpsException
+from .validation import (
+    ValidationError,
+    PortValidationError,
+    IPValidationError,
+    URLValidationError,
+    MissingParameterError,
+)
+from .database import (
+    DatabaseError,
+    EntityNotFoundError,
+    EntityAlreadyExistsError,
+    DatabaseConnectionError,
+    TransactionError,
+)
+from .scan import (
+    ScanError,
+    ScanNotFoundError,
+    ScanAlreadyRunningError,
+    ScanExecutionError,
+    ScanTimeoutError,
+    MaxConcurrentScansError,
+)
+from .report import (
+    ReportError,
+    ReportGenerationError,
+    ReportNotFoundError,
+)
+from .config import ConfigurationError, MissingConfigError
+from .auth import (
+    AuthenticationError,
+    AuthorizationError,
+    InvalidCredentialsError,
+    UserNotFoundError,
+    UserBindingError,
+    DuplicatedUserCredentials,
+    ExistingUserError,
+)
+from .parsing import ParsingError, XMLParsingError, JSONParsingError
+from .handler import ExceptionHandler, handle_exceptions, create_error_response
+
+__all__ = [
+    'ErrorCode',
+    'ErrorSeverity',
+    'SecOpsException',
+    'ValidationError',
+    'PortValidationError',
+    'IPValidationError',
+    'URLValidationError',
+    'MissingParameterError',
+    'DatabaseError',
+    'EntityNotFoundError',
+    'EntityAlreadyExistsError',
+    'DatabaseConnectionError',
+    'TransactionError',
+    'ScanError',
+    'ScanNotFoundError',
+    'ScanAlreadyRunningError',
+    'ScanExecutionError',
+    'ScanTimeoutError',
+    'MaxConcurrentScansError',
+    'ReportError',
+    'ReportGenerationError',
+    'ReportNotFoundError',
+    'ConfigurationError',
+    'MissingConfigError',
+    'AuthenticationError',
+    'AuthorizationError',
+    'InvalidCredentialsError',
+    'UserNotFoundError',
+    'UserBindingError',
+    'DuplicatedUserCredentials',
+    'ExistingUserError',
+    'ParsingError',
+    'XMLParsingError',
+    'JSONParsingError',
+    'ExceptionHandler',
+    'handle_exceptions',
+    'create_error_response',
+]

@@ -36,6 +36,14 @@ from src.core.model import Topic
 from src.misc import SecOpsLogger
 
 from src.logic.documents._base import AIWriter
+from src.logic.documents.exceptions import (
+    CircuitBreakerOpenError,
+    AegisValidationError,
+    AegisInsufficientContentError,
+    AegisFetchError,
+    AIResponseError,
+    AIFallbackExhaustedError,
+)
 
 
 # ============================================================================
@@ -133,12 +141,12 @@ class AegisTipData:
 
     def __post_init__(self) -> None:
         if not self.headline or len(self.headline) > 150:
-            raise ValueError("headline debe tener entre 1 y 150 caracteres")
+            raise AegisValidationError("headline debe tener entre 1 y 150 caracteres", field="headline")
         if not self.body or len(self.body) < 50:
-            raise ValueError("body debe tener al menos 50 caracteres")
+            raise AegisValidationError("body debe tener al menos 50 caracteres", field="body")
         for link in self.links:
             if not isinstance(link, dict) or "text" not in link or "url" not in link:
-                raise ValueError("cada link debe ser un dict con 'text' y 'url'")
+                raise AegisValidationError("cada link debe ser un dict con 'text' y 'url'", field="links")
 
 
 @dataclass
@@ -248,7 +256,7 @@ class AegisAlert:
             object.__setattr__(self, "severity", mapping.get(self.severity.lower(), SeverityLevel.INFO))
 
         if not self.url.startswith(("http://", "https://")):
-            raise ValueError(f"URL inválida: {self.url}")
+            raise AegisValidationError(f"URL inválida: {self.url}", field="url", value=self.url)
 
 
 # ============================================================================
@@ -287,7 +295,7 @@ def circuit_breaker(threshold: int = 5, timeout: int = 60):
                 if failures >= threshold:
                     elapsed = time.time() - (last_failure_time or 0)
                     if elapsed < timeout:
-                        raise RuntimeError("Circuit breaker abierto")
+                        raise CircuitBreakerOpenError("Ollama")
                     failures = 0
 
             try:
@@ -873,7 +881,7 @@ class AegisAIWriter(AIWriter):
             except Exception as exc:
                 self.logger.error(f"Intento {attempt + 1} fallido: {exc}")
                 if attempt == MAX_RETRIES - 1:
-                    raise RuntimeError(f"Fallo tras {MAX_RETRIES} intentos: {exc}")
+                    raise AIFallbackExhaustedError(MAX_RETRIES, str(exc))
                 time.sleep(RETRY_DELAY_BASE ** attempt)
 
         data = self._parse_response(raw_response)
@@ -917,11 +925,11 @@ class AegisAIWriter(AIWriter):
                     body     = str(tip_data.get("body", ""))[:1000],
                     links    = valid_links[:2],
                 ))
-            except ValueError as exc:
+            except AegisValidationError as exc:
                 self.logger.warning(f"Tip {i + 1} descartado: {exc}")
 
         if len(tips) < 3:
-            raise ValueError(f"Insuficientes tips válidos: {len(tips)}")
+            raise AegisInsufficientContentError(3, len(tips))
 
         return AegisContent(
             topic_id      = resolved_topic_id,
@@ -940,7 +948,7 @@ class AegisAIWriter(AIWriter):
     def _parse_response(self, raw: str) -> dict:
         """Parseo robusto con múltiples estrategias de recuperación."""
         if not raw:
-            raise ValueError("Respuesta vacía del modelo")
+            raise AIResponseError("Respuesta vacía del modelo")
 
         # Intento directo
         try:
@@ -964,4 +972,4 @@ class AegisAIWriter(AIWriter):
             return json.loads(cleaned)
         except json.JSONDecodeError as exc:
             self.logger.error(f"No se pudo parsear respuesta: {raw[:500]}")
-            raise ValueError(f"JSON inválido tras limpieza: {exc}")
+            raise AIResponseError(f"JSON inválido tras limpieza: {exc}")

@@ -26,6 +26,11 @@ from pathlib import Path
 from typing import Any
 
 from src.misc import SecOpsLogger
+from src.logic.documents.exceptions import (
+    ExporterError,
+    ExporterFormatError,
+    ExporterConfigurationError,
+)
 
 _logger = SecOpsLogger(name="AegisExporters").get_logger()
 
@@ -148,11 +153,11 @@ class AegisExporter(ABC):
         required = ["format", "extension", "mimetype"]
         missing = [a for a in required if not getattr(self, a, None)]
         if missing:
-            raise ValueError(f"Exportador mal configurado. Faltan: {missing}")
+            raise ExporterConfigurationError(missing)
 
     @abstractmethod
     def export(self, data: ExportData, output_path: Path | None = None) -> ExportResult:
-        raise NotImplementedError
+        raise NotImplementedError("Subclass must implement export method")
 
     def generate_filename(self, data: ExportData, suffix: str = "") -> str:
         timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -420,6 +425,6 @@ def get_exporter_for_format(format_type: ExportFormat | str) -> AegisExporter:
 
     exporter_class = exporters.get(format_type)
     if not exporter_class:
-        raise ValueError(f"Formato no soportado: {format_type}")
+        raise ExporterFormatError(format_type.value if hasattr(format_type, 'value') else format_type)
 
     return exporter_class()

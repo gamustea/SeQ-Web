@@ -32,6 +32,12 @@ from reportlab.platypus import (
 from src.misc import ConfigReader, DirectoryType, SecOpsLogger
 from src.core.model import NmapScan, NiktoScan, Scan, Host, Topic, NiktoIncident
 from src.logic.documents._base import AIWriter
+from src.logic.documents.exceptions import (
+    AIConnectionError,
+    AIResponseError,
+    AIFallbackExhaustedError,
+    PDFGenerationError,
+)
 
 
 class ColorType(Enum):
@@ -1677,7 +1683,7 @@ class NmapAIWriter(AIWriter):
                     
             except Exception as exc:
                 if attempt == 2:
-                    raise RuntimeError(f"Fallo tras 3 intentos: {exc}")
+                    raise AIFallbackExhaustedError(3, str(exc))
                 time.sleep(1.5 ** attempt)
         
         return self._parse_response(raw_response)
@@ -1685,7 +1691,7 @@ class NmapAIWriter(AIWriter):
     def _parse_response(self, raw: str) -> dict:
         """Parseo robusto de la respuesta JSON con validación de integridad."""
         if not raw:
-            raise ValueError("Respuesta vacía del modelo")
+            raise AIResponseError("Respuesta vacía del modelo", attempt=attempt)
         
         try:
             result = json.loads(raw)
@@ -2069,14 +2075,14 @@ class NiktoAIWriter(AIWriter):
                     break
             except Exception as exc:
                 if attempt == 2:
-                    raise RuntimeError(f"Fallo tras 3 intentos: {exc}")
+                    raise AIFallbackExhaustedError(3, str(exc))
                 time.sleep(1.5 ** attempt)
         
         return self._parse_response(raw_response)
 
     def _parse_response(self, raw: str) -> dict:
         if not raw:
-            raise ValueError("Respuesta vacía")
+            raise AIResponseError("Respuesta vacía", attempt=attempt)
         
         try:
             result = json.loads(raw)
