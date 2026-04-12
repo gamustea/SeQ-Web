@@ -175,23 +175,43 @@ class ConfigReader:
         model = os.getenv("OLLAMA_MODEL", "llama3.2")
         return host, model
 
-    def get_db_credentials(self) -> tuple:
+    def get_db_credentials(self) -> dict:
         """
         Prioridad: variables de entorno → SecConfig.json
         Variables esperadas: POSTGRES_USER, POSTGRES_PASSWORD,
-                            POSTGRES_HOST, POSTGRES_DB
+                            POSTGRES_HOST, POSTGRES_DB, POSTGRES_PORT, POSTGRES_DIALECT
+        
+        Returns:
+            dict: {dialect, username, password, host, port, dbname}
         """
         user     = os.getenv("POSTGRES_USER")
         password = os.getenv("POSTGRES_PASSWORD")
         host     = os.getenv("POSTGRES_HOST", "postgres")
         database = os.getenv("POSTGRES_DB")
+        port     = os.getenv("POSTGRES_PORT", "5432")
+        dialect  = os.getenv("POSTGRES_DIALECT", "postgresql+psycopg2")
 
         if all([user, password, host, database]):
-            return (user, password, host, database)
+            return {
+                "dialect": dialect,
+                "username": user,
+                "password": password,
+                "host": host,
+                "port": port,
+                "dbname": database
+            }
 
-        raise ValueError("Faltan variables de entorno para la base de datos. "
-                        "Asegúrate de definir POSTGRES_USER, POSTGRES_PASSWORD, "
-                        "POSTGRES_HOST y POSTGRES_DB.")
+        configs = self._read_configs()
+        dbconfig = configs["dbconfig"]
+
+        return {
+            "dialect": dbconfig.get("dialect", "postgresql+psycopg2"),
+            "username": dbconfig.get("username"),
+            "password": dbconfig.get("password"),
+            "host": dbconfig.get("host", "postgres"),
+            "port": str(dbconfig.get("port", "5432")),
+            "dbname": dbconfig.get("dbname")
+        }
 
     def get_directory_of(self, directory_type: DirectoryType) -> str:
         """

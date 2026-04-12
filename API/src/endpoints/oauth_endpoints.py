@@ -109,7 +109,7 @@ from ._shared import (
     get_current_user_id,
     get_current_username,
     require_oauth_token,
-    limiter
+    limiter,
 )
 
 oauth_bp = Blueprint("oauth", __name__)
@@ -175,22 +175,16 @@ def oauth_token():
         if not username or not password:
             return jsonify({"error": "invalid_request", "error_description": "username and password are required"}), 400
 
-        user_manager = get_user_manager()
-        try:
-            is_valid, uid = user_manager.verify_credentials(username, password)
-        finally:
-            user_manager.close_session()
+        with get_user_manager() as um:
+            is_valid, uid = um.verify_credentials(username, password)
 
         if not is_valid:
             _logger.warning(f"Login fallido para: {username}")
             return jsonify({"error": "invalid_grant", "error_description": "Invalid username or password"}), 401
 
-        oauth_manager = get_oauth_manager()
-        try:
-            access_token  = oauth_manager.create_access_token(uid, username)   # type: ignore[arg-type]
-            refresh_token = oauth_manager.create_refresh_token(uid)            # type: ignore[arg-type]
-        finally:
-            oauth_manager.close_session()
+        with get_oauth_manager() as om:
+            access_token  = om.create_access_token(uid, username)   # type: ignore[arg-type]
+            refresh_token = om.create_refresh_token(uid)            # type: ignore[arg-type]
 
         _logger.info(f"Tokens emitidos para: {username}")
         return jsonify({
@@ -207,29 +201,20 @@ def oauth_token():
         if not refresh_token:
             return jsonify({"error": "invalid_request", "error_description": "refresh_token is required"}), 400
 
-        oauth_manager = get_oauth_manager()
-        try:
-            uid = oauth_manager.verify_refresh_token(refresh_token)
-        finally:
-            oauth_manager.close_session()
+        with get_oauth_manager() as om:
+            uid = om.verify_refresh_token(refresh_token)
 
         if not uid:
             return jsonify({"error": "invalid_grant", "error_description": "Invalid or expired refresh token"}), 401
 
-        user_manager = get_user_manager()
-        try:
-            user = user_manager.get_user_by_id(uid)
-        finally:
-            user_manager.close_session()
+        with get_user_manager() as um:
+            user = um.get_user_by_id(uid)
 
         if not user:
             return jsonify({"error": "invalid_grant", "error_description": "User not found"}), 401
 
-        oauth_manager2 = get_oauth_manager()
-        try:
-            access_token = oauth_manager2.create_access_token(uid, user.username)  # type: ignore[arg-type]
-        finally:
-            oauth_manager2.close_session()
+        with get_oauth_manager() as om2:
+            access_token = om2.create_access_token(uid, user.username)  # type: ignore[arg-type]
 
         _logger.info(f"Access token renovado para usuario ID: {uid}")
         return jsonify({
@@ -259,11 +244,8 @@ def oauth_revoke():
              -H "Authorization: Bearer <token>"
     """
     token = request.headers["Authorization"].split()[1]
-    mgr = get_oauth_manager()
-    try:
-        mgr.revoke_access_token(token)
-    finally:
-        mgr.close_session()
+    with get_oauth_manager() as om:
+        om.revoke_access_token(token)
     _logger.info(f"Token revocado para: {get_current_username()}")
     return jsonify({"message": "Token revoked successfully"}), 200
 
@@ -290,10 +272,7 @@ def oauth_revoke_all():
              -H "Authorization: Bearer <token>"
     """
     uid = get_current_user_id()
-    mgr = get_oauth_manager()
-    try:
-        mgr.revoke_all_user_tokens(uid)
-    finally:
-        mgr.close_session()
+    with get_oauth_manager() as om:
+        om.revoke_all_user_tokens(uid)
     _logger.info(f"Todos los tokens revocados para usuario ID: {uid}")
     return jsonify({"message": "All tokens revoked successfully"}), 200

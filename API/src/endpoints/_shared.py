@@ -13,6 +13,7 @@ Utilidades compartidas por todos los blueprints:
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from functools import wraps
 from typing import Optional, Tuple, Any
 
@@ -92,8 +93,8 @@ def require_oauth_token(f):
                 }), 401
 
             token = parts[1]
-            oauth_manager = _get_oauth_manager()
-            payload = oauth_manager.verify_access_token(token)
+            with get_oauth_manager() as oauth_mg:
+                payload = oauth_mg.verify_access_token(token)
 
             if not payload:
                 return jsonify({
@@ -124,52 +125,85 @@ def require_oauth_token(f):
 
     return decorated
 
-def _get_user_manager() -> UserManager:
-    return UserManager()
-
-def _get_oauth_manager() -> OAuthTokenManager:
-    return OAuthTokenManager()
-
-def get_user_managers(
-    user_id: int,
-) -> Tuple[NmapScanManager, NiktoScanManager, OpenVASScanManager]:
-    """
-    Crea los tres managers de escaneo para el usuario indicado.
-    El UserManager auxiliar se cierra en un finally para garantizar
-    que su conexión vuelve al pool aunque get_user_by_id lance.
-    """
-    um = _get_user_manager()
+@contextmanager
+def get_user_manager():
+    um = UserManager()
     try:
-        user = um.get_user_by_id(user_id)
+        yield um
     finally:
         um.close_session()
-    nmap    = NmapScanManager(user)
-    nikto   = NiktoScanManager(user)
-    openvas = OpenVASScanManager(user)
-    return nmap, nikto, openvas
 
-def get_vault_manager(user_id: int) -> VaultManager:
-    um = _get_user_manager()
+@contextmanager
+def get_oauth_manager():
+    om = OAuthTokenManager()
     try:
-        user = um.get_user_by_id(user_id)
+        yield om
     finally:
-        um.close_session()
-    if not user:
-        raise UserNotFoundError(user_id=user_id)
-    return VaultManager(user)
+        om.close_session()
 
-def get_aegis_manager(user_id: int) -> AegisManager:
-    um = _get_user_manager()
-    try:
+@contextmanager
+def get_user_managers(user_id: int):
+    with get_user_manager() as um:
         user = um.get_user_by_id(user_id)
-    finally:
-        um.close_session()
-    if not user:
-        raise UserNotFoundError(user_id=user_id)
-    return AegisManager(user)
+        nmap    = NmapScanManager(user)
+        nikto   = NiktoScanManager(user)
+        openvas = OpenVASScanManager(user)
+        try:
+            yield nmap, nikto, openvas
+        finally:
+            nmap.close_session()
+            nikto.close_session()
+            openvas.close_session()
 
-get_user_manager  = _get_user_manager
-get_oauth_manager = _get_oauth_manager
+@contextmanager
+def get_vault_manager(user_id: int):
+    with get_user_manager() as um:
+        user = um.get_user_by_id(user_id)
+        if not user:
+            raise UserNotFoundError(user_id=user_id)
+        vm = VaultManager(user)
+        try:
+            yield vm
+        finally:
+            vm.close_session()
+
+@contextmanager
+def get_aegis_manager(user_id: int):
+    with get_user_manager() as um:
+        user = um.get_user_by_id(user_id)
+        nmap    = NmapScanManager(user)
+        nikto   = NiktoScanManager(user)
+        openvas = OpenVASScanManager(user)
+        try:
+            yield nmap, nikto, openvas
+        finally:
+            nmap.close_session()
+            nikto.close_session()
+            openvas.close_session()
+
+@contextmanager
+def get_vault_manager(user_id: int):
+    with get_user_manager() as um:
+        user = um.get_user_by_id(user_id)
+        if not user:
+            raise UserNotFoundError(user_id=user_id)
+        vm = VaultManager(user)
+        try:
+            yield vm
+        finally:
+            vm.close_session()
+
+@contextmanager
+def get_aegis_manager(user_id: int):
+    with get_user_manager() as um:
+        user = um.get_user_by_id(user_id)
+        if not user:
+            raise UserNotFoundError(user_id=user_id)
+        am = AegisManager(user)
+        try:
+            yield am
+        finally:
+            am.close_session()
 
 def get_scan_by_id_for_user(
     scan_id: int,
@@ -182,8 +216,14 @@ def get_scan_by_id_for_user(
     El tipo es 'nmap', 'nikto' u 'openvas'.
     """
     scan = nmap_manager.get_scan_by_id(scan_id)
-    if scan:
-        return scan, scan.scan_type
+    if not scan:
+        raise ScanNotFoundError(scan_id)
+
+    uid = get_current_user_id()
+    verify_scan_ownership(scan, uid, scan_id)
+    return scan, scan.scan_type
+
+    
 
 def resolve_manager(
     scan_type: str,

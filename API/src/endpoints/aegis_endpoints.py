@@ -220,9 +220,8 @@ def aegis_generate():
 
     try:
         uid         = get_current_user_id()
-        mgr         = get_aegis_manager(uid)
-        document_id = mgr.generate(topic_id=topic_id, tweaks=tweaks)
-        mgr.close_session()
+        with get_aegis_manager(uid) as mgr:
+            document_id = mgr.generate(topic_id=topic_id, tweaks=tweaks)
 
         _logger.info(f"Aegis generate lanzado — topicId={topic_id} documentId={document_id} user={get_current_username()}")
         return jsonify({"message": "Generación Aegis iniciada", "documentId": document_id, "status": "pending"}), 202
@@ -265,9 +264,8 @@ def aegis_status():
     try:
         doc_id   = _parse_doc_id()
         uid      = get_current_user_id()
-        mgr      = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
-        mgr.close_session()
+        with get_aegis_manager(uid) as mgr:
+            doc_info = mgr.get_document(doc_id)
 
         if not doc_info or doc_info.get("userId") != uid:
             return _doc_not_found(doc_id)
@@ -312,9 +310,8 @@ def aegis_get_document():
     try:
         doc_id   = _parse_doc_id()
         uid      = get_current_user_id()
-        mgr      = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
-        mgr.close_session()
+        with get_aegis_manager(uid) as mgr:
+            doc_info = mgr.get_document(doc_id)
 
         if not doc_info or doc_info.get("userId") != uid:
             return _doc_not_found(doc_id)
@@ -359,32 +356,26 @@ def aegis_download():
     try:
         doc_id   = _parse_doc_id()
         uid      = get_current_user_id()
-        mgr      = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
+        with get_aegis_manager(uid) as mgr:
+            doc_info = mgr.get_document(doc_id)
 
-        if not doc_info or doc_info.get("userId") != uid:
-            mgr.close_session()
-            return _doc_not_found(doc_id)
-        if doc_info["status"] != "done":
-            mgr.close_session()
-            return _doc_not_ready(doc_id, doc_info["status"])
+            if not doc_info or doc_info.get("userId") != uid:
+                return _doc_not_found(doc_id)
+            if doc_info["status"] != "done":
+                return _doc_not_ready(doc_id, doc_info["status"])
 
-        try:
-            path = mgr.get_document_path(doc_id)
-        except ValueError:
-            mgr.close_session()
-            return _doc_not_found(doc_id)
-        except FileNotFoundError:
-            mgr.close_session()
-            return jsonify({"error": "not_found", "message": "El fichero del documento no está disponible en disco"}), 404
+            try:
+                path = mgr.get_document_path(doc_id)
+            except ValueError:
+                return _doc_not_found(doc_id)
+            except FileNotFoundError:
+                return jsonify({"error": "not_found", "message": "El fiche" + "o del documento no est" + chr(0xe1) + " disponible en disco"}), 404
 
-        mgr.close_session()
+            doc_format = doc_info.get("format", "json")
+            mimetype   = "application/json" if doc_format == "json" else "text/markdown; charset=utf-8"
 
-        doc_format = doc_info.get("format", "json")
-        mimetype   = "application/json" if doc_format == "json" else "text/markdown; charset=utf-8"
-
-        _logger.info(f"Descargando Aegis doc {doc_id} ({doc_format}) — user={get_current_username()}")
-        return send_file(path, as_attachment=True, download_name=path.name, mimetype=mimetype)
+            _logger.info(f"Descargando Aegis doc {doc_id} ({doc_format}) " + chr(0xe2) + " user={get_current_username()}")
+            return send_file(path, as_attachment=True, download_name=path.name, mimetype=mimetype)
 
     except (MissingParameterError, ValidationError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
@@ -421,17 +412,16 @@ def aegis_delete_document():
     try:
         doc_id   = _parse_doc_id()
         uid      = get_current_user_id()
-        mgr      = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
+        with get_aegis_manager(uid) as mgr:
+            doc_info = mgr.get_document(doc_id)
 
-        if not doc_info or doc_info.get("userId") != uid:
-            mgr.close_session()
-            return _doc_not_found(doc_id)
+            if not doc_info or doc_info.get("userId") != uid:
+                return _doc_not_found(doc_id)
 
-        mgr.delete_document(doc_id)
+            mgr.delete_document(doc_id)
 
-        _logger.info(f"Aegis doc {doc_id} eliminado — user={get_current_username()}")
-        return jsonify({"message": "Documento eliminado correctamente", "documentId": doc_id}), 200
+            _logger.info(f"Aegis doc {doc_id} eliminado " + chr(0xe2) + " user={get_current_username()}")
+            return jsonify({"message": "Documento eliminado correctamente", "documentId": doc_id}), 200
 
     except (MissingParameterError, ValidationError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
@@ -466,9 +456,8 @@ def aegis_list_documents():
     """
     try:
         uid  = get_current_user_id()
-        mgr  = get_aegis_manager(uid)
-        docs = mgr.list_documents()
-        mgr.close_session()
+        with get_aegis_manager(uid) as mgr:
+            docs = mgr.list_documents()
 
         return jsonify({"count": len(docs), "documents": docs}), 200
 
@@ -499,9 +488,8 @@ def aegis_get_topics():
     """
     try:
         uid     = get_current_user_id()
-        mgr     = get_aegis_manager(uid)
-        topics  = mgr.get_topics()
-        mgr.close_session()
+        with get_aegis_manager(uid) as mgr:
+            topics  = mgr.get_topics()
 
         return jsonify(topics), 200
 
@@ -621,37 +609,34 @@ def export_document(doc_id: int):
             return jsonify({"error": "unsupported_format", "message": f"Formato '{format_str}' no soportado", "supported": ["md", "json"]}), 400
 
         uid = get_current_user_id()
-        mgr = get_aegis_manager(uid)
 
-        try:
-            doc_info = _get_document_checked(mgr, doc_id, uid)
-        except ValueError:
-            mgr.close_session()
-            return jsonify({"error": "not_found", "message": f"Documento {doc_id} no encontrado"}), 404
-        except PermissionError as exc:
-            mgr.close_session()
-            return jsonify({"error": "not_ready", "message": str(exc)}), 409
+        with get_aegis_manager(uid) as mgr:
+            try:
+                doc_info = _get_document_checked(mgr, doc_id, uid)
+            except ValueError:
+                return jsonify({"error": "not_found", "message": f"Documento {doc_id} no encontrado"}), 404
+            except PermissionError as exc:
+                return jsonify({"error": "not_ready", "message": str(exc)}), 409
 
-        export_data = ExportData.from_document_dict(doc_info, doc_id)
+            export_data = ExportData.from_document_dict(doc_info, doc_id)
 
-        if export_format == ExportFormat.MARKDOWN:
-            exporter = MarkdownExporter(template=MarkdownTemplate(
-                include_toc            = options.get("includeToc",   False),
-                include_metadata_block = options.get("includeMetadata", True),
-            ))
-        else:
-            exporter = JsonExporter()
+            if export_format == ExportFormat.MARKDOWN:
+                exporter = MarkdownExporter(template=MarkdownTemplate(
+                    include_toc            = options.get("includeToc",   False),
+                    include_metadata_block = options.get("includeMetadata", True),
+                ))
+            else:
+                exporter = JsonExporter()
 
-        result = exporter.export(export_data)
-        mgr.close_session()
+            result = exporter.export(export_data)
 
-        _logger.info(f"Exportación {export_format.value} generada para doc {doc_id} — user={get_current_username()}, size={result.size_bytes}b")
-        return jsonify({
-            "success":     True,
-            "export":      result.to_response_dict(),
-            "document":    {"id": doc_id, "title": doc_info.get("title"), "topicId": doc_info.get("topicId"), "status": doc_info.get("status")},
-            "downloadUrl": f"/aegis/export/{doc_id}/download?format={export_format.value}",
-        }), 200
+            _logger.info(f"Exportación {export_format.value} generada para doc {doc_id} — user={get_current_username()}, size={result.size_bytes}b")
+            return jsonify({
+                "success":     True,
+                "export":      result.to_response_dict(),
+                "document":    {"id": doc_id, "title": doc_info.get("title"), "topicId": doc_info.get("topicId"), "status": doc_info.get("status")},
+                "downloadUrl": f"/aegis/export/{doc_id}/download?format={export_format.value}",
+            }), 200
 
     except Exception as exc:
         _logger.error(f"Error en exportación: {exc}", exc_info=True)
@@ -697,35 +682,32 @@ def download_export(doc_id: int):
             return jsonify({"error": "unsupported_format", "message": f"Formato '{format_str}' no soportado"}), 400
 
         uid = get_current_user_id()
-        mgr = get_aegis_manager(uid)
 
-        try:
-            doc_info = _get_document_checked(mgr, doc_id, uid)
-        except ValueError:
-            mgr.close_session()
-            return jsonify({"error": "not_found", "message": f"Documento {doc_id} no encontrado"}), 404
-        except PermissionError as exc:
-            mgr.close_session()
-            return jsonify({"error": "not_ready", "message": str(exc)}), 409
+        with get_aegis_manager(uid) as mgr:
+            try:
+                doc_info = _get_document_checked(mgr, doc_id, uid)
+            except ValueError:
+                return jsonify({"error": "not_found", "message": f"Documento {doc_id} no encontrado"}), 404
+            except PermissionError as exc:
+                return jsonify({"error": "not_ready", "message": str(exc)}), 409
 
-        export_data = ExportData.from_document_dict(doc_info, doc_id)
-        exporter    = MarkdownExporter() if export_format == ExportFormat.MARKDOWN else JsonExporter()
-        result      = exporter.export(export_data)
-        mgr.close_session()
+            export_data = ExportData.from_document_dict(doc_info, doc_id)
+            exporter    = MarkdownExporter() if export_format == ExportFormat.MARKDOWN else JsonExporter()
+            result      = exporter.export(export_data)
 
-        disposition = "inline" if inline else "attachment"
-        _logger.info(f"Descarga {export_format.value} doc {doc_id} — user={get_current_username()}, inline={inline}")
+            disposition = "inline" if inline else "attachment"
+            _logger.info(f"Descarga {export_format.value} doc {doc_id} — user={get_current_username()}, inline={inline}")
 
-        return Response(
-            result.content,
-            mimetype = result.mimetype,
-            headers  = {
-                "Content-Disposition": f'{disposition}; filename="{result.filename}"',
-                "Content-Length":      str(result.size_bytes),
-                "X-Export-Format":     export_format.value,
-                "X-Document-Id":       str(doc_id),
-            },
-        )
+            return Response(
+                result.content,
+                mimetype = result.mimetype,
+                headers  = {
+                    "Content-Disposition": f'{disposition}; filename="{result.filename}"',
+                    "Content-Length":      str(result.size_bytes),
+                    "X-Export-Format":     export_format.value,
+                    "X-Document-Id":       str(doc_id),
+                },
+            )
 
     except Exception as exc:
         _logger.error(f"Error en download export: {exc}", exc_info=True)
@@ -768,38 +750,35 @@ def quick_export_markdown(doc_id: int):
         include_alerts = request.args.get("noAlerts", "false").lower() != "true"
 
         uid = get_current_user_id()
-        mgr = get_aegis_manager(uid)
 
-        try:
-            doc_info = _get_document_checked(mgr, doc_id, uid)
-        except ValueError:
-            mgr.close_session()
-            return jsonify({"error": "not_found", "message": f"Documento {doc_id} no encontrado"}), 404
-        except PermissionError as exc:
-            mgr.close_session()
-            return jsonify({"error": "not_ready", "message": str(exc), "status": "pending"}), 409
+        with get_aegis_manager(uid) as mgr:
+            try:
+                doc_info = _get_document_checked(mgr, doc_id, uid)
+            except ValueError:
+                return jsonify({"error": "not_found", "message": f"Documento {doc_id} no encontrado"}), 404
+            except PermissionError as exc:
+                return jsonify({"error": "not_ready", "message": str(exc), "status": "pending"}), 409
 
-        export_data = ExportData.from_document_dict(doc_info, doc_id)
-        if not include_alerts:
-            # Sobreescribir alertas con lista vacía sin mutar el dict original
-            from dataclasses import replace
-            export_data = replace(export_data, alerts=[])
+            export_data = ExportData.from_document_dict(doc_info, doc_id)
+            if not include_alerts:
+                # Sobreescribir alertas con lista vacía sin mutar el dict original
+                from dataclasses import replace
+                export_data = replace(export_data, alerts=[])
 
-        exporter = MarkdownExporter(template=MarkdownTemplate(
-            include_metadata_block = False,
-            alert_section_title    = "## Alertas Recientes" if include_alerts else "",
-        ))
-        result = exporter.export(export_data)
-        mgr.close_session()
+            exporter = MarkdownExporter(template=MarkdownTemplate(
+                include_metadata_block = False,
+                alert_section_title    = "## Alertas Recientes" if include_alerts else "",
+            ))
+            result = exporter.export(export_data)
 
-        disposition = "inline" if inline else "attachment"
-        _logger.info(f"Quick MD export doc {doc_id} — user={get_current_username()}, inline={inline}, alerts={include_alerts}")
+            disposition = "inline" if inline else "attachment"
+            _logger.info(f"Quick MD export doc {doc_id} — user={get_current_username()}, inline={inline}, alerts={include_alerts}")
 
-        return Response(
-            result.content,
-            mimetype = "text/markdown; charset=utf-8",
-            headers  = {
-                "Content-Disposition": f'{disposition}; filename="{result.filename}"',
+            return Response(
+                result.content,
+                mimetype = "text/markdown; charset=utf-8",
+                headers  = {
+                    "Content-Disposition": f'{disposition}; filename="{result.filename}"',
                 "Content-Length":      str(result.size_bytes),
             },
         )

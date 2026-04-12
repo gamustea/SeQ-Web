@@ -394,6 +394,28 @@ class _PrintingStrategy(ABC):
             elements.append(Spacer(1, 0.05 * inch))
             elements.append(Paragraph(conclusions, theme.body))
 
+        disclaimer_text = """
+        <b>Nota:</b> El contenido de esta sección ha sido generado mediante 
+        inteligencia artificial y se basa en el análisis automático de los datos del escaneo. 
+        Si bien se ha diseñado para proporcionar una evaluación de seguridad objetiva, los 
+        resultados deben ser interpretados por un profesional cualificado. SeQ no garantiza 
+        la exactitud, completitud o aplicabilidad de las recomendaciones generadas. Este informe 
+        no sustituye —sino complementa— una auditoría de seguridad manual o la evaluación 
+        detallada por parte de un experto en ciberseguridad.
+        """
+        disclaimer_style = ParagraphStyle(
+            "Disclaimer",
+            parent=theme.styles["Normal"],
+            fontSize=7,
+            leading=9,
+            textColor=colors.HexColor("#6C757D"),
+            alignment=TA_JUSTIFY,
+            spaceAfter=5,
+        )
+        elements.append(Spacer(1, 0.1 * inch))
+        elements.append(Paragraph(disclaimer_text, disclaimer_style))
+        elements.append(Spacer(1, 0.15 * inch))
+
     @abstractmethod
     def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
         """Añade el cuerpo específico del informe (propio de cada herramienta)."""

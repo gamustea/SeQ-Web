@@ -74,10 +74,10 @@ from src.misc import SecOpsLogger
 from ._shared import (
     get_current_user_id,
     get_current_username,
-    get_oauth_manager,
-    get_user_manager,
     limiter,
+    get_oauth_manager,
     require_oauth_token,
+    get_user_manager,
 )
 
 users_bp = Blueprint("users", __name__)
@@ -125,7 +125,8 @@ def sign_up_person():
         return jsonify(err), code
 
     try:
-        person = get_user_manager().sign_in_person(first_name, last_name, alias)
+        with user_manager() as user_mgr:
+            person = user_mgr.sign_in_person(first_name, last_name, alias)
         _logger.info(f"Persona registrada: {first_name} {last_name} (ID: {person.id})")
         return jsonify({
             "message":   "Persona registrada exitosamente",
@@ -187,7 +188,8 @@ def sign_up_user():
         return jsonify(err), code
 
     try:
-        user = get_user_manager().sign_in_user(username, password, email, alias)
+        with user_manager() as user_mgr:
+            user = user_mgr.sign_in_user(username, password, email, alias)
         _logger.info(f"Usuario registrado: {username} (ID: {user.id})")
         return jsonify({
             "message":  "Usuario registrado exitosamente",
@@ -248,7 +250,8 @@ def check_credentials():
         return jsonify(err), code
 
     try:
-        is_valid, user_id = get_user_manager().verify_credentials(username, password)
+        with user_manager() as user_mgr:
+            is_valid, user_id = user_mgr.verify_credentials(username, password)
         if not is_valid:
             raise InvalidCredentialsError()
 
@@ -309,8 +312,10 @@ def change_password():
         user_id  = get_current_user_id()
         username = get_current_username()
 
-        get_user_manager().update_user_password(user_id, new_password)
-        get_oauth_manager().revoke_all_user_tokens(user_id)
+        with get_user_manager() as user_mgr:
+            user_mgr.update_user_password(user_id, new_password)
+        with get_oauth_manager() as oauth_mgr:
+            oauth_mgr.revoke_all_user_tokens(user_id)
 
         _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
         return jsonify({

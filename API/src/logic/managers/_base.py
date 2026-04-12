@@ -23,9 +23,9 @@ def initialize_engine(database_url: Optional[str] = None):
     if _ENGINE is None:
         t0 = time.perf_counter()
         if database_url is None:
-            (USERNAME, PASSWORD, HOST, DBNAME) = ConfigReader().get_db_credentials()
+            db_creds = ConfigReader().get_db_credentials()
             database_url = (
-                f"postgresql+psycopg2://{USERNAME}:{urllib.parse.quote(PASSWORD)}@{HOST}:{15432}/{DBNAME}"
+                f"{db_creds['dialect']}://{db_creds['username']}:{urllib.parse.quote(db_creds['password'])}@{db_creds['host']}:{db_creds['port']}/{db_creds['dbname']}"
             )
 
         _ENGINE = create_engine(
