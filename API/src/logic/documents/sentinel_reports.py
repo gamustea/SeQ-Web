@@ -1911,6 +1911,11 @@ class NiktoAIWriter(AIWriter):
                 Usa en su lugar el impacto concreto: "Previene suplantación de identidad del servidor".
             - NO incluyas recomendaciones para hallazgos clasificados como INFORMATIVO (robots.txt de CMS
                 conocido, banners de versión, ETags). Estas no aportan valor accionable al cliente.
+            - Si risk_level es MEDIO, ninguna recomendación puede tener priority ALTA.
+                Si risk_level es BAJO o INFORMATIVO, ninguna recomendación puede superar priority MEDIA.
+                La prioridad máxima de las recomendaciones está acotada por el nivel de riesgo global.
+            - En executive_summary, menciona únicamente los controles con impacto MEDIO o superior.
+                No menciones hallazgos de configuración rutinaria (robots.txt de CMS, ETags, banners).
         """)
 
     def _build_user_prompt(self, scan_data: dict, processed: dict) -> str:
@@ -1965,19 +1970,19 @@ class NiktoAIWriter(AIWriter):
 
             FORMATO DE RESPUESTA (JSON estricto, sin ningún texto antes ni después del JSON):
             {{
-                "executive_summary": "Descripción concisa del perfil de seguridad. Máximo 2-3 frases. Sin conteos de hallazgos.",
+                "executive_summary": "Descripción del perfil de seguridad en 3-4 frases. Contextualiza el tipo de aplicación detectado, los controles con deficiencias y su impacto general. Sin conteos de hallazgos individuales.",
                 "risk_level": "CRÍTICO|ALTO|MEDIO|BAJO|INFORMATIVO",
-                "technical_analysis": "Análisis por control: qué protección debería ofrecer cada uno, qué riesgo concreto acepta su ausencia o debilidad. Distingue entre hardening ausente y protección crítica ausente. Máximo 500 caracteres.",
+                "technical_analysis": "Análisis detallado por cada control evaluado: qué protección debería ofrecer, qué debilidad concreta presenta y qué riesgo real acepta esa debilidad en el contexto detectado. Distingue entre hardening ausente y protección crítica ausente. Para cada control relevante dedica 2-3 frases. Mínimo 400 caracteres, máximo 900 caracteres.",
                 "recommendations": [
                     {{
                         "title": "Acción concreta sobre el control",
-                        "description": "Por qué es necesario y qué riesgo mitiga",
+                        "description": "Explica en 2-3 frases por qué es necesario, qué riesgo concreto mitiga y cuál es el impacto esperado de no corregirlo. No uses el nivel de riesgo global como argumento; describe el impacto técnico específico.",
                         "priority": "ALTA|MEDIA|BAJA",
                         "cve_refs": [],
-                        "remediation": "Instrucción técnica específica aplicable al stack detectado"
+                        "remediation": "Instrucción técnica específica y accionable aplicable al stack detectado, en 2-3 frases."
                     }}
                 ],
-                "conclusions": "Evaluación de madurez general y recomendación de acción. No repetir el resumen ejecutivo. Máximo 150 caracteres."
+                "conclusions": "Evaluación de madurez general de la aplicación en 2-3 frases. Indica si los controles básicos están implementados y qué tipo de acción se recomienda (mejora planificable, corrección próxima, remediación prioritaria) según el nivel de riesgo. No repetir el resumen ejecutivo."
             }}
         """)
 
