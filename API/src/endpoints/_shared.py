@@ -183,14 +183,7 @@ def get_scan_by_id_for_user(
     """
     scan = nmap_manager.get_scan_by_id(scan_id)
     if scan:
-        return scan, "nmap"
-    scan = nikto_manager.get_scan_by_id(scan_id)
-    if scan:
-        return scan, "nikto"
-    scan = openvas_manager.get_scan_by_id(scan_id)
-    if scan:
-        return scan, "openvas"
-    return None, ""
+        return scan, scan.scan_type
 
 def resolve_manager(
     scan_type: str,
@@ -199,6 +192,7 @@ def resolve_manager(
     openvas_manager: OpenVASScanManager,
 ) -> NmapScanManager | NiktoScanManager | OpenVASScanManager:
     """Devuelve el manager correcto a partir del tipo de escaneo (DRY)."""
+    _logger.debug(f"Resolviendo manager para tipo de escaneo: {scan_type}")
     if scan_type == "nmap":
         return nmap_manager
     if scan_type == "nikto":

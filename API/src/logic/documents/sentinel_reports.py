@@ -3,6 +3,7 @@ import json
 import random
 import re
 import time
+import textwrap
 
 from enum import Enum
 from abc import ABC, abstractmethod
@@ -29,7 +30,7 @@ from reportlab.platypus import (
 )
 
 from src.misc import ConfigReader, DirectoryType, SecOpsLogger
-from src.core.model import NmapScan, NiktoScan, Scan, Host, Topic
+from src.core.model import NmapScan, NiktoScan, Scan, Host, Topic, NiktoIncident
 from src.logic.documents._base import AIWriter
 
 
@@ -42,32 +43,8 @@ class ColorType(Enum):
     WHITE = "white"
 
 
-class _PrintingStrategy(ABC):
-    def __init__(self, scan: Scan) -> None:
-        super().__init__()
-        self.scan = scan
-        self.color_palette: Dict[ColorType, str] = {}
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
-
-    @abstractmethod
-    def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
-        """Añade el cuerpo específico del informe (propio de cada herramienta)."""
-        ...
-
-    @abstractmethod
-    def get_filename_suffix(self) -> str:
-        ...
-
-    @abstractmethod
-    def get_picture_name(self, dark: bool = True) -> str:
-        ...
-
-    @abstractmethod
-    def get_report_title(self) -> str:
-        ...
-
-
 class ReportTheme:
+    
     def __init__(self, base_styles, palette):
         self.palette = palette
         self.styles = base_styles
@@ -181,7 +158,6 @@ class ReportTheme:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ("GRID", (0, 0), (-1, -1), 0.4, light),
         ])
-
 
     def kv_table(self, data, col_widths):
         t = Table(data, colWidths=col_widths)
@@ -302,7 +278,136 @@ class ReportTheme:
         return t
 
 
+class _PrintingStrategy(ABC):
+
+    def __init__(self, scan: Scan) -> None:
+        super().__init__()
+        self.scan = scan
+        self.writer = None
+        self.color_palette: Dict[ColorType, str] = {}
+        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+
+    def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:
+        ai_analysis = self.writer.generate(self.scan)
+
+        # 1) Salto de página para que el informe de IA empiece en una nueva
+        elements.append(PageBreak())
+        
+        # 2) Usar la cabecera estilizada de ReportTheme
+        elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
+        elements.append(Spacer(1, 0.15 * inch))
+
+        risk = ai_analysis.get("risk_level", "MEDIO")
+        
+        # PALETA COMPLETA DE COLORES DE RIESGO (incluye INFORMATIVO)
+        risk_colors = {
+            "CRÍTICO": colors.HexColor("#b71c1c"),      # Rojo oscuro
+            "ALTO": colors.HexColor("#d32f2f"),        # Rojo
+            "MEDIO": colors.HexColor("#f57c00"),       # Naranja
+            "BAJO": colors.HexColor("#388e3c"),        # Verde
+            "INFORMATIVO": colors.HexColor("#1976d2"), # Azul (distintivo, no confundir con MEDIO)
+        }
+        
+        # Color por defecto gris neutro si el valor no está en la paleta
+        risk_color = risk_colors.get(risk.upper(), colors.HexColor("#757575"))
+        
+        # 3) Badge de riesgo mejorado usando Table
+        risk_para = Paragraph(f"NIVEL DE RIESGO: {risk.upper()}", theme.pill)
+        risk_table = Table([[risk_para]], colWidths=[2 * inch])
+        risk_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), risk_color),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("BOX", (0, 0), (-1, -1), 0.5, risk_color),
+        ]))
+        
+        risk_wrapper = Table([[risk_table]], colWidths=[6 * inch])
+        risk_wrapper.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ]))
+        elements.append(risk_wrapper)
+        elements.append(Spacer(1, 0.1 * inch))
+
+        exec_summary = ai_analysis.get("executive_summary", "")
+        if exec_summary and isinstance(exec_summary, str):
+            elements.append(Paragraph("Resumen Ejecutivo", theme.subtitle))
+            elements.append(Spacer(1, 0.05 * inch))
+            elements.append(Paragraph(exec_summary, theme.body))
+            elements.append(Spacer(1, 0.15 * inch))
+
+        tech_analysis = ai_analysis.get("technical_analysis", "")
+        if tech_analysis and isinstance(tech_analysis, str):
+            elements.append(Paragraph("Análisis Técnico", theme.subtitle))
+            elements.append(Spacer(1, 0.05 * inch))
+            elements.append(Paragraph(tech_analysis, theme.body))
+            elements.append(Spacer(1, 0.15 * inch))
+
+        recommendations = ai_analysis.get("recommendations", [])
+        if recommendations:
+            elements.append(Paragraph("Recomendaciones de Seguridad", theme.subtitle))
+            elements.append(Spacer(1, 0.1 * inch))
+
+            # MAPEO DE PRIORIDADES DE RECOMENDACIONES A COLORES
+            # Las recomendaciones usan ALTA/MEDIA/BAJA, no los mismos que el risk_level general
+            priority_colors = {
+                "ALTA": colors.HexColor("#d32f2f"),      # Rojo (equivalente a ALTO/CRÍTICO)
+                "MEDIA": colors.HexColor("#f57c00"),     # Naranja (equivalente a MEDIO)
+                "BAJA": colors.HexColor("#388e3c"),      # Verde (equivalente a BAJO)
+                "INFORMATIVA": colors.HexColor("#1976d2"), # Azul para recomendaciones informativas
+            }
+
+            for i, rec in enumerate(recommendations, 1):
+                title = rec.get("title", "Recomendación") if isinstance(rec, dict) else "Recomendación"
+                desc = rec.get("description", "") if isinstance(rec, dict) else ""
+                priority = rec.get("priority", "MEDIA") if isinstance(rec, dict) else "MEDIA"
+                remediation = rec.get("remediation", "") if isinstance(rec, dict) else ""
+
+                # Usar el mapeo de prioridades, no el de risk_level
+                pri_color = priority_colors.get(priority.upper(), colors.HexColor("#757575"))
+
+                # 4) Construir el contenido de la recomendación dentro de una tarjeta (card)
+                rec_flowables = []
+                rec_flowables.append(Paragraph(f"<b>{i}. {title}</b> — Prioridad: {priority}", theme.info))
+                if desc:
+                    rec_flowables.append(Spacer(1, 0.05 * inch))
+                    rec_flowables.append(Paragraph(desc, theme.body))
+                if remediation:
+                    rec_flowables.append(Spacer(1, 0.05 * inch))
+                    rec_flowables.append(Paragraph(f"<b>Acción:</b> {remediation}", theme.body))
+                    
+                elements.append(theme.card(rec_flowables, severity_color=pri_color))
+                elements.append(Spacer(1, 0.1 * inch))
+
+        conclusions = ai_analysis.get("conclusions", "")
+        if conclusions and isinstance(conclusions, str):
+            elements.append(Spacer(1, 0.1 * inch))
+            elements.append(Paragraph("Conclusiones", theme.subtitle))
+            elements.append(Spacer(1, 0.05 * inch))
+            elements.append(Paragraph(conclusions, theme.body))
+
+    @abstractmethod
+    def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
+        """Añade el cuerpo específico del informe (propio de cada herramienta)."""
+        ...
+
+    @abstractmethod
+    def get_filename_suffix(self) -> str:
+        ...
+
+    @abstractmethod
+    def get_picture_name(self, dark: bool = True) -> str:
+        ...
+
+    @abstractmethod
+    def get_report_title(self) -> str:
+        ...
+
+
 class PDFCreator:
+
     def __init__(self, printing_strategy: _PrintingStrategy) -> None:
         self.config_reader = ConfigReader()
         self.directory = self.config_reader.get_directory_of(DirectoryType.TEMP)
@@ -318,7 +423,6 @@ class PDFCreator:
         doc.subject = f"Análisis de seguridad realizado el {date_str}"
         doc.creator = "SecOps PDF Generator v2.0"
 
-    # Cabecera/pie reales, con numeración de página
     def _on_page(self, canv, doc):
         canv.saveState()
         width, height = A4
@@ -578,8 +682,10 @@ class PDFCreator:
 
 
 class NmapPrintingStrategy(_PrintingStrategy):
+
     def __init__(self, scan: NmapScan) -> None:
         super().__init__(scan)
+        self.writer = NmapAIWriter()
         
         self.color_palette = {
             ColorType.BLACK: "#121212",
@@ -590,7 +696,7 @@ class NmapPrintingStrategy(_PrintingStrategy):
             ColorType.WHITE: "#E1E8F0",
         }
 
-    def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
+    def append_body(self, theme: ReportTheme, elements: list, ai_report: bool = False) -> None:
         scan = self.scan
         palette = self.color_palette
         main = colors.HexColor(palette[ColorType.MAIN])
@@ -690,106 +796,7 @@ class NmapPrintingStrategy(_PrintingStrategy):
         elements.append(port_table)
 
         if ai_report:
-            writer = NmapAIWriter()
-            ai_analysis = writer.generate(scan)
-
-            # 1) Salto de página para que el informe de IA empiece en una nueva
-            elements.append(PageBreak())
-            
-            # 2) Usar la cabecera estilizada de ReportTheme
-            elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
-            elements.append(Spacer(1, 0.15 * inch))
-
-            risk = ai_analysis.get("risk_level", "MEDIO")
-            
-            # PALETA COMPLETA DE COLORES DE RIESGO (incluye INFORMATIVO)
-            risk_colors = {
-                "CRÍTICO": colors.HexColor("#b71c1c"),      # Rojo oscuro
-                "ALTO": colors.HexColor("#d32f2f"),        # Rojo
-                "MEDIO": colors.HexColor("#f57c00"),       # Naranja
-                "BAJO": colors.HexColor("#388e3c"),        # Verde
-                "INFORMATIVO": colors.HexColor("#1976d2"), # Azul (distintivo, no confundir con MEDIO)
-            }
-            
-            # Color por defecto gris neutro si el valor no está en la paleta
-            risk_color = risk_colors.get(risk.upper(), colors.HexColor("#757575"))
-            
-            # 3) Badge de riesgo mejorado usando Table
-            risk_para = Paragraph(f"NIVEL DE RIESGO: {risk.upper()}", theme.pill)
-            risk_table = Table([[risk_para]], colWidths=[2 * inch])
-            risk_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), risk_color),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ("BOX", (0, 0), (-1, -1), 0.5, risk_color),
-            ]))
-            
-            risk_wrapper = Table([[risk_table]], colWidths=[6 * inch])
-            risk_wrapper.setStyle(TableStyle([
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-            ]))
-            elements.append(risk_wrapper)
-            elements.append(Spacer(1, 0.1 * inch))
-
-            exec_summary = ai_analysis.get("executive_summary", "")
-            if exec_summary:
-                elements.append(Paragraph("Resumen Ejecutivo", theme.subtitle))
-                elements.append(Spacer(1, 0.05 * inch))
-                elements.append(Paragraph(exec_summary, theme.body))
-                elements.append(Spacer(1, 0.15 * inch))
-
-            tech_analysis = ai_analysis.get("technical_analysis", "")
-            if tech_analysis:
-                elements.append(Paragraph("Análisis Técnico", theme.subtitle))
-                elements.append(Spacer(1, 0.05 * inch))
-                elements.append(Paragraph(tech_analysis, theme.body))
-                elements.append(Spacer(1, 0.15 * inch))
-
-            recommendations = ai_analysis.get("recommendations", [])
-            if recommendations:
-                elements.append(Paragraph("Recomendaciones de Seguridad", theme.subtitle))
-                elements.append(Spacer(1, 0.1 * inch))
-
-                # MAPEO DE PRIORIDADES DE RECOMENDACIONES A COLORES
-                # Las recomendaciones usan ALTA/MEDIA/BAJA, no los mismos que el risk_level general
-                priority_colors = {
-                    "ALTA": colors.HexColor("#d32f2f"),      # Rojo (equivalente a ALTO/CRÍTICO)
-                    "MEDIA": colors.HexColor("#f57c00"),     # Naranja (equivalente a MEDIO)
-                    "BAJA": colors.HexColor("#388e3c"),      # Verde (equivalente a BAJO)
-                    "INFORMATIVA": colors.HexColor("#1976d2"), # Azul para recomendaciones informativas
-                }
-
-                for i, rec in enumerate(recommendations, 1):
-                    title = rec.get("title", "Recomendación")
-                    desc = rec.get("description", "")
-                    priority = rec.get("priority", "MEDIA")
-                    remediation = rec.get("remediation", "")
-
-                    # Usar el mapeo de prioridades, no el de risk_level
-                    pri_color = priority_colors.get(priority.upper(), colors.HexColor("#757575"))
-
-                    # 4) Construir el contenido de la recomendación dentro de una tarjeta (card)
-                    rec_flowables = []
-                    rec_flowables.append(Paragraph(f"<b>{i}. {title}</b> — Prioridad: {priority}", theme.info))
-                    if desc:
-                        rec_flowables.append(Spacer(1, 0.05 * inch))
-                        rec_flowables.append(Paragraph(desc, theme.body))
-                    if remediation:
-                        rec_flowables.append(Spacer(1, 0.05 * inch))
-                        rec_flowables.append(Paragraph(f"<b>Acción:</b> {remediation}", theme.body))
-                        
-                    elements.append(theme.card(rec_flowables, severity_color=pri_color))
-                    elements.append(Spacer(1, 0.1 * inch))
-
-            conclusions = ai_analysis.get("conclusions", "")
-            if conclusions:
-                elements.append(Spacer(1, 0.1 * inch))
-                elements.append(Paragraph("Conclusiones", theme.subtitle))
-                elements.append(Spacer(1, 0.05 * inch))
-                elements.append(Paragraph(conclusions, theme.body))
+            self._append_ai_analysis(elements, theme)            
 
     def get_filename_suffix(self) -> str:
         return "_Nmap.pdf"
@@ -1116,6 +1123,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
 class NiktoPrintingStrategy(_PrintingStrategy):
     def __init__(self, scan: NiktoScan) -> None:
         super().__init__(scan)
+        self.writer = NiktoAIWriter()
         self.color_palette = {
             ColorType.BLACK: "#4B2500",
             ColorType.DARK: "#8E3D0A",
@@ -1340,6 +1348,9 @@ class NiktoPrintingStrategy(_PrintingStrategy):
 
             elements.append(Spacer(1, 0.2 * inch))
 
+        if ai_report:
+            self._append_ai_analysis(elements, theme)
+
     def get_filename_suffix(self) -> str:
         return "_Nikto.pdf"
 
@@ -1383,35 +1394,35 @@ class NmapAIWriter(AIWriter):
         PRINCIPIOS UNIVERSALES DE ANÁLISIS:
         
         1. NORMA vs. ANOMALÍA:
-           - Puertos bajo 1024 (sistema): Requieren privilegios root para abrirse. Su presencia indica servicios de sistema deliberadamente configurados.
-           - Puertos altos (>1024): Asignados dinámicamente o para servicios de usuario/aplicación.
-           - Un host con 3-6 puertos estándar (SSH, HTTP, HTTPS, DNS) representa una configuración mínima funcional, no "excesiva exposición".
+            - Puertos bajo 1024 (sistema): Requieren privilegios root para abrirse. Su presencia indica servicios de sistema deliberadamente configurados.
+            - Puertos altos (>1024): Asignados dinámicamente o para servicios de usuario/aplicación.
+            - Un host con 3-6 puertos estándar (SSH, HTTP, HTTPS, DNS) representa una configuración mínima funcional, no "excesiva exposición".
         
         2. EVALUACIÓN DE RIESGO POR TIPO DE EXPOSICIÓN:
-           - Riesgo inherente a protocolo: Telnet (texto plano), FTP anónimo, SNMP con community 'public' = Alto por diseño.
-           - Riesgo de configuración: SSH con métodos débiles, HTTP sin redirección a HTTPS = Medio, mitigable.
-           - Riesgo de versionado: Solo marcar como crítico si existe CVE específico y público con exploit verificado para la versión EXACTA detectada.
-           - Riesgo de combinación: Un solo puerto SSH (22) es estándar. SSH (22) + Telnet (23) sí es anómalo (redundancia insegura).
+            - Riesgo inherente a protocolo: Telnet (texto plano), FTP anónimo, SNMP con community 'public' = Alto por diseño.
+            - Riesgo de configuración: SSH con métodos débiles, HTTP sin redirección a HTTPS = Medio, mitigable.
+            - Riesgo de versionado: Solo marcar como crítico si existe CVE específico y público con exploit verificado para la versión EXACTA detectada.
+            - Riesgo de combinación: Un solo puerto SSH (22) es estándar. SSH (22) + Telnet (23) sí es anómalo (redundancia insegura).
         
         3. CLASIFICACIÓN FUNCIONAL (sin inventar vulnerabilidades):
-           - Identifica el PROPÓSITO del host según el perfil de puertos:
-             * "Gestión/Sistema": SSH, RDP, SNMP, IPMI, iDRAC, Proxmox, VMware
-             * "Servicio de red": DNS, DHCP, NTP, LDAP, Kerberos
-             * "Aplicación/Web": HTTP, HTTPS, APIs en puertos estándar/alternativos
-             * "Datos": MySQL, PostgreSQL, MongoDB, Redis, Elasticsearch
-             * "Infraestructura": Kubernetes, Docker, Consul, etcd
+            - Identifica el PROPÓSITO del host según el perfil de puertos:
+                * "Gestión/Sistema": SSH, RDP, SNMP, IPMI, iDRAC, Proxmox, VMware
+                * "Servicio de red": DNS, DHCP, NTP, LDAP, Kerberos
+                * "Aplicación/Web": HTTP, HTTPS, APIs en puertos estándar/alternativos
+                * "Datos": MySQL, PostgreSQL, MongoDB, Redis, Elasticsearch
+                * "Infraestructura": Kubernetes, Docker, Consul, etcd
         
         4. REGLA DE ORO PARA RECOMENDACIONES:
-           - NUNCA recomiendes "actualizar software" salvo que exista CVE específico documentado.
-           - NUNCA asumas que la autenticación está ausente sin evidencia (un servicio web en puerto 80 puede tener autenticación robusta en el backend).
-           - Prioriza el "hardening de configuración" sobre el "miedo a lo desconocido".
+            - NUNCA recomiendes "actualizar software" salvo que exista CVE específico documentado.
+            - NUNCA asumas que la autenticación está ausente sin evidencia (un servicio web en puerto 80 puede tener autenticación robusta en el backend).
+            - Prioriza el "hardening de configuración" sobre el "miedo a lo desconocido".
         
         5. NIVELES DE RIESGO - DEFINICIONES ESTRICTAS:
-           - CRÍTICO: Exposición de datos sensibles sin autenticación, o servicios obsoletos con vulnerabilidades día-cero activas (ej. log4j en versiones afectadas).
-           - ALTO: Protocolos inseguros por diseño (Telnet, FTP sin cifrado), o versiones con CVEs de ejecución remota confirmados.
-           - MEDIO: Configuraciones que aumentan superficie de ataque innecesariamente (ej. servicios de debug expuestos, paneles de admin en interfaces públicas sin IP whitelist).
-           - BAJO: Servicios legítimos pero que podrían beneficiarse de hardening (ej. ocultar versiones en banners, implementar rate limiting).
-           - INFORMATIVO: Perfil estándar de servicios sin desviaciones de seguridad detectables desde el escaneo.
+            - CRÍTICO: Exposición de datos sensibles sin autenticación, o servicios obsoletos con vulnerabilidades día-cero activas (ej. log4j en versiones afectadas).
+            - ALTO: Protocolos inseguros por diseño (Telnet, FTP sin cifrado), o versiones con CVEs de ejecución remota confirmados.
+            - MEDIO: Configuraciones que aumentan superficie de ataque innecesariamente (ej. servicios de debug expuestos, paneles de admin en interfaces públicas sin IP whitelist).
+            - BAJO: Servicios legítimos pero que podrían beneficiarse de hardening (ej. ocultar versiones en banners, implementar rate limiting).
+            - INFORMATIVO: Perfil estándar de servicios sin desviaciones de seguridad detectables desde el escaneo.
         
         PROHIBICIONES ABSOLUTAS:
         - NO generes CVEs genéricos o hipotéticos (ej. "CVE-2024-BIND" o "Posible Buffer Overflow").
@@ -1716,3 +1727,371 @@ class NmapAIWriter(AIWriter):
             return json.loads(cleaned)
         except json.JSONDecodeError:
             raise ValueError(f"No se pudo parsear la respuesta: {raw[:200]}")
+
+
+class NiktoAIWriter(AIWriter):
+    """
+    Genera análisis y recomendaciones de seguridad para escaneos Nikto.
+    
+    Utiliza Ollama para analizar agregados de hallazgos, no incidentes individuales,
+    proporcionando una evaluación de controles de seguridad web universales.
+    """
+
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> None:
+        super().__init__()
+
+    def _preprocess_incidents(self, incidents: list) -> dict:
+        """
+        Pre-procesamiento universal: agrupa hallazgos por control de seguridad,
+        no por tipo técnico específico. Esto elimina la necesidad de mantener
+        listas de servicios o vulnerabilidades específicas.
+        """
+        if not incidents:
+            return {"error": "No incidents"}
+        
+        # Clasificación por impacto de seguridad (universal para cualquier web app)
+        controls = {
+            "transport_security": [],  # TLS, certificados, redirecciones HTTPS
+            "session_management": [],  # Cookies, tokens, auth
+            "information_disclosure": [],  # Banners, versiones, paths sensibles
+            "client_protection": [],  # Headers de seguridad (CSP, XFO, etc)
+            "access_control": [],  # Métodos HTTP, restricciones de acceso
+            "configuration": [],  # robots.txt, directorios listables
+            "noise": []  # Falsos positivos, datos corruptos
+        }
+        
+        seen_patterns = set()
+        
+        for inc in incidents:
+            desc = str(inc.get("description", "")).lower()
+            url = str(inc.get("url", ""))
+            method = str(inc.get("method", "GET"))
+            severity = str(inc.get("severity", "INFO")).upper()
+            
+            # FILTRO DE RUIDO UNIVERSAL
+            # Detecta datos corruptos o técnicamente imposibles
+            if "hash(" in url or "0x" in url or len(url) > 200:
+                controls["noise"].append(inc)
+                continue
+            
+            # Clasificación por control (heurística de comportamiento, no listas hardcodeadas)
+            if any(x in desc for x in ["cookie", "session", "httponly", "secure flag"]):
+                controls["session_management"].append(inc)
+            elif any(x in desc for x in ["certificate", "ssl", "tls", "https", "cn=", "hostname"]):
+                controls["transport_security"].append(inc)
+            elif any(x in desc for x in ["x-frame-options", "csp", "content-security", "clickjacking", "xss"]):
+                controls["client_protection"].append(inc)
+            elif any(x in desc for x in ["method", "put", "delete", "trace", "debug", "options"]):
+                controls["access_control"].append(inc)
+            elif any(x in desc for x in ["banner", "version", "x-powered-by", "server:", "etag", "inode"]):
+                controls["information_disclosure"].append(inc)
+            elif any(x in desc for x in ["robots.txt", "directory", "index of", "accessible"]):
+                controls["configuration"].append(inc)
+            else:
+                # Si no encaja en controles conocidos, es fingerprinting genérico
+                controls["information_disclosure"].append(inc)
+        
+        # Calcular métricas agregadas
+        total_valid = sum(len(v) for k, v in controls.items() if k != "noise")
+        
+        return {
+            "controls": controls,
+            "metrics": {
+                "total_raw": len(incidents),
+                "noise_filtered": len(controls["noise"]),
+                "effective_findings": total_valid,
+                "critical_controls_missing": sum(
+                    1 for k, v in controls.items() 
+                    if k in ["transport_security", "session_management"] and len(v) > 0
+                )
+            }
+        }
+
+    def _build_system_prompt(self) -> str:
+        return textwrap.dedent("""\
+            Eres un analista de seguridad web especializado en interpretar resultados de escáneres automáticos (Nikto).
+            Tu tarea es producir evaluaciones CALIBRADAS: ni alarmistas ni complacientes.
+            Respondes EXCLUSIVAMENTE en el formato JSON indicado. No añades texto fuera del JSON.
+
+            ════════════════════════════════════════
+            PRINCIPIO FUNDAMENTAL: CONTROLES, NO CONTEOS
+            ════════════════════════════════════════
+            Nikto reporta instancias, no vulnerabilidades independientes.
+            - 12 directorios accesibles en robots.txt = UN control de configuración con deficiencias.
+            - 2 cookies sin HttpOnly = UN problema de gestión de sesiones.
+            - Nunca sumes instancias para escalar el riesgo. El riesgo lo determina el TIPO de control afectado, no el número de hallazgos.
+
+            ════════════════════════════════════════
+            CONTROLES EVALUADOS Y SU RIESGO INTRÍNSECO
+            ════════════════════════════════════════
+
+            [TRANSPORT_SECURITY] — Riesgo base: ALTO cuando falla
+            - Certificado SSL no coincide con el hostname → riesgo ALTO (permite MITM si el atacante está en posición)
+            - EXCEPCIÓN: Si el certificado es claramente un placeholder de panel de hosting (ej. Plesk, cPanel, DirectAdmin),
+            el riesgo real es MEDIO porque el contexto indica configuración por defecto del servidor, no comunicación vulnerable.
+            Indica esta distinción en el análisis.
+            - Ausencia de HSTS → riesgo BAJO-MEDIO (facilita downgrade, no es explotación directa)
+
+            [SESSION_MANAGEMENT] — Riesgo base: MEDIO cuando falla
+            - Cookie de sesión sin flag HttpOnly → riesgo MEDIO (robo de sesión vía XSS requiere vulnerabilidad XSS previa)
+            - Cookie sin flag Secure en contexto HTTPS → riesgo BAJO (cookie transmitida solo por HTTPS igualmente)
+            - REGLA: La ausencia de HttpOnly es MEDIO, nunca ALTO, salvo que haya evidencia de XSS confirmado.
+
+            [CLIENT_PROTECTION] — Riesgo base: BAJO cuando falla
+            - Ausencia de X-Frame-Options / CSP / X-Content-Type-Options → riesgo BAJO (hardening, no protección crítica)
+            - Presencia de X-Frame-Options SAMEORIGIN es un control CORRECTO. No lo reportes como deficiencia.
+            - Un header "poco común" detectado por Nikto NO es una vulnerabilidad. Es fingerprinting benigno.
+
+            [ACCESS_CONTROL] — Riesgo base: MEDIO-ALTO cuando falla con evidencia
+            - Verbo HTTP DEBUG habilitado → riesgo BAJO-MEDIO si Nikto solo detecta que responde, sin datos sensibles reales
+            - PUT/DELETE accesibles con evidencia de escritura → riesgo ALTO
+            - El hallazgo "DEBUG verb may show server debugging information" de Nikto es una advertencia de escáner,
+            no evidencia de explotación. Trátalo como BAJO salvo que haya respuesta con datos sensibles.
+
+            [INFORMATION_DISCLOSURE] — Riesgo base: INFORMATIVO-BAJO siempre
+            - Banners de software, headers x-powered-by, versiones de servidor → INFORMATIVO
+            - ETags con inodos → INFORMATIVO (requiere LFI previo para ser útil, irrelevante en sí mismo)
+            - NUNCA escales Information Disclosure a MEDIO o ALTO sin vulnerabilidad confirmada asociada.
+
+            [CONFIGURATION] — Riesgo base: BAJO-INFORMATIVO
+            - robots.txt con entradas de CMS (Joomla, WordPress, Drupal) → INFORMATIVO (estructura conocida pública)
+            - Directorio /administrator/ accesible con código 200 → BAJO si requiere autenticación (normal en Joomla)
+            - Un directorio listable SIN autenticación → MEDIO
+            - REGLA: Accesible ≠ Expuesto. Un panel admin que devuelve 200 y muestra login form es correcto, no vulnerable.
+
+            ════════════════════════════════════════
+            TABLA DE NIVELES DE RIESGO GLOBAL
+            ════════════════════════════════════════
+            Aplica el nivel más alto que esté JUSTIFICADO por evidencia concreta:
+
+            CRÍTICO : Autenticación completamente bypassable, RCE confirmado, o exfiltración activa de datos.
+                    Nikto raramente produce evidencia suficiente para este nivel. Úsalo solo con certeza absoluta.
+
+            ALTO    : Certificado SSL inválido de dominio real (no placeholder de hosting como Plesk, cPanel, DirectAdmin)
+                    Y cookie de sesión sin HttpOnly de forma simultánea,
+                    o método HTTP peligroso con evidencia funcional de escritura/ejecución.
+                    Si el certificado inválido es un placeholder de hosting → máximo MEDIO, nunca ALTO.
+
+            MEDIO   : Certificado inválido que sea placeholder de hosting (Plesk, cPanel, DirectAdmin),
+                    o cookie sin HttpOnly como único problema,
+                    o múltiples controles con deficiencias menores simultáneas (3 o más categorías afectadas).
+
+            BAJO    : Solo Information Disclosure, solo headers de hardening ausentes, solo configuración de robots.txt.
+
+            INFORMATIVO : Hallazgos puramente de fingerprinting sin impacto operativo.
+
+            REGLA DE ORO: Ante la duda entre dos niveles, elige el inferior. Es preferible subestimar
+                        y que el equipo revise, que alarmar con falsos positivos que erosionan la confianza.
+
+            ════════════════════════════════════════
+            FILTRADO DE RUIDO — IGNORAR COMPLETAMENTE
+            ════════════════════════════════════════
+            - URLs con formato "HASH(0x...)" → datos corruptos del escáner, no son hallazgos
+            - "Uncommon header X found" → SOLO reportar si el header revela versión de software con CVE conocido
+            - Presencia de X-Frame-Options, Referrer-Policy, Cross-Origin-Opener-Policy → son controles CORRECTOS,
+            no "uncommon headers preocupantes". Nikto los marca como inusuales por ser conservador, no porque sean problemas.
+            - ETags con inodos en aplicaciones Joomla/WordPress → conocido y de impacto mínimo sin vulnerabilidades adicionales
+
+            ════════════════════════════════════════
+            PROHIBICIONES ABSOLUTAS
+            ════════════════════════════════════════
+            - NO menciones la cantidad de hallazgos individuales (ej: "21 incidentes", "14 entradas")
+            - NO cites CVEs a menos que tengas certeza absoluta del identificador exacto. En caso de duda: cve_refs: []
+            - NO escales el riesgo porque haya muchos hallazgos del mismo tipo
+            - NO trates hallazgos de Nikto como evidencia de explotación activa; son indicadores de configuración
+            - NO uses lenguaje alarmista: evita "peligroso", "urgente", "amenaza significativa" salvo que risk_level sea ALTO o CRÍTICO
+            - NO repitas en conclusions lo que ya dijiste en executive_summary
+            - En conclusions: para MEDIO usa tono de mejora recomendada; para BAJO usa tono de mejora planificable; reserva urgencia para ALTO/CRÍTICO
+            - En las recommendations, NO uses el nivel de riesgo como argumento de urgencia si ya fue
+                calibrado a la baja. Ejemplo incorrecto: "Mitiga riesgo ALTO" cuando el nivel global es MEDIO.
+                Usa en su lugar el impacto concreto: "Previene suplantación de identidad del servidor".
+            - NO incluyas recomendaciones para hallazgos clasificados como INFORMATIVO (robots.txt de CMS
+                conocido, banners de versión, ETags). Estas no aportan valor accionable al cliente.
+        """)
+
+    def _build_user_prompt(self, scan_data: dict, processed: dict) -> str:
+        target = scan_data.get("target", "desconocido")
+        started = scan_data.get("started_at", "N/A")
+        metrics = processed.get("metrics", {})
+        controls = processed.get("controls", {})
+
+        controls_summary = {}
+        for control_name, findings in controls.items():
+            if control_name == "noise" or not findings:
+                continue
+
+            unique_issues = set()
+            for f in findings[:3]:
+                desc = f.get("description", "")[:120]
+                unique_issues.add(desc)
+
+            controls_summary[control_name] = {
+                "instancias_detectadas": len(findings),
+                "ejemplos_representativos": list(unique_issues),
+                "techo_teorico": self._assess_control_severity(control_name, findings)
+                # "techo_teorico" = impacto máximo posible del control en condiciones adversas,
+                # NO es el nivel de riesgo final. El nivel final lo determinas tú con las reglas del sistema.
+            }
+
+        return textwrap.dedent(f"""\
+            Analiza el estado de seguridad del siguiente objetivo escaneado con Nikto.
+
+            OBJETIVO: {target}
+            FECHA DEL ESCANEO: {started}
+
+            RESUMEN DE MÉTRICAS:
+            - Hallazgos brutos totales: {metrics.get('total_raw', 0)}
+            - Filtrados como ruido técnico: {metrics.get('noise_filtered', 0)}
+            - Hallazgos válidos agrupados por control: {metrics.get('effective_findings', 0)}
+
+            ESTADO POR CONTROL (el campo "techo_teorico" indica el impacto máximo posible del control,
+            NO el nivel de riesgo final — ese debes determinarlo tú aplicando las reglas del sistema):
+            {json.dumps(controls_summary, indent=2, ensure_ascii=False)}
+
+            --- RAZONAMIENTO PREVIO (no incluir en el JSON de salida) ---
+            Antes de elegir risk_level, responde internamente estas preguntas:
+            1. ¿El certificado inválido corresponde a un placeholder de hosting (Plesk, cPanel, DirectAdmin)?
+            Si sí → transport_security es MEDIO como máximo, nunca ALTO.
+            2. ¿Hay evidencia de XSS confirmado que explote las cookies sin HttpOnly?
+            Si no → session_management es MEDIO como máximo.
+            3. ¿Hay métodos HTTP peligrosos con evidencia funcional de escritura o ejecución?
+            Si no → access_control no escala el riesgo.
+            4. Con esas respuestas, consulta la tabla de niveles del sistema y elige el nivel justificado.
+            --- FIN DEL RAZONAMIENTO ---
+
+            FORMATO DE RESPUESTA (JSON estricto, sin ningún texto antes ni después del JSON):
+            {{
+                "executive_summary": "Descripción concisa del perfil de seguridad. Máximo 2-3 frases. Sin conteos de hallazgos.",
+                "risk_level": "CRÍTICO|ALTO|MEDIO|BAJO|INFORMATIVO",
+                "technical_analysis": "Análisis por control: qué protección debería ofrecer cada uno, qué riesgo concreto acepta su ausencia o debilidad. Distingue entre hardening ausente y protección crítica ausente. Máximo 500 caracteres.",
+                "recommendations": [
+                    {{
+                        "title": "Acción concreta sobre el control",
+                        "description": "Por qué es necesario y qué riesgo mitiga",
+                        "priority": "ALTA|MEDIA|BAJA",
+                        "cve_refs": [],
+                        "remediation": "Instrucción técnica específica aplicable al stack detectado"
+                    }}
+                ],
+                "conclusions": "Evaluación de madurez general y recomendación de acción. No repetir el resumen ejecutivo. Máximo 150 caracteres."
+            }}
+        """)
+
+    def _assess_control_severity(self, control_name: str, findings: list) -> str:
+        """
+        Asigna severidad base a un control basado en su naturaleza universal,
+        no en la cantidad de hallazgos específicos.
+        """
+        severity_map = {
+            "transport_security": "ALTO",      # Cert inválido es siempre grave
+            "session_management": "MEDIO",     # Depende del contexto, pero generalmente importante
+            "access_control": "MEDIO",         # Methods peligrosos son preocupantes
+            "client_protection": "BAJO",       # Headers son hardening
+            "information_disclosure": "BAJO",  # Fingerprinting es reconocimiento
+            "configuration": "BAJO"            # robots.txt es informativo
+        }
+        return severity_map.get(control_name, "BAJO")
+
+    def generate(self, scan: NiktoScan) -> dict:
+        scan_data = {
+            "target": scan.target,
+            "started_at": scan.started_at.isoformat() if getattr(scan, 'started_at', None) else "N/A",
+        }
+        
+        incidents = []
+        for incident in (getattr(scan, 'incidents', None) or []):
+            incidents.append({
+                "osvdb_id": getattr(incident, "osvdb_id", None),
+                "url": getattr(incident, "url", ""),
+                "method": getattr(incident, "method", ""),
+                "description": getattr(incident, "description", ""),
+                "severity": getattr(incident, "severity", "INFO"),
+            })
+        
+        # PRE-PROCESAMIENTO CRÍTICO: Agrupación universal
+        processed = self._preprocess_incidents(incidents)
+        
+        # Si todo es ruido, retornar análisis mínimo
+        if processed["metrics"]["effective_findings"] == 0:
+            return {
+                "executive_summary": "Escaneo con datos insuficientes o ruido técnico predominante. No se detectaron controles de seguridad evaluables.",
+                "risk_level": "INFORMATIVO",
+                "technical_analysis": "Los hallazgos del escaneo consisten principalmente en datos corruptos o falsos positivos técnicos (URLs malformadas, referencias de memoria). Se recomienda verificar la configuración del escáner.",
+                "recommendations": [],
+                "conclusions": "Requiere re-escaneo con configuración adecuada."
+            }
+        
+        prompt = self._build_user_prompt(scan_data, processed)
+        
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Buscar información sobre configuración segura de certificados SSL o mejores prácticas de headers de seguridad.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        }]
+        
+        raw_response = None
+        for attempt in range(3):
+            try:
+                messages = [
+                    {"role": "system", "content": self._build_system_prompt()},
+                    {"role": "user",   "content": prompt},
+                ]
+                resp = self._client.chat(
+                    model    = self.model,
+                    messages = messages,
+                    tools    = tools,
+                    format   = "json",
+                    options  = {
+                        "num_predict": 2048,
+                        "temperature": 0.1,  # Muy bajo para consistencia máxima
+                        "top_p": 0.75,
+                        "repeat_penalty": 1.3,  # Penalizar repetición de hallazgos individuales
+                    },
+                )
+                raw_response = resp.message.content.strip()
+                if raw_response:
+                    break
+            except Exception as exc:
+                if attempt == 2:
+                    raise RuntimeError(f"Fallo tras 3 intentos: {exc}")
+                time.sleep(1.5 ** attempt)
+        
+        return self._parse_response(raw_response)
+
+    def _parse_response(self, raw: str) -> dict:
+        if not raw:
+            raise ValueError("Respuesta vacía")
+        
+        try:
+            result = json.loads(raw)
+            # Normalizar riesgo
+            valid = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
+            if result.get("risk_level", "").upper() not in valid:
+                result["risk_level"] = "BAJO"
+            
+            # Asegurar que no haya CVEs inventados
+            if isinstance(result.get("recommendations"), list):
+                for rec in result["recommendations"]:
+                    rec["cve_refs"] = []  # Nikto raramente da CVEs específicos verificables
+                    
+            return result
+        except json.JSONDecodeError:
+            # Fallback parsing...
+            return {
+                "executive_summary": "Error en análisis de IA",
+                "risk_level": "INFORMATIVO",
+                "technical_analysis": "No se pudo generar el análisis automático.",
+                "recommendations": [],
+                "conclusions": "Revisar manualmente los hallazgos brutos."
+            }

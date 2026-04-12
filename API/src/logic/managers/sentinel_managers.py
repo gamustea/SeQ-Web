@@ -413,7 +413,7 @@ class NmapScanManager(ScanManager):
 
             scan_type = scan.scan_type
             if scan_type != "nmap":
-                thread_manager.logger.error(f"Tipo de escaneo {scan_type} no soportado para generación de PDF")
+                thread_manager.logger.error(f"Tipo de escaneo {scan_type} no soportado para generación de PDF a traves de NmapScanManager")
                 return
 
             thread_manager.logger.info(f"Generando análisis de seguridad con IA para el informe del escaneo {scan_id}")
@@ -494,15 +494,88 @@ class NiktoScanManager(ScanManager):
                 )
                 .all()
             )
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
+            self.logger.info(f"Se obtuvoeron {len(scans)} escaneos Nikto")
             return scans
         except Exception as e:
             self._safe_rollback()
             self.logger.error(f"Error obteniendo escaneos Nikto: {e}", exc_info=True)
             raise
 
-    def generate_report(self, scan_id: int) -> bytes:
-        raise NotImplementedError("La generación de reportes para Nikto se maneja en el endpoint")
+    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
+        
+        scan = self.get_scan_by_id(scan_id)
+        if not scan:
+            self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
+            raise ValueError(f"Escaneo {scan_id} no encontrado")
+
+        document = SentinelDocument(
+            scan_id=scan.id,
+            scan_type=scan.scan_type,
+            document_type="sentinel",
+            filename="",
+            format="pdf",
+            status="pending",
+            user_id=scan.user_id
+        )
+        
+        self.session.add(document)
+        self.session.flush()
+        
+        document.status = "running"
+        self.session.commit()
+
+        thread = threading.Thread(
+            target=self._generate_pdf_async,
+            args=(document.id, scan.id, ai_report),
+            daemon=True,
+            name=f"PDFGeneration-Scan-{scan.id}"
+        )
+
+        thread.start()
+        return document.id
+
+    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False):
+        thread_manager = self.__class__(self.active_user)
+        document = None
+        
+        try:
+            document = thread_manager.get_document_by_id(document_id)
+            if not document:
+                thread_manager.logger.error(f"Documento {document_id} no encontrado para generación de PDF")
+                return
+
+            scan = thread_manager.get_scan_by_id(scan_id)
+            if not scan:
+                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado para generación de PDF")
+                return
+
+            scan_type = scan.scan_type
+            if scan_type != "nikto":
+                thread_manager.logger.error(f"Tipo de escaneo {scan_type} no soportado para generación de PDF para NiktoScanManager")
+                return
+
+            thread_manager.logger.info(f"Generando análisis de seguridad con IA para el informe del escaneo {scan_id}")
+            
+            strategy = NiktoPrintingStrategy(scan)
+            pdf_creator = PDFCreator(strategy)
+            pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
+
+            document.filename = pdf_path
+            document.status = "done"
+            document.generated_at = datetime.utcnow()
+            thread_manager._safe_commit()
+            
+            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
+
+        except Exception as e:
+            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
+            if document:
+                document.status = "error"
+                thread_manager._safe_commit()
+        
+        finally:
+            thread_manager.close_session()
+
 
 class OpenVASScanManager(ScanManager):
     """Gestor de escaneos OpenVAS"""
