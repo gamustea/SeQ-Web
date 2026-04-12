@@ -1,3 +1,23 @@
+"""
+Managers for security scan orchestration and result persistence.
+
+This module provides manager classes for coordinating various security scans:
+- NmapScanManager: Network exploration and security scanning
+- NiktoScanManager: Web server vulnerability scanning
+- OpenVASScanManager: Comprehensive vulnerability management
+
+Each manager handles the complete lifecycle of a scan including:
+- Creating scan records in the database
+- Executing scans in background threads
+- Processing and saving results
+- Generating PDF reports
+
+Usage:
+    manager = NmapScanManager(user)
+    scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
+    scan = manager.get_scan_by_id(scan_id)
+"""
+
 import threading
 import uuid
 from enum import Enum
@@ -33,6 +53,22 @@ from ._base import BaseManager
 
 
 class ScanManager(BaseManager, ABC):
+    """Base class for scan managers.
+
+    Responsibilities:
+        - Coordinate task execution and result persistence
+        - Manage scan lifecycle (create, execute, cancel, delete)
+        - Track running tasks and threads
+        - Provide common scan operations
+
+    Class Attributes:
+        _running_tasks: Dictionary mapping scan_id to running task.
+        _running_threads: Dictionary mapping scan_id to running thread.
+        _running_tasks_lock: RLock for thread-safe task management.
+
+    Attributes:
+        active_user: User executing the scan operations.
+    """
     """
     Clase base para gestores de escaneos.
     Responsabilidad: Coordinar la ejecución de tareas y la persistencia de resultados.
@@ -43,11 +79,24 @@ class ScanManager(BaseManager, ABC):
     _running_tasks_lock = threading.RLock()
 
     def __init__(self, user: User, session: Optional[Session] = None):
+        """Initialize the scan manager.
+
+        Args:
+            user: User performing the scan operations.
+            session: Optional database session.
+        """
         super().__init__(session)
         self.active_user = user
 
     @classmethod
     def _register_task(cls, scan_id: int, task: _Task, thread: Optional[threading.Thread] = None) -> None:
+        """Register a running task and its thread.
+
+        Args:
+            scan_id: ID of the scan.
+            task: Task instance to register.
+            thread: Thread running the task.
+        """
         with cls._running_tasks_lock:
             cls._running_tasks[scan_id] = task
             if thread is not None:
@@ -55,20 +104,36 @@ class ScanManager(BaseManager, ABC):
 
     @classmethod
     def _get_task(cls, scan_id: int) -> Optional[_Task]:
+        """Get a registered task by scan ID.
+
+        Args:
+            scan_id: ID of the scan.
+
+        Returns:
+            Task instance or None if not found.
+        """
         with cls._running_tasks_lock:
             return cls._running_tasks.get(scan_id)
 
     @classmethod
     def _unregister_task(cls, scan_id: int) -> None:
+        """Unregister a task and its thread.
+
+        Args:
+            scan_id: ID of the scan to unregister.
+        """
         with cls._running_tasks_lock:
             cls._running_tasks.pop(scan_id, None)
             cls._running_threads.pop(scan_id, None)
 
     @classmethod
     def cancel_all_running(cls, timeout: float = 10.0) -> None:
-        """
-        Cancela todas las tareas activas y espera a que sus threads terminen.
-        Pensado para ser llamado desde el signal handler de shutdown.
+        """Cancel all running tasks and wait for threads to finish.
+
+        Intended to be called from the shutdown signal handler.
+
+        Args:
+            timeout: Maximum time to wait for threads to join.
         """
         with cls._running_tasks_lock:
             task_snapshot = dict(cls._running_tasks)
@@ -84,6 +149,14 @@ class ScanManager(BaseManager, ABC):
             thread.join(timeout=timeout)
 
     def get_scan_by_id(self, scan_id: int) -> Optional[Scan]:
+        """Get a scan by its ID.
+
+        Args:
+            scan_id: ID of the scan to retrieve.
+
+        Returns:
+            Scan instance or None if not found.
+        """
         try:
             self._check_session()
             scan = self.session.query(Scan).filter(Scan.id == scan_id).one_or_none()
@@ -100,6 +173,11 @@ class ScanManager(BaseManager, ABC):
             raise
 
     def get_scans_for_user(self) -> List[Scan]:
+        """Get all scans for the active user.
+
+        Returns:
+            List of Scan instances.
+        """
         try:
             self._check_session()
             scans = self.session.query(Scan).filter(
@@ -115,6 +193,14 @@ class ScanManager(BaseManager, ABC):
             raise
 
     def delete_scan(self, scan_id: int) -> bool:
+        """Delete a scan and its associated documents.
+
+        Args:
+            scan_id: ID of the scan to delete.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
         try:
             self._check_session()
             scan = self.get_scan_by_id(scan_id)
@@ -122,7 +208,6 @@ class ScanManager(BaseManager, ABC):
             if not scan:
                 return False
 
-            # Eliminar documentos asociados antes de borrar el scan
             from src.core.model import SentinelDocument
             docs = self.session.query(SentinelDocument).filter(
                 SentinelDocument.scan_id == scan_id
@@ -142,6 +227,14 @@ class ScanManager(BaseManager, ABC):
             raise
 
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
+        """Get the progress percentage of a running scan.
+
+        Args:
+            scan_id: ID of the scan.
+
+        Returns:
+            Progress percentage (0-100) or None if not running.
+        """
         task = self._get_task(scan_id)
         if task:
             progress = task.progress
@@ -150,6 +243,14 @@ class ScanManager(BaseManager, ABC):
         return None
 
     def get_scan_status(self, scan_id: int) -> Optional[str]:
+        """Get the status of a scan.
+
+        Args:
+            scan_id: ID of the scan.
+
+        Returns:
+            Status string or None if not found.
+        """
         task = self._get_task(scan_id)
         if task:
             return str(task.status)
@@ -158,7 +259,14 @@ class ScanManager(BaseManager, ABC):
         return None
 
     def get_document_by_id(self, document_id: int):
-        
+        """Get a document by its ID.
+
+        Args:
+            document_id: ID of the document to retrieve.
+
+        Returns:
+            SentinelDocument instance or None if not found.
+        """
         try:
             self._check_session()
             document = self.session.query(SentinelDocument).filter(
@@ -178,7 +286,14 @@ class ScanManager(BaseManager, ABC):
             raise
 
     def is_scan_finished(self, scan_id: int) -> Optional[bool]:
+        """Check if a scan has finished.
 
+        Args:
+            scan_id: ID of the scan to check.
+
+        Returns:
+            True if finished, False otherwise.
+        """
         scan = self.get_scan_by_id(scan_id)
         if not scan:
             self.logger.warning(f"Escaneo {scan_id} no encontrado para verificar finalización")
@@ -188,6 +303,14 @@ class ScanManager(BaseManager, ABC):
         return is_finished
 
     def cancel_scan(self, scan_id: int) -> bool:
+        """Cancel a running scan.
+
+        Args:
+            scan_id: ID of the scan to cancel.
+
+        Returns:
+            True if cancelled successfully, False otherwise.
+        """
         try:
             scan = self.get_scan_by_id(scan_id)
             if not scan:
@@ -231,21 +354,50 @@ class ScanManager(BaseManager, ABC):
 
     @abstractmethod
     def run_scan(self, **kwargs) -> int:
+        """Start a new scan.
+
+        Returns:
+            Scan ID of the created scan.
+        """
         pass
 
     @abstractmethod
     def _create_scan_record(self, **kwargs) -> Scan:
+        """Create a new scan record in the database.
+
+        Returns:
+            Created scan record.
+        """
         pass
 
     @abstractmethod
     def _get_result_processor(self) -> ScanResultProcessor:
+        """Get the result processor for this scan type.
+
+        Returns:
+            Result processor instance.
+        """
         pass
 
     @abstractmethod
     def generate_report(self, scan_id: int) -> bytes:
+        """Generate a PDF report for the scan.
+
+        Args:
+            scan_id: ID of the scan to generate report for.
+
+        Returns:
+            Report bytes.
+        """
         pass
 
     def _execute_scan_in_thread(self, scan_id: int, task: _Task) -> None:
+        """Execute a scan in a background thread.
+
+        Args:
+            scan_id: ID of the scan to execute.
+            task: Task instance to run.
+        """
         thread_manager = self.__class__(self.active_user)
 
         try:
@@ -294,6 +446,12 @@ class ScanManager(BaseManager, ABC):
             self._unregister_task(scan_id)
 
     def _mark_scan_as(self, scan: Scan, status: ScanStatus) -> None:
+        """Update scan status and finished timestamp.
+
+        Args:
+            scan: Scan instance to update.
+            status: New status to set.
+        """
         old_status = scan.status
         scan.status = status.value
         scan.finished_at = datetime.now()
@@ -301,10 +459,30 @@ class ScanManager(BaseManager, ABC):
 
 
 class NmapScanManager(ScanManager):
-    """Gestor de escaneos Nmap"""
+    """Manager for Nmap network security scans.
+
+    Handles Nmap scan execution, result processing, and PDF report generation.
+    Inherits from ScanManager to provide common scan operations.
+
+    Attributes:
+        scan_type: Type identifier for this manager ('nmap').
+
+    Example:
+        >>> manager = NmapScanManager(user)
+        >>> scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
+    """
 
     def run_scan(self, target_host: str, target_ports: str, timeout: int = 300) -> int:
-        """Inicia un escaneo Nmap"""
+        """Start an Nmap scan.
+
+        Args:
+            target_host: Target IP address or hostname.
+            target_ports: Port range to scan (e.g., "1-1000").
+            timeout: Maximum scan duration in seconds.
+
+        Returns:
+            Scan ID of the created scan record.
+        """
         try:
             scan = self._create_scan_record(target=target_host)
             scan_id = scan.id
@@ -333,6 +511,14 @@ class NmapScanManager(ScanManager):
             raise
 
     def _create_scan_record(self, target: str) -> NmapScan:
+        """Create an NmapScan record in the database.
+
+        Args:
+            target: Target host or IP address.
+
+        Returns:
+            Created NmapScan instance.
+        """
         scan = NmapScan(
             target=target,
             user=self.active_user,
@@ -343,9 +529,19 @@ class NmapScanManager(ScanManager):
         return scan
 
     def _get_result_processor(self) -> NmapResultProcessor:
+        """Get the Nmap result processor.
+
+        Returns:
+            NmapResultProcessor instance.
+        """
         return NmapResultProcessor(self.session, self.logger)
 
     def get_scans_for_user(self) -> List[NmapScan]:
+        """Get all Nmap scans for the active user.
+
+        Returns:
+            List of NmapScan instances with loaded relationships.
+        """
         try:
             self._check_session()
             scans = (
@@ -363,8 +559,16 @@ class NmapScanManager(ScanManager):
             self.logger.error(f"Error obteniendo escaneos Nmap: {e}", exc_info=True)
             raise
 
-    def generate_report(self, scan_id:  int, ai_report: bool = False) -> int:
-        
+    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
+        """Generate a PDF report for an Nmap scan.
+
+        Args:
+            scan_id: ID of the scan.
+            ai_report: Include AI-generated analysis in the report.
+
+        Returns:
+            Document ID of the generated document.
+        """
         scan = self.get_scan_by_id(scan_id)
         if not scan:
             self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
@@ -397,6 +601,13 @@ class NmapScanManager(ScanManager):
         return document.id
 
     def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False):
+        """Generate PDF asynchronously in a background thread.
+
+        Args:
+            document_id: ID of the document to update.
+            scan_id: ID of the source scan.
+            ai_report: Include AI-generated analysis in the report.
+        """
         thread_manager = self.__class__(self.active_user)
         document = None
         
@@ -440,10 +651,29 @@ class NmapScanManager(ScanManager):
 
 
 class NiktoScanManager(ScanManager):
-    """Gestor de escaneos Nikto"""
+    """Manager for Nikto web vulnerability scans.
+
+    Handles Nikto scan execution, result processing, and PDF report generation.
+    Inherits from ScanManager to provide common scan operations.
+
+    Attributes:
+        scan_type: Type identifier for this manager ('nikto').
+
+    Example:
+        >>> manager = NiktoScanManager(user)
+        >>> scan_id = manager.run_scan(target_domain="example.com")
+    """
 
     def run_scan(self, target_domain: str, timeout: int = 60) -> int:
-        """Inicia un escaneo Nikto"""
+        """Start a Nikto scan.
+
+        Args:
+            target_domain: Target domain or hostname.
+            timeout: Maximum scan duration in seconds.
+
+        Returns:
+            Scan ID of the created scan record.
+        """
         try:
             scan = self._create_scan_record(target=target_domain)
             scan_id = scan.id
@@ -471,6 +701,14 @@ class NiktoScanManager(ScanManager):
             raise
 
     def _create_scan_record(self, target: str) -> NiktoScan:
+        """Create a NiktoScan record in the database.
+
+        Args:
+            target: Target domain.
+
+        Returns:
+            Created NiktoScan instance.
+        """
         scan = NiktoScan(
             target=target,
             user=self.active_user,
@@ -481,9 +719,19 @@ class NiktoScanManager(ScanManager):
         return scan
 
     def _get_result_processor(self) -> NiktoResultProcessor:
+        """Get the Nikto result processor.
+
+        Returns:
+            NiktoResultProcessor instance.
+        """
         return NiktoResultProcessor(self.session, self.logger)
 
     def get_scans_for_user(self) -> List[NiktoScan]:
+        """Get all Nikto scans for the active user.
+
+        Returns:
+            List of NiktoScan instances with loaded relationships.
+        """
         try:
             self._check_session()
             scans = (
@@ -502,7 +750,15 @@ class NiktoScanManager(ScanManager):
             raise
 
     def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        
+        """Generate a PDF report for a Nikto scan.
+
+        Args:
+            scan_id: ID of the scan.
+            ai_report: Include AI-generated analysis in the report.
+
+        Returns:
+            Document ID of the generated document.
+        """
         scan = self.get_scan_by_id(scan_id)
         if not scan:
             self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
@@ -535,6 +791,13 @@ class NiktoScanManager(ScanManager):
         return document.id
 
     def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False):
+        """Generate PDF asynchronously in a background thread.
+
+        Args:
+            document_id: ID of the document to update.
+            scan_id: ID of the source scan.
+            ai_report: Include AI-generated analysis in the report.
+        """
         thread_manager = self.__class__(self.active_user)
         document = None
         
@@ -578,7 +841,27 @@ class NiktoScanManager(ScanManager):
 
 
 class OpenVASScanManager(ScanManager):
-    """Gestor de escaneos OpenVAS"""
+    """Manager for OpenVAS vulnerability scans.
+
+    Handles OpenVAS scan execution, result processing, and integration
+    with the OpenVAS manager service. Inherits from ScanManager to
+    provide common scan operations.
+
+    Class Attributes:
+        SCAN_CONFIGS: Available OpenVAS scan configuration IDs.
+        PORT_LISTS: Available port list IDs for scanning.
+
+    Attributes:
+        hostname: OpenVAS manager hostname.
+        port: OpenVAS manager port.
+        username: OpenVAS manager username.
+        password: OpenVAS manager password.
+        scan_type: Type identifier for this manager ('openvas').
+
+    Example:
+        >>> manager = OpenVASScanManager(user)
+        >>> scan_id = manager.run_scan(target="192.168.1.1")
+    """
 
     SCAN_CONFIGS = {
         'full_fast': 'daba56c8-73ec-11df-a475-002264764cea',
@@ -593,6 +876,12 @@ class OpenVASScanManager(ScanManager):
     }
 
     def __init__(self, user: User, session: Optional[Session] = None):
+        """Initialize OpenVAS manager.
+
+        Args:
+            user: User performing the scan.
+            session: Optional database session.
+        """
         super().__init__(user, session)
 
         config = ConfigReader().get_openvas_config()
@@ -602,7 +891,16 @@ class OpenVASScanManager(ScanManager):
         self.password = config["password"]  # type: ignore
 
     def run_scan(self, target: str, scan_config: str = 'full_fast', skip_normalize: bool = False) -> int:
-        """Inicia un escaneo OpenVAS"""
+        """Start an OpenVAS scan.
+
+        Args:
+            target: Target IP address or hostname.
+            scan_config: Scan configuration name (default: 'full_fast').
+            skip_normalize: Skip target normalization if True.
+
+        Returns:
+            Scan ID of the created scan record.
+        """
         try:
             target_ip = target if skip_normalize else normalize_target(target)[0]
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
@@ -636,6 +934,14 @@ class OpenVASScanManager(ScanManager):
             raise
 
     def _create_scan_record(self, target: str) -> OpenVASScan:
+        """Create an OpenVASScan record in the database.
+
+        Args:
+            target: Target IP address or hostname.
+
+        Returns:
+            Created OpenVASScan instance.
+        """
         temp_task_id = f"PENDING_{uuid.uuid4()}"
 
         scan = OpenVASScan(
@@ -649,6 +955,16 @@ class OpenVASScanManager(ScanManager):
         return scan
 
     def _create_task(self, target: str, scan_config: str, timeout: int) -> OpenVASTask:
+        """Create an OpenVAS task.
+
+        Args:
+            target: Target IP address or hostname.
+            scan_config: Scan configuration ID.
+            timeout: Task timeout in seconds.
+
+        Returns:
+            OpenVASTask instance.
+        """
         return OpenVASTask(
             target=target,
             hostname=self.hostname,
@@ -660,12 +976,22 @@ class OpenVASScanManager(ScanManager):
         )
 
     def _get_result_processor(self) -> OpenVASResultProcessor:
+        """Get the OpenVAS result processor.
+
+        Returns:
+            OpenVASResultProcessor instance.
+        """
         return OpenVASResultProcessor(
             self.session, 
             self.logger
         )
 
     def get_scans_for_user(self) -> List[OpenVASScan]:
+        """Get all OpenVAS scans for the active user.
+
+        Returns:
+            List of OpenVASScan instances with loaded relationships.
+        """
         try:
             self._check_session()
             scans = (
@@ -690,9 +1016,15 @@ class OpenVASScanManager(ScanManager):
         task: OpenVASTask, 
         skip_normalize: bool = False
     ) -> None:
-        """
-        Override para OpenVAS: necesita actualizar task_id y report_id
-        después de que la tarea se ejecute.
+        """Execute OpenVAS scan in a background thread.
+
+        Override for OpenVAS: needs to update task_id and report_id
+        after the task executes.
+
+        Args:
+            scan_id: ID of the scan to execute.
+            task: OpenVASTask instance to run.
+            skip_normalize: Skip target normalization if True.
         """
         thread_manager = self.__class__(self.active_user)
 
@@ -745,4 +1077,15 @@ class OpenVASScanManager(ScanManager):
             self._unregister_task(scan_id)
 
     def generate_report(self, scan_id: int) -> bytes:
+        """Generate a PDF report for an OpenVAS scan.
+
+        Args:
+            scan_id: ID of the scan.
+
+        Returns:
+            Report bytes.
+
+        Raises:
+            NotImplementedError: OpenVAS report generation is handled by endpoint.
+        """
         raise NotImplementedError("La generación de reportes para OpenVAS se maneja en el endpoint")
