@@ -438,7 +438,7 @@ class PDFCreator:
 
     def __init__(self, printing_strategy: _PrintingStrategy) -> None:
         self.config_reader = ConfigReader()
-        self.directory = self.config_reader.get_directory_of(DirectoryType.TEMP)
+        self.directory = self.config_reader.get_directory_of(DirectoryType.OUTPUT_SENTINEL)
         self.printing_strategy = printing_strategy
         self.scan = printing_strategy.scan
 

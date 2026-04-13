@@ -29,7 +29,7 @@ from src.logic.documents.aegis_pills import (
     AegisContent,
     AlertSource,
 )
-from src.misc import ConfigReader, SecOpsLogger
+from src.misc import ConfigReader, SecOpsLogger, DirectoryType
 from ._base import BaseManager
 
 
@@ -337,22 +337,21 @@ class AegisManager(BaseManager):
     # =========================================================================
 
     def _read_cfg(self) -> dict:
-        aegis = ConfigReader().get_aegis_config() or {}
-        ol = aegis.get("ollama", {}) or {}
-        paths = aegis.get("paths", {}) or {}
-        
-        api_root = Path(__file__).resolve().parents[3]
-        stack_dir = api_root / str(paths.get("stackDir", "data/aegis/stack"))
-        output_dir = api_root / str(paths.get("outputDir", "data/aegis/output"))
+        reader = ConfigReader()
+        stack_dir = Path(reader.get_directory_of(DirectoryType.STACK_AEGIS))
+        output_dir = Path(reader.get_directory_of(DirectoryType.OUTPUT_AEGIS))
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        ollama_host, ollama_model = reader.get_ollama_config()
+        aegis = reader.get_aegis_config() or {}
+
         return {
-            "enabled":         bool(aegis.get("enabled", True)),
-            "ollama_host":     str(ol.get("host",           "http://localhost:11434")),
-            "ollama_model":    str(ol.get("model",          "mistral")),
-            "timeout_seconds": int(ol.get("timeoutSeconds", 120)),
-            "stack_dir":       stack_dir,
-            "output_dir":      output_dir,
+            "enabled":          bool(aegis.get("enabled", True)),
+            "ollama_host":      ollama_host,
+            "ollama_model":     ollama_model,
+            "timeout_seconds":  120,
+            "stack_dir":        stack_dir,
+            "output_dir":       output_dir,
         }
 
     def _get_topic_from_db(self, topic_id: int | None) -> tuple[Topic | None, bool]:

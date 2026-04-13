@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 from typing import List,Optional
 from pathlib import Path
 
+
 load_dotenv()
+
 
 class PlatformType(Enum):
     """Enumeración de tipos de plataforma"""
@@ -96,10 +98,15 @@ class PlatformDetector:
 
 class DirectoryType(Enum):
     """Enumeración de tipos de directorios disponibles"""
-    TEMP     = "tempdir"
-    LOG      = "logdir"
-    RESULT   = "resultdir"
-    RESOURCE = "resourcedir"
+    TEMP            = "tempdir"
+    LOG             = "logdir"
+    RESULT          = "resultdir"
+    RESOURCE        = "resourcedir"
+    
+    STACK_AEGIS     = "stack"
+    OUTPUT_AEGIS    = "output_aegis"
+    
+    OUTPUT_SENTINEL = "output_sentinel"
 
 
 class DirectoryChecker:
@@ -221,10 +228,18 @@ class ConfigReader:
         directories = configs["directories"]
 
         dir_key = directory_type.value
-        if dir_key not in directories:
-            raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
 
-        raw_path = directories[dir_key]
+        if dir_key in ("output_aegis", "output_sentinel"):
+            output_config = directories.get("output", {})
+            module = "aegis" if dir_key == "output_aegis" else "sentinel"
+            raw_path = output_config.get(module, f"data/{module}/output")
+        elif dir_key == "stack":
+            raw_path = directories.get("stack", "data/aegis/stack")
+        elif dir_key not in directories:
+            raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
+        else:
+            raw_path = directories[dir_key]
+
         path     = Path(raw_path)
 
         if not path.is_absolute():
@@ -272,15 +287,13 @@ class ConfigReader:
 
     def get_aegis_config(self) -> dict[str, str]:
         """
-        La config de Aegis (parámetros del modelo, rutas, etc.)
+        La config de Aegis (parámetros del modelo, etc.)
         no son secretos → siempre desde el JSON.
         Excepción: OLLAMA_HOST si se define en el entorno.
         """
         cfg = self._read_configs()["aegis"]
-
-        ollama_host = os.getenv("OLLAMA_HOST")
-        if ollama_host:
-            cfg["host"] = ollama_host
+        if "paths" in cfg:
+            del cfg["paths"]
 
         return cfg
 
