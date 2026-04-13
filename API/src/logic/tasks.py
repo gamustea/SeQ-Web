@@ -11,10 +11,14 @@ from enum import Enum, auto
 from abc import ABC, abstractmethod
 from nmap import PortScanner
 
-from src.misc.configread import ConfigReader, DirectoryType
-from src.misc.logging import SecOpsLogger
-from src.misc.conversion import JSONManager
-from src.misc.directorychecker import DirectoryChecker
+from src.misc import (
+    ConfigReader, 
+    DirectoryType, 
+    SecOpsLogger, 
+    JSONManager,
+    DirectoryChecker,
+    PlatformDetector
+)
 
 import xml.etree.ElementTree as ET
 from gvm.connections import TLSConnection
@@ -290,7 +294,6 @@ class NmapScanTask(_Task):
         super().__init__(target_host, timeout)
         TEMP_DIR = ConfigReader().get_directory_of(DirectoryType.TEMP)
         
-        # Nombre único y seguro
         timestamp = int(time.time() * 1000)
         safe_target = target_host.replace("/", "_").replace(":", "_")
         FILE_NAME = f"nmap_scan_{safe_target}_{timestamp}.xml"
@@ -298,24 +301,33 @@ class NmapScanTask(_Task):
         self.target_ports = target_ports
         self._output_file = Path(f"{TEMP_DIR}/{FILE_NAME}")
         self.scanner = None
+        self.platform = PlatformDetector()
         
-        # Asegurar directorio
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _build_command(self) -> List[str]:
-        wsl_output = str(self._output_file).replace("\\", "/")
-        if len(wsl_output) > 2 and wsl_output[1] == ":":
-            drive = wsl_output[0].lower()
-            wsl_output = f"/mnt/{drive}/{wsl_output[3:]}"
-        return [
-            "wsl", "-d", "Ubuntu", "-u", "gmiga",
+        nmap_cmd = [
             "sudo", "-n", "nmap",
             "-sV", "-sT",
             "-p", self.target_ports,
-            "-oX", wsl_output,
+            "-oX", str(self._output_file),
             self.target,
             "--stats-every", "1s"
         ]
+
+        if self.platform.is_windows and self.platform.wsl_available:
+            wsl_output = self.platform.convert_path_to_wsl(str(self._output_file))
+            nmap_cmd = [
+                "sudo", "-n", "nmap",
+                "-sV", "-sT",
+                "-p", self.target_ports,
+                "-oX", wsl_output,
+                self.target,
+                "--stats-every", "1s"
+            ]
+            return self.platform.wrap_wsl_command(nmap_cmd)
+
+        return nmap_cmd
 
     def _process_results(self) -> None:
         try:
@@ -491,10 +503,10 @@ class NiktoScanTask(_Task):
     def __init__(self, target_domain, timeout: int = 120):
         super().__init__(target_domain, timeout)
         
-        # Nombre único
         timestamp = int(time.time() * 1000)
         self.temp_path = DirectoryChecker().verify_directory(DirectoryType.TEMP) / f"nikto_scan_{timestamp}.xml"
         self._output_file = self.temp_path
+        self.platform = PlatformDetector()
 
     def _build_command(self) -> List[str]:
         raw = self.target
@@ -507,28 +519,37 @@ class NiktoScanTask(_Task):
         use_ssl = scheme == "https"
         port = parsed.port or (443 if use_ssl else 80)
 
-        # Convertir ruta Windows → WSL
-        wsl_path = str(self.temp_path).replace("\\", "/")
-        if len(wsl_path) > 2 and wsl_path[1] == ":":
-            drive = wsl_path[0].lower()
-            wsl_path = f"/mnt/{drive}/{wsl_path[3:]}"
-
-        cmd = [
-            "wsl", "-d", "Ubuntu", "-u", "gmiga",
+        nikto_cmd = [
             "nikto",
             "-h", host,
             "-port", str(port),
-            "-output", wsl_path,   # esta versión usa -output, no -o
+            "-output", str(self.temp_path),
             "-Format", "xml",
             "-Tuning", "1234569b",
-            "-timeout", "10",      # timeout por request (segundos), no el total
+            "-timeout", "10",
             "-nointeractive",
         ]
 
         if use_ssl:
-            cmd.append("-ssl")
+            nikto_cmd.append("-ssl")
 
-        return cmd
+        if self.platform.is_windows and self.platform.wsl_available:
+            wsl_path = self.platform.convert_path_to_wsl(str(self.temp_path))
+            nikto_cmd = [
+                "nikto",
+                "-h", host,
+                "-port", str(port),
+                "-output", wsl_path,
+                "-Format", "xml",
+                "-Tuning", "1234569b",
+                "-timeout", "10",
+                "-nointeractive",
+            ]
+            if use_ssl:
+                nikto_cmd.append("-ssl")
+            return self.platform.wrap_wsl_command(nikto_cmd)
+
+        return nikto_cmd
 
     def _process_results(self) -> None:
         """Procesa el XML generado por Nikto."""
@@ -608,15 +629,6 @@ class OpenVASTask(_Task):
     
     def _execute_openvas_scan(self) -> None:
         try:
-            with self._create_gmp_connection() as gmp:
-                gmp.authenticate(self.username, self.password)
-                configs = gmp.get_scan_configs()
-                for cfg in configs.xpath('config'):
-                    self.logger.info(f"[CONFIG] id={cfg.get('id')} | name={cfg.find('name').text}")
-                scanners = gmp.get_scanners()
-                for sc in scanners.xpath('scanner'):
-                    self.logger.info(f"[SCANNER] id={sc.get('id')} | name={sc.find('name').text}")
-
             # Fase 1: setup (conexión corta)
             with self._create_gmp_connection() as gmp:
                 gmp.authenticate(self.username, self.password)
@@ -716,6 +728,13 @@ class OpenVASTask(_Task):
             self.task_id = task_el.get('id') if task_el is not None else None
 
         if not self.task_id:
+            try:
+                from lxml import etree
+                self.logger.error(
+                    f"[DEBUG] create_task response: {etree.tostring(task_response, encoding='unicode')}"
+                )
+            except Exception:
+                self.logger.error(f"[DEBUG] create_task response attrib: {dict(task_response.attrib)}")
             raise RuntimeError("No se pudo obtener el task_id de la respuesta de create_task")
 
         self.logger.info(f"Tarea creada: {self.task_id}")

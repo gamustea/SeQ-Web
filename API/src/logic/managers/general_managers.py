@@ -12,7 +12,7 @@ from src.core.model import (
     RefreshToken,
     User,
 )
-from src.misc.configread import ConfigReader
+from src.misc import ConfigReader
 from src.logic.secrets import Encoder
 
 from ._base import BaseManager

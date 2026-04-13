@@ -3,10 +3,9 @@ from datetime import datetime
 from typing import List
 
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-
-from src.misc.inetutils import normalize_target
-from src.misc.conversion import JSONManager
+from src.misc import JSONManager, normalize_target
 from src.core.model import (
     Host,
     Scan,
@@ -34,38 +33,35 @@ class ScanResultProcessor(ABC):
         pass
     
     def _get_or_create_host(self, target: str) -> Host:
-        """Obtiene o crea un host en la BD.
-
-        Garantías:
-        - hostname nunca es None (cae back a la IP o al target original).
-        - ip_address nunca es None (cae back al target original).
-        - mac_address se establece a cadena vacía si no está disponible, evitando
-            NotNullViolation ya que la columna es NOT NULL en el modelo.
-        """
-        ip, hostname = normalize_target(target)
+        ip, hostname = normalize_target(target, resolve_hostname=True)
         self.logger.debug(f"Normalizando target '{target}' -> hostname: '{hostname}', ip: '{ip}'")
 
-        # Fallbacks para evitar NOT NULL violations
         if not hostname:
             hostname = ip or target
         if not ip:
             ip = target
 
         host = self.session.query(Host).filter(
-            Host.ip_address == ip,
             Host.hostname == hostname
         ).first()
-            
-        if not host:
-            host = Host(
-                hostname=hostname,
-                ip_address=ip,
-                mac_address="",   # NOT NULL en modelo; cadena vacía como nulo semántico
-            )
-            self.session.add(host)
-            self.session.flush()
-            self.logger.info(f"Host creado: {hostname} ({ip})")
 
+        if host:
+            return host
+
+        stmt = pg_insert(Host).values(
+            hostname=hostname,
+            ip_address=ip,
+            mac_address="",
+        ).on_conflict_do_nothing(index_elements=["hostname"])
+
+        self.session.execute(stmt)
+        self.session.flush()
+
+        host = self.session.query(Host).filter(
+            Host.hostname == hostname
+        ).first()
+
+        self.logger.info(f"Host obtenido/creado: {hostname} ({ip})")
         return host
 
 

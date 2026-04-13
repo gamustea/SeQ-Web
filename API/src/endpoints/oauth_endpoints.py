@@ -13,7 +13,7 @@ from flask import Blueprint, jsonify, request
 from werkzeug.exceptions import BadRequest
 
 from src.logic.managers import ACCESS_TOKEN_EXPIRE_MINUTES
-from src.misc.logging import SecOpsLogger
+from src.misc import SecOpsLogger
 
 from ._shared import (
     get_oauth_manager,

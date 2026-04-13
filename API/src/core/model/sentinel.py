@@ -54,6 +54,7 @@ class ScanStatus(Enum):
     RUNNING = "running"
     FINISHED = "finished"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 class Scan(Base):
     """
