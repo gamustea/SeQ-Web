@@ -49,3 +49,5 @@ local.properties
 API/src/config/SecConfig.json
 
 API/data/*
+
+*.prof
