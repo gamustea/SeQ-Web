@@ -398,9 +398,10 @@ class _PrintingStrategy(ABC):
         <b>Nota:</b> El contenido de esta sección ha sido generado mediante 
         inteligencia artificial y se basa en el análisis automático de los datos del escaneo. 
         Si bien se ha diseñado para proporcionar una evaluación de seguridad objetiva, los 
-        resultados deben ser interpretados por un profesional cualificado. SeQ no garantiza 
-        la exactitud, completitud o aplicabilidad de las recomendaciones generadas. Este informe 
-        no sustituye —sino complementa— una auditoría de seguridad manual o la evaluación 
+        resultados deben ser interpretados por un profesional cualificado, pues Sentinel no cuenta
+        con todo el contexto en el que se encuentran los hosts escaneados. SeQ no garantiza 
+        la exactitud, completitud o aplicabilidad de las recomendaciones generadas. Este análisis con
+        inteligencia artificial no sustituye —sino complementa— una auditoría de seguridad manual o la evaluación 
         detallada por parte de un experto en ciberseguridad.
         """
         disclaimer_style = ParagraphStyle(
