@@ -434,6 +434,7 @@ class ScanManager(BaseManager, ABC):
             thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
 
             try:
+                thread_manager._safe_rollback()
                 error_scan = thread_manager.get_scan_by_id(scan_id)
                 if error_scan:
                     thread_manager._mark_scan_as(error_scan, ScanStatus.FAILED)
