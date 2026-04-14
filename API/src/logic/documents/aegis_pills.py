@@ -36,7 +36,7 @@ from src.core.model import Topic
 from src.misc import SecOpsLogger
 
 from src.logic.documents._base import AIWriter
-from src.logic.documents.exceptions import (
+from src.core.exceptions import (
     CircuitBreakerOpenError,
     AegisValidationError,
     AegisInsufficientContentError,

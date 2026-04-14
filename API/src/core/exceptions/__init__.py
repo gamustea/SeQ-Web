@@ -39,6 +39,22 @@ from .auth import (
 from .parsing import ParsingError, XMLParsingError, JSONParsingError
 from .handler import ExceptionHandler, handle_exceptions, create_error_response
 
+from .documents import (
+    DocumentError,
+    DocumentGenerationError,
+    AIConnectionError,
+    AIResponseError,
+    AIFallbackExhaustedError,
+    CircuitBreakerOpenError,
+    AegisValidationError,
+    AegisInsufficientContentError,
+    AegisFetchError,
+    ExporterError,
+    ExporterFormatError,
+    ExporterConfigurationError,
+    PDFGenerationError,
+)
+
 __all__ = [
     'ErrorCode',
     'ErrorSeverity',
@@ -77,4 +93,17 @@ __all__ = [
     'ExceptionHandler',
     'handle_exceptions',
     'create_error_response',
+    'DocumentError',
+    'DocumentGenerationError',
+    'AIConnectionError',
+    'AIResponseError',
+    'AIFallbackExhaustedError',
+    'CircuitBreakerOpenError',
+    'AegisValidationError',
+    'AegisInsufficientContentError',
+    'AegisFetchError',
+    'ExporterError',
+    'ExporterFormatError',
+    'ExporterConfigurationError',
+    'PDFGenerationError',
 ]

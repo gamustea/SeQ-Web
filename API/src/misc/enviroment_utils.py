@@ -162,7 +162,7 @@ class ConfigReader:
     # ── Lectura del JSON (solo para fallback) ─────────────────────────────────
 
     def _read_configs(self) -> dict:
-        with open(self.configs_path, "r") as f:
+        with open(self.configs_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     # ── Getters ───────────────────────────────────────────────────────────────
@@ -296,6 +296,17 @@ class ConfigReader:
             del cfg["paths"]
 
         return cfg
+
+    def get_prompts_config(self) -> dict:
+        """
+        Obtiene la configuración de prompts para AI analysis desde SecConfig.json.
+        
+        Returns:
+            dict: Dictionary containing prompts for different scanners.
+                  Each scanner has 'system' and 'user_template' keys.
+        """
+        configs = self._read_configs()
+        return configs.get("prompts", {})
 
 
 class SecOpsLogger:

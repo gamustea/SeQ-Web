@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from src.misc import SecOpsLogger
-from src.logic.documents.exceptions import (
+from src.core.exceptions import (
     ExporterError,
     ExporterFormatError,
     ExporterConfigurationError,
