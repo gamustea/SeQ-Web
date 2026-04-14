@@ -13,7 +13,6 @@ from .inet_utils import (
     IPValidator,
     PortValidator
 )
-from .conversion import JSONManager
 
 __all__ = [
     "DirectoryChecker",

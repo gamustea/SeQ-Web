@@ -103,10 +103,10 @@ class DirectoryType(Enum):
     RESULT          = "resultdir"
     RESOURCE        = "resourcedir"
     
-    STACK_AEGIS     = "stack"
-    OUTPUT_AEGIS    = "output_aegis"
+    STACK_AEGIS     = "aegis.stack"
+    OUTPUT_AEGIS    = "aegis.output"
     
-    OUTPUT_SENTINEL = "output_sentinel"
+    OUTPUT_SENTINEL = "sentinel.output"
 
 
 class DirectoryChecker:
@@ -223,24 +223,32 @@ class ConfigReader:
     def get_directory_of(self, directory_type: DirectoryType) -> str:
         """
         Los directorios no son secretos → siempre desde el JSON.
+        
+        Args:
+            directory_type: DirectoryType enum member.
+            
+        Returns:
+            Absolute path string to the directory.
         """
         configs    = self._read_configs()
         directories = configs["directories"]
 
         dir_key = directory_type.value
 
-        if dir_key in ("output_aegis", "output_sentinel"):
-            output_config = directories.get("output", {})
-            module = "aegis" if dir_key == "output_aegis" else "sentinel"
-            raw_path = output_config.get(module, f"data/{module}/output")
-        elif dir_key == "stack":
-            raw_path = directories.get("stack", "data/aegis/stack")
+        if "." in dir_key:
+            parts = dir_key.split(".")
+            if parts[0] not in directories:
+                raise ValueError(f"Módulo '{parts[0]}' no encontrado en la configuración.")
+            module_config = directories[parts[0]]
+            if parts[1] not in module_config:
+                raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
+            raw_path = module_config[parts[1]]
         elif dir_key not in directories:
             raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
         else:
             raw_path = directories[dir_key]
 
-        path     = Path(raw_path)
+        path = Path(raw_path)
 
         if not path.is_absolute():
             app_root = Path(__file__).resolve().parent.parent.parent

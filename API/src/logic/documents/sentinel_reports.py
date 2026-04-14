@@ -1014,7 +1014,6 @@ class NmapPrintingStrategy(_PrintingStrategy):
                 ["Host analizado:", str(getattr(host, "ip_address", ""))],
                 ["Nombre de host:", str(getattr(host, "hostname", ""))],
                 ["MAC address:", str(getattr(host, "mac_address", ""))],
-                ["Vendedor:", str(getattr(host, "vendor", ""))],
             ]
             host_table = theme.kv_table(host_info, col_widths=[2 * inch, 4 * inch])
             elements.append(host_table)

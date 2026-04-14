@@ -69,10 +69,6 @@ class ScanManager(BaseManager, ABC):
     Attributes:
         active_user: User executing the scan operations.
     """
-    """
-    Clase base para gestores de escaneos.
-    Responsabilidad: Coordinar la ejecución de tareas y la persistencia de resultados.
-    """
 
     _running_tasks: Dict[int, _Task] = {}
     _running_threads: Dict[int, threading.Thread] = {}
@@ -392,12 +388,7 @@ class ScanManager(BaseManager, ABC):
         pass
 
     def _execute_scan_in_thread(self, scan_id: int, task: _Task) -> None:
-        """Execute a scan in a background thread.
-
-        Args:
-            scan_id: ID of the scan to execute.
-            task: Task instance to run.
-        """
+        """Ejecuta escaneo en hilo background y persiste resultados."""
         thread_manager = self.__class__(self.active_user)
 
         try:
@@ -414,17 +405,16 @@ class ScanManager(BaseManager, ABC):
             has_no_results = task.results is None
 
             if not success or has_no_results:
-                thread_manager.logger.error(
-                    f"Escaneo {scan_id} falló. Estado: {task.status}"
-                )
+                thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
                 thread_manager._mark_scan_as(scan, ScanStatus.FAILED)
                 return
 
-            thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")
-        
+            thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
+            
             processor = thread_manager._get_result_processor()
-            processor.process_and_save(scan, task.results)
-
+            domain_data = thread_manager._extract_domain_data(processor, task, scan)
+            thread_manager._persist_scan_results(scan, domain_data)
+            
             thread_manager._mark_scan_as(scan, ScanStatus.FINISHED)
             thread_manager._safe_commit()
 
@@ -432,7 +422,6 @@ class ScanManager(BaseManager, ABC):
 
         except Exception as e:
             thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
-
             try:
                 thread_manager._safe_rollback()
                 error_scan = thread_manager.get_scan_by_id(scan_id)
@@ -441,7 +430,6 @@ class ScanManager(BaseManager, ABC):
                     thread_manager._safe_commit()
             except Exception as update_err:
                 thread_manager.logger.error(f"Error actualizando estado: {update_err}")
-
         finally:
             thread_manager.close_session()
             self._unregister_task(scan_id)
@@ -457,6 +445,35 @@ class ScanManager(BaseManager, ABC):
         scan.status = status.value
         scan.finished_at = datetime.now()
         self.logger.info(f"Estado del escaneo {scan.id} actualizado: {old_status} -> {status.value}")
+    
+    def _get_or_create_host(self, hostname: str, ip_address: str):
+        """Versión simplificada para Nikto."""
+        from src.core.model import Host
+        from src.misc import normalize_target
+        
+        # Normalizar si es necesario
+        ip, host = normalize_target(hostname, resolve_hostname=True)
+        final_hostname = host or ip or hostname
+        final_ip = ip or ip_address
+        
+        host_obj = self.session.query(Host).filter(Host.hostname == final_hostname).first()
+        if host_obj:
+            return host_obj
+        
+        host_obj = Host(hostname=final_hostname, ip_address=final_ip, mac_address="")
+        self.session.add(host_obj)
+        self.session.flush()
+        return host_obj
+
+    @abstractmethod
+    def _extract_domain_data(self, processor, task, scan):
+        """Extrae datos de dominio del processor."""
+        pass
+    
+    @abstractmethod
+    def _persist_scan_results(self, scan, domain_data):
+        """Persiste los datos procesados en la base de datos."""
+        pass   
 
 
 class NmapScanManager(ScanManager):
@@ -535,7 +552,7 @@ class NmapScanManager(ScanManager):
         Returns:
             NmapResultProcessor instance.
         """
-        return NmapResultProcessor(self.session, self.logger)
+        return NmapResultProcessor(self.logger)
 
     def get_scans_for_user(self) -> List[NmapScan]:
         """Get all Nmap scans for the active user.
@@ -650,6 +667,72 @@ class NmapScanManager(ScanManager):
         finally:
             thread_manager.close_session()
 
+    def _extract_domain_data(self, processor, task, scan):
+        """Extrae datos de hosts y puertos."""
+        return processor.process(task.results, scan.target)
+
+    def _persist_scan_results(self, scan, domain_data):
+        """Persiste resultados Nmap."""
+        host_data, ports_data = domain_data
+        
+        # Persistir host
+        host = self._get_or_create_host(
+            hostname=host_data['hostname'],
+            ip_address=host_data['ip_address'],
+            mac_address=host_data['mac_address'],
+            vendor=host_data['vendor']
+        )
+        scan.host_id = host.id
+        
+        # Persistir puertos
+        for port_info in ports_data:
+            port = self._obtain_or_create_port(port_info['protocol'])
+            if port not in scan.target_ports:
+                scan.target_ports.append(port)
+            
+            open_port = OpenPort(
+                nmap_scan_id=scan.id,
+                port_id=port.id,
+                reason=port_info['reason'],
+                product=port_info['product'],
+                version=port_info['version'],
+                given_use=port_info['given_use']
+            )
+            self.session.add(open_port)
+
+    def _obtain_or_create_port(self, protocol: str):
+        """Obtiene o crea un puerto por su protocolo."""
+        from src.core.model import Port
+        port = self.session.query(Port).filter(Port.protocol == protocol).one_or_none()
+        if port:
+            return port
+        
+        new_port = Port(protocol=protocol)
+        self.session.add(new_port)
+        self.session.flush()
+        return new_port
+    
+    def _get_or_create_host(self, hostname: str, ip_address: str, mac_address: str = "", vendor: str = ""):
+        """Obtiene o crea un host."""
+        from src.core.model import Host
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        
+        host = self.session.query(Host).filter(Host.hostname == hostname).first()
+        if host:
+            return host
+        
+        stmt = pg_insert(Host).values(
+            hostname=hostname,
+            ip_address=ip_address,
+            mac_address=mac_address or "",
+            vendor=vendor
+        ).on_conflict_do_nothing(index_elements=["hostname"])
+        
+        self.session.execute(stmt)
+        self.session.flush()
+        
+        return self.session.query(Host).filter(Host.hostname == hostname).first()
+
 
 class NiktoScanManager(ScanManager):
     """Manager for Nikto web vulnerability scans.
@@ -725,7 +808,7 @@ class NiktoScanManager(ScanManager):
         Returns:
             NiktoResultProcessor instance.
         """
-        return NiktoResultProcessor(self.session, self.logger)
+        return NiktoResultProcessor(self.logger)
 
     def get_scans_for_user(self) -> List[NiktoScan]:
         """Get all Nikto scans for the active user.
@@ -839,6 +922,52 @@ class NiktoScanManager(ScanManager):
         
         finally:
             thread_manager.close_session()
+
+    def _extract_domain_data(self, processor, task, scan):
+        return processor.process(task.results)
+
+    def _persist_scan_results(self, scan, domain_data):
+        """Persiste incidentes Nikto y asocia host."""
+        from src.core.model import Host
+        
+        incidents_data = domain_data
+        
+        # Crear/obtener incidentes
+        for inc_data in incidents_data:
+            incident = self._obtain_or_create_incident(inc_data)
+            if incident not in scan.incidents:
+                scan.incidents.append(incident)
+        
+        # Asociar host (usando target del scan)
+        host = self._get_or_create_host(
+            hostname=scan.target,  # Nikto usa el target como hostname inicial
+            ip_address=scan.target
+        )
+        scan.host = host
+    
+    def _obtain_or_create_incident(self, inc_data: dict):
+        """Obtiene o crea un incidente Nikto."""
+        from src.core.model import NiktoIncident
+        
+        existing = self.session.query(NiktoIncident).filter(
+            NiktoIncident.description == inc_data['description'],
+            NiktoIncident.url == inc_data['url'],
+            NiktoIncident.method == inc_data['method'],
+        ).first()
+        
+        if existing:
+            return existing
+        
+        incident = NiktoIncident(
+            description=inc_data['description'],
+            osvdb_id=inc_data['osvdb_id'],
+            method=inc_data['method'],
+            url=inc_data['url'],
+            severity=inc_data['severity']
+        )
+        self.session.add(incident)
+        self.session.flush()
+        return incident
 
 
 class OpenVASScanManager(ScanManager):
@@ -976,16 +1105,8 @@ class OpenVASScanManager(ScanManager):
             timeout=timeout
         )
 
-    def _get_result_processor(self) -> OpenVASResultProcessor:
-        """Get the OpenVAS result processor.
-
-        Returns:
-            OpenVASResultProcessor instance.
-        """
-        return OpenVASResultProcessor(
-            self.session, 
-            self.logger
-        )
+    def _get_result_processor(self):
+        return OpenVASResultProcessor(self.logger)
 
     def get_scans_for_user(self) -> List[OpenVASScan]:
         """Get all OpenVAS scans for the active user.
@@ -1090,3 +1211,49 @@ class OpenVASScanManager(ScanManager):
             NotImplementedError: OpenVAS report generation is handled by endpoint.
         """
         raise NotImplementedError("La generación de reportes para OpenVAS se maneja en el endpoint")
+
+    def _extract_domain_data(self, processor, task, scan):
+        return processor.process(task.results)
+
+    def _persist_scan_results(self, scan, domain_data):
+        """Persiste vulnerabilidades y resultados OpenVAS."""
+        vulnerabilities_data, scan_results_data, hosts_ips = domain_data
+        
+        # 1. Procesar y guardar vulnerabilidades únicas
+        vulnerability_map = {}
+        for vuln_data in vulnerabilities_data:
+            vuln = self._obtain_or_create_vulnerability(vuln_data)
+            vulnerability_map[vuln.nvt_oid] = vuln
+        
+        # 2. Procesar hosts y crear resultados
+        for result_data in scan_results_data:
+            host = self._get_or_create_host(
+                hostname=result_data['host_ip'],
+                ip_address=result_data['host_ip']
+            )
+            
+            scan_result = OpenVASScanResult(
+                openvas_scan_id=scan.id,
+                vulnerability_id=vulnerability_map[result_data['nvt_oid']].id,
+                host_id=host.id
+            )
+            self.session.add(scan_result)
+        
+        self.session.flush()
+
+    def _obtain_or_create_vulnerability(self, vuln_data: dict):
+        """Obtiene o crea una vulnerabilidad OpenVAS."""
+        from src.core.model import OpenVASVulnerability
+        
+        nvt_oid = vuln_data['nvt_oid']
+        vuln = self.session.query(OpenVASVulnerability).filter(
+            OpenVASVulnerability.nvt_oid == nvt_oid
+        ).one_or_none()
+        
+        if vuln:
+            return vuln
+        
+        vuln = OpenVASVulnerability(**vuln_data)
+        self.session.add(vuln)
+        self.session.flush()
+        return vuln

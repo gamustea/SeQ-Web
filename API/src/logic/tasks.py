@@ -14,8 +14,7 @@ from nmap import PortScanner
 from src.misc import (
     ConfigReader, 
     DirectoryType, 
-    SecOpsLogger, 
-    JSONManager,
+    SecOpsLogger,
     DirectoryChecker,
     PlatformDetector
 )
@@ -551,6 +550,34 @@ class NiktoScanTask(_Task):
 
         return nikto_cmd
 
+    def _parse_nikto_xml(self, xml_path: str) -> List[Dict]:
+        """Parsea archivo XML de Nikto a lista de diccionarios."""
+        import xmltodict
+        import re
+        
+        xml_file = Path(xml_path)
+        if not xml_file.is_file():
+            return []
+        
+        try:
+            content = xml_file.read_text(encoding='utf-8')
+            # Nikto puede generar múltiples bloques <niktoscan>
+            pattern = re.compile(r'(<niktoscan.*?>.*?</niktoscan>)', re.DOTALL)
+            matches = pattern.findall(content)
+            
+            if not matches:
+                return []
+            
+            results = []
+            for match in matches:
+                doc_dict = xmltodict.parse(match)
+                results.append(doc_dict)
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error parseando XML Nikto: {e}")
+            return []
+
     def _process_results(self) -> None:
         """Procesa el XML generado por Nikto."""
         try:
@@ -564,7 +591,8 @@ class NiktoScanTask(_Task):
                 self.results = None
                 return
             
-            self.results = JSONManager.convert_multi_niktoscan_xml_to_json(str(self.temp_path))
+            # REEMPLAZAR: JSONManager.convert_multi_niktoscan_xml_to_json
+            self.results = self._parse_nikto_xml(str(self.temp_path))
             self.logger.info("Resultados Nikto procesados")
         
         except Exception as e:
@@ -805,12 +833,13 @@ class OpenVASTask(_Task):
         self.logger.info("Reporte XML obtenido")
     
     def _process_results(self) -> None:
-        """Procesa el XML del reporte y lo convierte a JSON"""
+        """Procesa el XML del reporte y lo convierte a estructura de datos."""
         try:
             if not self._report_xml:
                 raise RuntimeError("No hay reporte XML disponible")
             
-            self.results = JSONManager.openvas_xml_to_json(self._report_xml)
+            # REEMPLAZAR: JSONManager.openvas_xml_to_json
+            self.results = self._parse_openvas_report(self._report_xml)
             self.logger.info("Resultados OpenVAS procesados")
         
         except Exception as e:
@@ -849,3 +878,140 @@ class OpenVASTask(_Task):
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error en wait de OpenVAS: {e}", exc_info=True)
             return False
+
+    def _parse_openvas_report(self, report_xml: str) -> Dict:
+        """Parsea XML de reporte OpenVAS a estructura de datos planos."""
+        from lxml import etree as lxml_etree
+        from typing import List, Tuple
+        
+        def _classify_severity(score: float) -> str:
+            if score == 0.0:
+                return 'Log'
+            elif score < 4.0:
+                return 'Low'
+            elif score < 7.0:
+                return 'Medium'
+            elif score < 9.0:
+                return 'High'
+            else:
+                return 'Critical'
+        
+        def _extract_references(refs) -> Tuple[List[str], List[str], List[str], List[str]]:
+            cve_ids, cert_refs, bugtraq_ids, other_refs = [], [], [], []
+            for ref in refs:
+                ref_type = ref.get('type', '').upper()
+                ref_id = ref.get('id', '')
+                if ref_type == 'CVE':
+                    cve_ids.append(ref_id)
+                elif ref_type in ['CERT-BUND', 'DFN-CERT']:
+                    cert_refs.append(f"{ref_type}:{ref_id}")
+                elif ref_type == 'BID':
+                    bugtraq_ids.append(ref_id)
+                else:
+                    other_refs.append(f"{ref_type}:{ref_id}")
+            return cve_ids, cert_refs, bugtraq_ids, other_refs
+        
+        # Parsear XML
+        if isinstance(report_xml, str):
+            root = lxml_etree.fromstring(report_xml.encode('utf-8'))
+        elif isinstance(report_xml, bytes):
+            root = lxml_etree.fromstring(report_xml)
+        else:
+            import xml.etree.ElementTree as ET
+            xml_str = ET.tostring(report_xml, encoding='unicode')
+            root = lxml_etree.fromstring(xml_str.encode('utf-8'))
+        
+        report = root.xpath('//report')[0]
+        report_id = report.get('id')
+        
+        task = root.xpath('//task')[0]
+        task_id = task.get('id')
+        
+        results = root.xpath('//report/results/result')
+        
+        vulnerabilities = {}
+        scan_results = []
+        hosts_found = set()
+        
+        for result in results:
+            host_ip = result.xpath('host/text()')[0] if result.xpath('host/text()') else None
+            if not host_ip:
+                continue
+            
+            hosts_found.add(host_ip)
+            
+            nvt = result.xpath('nvt')[0] if result.xpath('nvt') else None
+            if nvt is None:
+                continue
+            
+            nvt_oid = nvt.get('oid')
+            if not nvt_oid:
+                continue
+            
+            if nvt_oid not in vulnerabilities:
+                name = nvt.xpath('name/text()')[0] if nvt.xpath('name/text()') else 'Unknown'
+                family = nvt.xpath('family/text()')[0] if nvt.xpath('family/text()') else None
+                
+                severity = result.xpath('severity/text()')[0] if result.xpath('severity/text()') else '0.0'
+                severity_score = float(severity) if severity else 0.0
+                
+                cvss_base = nvt.xpath('cvss_base/text()')[0] if nvt.xpath('cvss_base/text()') else None
+                cvss_base_score = float(cvss_base) if cvss_base else severity_score
+                
+                cvss_vector = None
+                cvss_tags = nvt.xpath('tags/text()')
+                tags_dict = {}
+                
+                if cvss_tags:
+                    tags_text = cvss_tags[0]
+                    for tag in tags_text.split('|'):
+                        if '=' in tag:
+                            key, value = tag.split('=', 1)
+                            tags_dict[key.strip().lower()] = value.strip()
+                        if 'cvss_base_vector=' in tag.lower():
+                            cvss_vector = tag.split('=', 1)[1].strip()
+                
+                refs = nvt.xpath('refs/ref')
+                cve_ids, cert_refs, bugtraq_ids, other_refs = _extract_references(refs)
+                
+                qod = nvt.xpath('qod')[0] if nvt.xpath('qod') else None
+                qod_value = int(qod.xpath('value/text()')[0]) if qod and qod.xpath('value/text()') else None
+                qod_type = qod.xpath('type/text()')[0] if qod and qod.xpath('type/text()') else None
+                
+                vulnerabilities[nvt_oid] = {
+                    'nvt_oid': nvt_oid,
+                    'name': name,
+                    'severity_score': severity_score,
+                    'severity_class': _classify_severity(severity_score),
+                    'cvss_base_score': cvss_base_score,
+                    'cvss_vector': cvss_vector,
+                    'cve_ids': ','.join(cve_ids) if cve_ids else None,
+                    'cert_refs': ','.join(cert_refs) if cert_refs else None,
+                    'bugtraq_ids': ','.join(bugtraq_ids) if bugtraq_ids else None,
+                    'other_refs': ','.join(other_refs) if other_refs else None,
+                    'summary': tags_dict.get('summary', ''),
+                    'description': result.xpath('description/text()')[0] if result.xpath('description/text()') else tags_dict.get('vuldetect', ''),
+                    'impact': tags_dict.get('impact', ''),
+                    'insight': tags_dict.get('insight', ''),
+                    'affected_software': tags_dict.get('affected', ''),
+                    'solution_type': tags_dict.get('solution_type', 'Mitigation'),
+                    'solution': tags_dict.get('solution', ''),
+                    'qod_value': qod_value,
+                    'qod_type': qod_type,
+                    'family': family,
+                    'category': nvt.xpath('category/text()')[0] if nvt.xpath('category/text()') else None
+                }
+            
+            scan_results.append({
+                'nvt_oid': nvt_oid,
+                'host_ip': host_ip,
+                'port': result.xpath('port/text()')[0] if result.xpath('port/text()') else None,
+                'threat': result.xpath('threat/text()')[0] if result.xpath('threat/text()') else None
+            })
+        
+        return {
+            'scan_data': {'task_id': task_id, 'report_id': report_id},
+            'vulnerabilities': list(vulnerabilities.values()),
+            'scan_results': scan_results,
+            'hosts': list(hosts_found)
+        }
