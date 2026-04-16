@@ -100,7 +100,6 @@ class DirectoryType(Enum):
     """Enumeración de tipos de directorios disponibles"""
     TEMP            = "tempdir"
     LOG             = "logdir"
-    RESULT          = "resultdir"
     RESOURCE        = "resourcedir"
     
     STACK_AEGIS     = "aegis.stack"
