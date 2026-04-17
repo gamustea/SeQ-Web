@@ -1,6 +1,7 @@
 from .enviroment_utils import (
     DirectoryChecker,
     DirectoryType,
+    SentinelTool,
     ConfigReader,
     SecOpsLogger,
     PlatformDetector,
@@ -17,6 +18,7 @@ from .inet_utils import (
 __all__ = [
     "DirectoryChecker",
     "DirectoryType",
+    "SentinelTool",
     "ConfigReader",
     "SecOpsLogger",
     "PlatformDetector",

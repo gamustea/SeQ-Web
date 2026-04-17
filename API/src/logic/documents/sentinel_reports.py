@@ -48,7 +48,7 @@ from reportlab.platypus import (
     CondPageBreak,
 )
 
-from src.misc import ConfigReader, DirectoryType, SecOpsLogger
+from src.misc import ConfigReader, DirectoryType, SentinelTool, SecOpsLogger
 from src.core.model import NmapScan, NiktoScan, Scan, Host, Topic, NiktoIncident
 from src.logic.documents._base import AIWriter
 from src.core.exceptions import (
@@ -61,12 +61,12 @@ from src.core.exceptions import (
 
 class ColorType(Enum):
     """Color palette type identifiers for report theming."""
-    BLACK = "black"
-    DARK = "dark"
-    MAIN = "main"
-    SECONDARY = "secondary"
-    LIGHT = "light"
-    WHITE = "white"
+    BLACK       = "black"
+    DARK        = "dark"
+    MAIN        = "main"
+    SECONDARY   = "secondary"
+    LIGHT       = "light"
+    WHITE       = "white"
 
 
 class ReportTheme:
@@ -981,13 +981,16 @@ class NmapPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = NmapAIWriter()
         
+        config_reader = ConfigReader()
+        palette_config = config_reader.get_tool_color_palette(SentinelTool.NMAP)
+        
         self.color_palette = {
-            ColorType.BLACK: "#121212",
-            ColorType.DARK: "#01375A",
-            ColorType.MAIN: "#014F86",
-            ColorType.SECONDARY: "#555B6E",
-            ColorType.LIGHT: "#4A90E2",
-            ColorType.WHITE: "#E1E8F0",
+            ColorType.BLACK: palette_config.get("black", "#121212"),
+            ColorType.DARK: palette_config.get("dark", "#01375A"),
+            ColorType.MAIN: palette_config.get("main", "#014F86"),
+            ColorType.SECONDARY: palette_config.get("secondary", "#555B6E"),
+            ColorType.LIGHT: palette_config.get("light", "#4A90E2"),
+            ColorType.WHITE: palette_config.get("white", "#E1E8F0"),
         }
 
     def append_body(self, theme: ReportTheme, elements: list, ai_report: bool = False) -> None:
@@ -1137,13 +1140,17 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
             scan: OpenVASScan instance to generate report from.
         """
         super().__init__(scan)
+        
+        config_reader = ConfigReader()
+        palette_config = config_reader.get_tool_color_palette(SentinelTool.OPENVAS)
+        
         self.color_palette = {
-            ColorType.BLACK: "#0D2818",
-            ColorType.DARK: "#1B5E20",
-            ColorType.MAIN: "#2E7D32",
-            ColorType.SECONDARY: "#43A047",
-            ColorType.LIGHT: "#66BB6A",
-            ColorType.WHITE: "#E8F5E9",
+            ColorType.BLACK: palette_config.get("black", "#0D2818"),
+            ColorType.DARK: palette_config.get("dark", "#1B5E20"),
+            ColorType.MAIN: palette_config.get("main", "#2E7D32"),
+            ColorType.SECONDARY: palette_config.get("secondary", "#43A047"),
+            ColorType.LIGHT: palette_config.get("light", "#66BB6A"),
+            ColorType.WHITE: palette_config.get("white", "#E8F5E9"),
         }
 
     def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
@@ -1486,13 +1493,17 @@ class NiktoPrintingStrategy(_PrintingStrategy):
         """
         super().__init__(scan)
         self.writer = NiktoAIWriter()
+        
+        config_reader = ConfigReader()
+        palette_config = config_reader.get_tool_color_palette(SentinelTool.NIKTO)
+        
         self.color_palette = {
-            ColorType.BLACK: "#4B2500",
-            ColorType.DARK: "#8E3D0A",
-            ColorType.MAIN: "#C75B12",
-            ColorType.SECONDARY: "#FA8072",
-            ColorType.LIGHT: "#F9B49A",
-            ColorType.WHITE: "#FFF5F0",
+            ColorType.BLACK: palette_config.get("black", "#4B2500"),
+            ColorType.DARK: palette_config.get("dark", "#8E3D0A"),
+            ColorType.MAIN: palette_config.get("main", "#C75B12"),
+            ColorType.SECONDARY: palette_config.get("secondary", "#FA8072"),
+            ColorType.LIGHT: palette_config.get("light", "#F9B49A"),
+            ColorType.WHITE: palette_config.get("white", "#FFF5F0"),
         }
 
     def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:

@@ -108,6 +108,13 @@ class DirectoryType(Enum):
     OUTPUT_SENTINEL = "sentinel.output"
 
 
+class SentinelTool(Enum):
+    """Enumeración de herramientas disponibles en Sentinel"""
+    NMAP    = "nmap"
+    NIKTO   = "nikto"
+    OPENVAS = "openvas"
+
+
 class DirectoryChecker:
 
     def __init__(self):
@@ -122,19 +129,19 @@ class DirectoryChecker:
 
 class ConfigReader:
     """
-    Fuente de configuración con prioridad: entorno > SecConfig.json
+    Fuente de configuración con prioridad: entorno > SecOpsConfig.json
 
     Orden de resolución:
         1. Variables de entorno (inyectadas por Docker o cargadas desde .env).
-        2. Fallback al SecConfig.json (desarrollo local sin .env).
+        2. Fallback al SecOpsConfig.json (desarrollo local sin .env).
 
     Estrategia de búsqueda del JSON (primera ruta que exista gana):
         1. Ruta explícita pasada al constructor.
-        2. Relativa a la raíz del paquete: API/src/config/SecConfig.json.
-        3. Relativa a este fichero: subiendo hasta src/config/SecConfig.json.
+        2. Relativa a la raíz del paquete: API/src/config/SecOpsConfig.json.
+        3. Relativa a este fichero: subiendo hasta src/config/SecOpsConfig.json.
     """
 
-    _DEFAULT_RELATIVE = "API/src/config/SecConfig.json"
+    _DEFAULT_RELATIVE = "API/SecOpsConfig.json"
 
     def __init__(self, configs_file: str = _DEFAULT_RELATIVE) -> None:
         self.configs_path = self._resolve(configs_file)
@@ -152,9 +159,13 @@ class ConfigReader:
 
         this_file = Path(__file__).resolve()
         src_dir   = this_file.parent.parent
-        from_src  = src_dir / "config" / "SecConfig.json"
+        from_src  = src_dir / "config" / "SecOpsConfig.json"
         if from_src.exists():
             return from_src
+        
+        from_old  = src_dir / "config" / "SecConfig.json"
+        if from_old.exists():
+            return from_old
 
         return resolved
 
@@ -230,22 +241,26 @@ class ConfigReader:
             Absolute path string to the directory.
         """
         configs    = self._read_configs()
-        directories = configs["directories"]
-
+        
         dir_key = directory_type.value
 
         if "." in dir_key:
             parts = dir_key.split(".")
-            if parts[0] not in directories:
-                raise ValueError(f"Módulo '{parts[0]}' no encontrado en la configuración.")
-            module_config = directories[parts[0]]
-            if parts[1] not in module_config:
+            module_key = parts[0]
+            if module_key not in configs:
+                raise ValueError(f"Módulo '{module_key}' no encontrado en la configuración.")
+            module_config = configs[module_key]
+            if "directories" not in module_config:
                 raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
-            raw_path = module_config[parts[1]]
-        elif dir_key not in directories:
-            raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
+            directories = module_config["directories"]
+            sub_key = parts[1]
+            if sub_key not in directories:
+                raise ValueError(f"Directorio '{sub_key}' no encontrado en la configuración.")
+            raw_path = directories[sub_key]
         else:
-            raw_path = directories[dir_key]
+            if dir_key not in configs.get("general", {}).get("directories", {}):
+                raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
+            raw_path = configs["general"]["directories"][dir_key]
 
         path = Path(raw_path)
 
@@ -299,21 +314,70 @@ class ConfigReader:
         Excepción: OLLAMA_HOST si se define en el entorno.
         """
         cfg = self._read_configs()["aegis"]
-        if "paths" in cfg:
-            del cfg["paths"]
+        if "directories" in cfg:
+            del cfg["directories"]
 
         return cfg
 
+    def get_sentinel_config(self) -> dict:
+        """
+        Obtiene la configuración de Sentinel desde SecOpsConfig.json.
+        
+        Returns:
+            dict: Configuración completa de sentinel.
+        """
+        configs = self._read_configs()
+        return configs.get("sentinel", {})
+
     def get_prompts_config(self) -> dict:
         """
-        Obtiene la configuración de prompts para AI analysis desde SecConfig.json.
+        Obtiene la configuración de prompts para AI analysis desde SecOpsConfig.json.
         
         Returns:
             dict: Dictionary containing prompts for different scanners.
-                  Each scanner has 'system' and 'user_template' keys.
+                    Each scanner has 'system' and 'userTemplate' keys.
         """
         configs = self._read_configs()
-        return configs.get("prompts", {})
+        sentinel = configs.get("sentinel", {})
+        
+        return {
+            "nmap": sentinel.get("nmap", {}).get("prompts", {}),
+            "nikto": sentinel.get("nikto", {}).get("prompts", {}),
+            "openvas": sentinel.get("openvas", {}).get("prompts", {}),
+        }
+
+    def get_tool_prompts(self, tool: SentinelTool) -> dict:
+        """
+        Obtiene la configuración de prompts para un tool específico.
+        
+        Args:
+            tool: SentinelTool enum member.
+            
+        Returns:
+            dict: Diccionario con 'system' y 'userTemplate' keys.
+        """
+        prompts = self.get_prompts_config()
+        return prompts.get(tool.value, {})
+
+    def get_tool_color_palette(self, tool: SentinelTool) -> dict:
+        """
+        Obtiene la paleta de colores para un tool específico.
+        
+        Args:
+            tool: SentinelTool enum member.
+            
+        Returns:
+            dict: Diccionario con las couleurs (black, dark, main, secondary, light, white).
+        """
+        configs = self._read_configs()
+        sentinel = configs.get("sentinel", {})
+        
+        tool_key = tool.value
+        if tool_key not in sentinel:
+            return {}
+        
+        tool_config = sentinel[tool_key]
+        return tool_config.get("colorPalette", {})
 
 
 class SecOpsLogger:
