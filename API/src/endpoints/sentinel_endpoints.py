@@ -367,19 +367,19 @@ def retrieve_all_scans():
 
             if scan_type in ("nmap", "all"):
                 try:
-                    all_results.extend(_format_nmap_scans(nmap_mgr.get_scans_for_user()))
+                    all_results.extend(_format_nmap_scans(nmap_mgr.get_scans_for_user(), nmap_mgr))
                 except Exception as exc:
                     _logger.error(f"Error obteniendo Nmap scans: {exc}")
 
             if scan_type in ("nikto", "all"):
                 try:
-                    all_results.extend(_format_nikto_scans(nikto_mgr.get_scans_for_user()))
+                    all_results.extend(_format_nikto_scans(nikto_mgr.get_scans_for_user(), nikto_mgr))
                 except Exception as exc:
                     _logger.error(f"Error obteniendo Nikto scans: {exc}")
 
             if scan_type in ("openvas", "all"):
                 try:
-                    all_results.extend(_format_openvas_scans(openvas_mgr.get_scans_for_user()))
+                    all_results.extend(_format_openvas_scans(openvas_mgr.get_scans_for_user(), openvas_mgr))
                 except Exception as exc:
                     _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
 
@@ -424,12 +424,12 @@ def retrieve_scan_by_id(scan_id: int):
             verify_scan_ownership(scan, uid, scan_id)
 
             if scan_type == "nmap":
-                result = _format_nmap_scans([scan])[0]
+                result = _format_nmap_scans([scan], nmap)[0]
                 result["openPorts"] = [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason, "product": p.product, "version": p.version} for p in scan.open_ports_relation]
             elif scan_type == "nikto":
-                result = _format_nikto_scans([scan])[0]
+                result = _format_nikto_scans([scan], nikto)[0]
             else:
-                result = _format_openvas_scans([scan])[0]
+                result = _format_openvas_scans([scan], openvas)[0]
                 result["severityBreakdown"] = {
                     "critical": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
                     "high":     sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
@@ -840,11 +840,12 @@ def _ts(dt) -> str:
     return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
 
 
-def _format_nmap_scans(scans: list) -> list:
+def _format_nmap_scans(scans: list, manager=None) -> list:
     """Formatea una lista de escaneos Nmap para la respuesta JSON.
 
     Args:
         scans: Lista de objetos NmapScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
 
     Returns:
         list: Lista de diccionarios con los datos del escaneo en formato JSON.
@@ -859,11 +860,13 @@ def _format_nmap_scans(scans: list) -> list:
             "openPorts": [
                 {"port": "80/tcp", "reason": "syn-ack", "product": "Apache", "version": "2.4"}
             ],
-            "totalOpenPorts": int
+            "totalOpenPorts": int,
+            "documentId": int (optional)
         }
     """
-    return [
-        {
+    results = []
+    for s in scans:
+        entry = {
             "id":             s.id,
             "scanType":       "nmap",
             "target":         s.target,
@@ -872,15 +875,24 @@ def _format_nmap_scans(scans: list) -> list:
             "openPorts":      [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason} for p in s.open_ports_relation],
             "totalOpenPorts": len(s.open_ports_relation),
         }
-        for s in scans
-    ]
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results
 
 
-def _format_nikto_scans(scans: list) -> list:
+def _format_nikto_scans(scans: list, manager=None) -> list:
     """Formatea una lista de escaneos Nikto para la respuesta JSON.
 
     Args:
         scans: Lista de objetos NiktoScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
 
     Returns:
         list: Lista de diccionarios con los datos del escaneo en formato JSON.
@@ -902,11 +914,13 @@ def _format_nikto_scans(scans: list) -> list:
                     "discoveredAt": str (ISO 8601)
                 }
             ],
-            "totalIncidents": int
+            "totalIncidents": int,
+            "documentId": int (optional)
         }
     """
-    return [
-        {
+    results = []
+    for s in scans:
+        entry = {
             "id":             s.id,
             "scanType":       "nikto",
             "target":         s.target,
@@ -925,15 +939,24 @@ def _format_nikto_scans(scans: list) -> list:
             ],
             "totalIncidents": len(s.incidents),
         }
-        for s in scans
-    ]
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results
 
 
-def _format_openvas_scans(scans: list) -> list:
+def _format_openvas_scans(scans: list, manager=None) -> list:
     """Formatea una lista de escaneos OpenVAS para la respuesta JSON.
 
     Args:
         scans: Lista de objetos OpenVASScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
 
     Returns:
         list: Lista de diccionarios con los datos del escaneo en formato JSON.
@@ -947,30 +970,16 @@ def _format_openvas_scans(scans: list) -> list:
             "reportId": str,
             "status": str,
             "startedAt": str (ISO 8601),
-            "vulnerabilities": [
-                {
-                    "nvtOid": str,
-                    "name": str,
-                    "severityScore": float,
-                    "severityClass": "High|Medium|Low|...",
-                    "cvssBaseScore": float,
-                    "cvssVector": str,
-                    "cveIds": list,
-                    "description": str,
-                    "solution": str,
-                    "solutionType": str,
-                    "affectedSoftware": str,
-                    "hostIp": str,
-                    "hostName": str
-                }
-            ],
+            "vulnerabilities": [...],
             "totalVulnerabilities": int,
             "criticalCount": int,
-            "highCount": int
+            "highCount": int,
+            "documentId": int (optional)
         }
     """
-    return [
-        {
+    results = []
+    for s in scans:
+        entry = {
             "id":                   s.id,
             "scanType":             "openvas",
             "target":               s.target,
@@ -1000,5 +1009,13 @@ def _format_openvas_scans(scans: list) -> list:
             "criticalCount":        sum(1 for r in s.results if r.vulnerability.severity_class == "Critical"),
             "highCount":            sum(1 for r in s.results if r.vulnerability.severity_class == "High"),
         }
-        for s in scans
-    ]
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results

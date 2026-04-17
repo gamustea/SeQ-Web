@@ -23,64 +23,28 @@ document.addEventListener('DOMContentLoaded', () => {
   SeqUI.initTopbar();
   loadStats();
   loadScans('nmap');
-  startPolling();
+  updateDownloadButtons();
 });
 
-/* ══════════════════════════════════════════════════════════════
-    POLLING — Auto-refresh para escaneos en curso
+/* ══════════════════════════════════════════════════════════════════════
+    POLLING — Auto-refresh para escaneos en curso (ELIMINADO)
     ══════════════════════════════════════════════════════════════ */
 function startPolling() {
-  stopPolling();
-  pollAttempts = 0;
-  pollTimer = setInterval(async () => {
-    pollAttempts++;
-    if (pollAttempts >= POLL_MAX_ATTEMPTS) {
-      stopPolling();
-      SeqToast.show('Tiempo máximo de espera alcanzado (30 min)', 'warn');
-      return;
-    }
-    await checkAndRefreshScans();
-  }, POLL_INTERVAL_MS);
+  // Polling eliminado - ahora se actualiza manualmente con el botón
 }
 
 function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  // Pollingeliminado
 }
 
-async function checkAndRefreshScans() {
-  try {
-    const res = await apiFetch('/sentinel/results?type=all');
-    if (!res?.ok) return;
-    const data = await res.json();
-    const results = data.results || [];
-    
-    const hasRunningScans = results.some(r => 
-      r.status === 'running' || r.status === 'pending'
-    );
-    
-    if (hasRunningScans) {
-      const activeTab = document.querySelector('.tab.active')?.dataset?.panel;
-      if (activeTab) {
-        const page = paginationState[activeTab]?.page || 1;
-        await loadScans(activeTab, page, false);
-      }
-      loadStats();
-      pollAttempts = 0;
-    } else {
-      stopPolling();
-    }
-  } catch (e) {
-    console.error('[Sentinel] Polling error:', e);
-  }
-}
-
-function refreshCurrentTab() {
+async function refreshCurrentTab() {
   const activeTab = document.querySelector('.tab.active')?.dataset?.panel;
   if (activeTab) {
     const page = paginationState[activeTab]?.page || 1;
-    loadScans(activeTab, page, true);
+    await loadScans(activeTab, page, true);
   }
-  loadStats();
+  await loadStats();
+  await updateDownloadButtons();
 }
 
 function refreshWithFeedback(btn) {
@@ -89,13 +53,18 @@ function refreshWithFeedback(btn) {
   btn.innerHTML = `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;animation:seq-spin 0.6s linear infinite">
     <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
   </svg> Actualizando...`;
-  
-  refreshCurrentTab();
-  
-  setTimeout(() => {
-    btn.disabled = false;
-    btn.innerHTML = originalContent;
-  }, 800);
+
+  refreshCurrentTab().then(() => {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = originalContent;
+    }, 500);
+  }).catch(() => {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = originalContent;
+    }, 500);
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -108,7 +77,6 @@ function switchTab(name) {
   document.getElementById(`panel-${name}`)?.classList.add('active');
   paginationState[name].page = 1;
   loadScans(name, 1);
-  checkAndRefreshScans();
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -123,21 +91,34 @@ function showPanelAlert(type, msg, kind = 'error') {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   STATS
+    STATS
 ══════════════════════════════════════════════════════════════ */
 async function loadStats() {
-  const res = await apiFetch('/sentinel/results');
-  if (!res?.ok) return;
-  const { results = [] } = await res.json();
-  document.getElementById('stat-total').textContent   = results.length;
-  document.getElementById('stat-nmap').textContent    = results.filter(r => r.scanType === 'nmap').length;
-  document.getElementById('stat-nikto').textContent   = results.filter(r => r.scanType === 'nikto').length;
-  document.getElementById('stat-openvas').textContent = results.filter(r => r.scanType === 'openvas').length;
+  try {
+    const [nmapRes, niktoRes, openvasRes] = await Promise.all([
+      apiFetch('/sentinel/results?type=nmap&per_page=1'),
+      apiFetch('/sentinel/results?type=nikto&per_page=1'),
+      apiFetch('/sentinel/results?type=openvas&per_page=1')
+    ]);
+
+    const nmapData = nmapRes?.ok ? await nmapRes.json() : { total: 0 };
+    const niktoData = niktoRes?.ok ? await niktoRes.json() : { total: 0 };
+    const openvasData = openvasRes?.ok ? await openvasRes.json() : { total: 0 };
+
+    const total = (nmapData.total || 0) + (niktoData.total || 0) + (openvasData.total || 0);
+
+    document.getElementById('stat-total').textContent   = total;
+    document.getElementById('stat-nmap').textContent    = nmapData.total || 0;
+    document.getElementById('stat-nikto').textContent   = niktoData.total || 0;
+    document.getElementById('stat-openvas').textContent = openvasData.total || 0;
+  } catch (e) {
+    console.error('[Sentinel] Error loading stats:', e);
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════
-    TABLA DE RESULTADOS + PAGINACIÓN
-    ══════════════════════════════════════════════════════════════ */
+     TABLA DE RESULTADOS + PAGINACIÓN
+═════════════════════════════════════════════════════════════════════ */
 async function loadScans(type, page = 1, showLoading = true) {
   const wrap = document.getElementById(`table-${type}`);
   const pagWrap = document.getElementById(`pagination-${type}`);
@@ -153,16 +134,18 @@ async function loadScans(type, page = 1, showLoading = true) {
       </div>`;
   }
 
-  const res = await apiFetch(`/sentinel/results?type=${type}`);
+  const perPage = PAGE_SIZE;
+  const res = await apiFetch(`/sentinel/results?type=${type}&page=${page}&per_page=${perPage}`);
   if (!res?.ok) { wrap.innerHTML = '<div class="empty-state">Error al cargar los datos.</div>'; return; }
 
-  const { results = [] } = await res.json();
-  paginationState[type].total = results.length;
-  paginationState[type].page = page;
-  
+  const data = await res.json();
+  const results = data.results || [];
+  paginationState[type].total = data.total || results.length;
+  paginationState[type].page = data.page || page;
+
   renderTable(type, results, wrap);
-  renderPagination(type, pagWrap, results.length, page);
-  loadStats();
+  renderPagination(type, pagWrap, paginationState[type].total, page);
+  if (!showLoading) checkAllScansDocumentStatus();
 }
 
 function renderTable(type, rows, wrap) {
@@ -192,7 +175,7 @@ function renderTable(type, rows, wrap) {
         <td>${SeqUI.statusBadge(r.status)}</td>
         <td>${r.totalOpenPorts ?? 0} <span class="muted">puertos</span></td>
         <td>${SeqUI.formatDate(r.startedAt)}</td>
-        <td>${actionBtns(r.id, r.status, 'nmap')}</td>
+        <td>${actionBtns(r.id, r.status, 'nmap', r)}</td>
       </tr>`;
     }
   } else if (type === 'nikto') {
@@ -203,7 +186,7 @@ function renderTable(type, rows, wrap) {
         <td>${SeqUI.statusBadge(r.status)}</td>
         <td>${r.totalIncidents ?? 0} <span class="muted">hallazgos</span></td>
         <td>${SeqUI.formatDate(r.startedAt)}</td>
-        <td>${actionBtns(r.id, r.status, 'nikto')}</td>
+        <td>${actionBtns(r.id, r.status, 'nikto', r)}</td>
       </tr>`;
     }
   } else {
@@ -218,7 +201,7 @@ function renderTable(type, rows, wrap) {
         <td class="sev-critical">${crit > 0 ? crit : '<span class="muted">0</span>'}</td>
         <td class="sev-high">${high > 0 ? high : '<span class="muted">0</span>'}</td>
         <td>${SeqUI.formatDate(r.startedAt)}</td>
-        <td>${actionBtns(r.id, r.status, 'openvas')}</td>
+        <td>${actionBtns(r.id, r.status, 'openvas', r)}</td>
       </tr>`;
     }
   }
@@ -227,10 +210,14 @@ function renderTable(type, rows, wrap) {
   wrap.innerHTML = html;
 }
 
-function actionBtns(id, status, scanType = 'nmap') {
+function actionBtns(id, status, scanType = 'nmap', scan = null) {
   const st         = (status ?? '').toLowerCase();
   const isActive   = st === 'running' || st === 'pending';
   const isFinished = st === 'done'    || st === 'finished';
+
+  const docId = scan?.documentId || null;
+  const docStatus = scan?.documentStatus || null;
+  const canDownload = docId && docStatus === 'done';
 
   const viewBtn = `
     <button class="action-btn" title="Ver detalles" onclick="viewScanDetails(${id}, '${scanType}')">
@@ -251,7 +238,7 @@ function actionBtns(id, status, scanType = 'nmap') {
     </button>`;
 
   const downloadBtn = `
-    <button class="action-btn" title="Descargar PDF" id="download-btn-${id}" onclick="downloadDocument(${id})" disabled style="opacity:0.35;cursor:not-allowed">
+    <button class="action-btn" title="Descargar PDF" id="download-btn-${id}" data-doc-id="${docId || ''}" onclick="downloadDocument()" ${!canDownload ? 'disabled style="opacity:0.35;cursor:not-allowed"' : ''}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
         <polyline points="7 10 12 15 17 10"/>
@@ -302,8 +289,7 @@ async function launchNmap() {
     const data = await res.json();
     if (!res.ok) { showPanelAlert('nmap', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
     showPanelAlert('nmap', `Escaneo Nmap iniciado (ID: ${(data.scanIds || []).join(', ')}) — timeout: ${timeout}s`, 'success');
-    refreshCurrentTab();
-    startPolling();
+    try { await refreshCurrentTab(); } catch (e) { console.error('Error refresh:', e); }
   } catch { showPanelAlert('nmap', 'No se pudo conectar con la API.'); }
   finally   { setLaunching('btn-nmap', false); }
 }
@@ -319,8 +305,7 @@ async function launchNikto() {
     const data = await res.json();
     if (!res.ok) { showPanelAlert('nikto', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
     showPanelAlert('nikto', `Escaneo Nikto iniciado (ID: ${data.scanId})`, 'success');
-    refreshCurrentTab();
-    startPolling();
+    try { await refreshCurrentTab(); } catch (e) { console.error('Error refresh:', e); }
   } catch { showPanelAlert('nikto', 'No se pudo conectar con la API.'); }
   finally   { setLaunching('btn-nikto', false); }
 }
@@ -336,8 +321,7 @@ async function launchOpenvas() {
     const data = await res.json();
     if (!res.ok) { showPanelAlert('openvas', data.error_description || data.message || 'Error al lanzar el escaneo.'); return; }
     showPanelAlert('openvas', `Escaneo OpenVAS iniciado (ID: ${data.scanId}). Puede tardar varios minutos.`, 'info');
-    refreshCurrentTab();
-    startPolling();
+    try { await refreshCurrentTab(); } catch (e) { console.error('Error refresh:', e); }
   } catch { showPanelAlert('openvas', 'No se pudo conectar con la API.'); }
   finally   { setLaunching('btn-openvas', false); }
 }
@@ -351,7 +335,8 @@ async function downloadPDF(id) {
   const res = await apiFetch(`/sentinel/results/${id}`);
   if (!res?.ok) { SeqToast.show('Error al cargar el escaneo.', 'error'); return; }
   const data = await res.json();
-  const type = data.scanType || 'nmap';
+  const scanData = data.result || data;
+  const type = scanData.scanType || 'nmap';
   viewScanDetails(id, type);
 }
 
@@ -403,10 +388,16 @@ async function viewScanDetails(scanId, scanType) {
   try {
     const res = await apiFetch(`/sentinel/results/${scanId}`);
     if (!res?.ok) { body.innerHTML = '<div class="empty-state">Error al cargar los detalles.</div>'; return; }
-    
+
     const data = await res.json();
-    renderScanDetails(data, scanType);
-    checkDocumentStatus(scanId);
+    const scanData = data.result || data;
+    if (scanData.documentId) {
+      currentDocumentId = scanData.documentId;
+    }
+    renderScanDetails(scanData, scanType);
+    if (currentDocumentId) {
+      checkDocumentStatus(scanId, currentDocumentId);
+    }
   } catch (e) {
     body.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
   }
@@ -443,9 +434,9 @@ function renderScanDetails(scan, type) {
           <tbody>
             ${scan.openPorts.map(p => `
               <tr>
-                <td>${p.port}</td>
-                <td>${p.protocol || '-'}</td>
-                <td>${p.givenUse || '-'}</td>
+                <td>${p.port || '-'}</td>
+                <td>${p.port?.split('/')[1] || '-'}</td>
+                <td>${p.product || '-'}</td>
                 <td>${p.product || '-'}${p.version ? ' ' + p.version : ''}</td>
               </tr>
             `).join('')}
@@ -484,17 +475,45 @@ function renderScanDetails(scan, type) {
   }
   
   detailsHtml += `
-    <div class="detail-section">
-      <h3>Generación de Documento</h3>
-      <div class="document-actions">
-        <div class="ai-report-toggle">
-          <input type="checkbox" id="ai-report-check" />
-          <label for="ai-report-check">Incluir análisis de IA</label>
-        </div>
+    <div class="detail-section document-generator-card">
+      <div class="doc-gen-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <h3>Generar Informe PDF</h3>
+        <button class="doc-refresh-btn" onclick="refreshDocStatusInModal(${scan.id})" title="Actualizar estado">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+        </button>
       </div>
-      <div id="document-status-container"></div>
+      <div class="doc-gen-content">
+        <div class="doc-gen-options">
+          <label class="doc-checkbox">
+            <input type="checkbox" id="ai-report-check" />
+            <span class="doc-checkmark"></span>
+            <span class="doc-checklabel">Análisis IA con Ollama</span>
+          </label>
+        </div>
+        <button class="doc-gen-btn" onclick="generatePDF(${scan.id}, '${type}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9" y1="15" x2="15" y2="15"/>
+          </svg>
+          Generar PDF
+        </button>
+      </div>
+      <div class="doc-status-track" id="document-status-container">
+        <div class="doc-status-empty">Genera un documento para descargar el informe</div>
+      </div>
     </div>`;
-  
+
   body.innerHTML = detailsHtml;
 }
 
@@ -511,42 +530,50 @@ function closeScanDetailsModal() {
   document.getElementById('scan-details-modal').classList.remove('visible');
   stopDocumentPolling();
   currentScanId = null;
+  currentDocumentId = null;
 }
 
 async function generatePDF(scanId, scanType) {
   const aiReport = document.getElementById('ai-report-check')?.checked || false;
   const statusContainer = document.getElementById('document-status-container');
-  
+
   statusContainer.innerHTML = `
-    <div class="document-status pending">
-      <svg class="status-icon spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-      </svg>
-      <span>Solicitando generación del documento...</span>
+    <div class="doc-progress">
+      <div class="doc-progress-bar">
+        <div class="doc-progress-fill spin"></div>
+      </div>
+      <div class="doc-progress-text">
+        <span class="doc-spinner"></span>
+        Solicitando generación...
+      </div>
     </div>`;
-  
+
   try {
-    const url = `/sentinel/generate-pdf?id=${scanId}${aiReport ? '&ai_report=true' : ''}`;
+    const url = `/sentinel/generate-pdf?id=${scanId}${aiReport ? '&aiReport=true' : ''}`;
     const res = await apiFetch(url);
     const data = await res.json();
-    
+
     if (!res.ok) {
       statusContainer.innerHTML = `
-        <div class="document-status error">
-          <svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <div class="doc-result error">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
           </svg>
-          <span>${data.message || 'Error al generar el documento'}</span>
+          <span>${data.message || 'Error al generar'}</span>
+          <button class="doc-retry-btn" onclick="generatePDF(${scanId}, '${scanType}')">Reintentar</button>
         </div>`;
       return;
     }
-    
+
     const docId = data.documentId;
     startDocumentPolling(scanId, docId);
-    
+
   } catch (e) {
     statusContainer.innerHTML = `
-      <div class="document-status error">
+      <div class="doc-result error">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
         <span>Error: ${e.message}</span>
       </div>`;
   }
@@ -557,6 +584,24 @@ function startDocumentPolling(scanId, docId) {
   documentPollTimer = setInterval(() => checkDocumentStatus(scanId, docId), 3000);
 }
 
+async function refreshDocStatusInModal(scanId) {
+  const statusContainer = document.getElementById('document-status-container');
+  if (!statusContainer) return;
+
+  statusContainer.innerHTML = `
+    <div class="doc-progress">
+      <div class="doc-progress-bar">
+        <div class="doc-progress-fill spin"></div>
+      </div>
+      <div class="doc-progress-text">
+        <span class="doc-spinner"></span>
+        Verificando...
+      </div>
+    </div>`;
+
+  await checkDocumentStatus(scanId);
+}
+
 function stopDocumentPolling() {
   if (documentPollTimer) { clearInterval(documentPollTimer); documentPollTimer = null; }
 }
@@ -564,69 +609,122 @@ function stopDocumentPolling() {
 async function checkDocumentStatus(scanId, docId = null) {
   const statusContainer = document.getElementById('document-status-container');
   if (!statusContainer) return;
-  
+
   try {
-    const url = docId 
-      ? `/sentinel/document-status?document_id=${docId}` 
+    const url = docId
+      ? `/sentinel/document-status?document_id=${docId}`
       : `/sentinel/document-status?scan_id=${scanId}`;
     const res = await apiFetch(url);
-    
+
     if (!res?.ok) return;
     const data = await res.json();
-    
-    const statusIcons = {
-      pending: `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
-      running: `<svg class="status-icon spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`,
-      done: `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
-      error: `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+
+    const statusConfig = {
+      pending: {
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+        text: 'Pendiente...',
+        cls: 'pending'
+      },
+      running: {
+        icon: `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`,
+        text: 'Generando documento...',
+        cls: 'processing'
+      },
+      done: {
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+        text: 'Documento listo',
+        cls: 'success'
+      },
+      error: {
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+        text: 'Error en generación',
+        cls: 'error'
+      }
     };
-    
-    const statusTexts = {
-      pending: 'Pendiente de generación...',
-      running: 'Generando documento...',
-      done: 'Documento listo para descargar',
-      error: 'Error al generar el documento'
-    };
-    
-    statusContainer.innerHTML = `
-      <div class="document-status ${data.status}">
-        ${statusIcons[data.status] || statusIcons.pending}
-        <span>${statusTexts[data.status] || 'Estado desconocido'}</span>
-      </div>`;
-    
+
+    const status = statusConfig[data.status] || statusConfig.pending;
+
     if (data.status === 'done' && data.downloadUrl) {
       stopDocumentPolling();
+      currentDocumentId = docId || data.documentId;
       const downloadBtn = document.getElementById(`download-btn-${scanId}`);
       if (downloadBtn) {
         downloadBtn.disabled = false;
         downloadBtn.style.opacity = '1';
         downloadBtn.style.cursor = 'pointer';
       }
-      statusContainer.innerHTML += `
-        <button class="btn btn-primary" style="margin-top:0.75rem" onclick="downloadDocument(${data.documentId})">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:0.5rem">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          Descargar PDF
-        </button>`;
+
+      statusContainer.innerHTML = `
+        <div class="doc-result success">
+          <div class="doc-result-icon">${status.icon}</div>
+          <div class="doc-result-text">
+            <span class="doc-result-title">${status.text}</span>
+            <button class="doc-download-btn" onclick="downloadDocument(${currentDocumentId})">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Descargar PDF
+            </button>
+          </div>
+        </div>`;
+      return;
     }
-    
+
     if (data.status === 'error') {
       stopDocumentPolling();
+      statusContainer.innerHTML = `
+        <div class="doc-result error">
+          <div class="doc-result-icon">${status.icon}</div>
+          <div class="doc-result-text">
+            <span class="doc-result-title">${status.text}</span>
+            <button class="doc-retry-btn" onclick="generatePDF(${scanId}, '${docId ? '' : ''}')">Reintentar</button>
+          </div>
+        </div>`;
+      return;
     }
-    
+
+    statusContainer.innerHTML = `
+      <div class="doc-progress">
+        <div class="doc-progress-bar">
+          <div class="doc-progress-fill ${data.status === 'running' ? 'spin' : ''}"></div>
+        </div>
+        <div class="doc-progress-text">
+          ${status.icon}
+          ${status.text}
+        </div>
+      </div>`;
+
   } catch (e) {
     console.error('Error checking document status:', e);
   }
 }
 
-async function downloadDocument(documentId) {
+let currentDocumentId = null;
+
+async function downloadDocument(docId = null) {
+  const documentId = docId || currentDocumentId;
+  if (!documentId) {
+    const actionBtn = document.querySelector('.action-btn[id^="download-btn-"]');
+    const btnDocId = actionBtn?.dataset?.docId;
+    if (btnDocId) {
+      currentDocumentId = btnDocId;
+    }
+  }
+
+  const finalDocId = documentId || currentDocumentId;
+  if (!finalDocId) {
+    SeqToast.show('Documento no disponible.', 'error');
+    return;
+  }
+
   try {
-    const res = await apiFetch(`/sentinel/document/${documentId}/download`);
+    const res = await apiFetch(`/sentinel/document/${finalDocId}/download`);
     if (!res?.ok) { SeqToast.show('No se pudo descargar el documento.', 'error'); return; }
     const blob = await res.blob();
     const cd = res.headers.get('Content-Disposition') || '';
-    const name = cd.match(/filename="?([^";\n]+)"?/i)?.[1] ?? `scan_${documentId}.pdf`;
+    const name = cd.match(/filename="?([^";\n]+)"?/i)?.[1] ?? `scan_${finalDocId}.pdf`;
     _triggerDownload(blob, name);
     SeqToast.show('Documento descargado correctamente', 'success');
   } catch (e) {

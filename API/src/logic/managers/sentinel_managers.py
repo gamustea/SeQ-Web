@@ -275,10 +275,38 @@ class ScanManager(BaseManager, ABC):
                 self.logger.warning(f"Documento {document_id} no encontrado")
 
             return document
-
         except Exception as e:
             self._safe_rollback()
             self.logger.error(f"Error obteniendo documento {document_id}: {e}", exc_info=True)
+            raise
+
+    def get_latest_document_by_scan_id(self, scan_id: int) -> Optional[SentinelDocument]:
+        """Get the most recent document for a scan.
+
+        Args:
+            scan_id: ID of the scan.
+
+        Returns:
+            SentinelDocument instance or None if not found.
+        """
+        try:
+            self._check_session()
+            document = self.session.query(SentinelDocument).filter(
+                SentinelDocument.scan_id == scan_id
+            ).order_by(
+                SentinelDocument.created_at.desc()
+            ).first()
+
+            if document:
+                self.logger.info(f"Último documento para scan {scan_id}: {document.id}")
+            else:
+                self.logger.warning(f"No hay documentos para scan {scan_id}")
+
+            return document
+
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error obteniendo documento: {e}", exc_info=True)
             raise
 
     def is_scan_finished(self, scan_id: int) -> Optional[bool]:
