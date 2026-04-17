@@ -649,8 +649,7 @@ class PDFCreator:
     """
 
     def __init__(self, printing_strategy: _PrintingStrategy) -> None:
-        self.config_reader = ConfigReader()
-        self.directory = self.config_reader.get_directory_of(DirectoryType.OUTPUT_SENTINEL)
+        self.directory = ConfigReader.get_directory_of(DirectoryType.OUTPUT_SENTINEL)
         self.printing_strategy = printing_strategy
         self.scan = printing_strategy.scan
 
@@ -813,7 +812,7 @@ class PDFCreator:
             elements: List of flowable elements.
             is_cover: Whether this is for the cover page (larger logo).
         """
-        resource_directory = self.config_reader.get_directory_of(DirectoryType.RESOURCE)
+        resource_directory = ConfigReader.get_directory_of(DirectoryType.RESOURCE)
         picture_name = self.printing_strategy.get_picture_name()
         image_filename = os.path.join(resource_directory, picture_name)
 
@@ -981,8 +980,7 @@ class NmapPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = NmapAIWriter()
         
-        config_reader = ConfigReader()
-        palette_config = config_reader.get_tool_color_palette(SentinelTool.NMAP)
+        palette_config = ConfigReader.get_tool_color_palette(SentinelTool.NMAP)
         
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#121212"),
@@ -1141,8 +1139,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
         """
         super().__init__(scan)
         
-        config_reader = ConfigReader()
-        palette_config = config_reader.get_tool_color_palette(SentinelTool.OPENVAS)
+        palette_config = ConfigReader.get_tool_color_palette(SentinelTool.OPENVAS)
         
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#0D2818"),
@@ -1494,8 +1491,7 @@ class NiktoPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = NiktoAIWriter()
         
-        config_reader = ConfigReader()
-        palette_config = config_reader.get_tool_color_palette(SentinelTool.NIKTO)
+        palette_config = ConfigReader.get_tool_color_palette(SentinelTool.NIKTO)
         
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#4B2500"),

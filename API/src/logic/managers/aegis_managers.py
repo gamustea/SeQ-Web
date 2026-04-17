@@ -337,13 +337,12 @@ class AegisManager(BaseManager):
     # =========================================================================
 
     def _read_cfg(self) -> dict:
-        reader = ConfigReader()
-        stack_dir = Path(reader.get_directory_of(DirectoryType.STACK_AEGIS))
-        output_dir = Path(reader.get_directory_of(DirectoryType.OUTPUT_AEGIS))
+        stack_dir = Path(ConfigReader.get_directory_of(DirectoryType.STACK_AEGIS))
+        output_dir = Path(ConfigReader.get_directory_of(DirectoryType.OUTPUT_AEGIS))
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        ollama_host, ollama_model = reader.get_ollama_config()
-        aegis = reader.get_aegis_config() or {}
+        ollama_host, ollama_model = ConfigReader.get_ollama_config()
+        aegis = ConfigReader.get_aegis_config() or {}
 
         return {
             "enabled":          bool(aegis.get("enabled", True)),

@@ -48,7 +48,7 @@ class _Task(ABC):
     timout: int
     statis: TaskStatus = TaskStatus.PENDING
     target: str
-    config_reader: ConfigReader = ConfigReader()
+    config_reader: ConfigReader = None
     logger = SecOpsLogger(name=__name__).get_logger()
     progress: int = 0
 
@@ -291,7 +291,7 @@ class NmapScanTask(_Task):
 
     def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300):
         super().__init__(target_host, timeout)
-        TEMP_DIR = ConfigReader().get_directory_of(DirectoryType.TEMP)
+        TEMP_DIR = ConfigReader.get_directory_of(DirectoryType.TEMP)
         
         timestamp = int(time.time() * 1000)
         safe_target = target_host.replace("/", "_").replace(":", "_")

@@ -29,8 +29,7 @@ class AIWriter(ABC):
         model: Optional[str] = None,
     ) -> None:
 
-        config_reader = ConfigReader()
-        env_host, env_model = config_reader.get_ollama_config()
+        env_host, env_model = ConfigReader.get_ollama_config()
         
         if host is None or model is None:
             self.host = host or env_host

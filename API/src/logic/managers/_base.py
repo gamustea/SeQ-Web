@@ -23,7 +23,7 @@ def initialize_engine(database_url: Optional[str] = None):
     if _ENGINE is None:
         t0 = time.perf_counter()
         if database_url is None:
-            db_creds = ConfigReader().get_db_credentials()
+            db_creds = ConfigReader.get_db_credentials()
             database_url = (
                 f"{db_creds['dialect']}://{db_creds['username']}:{urllib.parse.quote(db_creds['password'])}@{db_creds['host']}:{db_creds['port']}/{db_creds['dbname']}"
             )

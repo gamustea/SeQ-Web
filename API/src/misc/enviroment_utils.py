@@ -118,10 +118,10 @@ class SentinelTool(Enum):
 class DirectoryChecker:
 
     def __init__(self):
-        self.config_reader = ConfigReader()
+        pass
 
     def verify_directory(self, directory: DirectoryType) -> Path:
-        dir_path = Path(self.config_reader.get_directory_of(directory)).resolve()
+        dir_path = Path(ConfigReader.get_directory_of(directory)).resolve()
         dir_path.mkdir(parents=True, exist_ok=True)
 
         return dir_path
@@ -129,55 +129,67 @@ class DirectoryChecker:
 
 class ConfigReader:
     """
-    Fuente de configuración con prioridad: entorno > SecOpsConfig.json
-
+    Singleton para gestión de configuración.
+    
+    La primera vez que se accede a la configuración, se lee del archivo JSON
+    y se guarda en memoria. Las siguientes lecturas son de memoria.
+    
     Orden de resolución:
         1. Variables de entorno (inyectadas por Docker o cargadas desde .env).
         2. Fallback al SecOpsConfig.json (desarrollo local sin .env).
-
-    Estrategia de búsqueda del JSON (primera ruta que exista gana):
-        1. Ruta explícita pasada al constructor.
-        2. Relativa a la raíz del paquete: API/src/config/SecOpsConfig.json.
-        3. Relativa a este fichero: subiendo hasta src/config/SecOpsConfig.json.
     """
 
-    _DEFAULT_RELATIVE = "API/SecOpsConfig.json"
+    _instance = None
+    _configs: dict = {}
+    _configs_path: Path = None
 
-    def __init__(self, configs_file: str = _DEFAULT_RELATIVE) -> None:
-        self.configs_path = self._resolve(configs_file)
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
-    # ── Resolución de ruta ────────────────────────────────────────────────────
-
-    @staticmethod
-    def _resolve(configs_file: str) -> Path:
-        explicit = Path(configs_file)
-        if explicit.is_absolute() and explicit.exists():
-            return explicit
-        resolved = explicit.resolve()
-        if resolved.exists():
-            return resolved
-
-        this_file = Path(__file__).resolve()
-        src_dir   = this_file.parent.parent
-        from_src  = src_dir / "config" / "SecOpsConfig.json"
-        if from_src.exists():
-            return from_src
+    @classmethod
+    def _resolve_config_path(cls) -> Path:
+        if cls._configs_path is not None:
+            return cls._configs_path
         
-        from_old  = src_dir / "config" / "SecConfig.json"
-        if from_old.exists():
-            return from_old
+        this_file = Path(__file__).resolve()
+        
+        candidates = [
+            this_file.parent.parent.parent / "SecOpsConfig.json",
+            this_file.parent.parent.parent / "SecConfig.json",
+            this_file.parent.parent / "SecOpsConfig.json",
+            this_file.parent.parent / "SecConfig.json",
+            this_file.parent / "SecOpsConfig.json",
+            this_file.parent / "SecConfig.json",
+        ]
+        
+        for candidate in candidates:
+            if candidate.exists():
+                cls._configs_path = candidate
+                return cls._configs_path
+        
+        raise FileNotFoundError("No se encontró ningún archivo de configuración.")
 
-        return resolved
+    @classmethod
+    def _load_configs(cls) -> dict:
+        if not cls._configs:
+            path = cls._resolve_config_path()
+            with open(path, "r", encoding="utf-8") as f:
+                cls._configs = json.load(f)
+        return cls._configs
 
-    # ── Lectura del JSON (solo para fallback) ─────────────────────────────────
-
-    def _read_configs(self) -> dict:
-        with open(self.configs_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+    @classmethod
+    def reload(cls) -> None:
+        """Fuerza la recarga de la configuración desde el archivo."""
+        cls._configs = {}
+        cls._configs_path = None
+        cls._load_configs()
 
     # ── Getters ───────────────────────────────────────────────────────────────
 
-    def get_ollama_config(self) -> tuple[str, str]:
+    @staticmethod
+    def get_ollama_config() -> tuple[str, str]:
         """
         Obtiene la configuración de Ollama (host y modelo) desde variables de entorno.
         
@@ -192,7 +204,8 @@ class ConfigReader:
         model = os.getenv("OLLAMA_MODEL", "llama3.2")
         return host, model
 
-    def get_db_credentials(self) -> dict:
+    @staticmethod
+    def get_db_credentials() -> dict:
         """
         Prioridad: variables de entorno → SecConfig.json
         Variables esperadas: POSTGRES_USER, POSTGRES_PASSWORD,
@@ -201,12 +214,12 @@ class ConfigReader:
         Returns:
             dict: {dialect, username, password, host, port, dbname}
         """
-        user     = os.getenv("POSTGRES_USER")
+        user = os.getenv("POSTGRES_USER")
         password = os.getenv("POSTGRES_PASSWORD")
-        host     = os.getenv("POSTGRES_HOST", "postgres")
+        host = os.getenv("POSTGRES_HOST", "postgres")
         database = os.getenv("POSTGRES_DB")
-        port     = os.getenv("POSTGRES_PORT", "5432")
-        dialect  = os.getenv("POSTGRES_DIALECT", "postgresql+psycopg2")
+        port = os.getenv("POSTGRES_PORT", "5432")
+        dialect = os.getenv("POSTGRES_DIALECT", "postgresql+psycopg2")
 
         if all([user, password, host, database]):
             return {
@@ -218,7 +231,7 @@ class ConfigReader:
                 "dbname": database
             }
 
-        configs = self._read_configs()
+        configs = ConfigReader._load_configs()
         dbconfig = configs["dbconfig"]
 
         return {
@@ -230,7 +243,8 @@ class ConfigReader:
             "dbname": dbconfig.get("dbname")
         }
 
-    def get_directory_of(self, directory_type: DirectoryType) -> str:
+    @staticmethod
+    def get_directory_of(directory_type: DirectoryType) -> str:
         """
         Los directorios no son secretos → siempre desde el JSON.
         
@@ -240,7 +254,7 @@ class ConfigReader:
         Returns:
             Absolute path string to the directory.
         """
-        configs    = self._read_configs()
+        configs = ConfigReader._load_configs()
         
         dir_key = directory_type.value
 
@@ -270,33 +284,35 @@ class ConfigReader:
 
         return str(path)
 
-    def get_oauth_config(self) -> tuple[float, float, str, str]:
+    @staticmethod
+    def get_oauth_config() -> tuple[float, float, str, str]:
         """
         Prioridad: variables de entorno → SecConfig.json
         Variables esperadas: JWT_SECRET_KEY, JWT_ALGORITHM,
                             ACCESS_TOKEN_EXPIRY_MINUTES, REFRESH_TOKEN_EXPIRY_DAYS
         """
-        secret    = os.getenv("JWT_SECRET_KEY")
+        secret = os.getenv("JWT_SECRET_KEY")
         algorithm = os.getenv("JWT_ALGORITHM")
-        access    = os.getenv("ACCESS_TOKEN_EXPIRY_MINUTES")
-        refresh   = os.getenv("REFRESH_TOKEN_EXPIRY_DAYS")
+        access = os.getenv("ACCESS_TOKEN_EXPIRY_MINUTES")
+        refresh = os.getenv("REFRESH_TOKEN_EXPIRY_DAYS")
 
         if all([secret, algorithm, access, refresh]):
             return (float(access), float(refresh), secret, algorithm)
 
         raise ValueError("Faltan variables de entorno para OAuth. "
-                        "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
-                        "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS.")
+                    "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
+                    "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS.")
 
-    def get_openvas_config(self) -> dict[str, str]:
+    @staticmethod
+    def get_openvas_config() -> dict[str, str]:
         """ 
         Prioridad: variables de entorno → SecConfig.json
         Variables esperadas: OPENVAS_HOST, OPENVAS_PORT,
                             OPENVAS_USERNAME, OPENVAS_PASSWORD
         """
         hostname = os.getenv("OPENVAS_HOST")
-        port     = os.getenv("OPENVAS_PORT")
-        user     = os.getenv("OPENVAS_USERNAME")
+        port = os.getenv("OPENVAS_PORT")
+        user = os.getenv("OPENVAS_USERNAME")
         password = os.getenv("OPENVAS_PASSWORD")
 
         if all([hostname, port, user, password]):
@@ -304,32 +320,49 @@ class ConfigReader:
                     "username": user, "password": password}
         
         raise ValueError("Faltan variables de entorno para OpenVAS. "
-                        "Asegúrate de definir OPENVAS_HOST, OPENVAS_PORT, "
-                        "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
+                    "Asegúrate de definir OPENVAS_HOST, OPENVAS_PORT, "
+                    "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
 
-    def get_aegis_config(self) -> dict[str, str]:
+    @staticmethod
+    def get_aegis_config() -> dict[str, str]:
         """
         La config de Aegis (parámetros del modelo, etc.)
         no son secretos → siempre desde el JSON.
         Excepción: OLLAMA_HOST si se define en el entorno.
         """
-        cfg = self._read_configs()["aegis"]
+        cfg = ConfigReader._load_configs()["aegis"].copy()
         if "directories" in cfg:
             del cfg["directories"]
+        if "prompts" in cfg:
+            del cfg["prompts"]
 
         return cfg
 
-    def get_sentinel_config(self) -> dict:
+    @staticmethod
+    def get_aegis_prompts() -> dict:
+        """
+        Obtiene la configuración de prompts para Aegis desde SecOpsConfig.json.
+        
+        Returns:
+            dict: Diccionario con 'system' key.
+        """
+        configs = ConfigReader._load_configs()
+        aegis = configs.get("aegis", {})
+        return aegis.get("prompts", {})
+
+    @staticmethod
+    def get_sentinel_config() -> dict:
         """
         Obtiene la configuración de Sentinel desde SecOpsConfig.json.
         
         Returns:
             dict: Configuración completa de sentinel.
         """
-        configs = self._read_configs()
+        configs = ConfigReader._load_configs()
         return configs.get("sentinel", {})
 
-    def get_prompts_config(self) -> dict:
+    @staticmethod
+    def get_prompts_config() -> dict:
         """
         Obtiene la configuración de prompts para AI analysis desde SecOpsConfig.json.
         
@@ -337,7 +370,7 @@ class ConfigReader:
             dict: Dictionary containing prompts for different scanners.
                     Each scanner has 'system' and 'userTemplate' keys.
         """
-        configs = self._read_configs()
+        configs = ConfigReader._load_configs()
         sentinel = configs.get("sentinel", {})
         
         return {
@@ -346,7 +379,8 @@ class ConfigReader:
             "openvas": sentinel.get("openvas", {}).get("prompts", {}),
         }
 
-    def get_tool_prompts(self, tool: SentinelTool) -> dict:
+    @staticmethod
+    def get_tool_prompts(tool: SentinelTool) -> dict:
         """
         Obtiene la configuración de prompts para un tool específico.
         
@@ -356,10 +390,11 @@ class ConfigReader:
         Returns:
             dict: Diccionario con 'system' y 'userTemplate' keys.
         """
-        prompts = self.get_prompts_config()
+        prompts = ConfigReader.get_prompts_config()
         return prompts.get(tool.value, {})
 
-    def get_tool_color_palette(self, tool: SentinelTool) -> dict:
+    @staticmethod
+    def get_tool_color_palette(tool: SentinelTool) -> dict:
         """
         Obtiene la paleta de colores para un tool específico.
         
@@ -369,7 +404,7 @@ class ConfigReader:
         Returns:
             dict: Diccionario con las couleurs (black, dark, main, secondary, light, white).
         """
-        configs = self._read_configs()
+        configs = ConfigReader._load_configs()
         sentinel = configs.get("sentinel", {})
         
         tool_key = tool.value
@@ -389,8 +424,6 @@ class SecOpsLogger:
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
 
-        reader = ConfigReader()
-
         if not self.logger.hasHandlers():
             formatter = logging.Formatter(
                 "[+] [%(levelname)s] (%(asctime)s) %(message)s"
@@ -400,7 +433,7 @@ class SecOpsLogger:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
-            path = Path(reader.get_directory_of(DirectoryType.LOG)).resolve()
+            path = Path(ConfigReader.get_directory_of(DirectoryType.LOG)).resolve()
             path.mkdir(parents=True, exist_ok=True)
             log_file = path / "secops.log"
 

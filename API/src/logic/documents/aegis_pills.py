@@ -33,7 +33,7 @@ import ollama
 from ddgs import DDGS
 
 from src.core.model import Topic
-from src.misc import SecOpsLogger
+from src.misc import ConfigReader, SecOpsLogger
 
 from src.logic.documents._base import AIWriter
 from src.core.exceptions import (
@@ -103,7 +103,7 @@ Ejemplo de output válido para tema "Phishing Empresarial":
     "tips": [
         {
             "headline": "Verifica siempre el remitente real, no solo el nombre visible",
-            "body": "Los atacantes configuran nombres de display que imitan a directivos o IT support. Haz clic en el nombre del remitente para ver la dirección email real. Desconfía de dominios similares como 'company-it.com' en lugar de 'company.com'.",
+            "body": "Los atacantes configuran nombres de display (el nombre visible del remitente) que imitan con precisión a directivos, IT support o proveedores habituales. Sin embargo, el nombre visible no tiene ninguna validación técnica: cualquiera puede poner 'Carlos García - IT' como nombre de remitente. Para ver la dirección real, haz clic en el nombre del remitente en tu cliente de correo. Desconfía especialmente de dominios similares pero no idénticos al de tu empresa, como 'empresa-soporte.com' en lugar de 'empresa.com', o de dominios legítimos pero inusuales para ese tipo de comunicación.",
             "links": [
                 {"text": "Guía de Google sobre verificación de remitentes", "url": "https://support.google.com/mail/answer/185835"}
             ]
@@ -684,22 +684,8 @@ class AegisAIWriter(AIWriter):
     # ── Prompts ───────────────────────────────────────────────────────────────
 
     def _build_system_prompt(self) -> str:
-        return """\
-        Eres un redactor senior de concienciación en ciberseguridad con 15 años de experiencia 
-        en comunicación corporativa. Tu especialidad es transformar conceptos técnicos complejos 
-        en consejos prácticos y accionables para empleados no técnicos.
-
-        REGLAS ABSOLUTAS:
-        1. Generas EXCLUSIVAMENTE JSON válido, sin markdown, sin explicaciones previas ni posteriores.
-        2. NUNCA inventas URLs. Si no tienes fuentes verificadas, usa array vacío [].
-        3. La 'intro' DEBE ser EXTENSA y DETALLADA (mínimo 1200 caracteres, ideal 1500-1800). 
-        Desarrolla el contexto empresarial, las consecuencias del riesgo y por qué es relevante para la empresa.
-        4. Priorizas la precisión técnica sobre la creatividad cuando haya conflicto.
-        5. Adaptas el nivel de detalle al perfil de audiencia especificado.
-        6. Mantienes un tono profesional pero cercano, evitando alarmismo innecesario.
-        7. Cumples estrictamente el formato JSON solicitado, sin campos adicionales.
-        8. El 'subtitle' DEBE ser creativo, atractivo y ORIGINAL. NUNCA repitas literalmente el nombre del tema.
-        9. Si el tema es "Phishing", el subtitle podría ser "No muerdas el anzuelo: Protección contra ataques de ingeniería social"."""
+        prompts = ConfigReader.get_aegis_prompts()
+        return prompts.get("system", "")
 
     def _build_user_prompt(
         self,
@@ -709,6 +695,9 @@ class AegisAIWriter(AIWriter):
         tweaks:             dict[str, Any],
         verified_resources: str,
     ) -> str:
+        prompts = ConfigReader.get_aegis_prompts()
+        user_template = prompts.get("userTemplate", "")
+        
         company  = tweaks.get("company", "la empresa")
         sector   = tweaks.get("sector", "tecnología")
         audience = tweaks.get("audienceLevel", "mixed")
@@ -724,66 +713,29 @@ class AegisAIWriter(AIWriter):
             "non-technical": "no técnico (ventas, RRHH, dirección)",
         }.get(str(audience), "mixto")
 
-        if topic:
-            topic_context = (
-                f"\nTema seleccionado:\n"
-                f"- Título: {topic.title}\n"
-                f"- Descripción: {getattr(topic, 'description', 'No disponible')}\n"
-                f"- ID: {topic.id}"
-            )
-        else:
-            topic_context = (
-                f"\nTema genérico (ID {topic_id} no encontrado en base de datos):\n"
-                f"Genera contenido sobre ciberseguridad general para el sector {sector}."
-            )
-
-        return f"""\
-        {FEW_SHOT_EXAMPLES}
-
-        CONTEXTO DEL DESTINATARIO:
-        - Empresa: {company}
-        - Sector: {sector}
-        - Tecnologías en uso: {brands or "No especificadas"}
-        - Perfil de audiencia: {audience_profile}
-        - Tono requerido: {tone}
-        - Idioma: {language.upper()}
-        - Contacto de referencia: {contact}
-        {topic_context}
-        {f"- Enfoque específico solicitado: {focus}" if focus else ""}
-
-        RECURSOS VERIFICADOS (usar prioritariamente si son relevantes):
-        {verified_resources[:2000]}
-
-        INSTRUCCIONES DE GENERACIÓN:
-
-        1. ANÁLISIS PREVIO (interno, antes de generar):
-            - Identifica los riesgos más críticos para el sector {sector}
-            - Considera las tecnologías {brands or "mencionadas"} si están presentes
-            - Adapta la complejidad al perfil de audiencia
-
-        2. ESTRUCTURA REQUERIDA:
-            - subtitle: Título atractivo pero profesional (máx 80 caracteres) que NO sea idéntico a "{topic.title}". 
-                Debe captar la atención pero reflejar el espíritu del tema de forma original.
-            - intro: Extensa, como se indicó anteriormente, con contexto real y relevancia empresarial. Evita generalidades.
-            - tips: Array de 5-7 objetos con:
-               * headline: Acción específica o riesgo concreto (máx 100 caracteres)
-               * body: Explicación práctica con contexto real (mín 100, máx 300 caracteres)
-               * links: Máx 2 URLs verificadas por tip, solo si son oficiales
-            - closing: Llamada a la acción clara y concreta
-            - contactEmail: Email de contacto o string vacío
-
-        3. CONSTRAINTS TÉCNICOS:
-            - NO uses markdown dentro de strings (sin **, sin `, sin listas con -)
-            - URLs deben ser absolutas y verificables (https://...)
-            - Contenido específico, no genérico
-            - Incluye al menos un tip relacionado con {brands or "las tecnologías mencionadas"}
-
-        4. VALIDACIÓN FINAL:
-            - Verifica que el JSON sea parseable
-            - Confirma que no hay campos null (usa "" para strings vacíos)
-            - Asegúrate de que tips tenga entre 5 y 7 elementos exactos
-
-        Responde ÚNICAMENTE con el objeto JSON, sin texto adicional."""
+        topic_title = topic.title if topic else "Ciberseguridad General"
+        topic_description = getattr(topic, 'description', 'No disponible') if topic else f"Genérico para sector {sector}"
+        
+        replacements = {
+            "company": company,
+            "sector": sector,
+            "brands": brands or "No especificadas",
+            "audience": audience_profile,
+            "tone": tone,
+            "language": language.upper(),
+            "contact": contact,
+            "topic_title": topic_title,
+            "topic_description": topic_description,
+            "topic_id": str(topic.id) if topic else str(topic_id),
+            "focus": focus,
+            "verified_resources": verified_resources[:2000],
+        }
+        
+        result = user_template
+        for key, value in replacements.items():
+            result = result.replace("{{" + key + "}}", value)
+        
+        return result
 
     # ── Generación ────────────────────────────────────────────────────────────
 

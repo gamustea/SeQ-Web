@@ -11,8 +11,7 @@ import os
 
 def run():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'API'))
-    config_reader = ConfigReader()
-    db_creds = config_reader.get_db_credentials()
+    db_creds = ConfigReader.get_db_credentials()
 
     username = db_creds["username"]
     password = db_creds["password"]
