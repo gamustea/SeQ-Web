@@ -1,13 +1,61 @@
 """
-endpoints/users.py
-──────────────────
-Blueprint de gestión de usuarios. Registrado en /users.
+users_endpoints.py
+══════════════════════════════════════════════════════════════════════════════
 
-Rutas:
-  POST  /users/sign-up-person      — registrar una Persona
-  POST  /users/sign-up             — registrar un Usuario (vinculado a una Persona)
-  POST  /users/check-credentials   — validar credenciales (legacy)
-  PUT   /users/change-password     — cambiar contraseña  [autenticado]
+Blueprint de gestión de usuarios y personas. Registrado en /users.
+
+Este módulo proporciona endpoints para registrar personas, crear usuarios,
+validar credenciales y gestionar contraseñas.
+
+────────────────────────────────────────────────────────────────────────────────
+ENDPOINTS DISPONIBLES
+────────────────────────────────────────────────────────────────────────────────
+
+Registro
+    POST /users/sign-up-person — Registrar una nueva Persona
+    POST /users/sign-up        — Registrar un Usuario vinculado a una Persona
+
+Autenticación
+    POST /users/check-credentials — Validar credenciales (legacy)
+
+Gestión
+    PUT  /users/change-password — Cambiar contraseña del usuario [autenticado]
+
+────────────────────────────────────────────────────────────────────────────────
+AUTENTICACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+Todos los endpoints excepto /sign-up-person, /sign-up y /check-credentials
+requieren un token OAuth2 válido en el header:
+    Authorization: Bearer <access_token>
+
+Límites de tasa:
+    • sign-up-person: 10/hour, 20/day
+    • sign-up: 10/hour, 20/day
+    • check-credentials: 10/minute, 30/hour
+    • change-password: 5/hour, 10/day
+
+────────────────────────────────────────────────────────────────────────────────
+EJEMPLOS DE USO
+────────────────────────────────────────────────────────────────────────────────
+
+# Registrar una persona
+curl -X POST https://api.example.com/users/sign-up-person \
+  -H "Content-Type: application/json" \
+  -d '{"firstName": "John", "lastName": "Doe", "alias": "johnd"}'
+
+# Registrar un usuario
+curl -X POST https://api.example.com/users/sign-up \
+  -H "Content-Type: application/json" \
+  -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd"}'
+
+# Cambiar contraseña (requiere autenticación)
+curl -X PUT https://api.example.com/users/change-password \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"newPassword": "newpassword123"}'
+
+────────────────────────────────────────────────────────────────────────────────
 """
 
 from flask import Blueprint, jsonify, request
@@ -26,10 +74,10 @@ from src.misc import SecOpsLogger
 from ._shared import (
     get_current_user_id,
     get_current_username,
-    get_oauth_manager,
-    get_user_manager,
     limiter,
+    get_oauth_manager,
     require_oauth_token,
+    get_user_manager,
 )
 
 users_bp = Blueprint("users", __name__)
@@ -41,7 +89,29 @@ _logger  = SecOpsLogger("users").get_logger()
 @users_bp.post("/sign-up-person")
 @limiter.limit("10 per hour; 20 per day")
 def sign_up_person():
-    """Registra una nueva Persona en el sistema."""
+    """Registra una nueva Persona en el sistema.
+
+    Args (JSON body):
+        firstName (str): Nombre de pila de la persona.
+        lastName  (str): Apellido(s) de la persona.
+        alias     (str): Alias único para identificar a la persona.
+
+    Returns:
+        201 — Persona creada exitosamente.
+            {
+                "message": "Persona registrada exitosamente",
+                "personId": 1,
+                "firstName": "John",
+                "lastName": "Doe"
+            }
+        400 — Error de validación (campos faltantes).
+        409 — El alias ya existe en el sistema.
+
+    Example:
+        curl -X POST https://api.example.com/users/sign-up-person \\
+             -H "Content-Type: application/json" \\
+             -d '{"firstName": "John", "lastName": "Doe", "alias": "johnd"}'
+    """
     data = _require_json()
     if isinstance(data, tuple):          # respuesta de error
         return data
@@ -55,7 +125,8 @@ def sign_up_person():
         return jsonify(err), code
 
     try:
-        person = get_user_manager().sign_in_person(first_name, last_name, alias)
+        with user_manager() as user_mgr:
+            person = user_mgr.sign_in_person(first_name, last_name, alias)
         _logger.info(f"Persona registrada: {first_name} {last_name} (ID: {person.id})")
         return jsonify({
             "message":   "Persona registrada exitosamente",
@@ -79,7 +150,30 @@ def sign_up_person():
 @users_bp.post("/sign-up")
 @limiter.limit("10 per hour; 20 per day")
 def sign_up_user():
-    """Registra un nuevo Usuario vinculándolo a una Persona existente."""
+    """Registra un nuevo Usuario vinculándolo a una Persona existente.
+
+    Args (JSON body):
+        username (str): Nombre de usuario único.
+        password (str): Contraseña del usuario.
+        email    (str): Correo electrónico válido.
+        alias    (str): Alias de la persona vinculada.
+
+    Returns:
+        201 — Usuario creado exitosamente.
+            {
+                "message": "Usuario registrado exitosamente",
+                "userId": 1,
+                "username": "johnd",
+                "email": "john@example.com"
+            }
+        400 — Error de validación (campos faltantes o inválidos).
+        409 — El username o email ya existe.
+
+    Example:
+        curl -X POST https://api.example.com/users/sign-up \\
+             -H "Content-Type: application/json" \\
+             -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd"}'
+    """
     data = _require_json()
     if isinstance(data, tuple):
         return data
@@ -94,7 +188,8 @@ def sign_up_user():
         return jsonify(err), code
 
     try:
-        user = get_user_manager().sign_in_user(username, password, email, alias)
+        with user_manager() as user_mgr:
+            user = user_mgr.sign_in_user(username, password, email, alias)
         _logger.info(f"Usuario registrado: {username} (ID: {user.id})")
         return jsonify({
             "message":  "Usuario registrado exitosamente",
@@ -120,7 +215,29 @@ def sign_up_user():
 @users_bp.post("/check-credentials")
 @limiter.limit("10 per minute; 30 per hour")
 def check_credentials():
-    """Valida credenciales (endpoint legacy — usar /oauth/token en producción)."""
+    """Valida credenciales de usuario (endpoint legacy).
+
+    En producción, usar /oauth/token para autenticación OAuth2.
+
+    Args (JSON body):
+        username (str): Nombre de usuario.
+        password (str): Contraseña del usuario.
+
+    Returns:
+        200 — Credenciales válidas.
+            {
+                "message": "Credenciales válidas",
+                "isValid": true,
+                "userId": 1,
+                "username": "johnd"
+            }
+        401 — Credenciales inválidas.
+
+    Example:
+        curl -X POST https://api.example.com/users/check-credentials \\
+             -H "Content-Type: application/json" \\
+             -d '{"username": "johnd", "password": "password123"}'
+    """
     data = _require_json()
     if isinstance(data, tuple):
         return data
@@ -133,7 +250,8 @@ def check_credentials():
         return jsonify(err), code
 
     try:
-        is_valid, user_id = get_user_manager().verify_credentials(username, password)
+        with user_manager() as user_mgr:
+            is_valid, user_id = user_mgr.verify_credentials(username, password)
         if not is_valid:
             raise InvalidCredentialsError()
 
@@ -156,7 +274,30 @@ def check_credentials():
 @require_oauth_token
 @limiter.limit("5 per hour; 10 per day")
 def change_password():
-    """Cambia la contraseña del usuario autenticado e invalida todos sus tokens."""
+    """Cambia la contraseña del usuario autenticado e invalida todos sus tokens.
+
+    Args (JSON body):
+        newPassword (str): Nueva contraseña para el usuario.
+
+    Returns:
+        200 — Contraseña cambiada exitosamente.
+            {
+                "message": "Contraseña cambiada exitosamente. Por favor, inicia sesión de nuevo.",
+                "userId": 1,
+                "username": "johnd"
+            }
+        400 — Error de validación (contraseña inválida).
+
+    Warning:
+        Esta acción invalida TODOS los tokens OAuth del usuario.
+        El usuario deberá iniciar sesión nuevamente.
+
+    Example:
+        curl -X PUT https://api.example.com/users/change-password \\
+             -H "Authorization: Bearer <token>" \\
+             -H "Content-Type: application/json" \\
+             -d '{"newPassword": "newpassword123"}'
+    """
     data = _require_json()
     if isinstance(data, tuple):
         return data
@@ -171,8 +312,10 @@ def change_password():
         user_id  = get_current_user_id()
         username = get_current_username()
 
-        get_user_manager().update_user_password(user_id, new_password)
-        get_oauth_manager().revoke_all_user_tokens(user_id)
+        with get_user_manager() as user_mgr:
+            user_mgr.update_user_password(user_id, new_password)
+        with get_oauth_manager() as oauth_mgr:
+            oauth_mgr.revoke_all_user_tokens(user_id)
 
         _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
         return jsonify({

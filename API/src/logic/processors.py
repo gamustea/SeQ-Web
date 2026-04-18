@@ -1,369 +1,435 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import List
+from typing import List, Dict, Any, Tuple, Optional, Set
+import json
+import re
+from pathlib import Path
 
-from sqlalchemy.orm import Session
-
-from src.misc import JSONManager, normalize_target
+from lxml import etree as lxml_etree
 from src.core.model import (
-    Host,
-    Scan,
-    OpenPort,
-    Port,
-    NiktoScan,
     NiktoIncident,
-    NmapScan,
-    OpenVASScan,
     OpenVASVulnerability,
     OpenVASScanResult
 )
 
 
 class ScanResultProcessor(ABC):
-    """Clase base para procesadores de resultados de escaneos"""
+    """Procesador base para transformar datos crudos en estructuras de dominio.
     
-    def __init__(self, session: Session, logger):
-        self.session = session
+    Responsabilidad única: conversión de formatos externos (XML/JSON) a 
+    diccionarios/objetos del modelo sin persistencia.
+    """
+    
+    def __init__(self, logger=None):
         self.logger = logger
     
     @abstractmethod
-    def process_and_save(self, scan, results: dict) -> None:
-        """Procesa y guarda los resultados del escaneo"""
-        pass
-    
-    def _get_or_create_host(self, target: str) -> Host:
-        """Obtiene o crea un host en la BD.
-
-        Garantías:
-        - hostname nunca es None (cae back a la IP o al target original).
-        - ip_address nunca es None (cae back al target original).
-        - mac_address se establece a cadena vacía si no está disponible, evitando
-            NotNullViolation ya que la columna es NOT NULL en el modelo.
-        """
-        ip, hostname = normalize_target(target, resolve_hostname=True)
-        self.logger.debug(f"Normalizando target '{target}' -> hostname: '{hostname}', ip: '{ip}'")
-
-        # Fallbacks para evitar NOT NULL violations
-        if not hostname:
-            hostname = ip or target
-        if not ip:
-            ip = target
-
-        host = self.session.query(Host).filter(
-            Host.ip_address == ip,
-            Host.hostname == hostname
-        ).first()
+    def process(self, raw_data: Any, **context) -> Any:
+        """Transforma datos crudos en estructuras de dominio listas para persistir.
+        
+        Args:
+            raw_data: Datos en formato nativo (XML, JSON, dict)
+            **context: Información adicional necesaria (target, etc.)
             
-        if not host:
-            host = Host(
-                hostname=hostname,
-                ip_address=ip,
-                mac_address="",   # NOT NULL en modelo; cadena vacía como nulo semántico
-            )
-            self.session.add(host)
-            self.session.flush()
-            self.logger.info(f"Host creado: {hostname} ({ip})")
-
-        return host
+        Returns:
+            Estructuras de datos listas para ser persistidas por los managers.
+        """
+        pass
 
 
 class NmapResultProcessor(ScanResultProcessor):
-    """Procesa y guarda resultados de escaneos Nmap"""
+    """Procesa resultados de escaneos Nmap."""
     
-    def process_and_save(self, scan: NmapScan, results: dict) -> None:
-        """Procesa resultados de Nmap y los guarda en BD"""
-        try:
-            # Convertir resultados JSON
-            processed = JSONManager.convert_json_to_individual_nmap_data(results, scan)
-            
-            # Guardar puertos
-            for port_data in processed["ports"]:
-                port_protocol, _, port_reason, port_product, port_version, given_use = port_data
-                
-                port = self._get_or_create_port(port_protocol)
-                
-                if port not in scan.target_ports:
-                    scan.target_ports.append(port)
-                
-                open_port = OpenPort(
-                    nmap_scan_id=scan.id,
-                    port_id=port.id,
-                    reason=port_reason,
-                    product=port_product,
-                    version=port_version,
-                    given_use=given_use
-                )
-                self.session.add(open_port)
-            
-            # Asociar host
-            host_info = processed["host"]
-            host = self._get_or_create_host_from_data(host_info)
-            scan.host_id = host.id
+    def process(self, raw_data: dict, target: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Extrae información de hosts y puertos de resultados Nmap.
         
-        except Exception as e:
-            self.logger.error(f"Error guardando resultados Nmap: {e}", exc_info=True)
-            raise
+        Returns:
+            Tuple conteniendo:
+            - Dict con datos del host (hostname, vendor, ip_address, mac_address)
+            - List de dicts con datos de puertos (protocol, state, reason, product, version, given_use)
+        """
+        parsed = self._parse_nmap_structure(raw_data, target)
+        
+        host_data = {
+            'hostname': parsed['host']['name'] or parsed['host']['addresses']['ipv4'] or target,
+            'vendor': parsed['host']['vendor'],
+            'ip_address': parsed['host']['addresses']['ipv4'],
+            'mac_address': parsed['host']['addresses']['mac']
+        }
+        
+        ports_data = []
+        for port_protocol, state, reason, product, version, given_use in parsed['ports']:
+            ports_data.append({
+                'protocol': port_protocol,
+                'state': state,
+                'reason': reason,
+                'product': product,
+                'version': version,
+                'given_use': given_use
+            })
+        
+        return host_data, ports_data
     
-    def _get_or_create_port(self, protocol: str) -> Port:
-        """Obtiene o crea un puerto"""
-        port = self.session.query(Port).filter(Port.protocol == protocol).one_or_none()
+    def _parse_nmap_structure(self, json_data: dict, target: str) -> dict:
+        """Parsea la estructura JSON de Nmap."""
+        if isinstance(json_data, str):
+            try:
+                result = json.loads(json_data)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"JSON inválido: {e}")
+        elif isinstance(json_data, dict):
+            result = json_data
+        else:
+            raise TypeError(f"Datos deben ser str o dict, recibido: {type(json_data)}")
         
-        if port:
-            return port
+        if "nmap" not in result or "scan" not in result:
+            raise ValueError("Estructura JSON de Nmap inválida")
         
-        new_port = Port(protocol=protocol)
-        self.session.add(new_port)
-        self.session.flush()
-        return new_port
-    
-    def _get_or_create_host_from_data(self, host_info: dict) -> Host:
-        """Crea o actualiza un host con información completa"""
-        hostname = host_info["name"]
+        scan_targets = list(result["scan"].keys())
+        if target not in result["scan"] and scan_targets:
+            target = scan_targets[0]
+        elif not scan_targets:
+            return {
+                'host': {
+                    'vendor': "",
+                    'name': "",
+                    'type': "",
+                    'addresses': {"ipv4": "", "mac": ""}
+                },
+                'ports': []
+            }
         
-        host = self.session.query(Host).filter(
-            Host.hostname == hostname
-        ).one_or_none()
+        scan_data = result["scan"][target]
         
-        if not host:
-            host = Host(
-                hostname=hostname,
-                vendor=host_info["vendor"],
-                ip_address=host_info["addresses"]["ipv4"],
-                mac_address=host_info["addresses"]["mac"]
+        hostnames = scan_data.get("hostnames", [])
+        hostname = hostnames[0].get("name", "") if hostnames else ""
+        hostname_type = hostnames[0].get("type", "") if hostnames else ""
+        
+        addresses = scan_data.get("addresses", {})
+        ipv4 = addresses.get("ipv4", "")
+        mac = addresses.get("mac", "")
+        
+        vendor_dict = scan_data.get("vendor", {})
+        vendor = vendor_dict.get(mac, "") if mac and vendor_dict else ""
+        
+        tcp_ports = scan_data.get("tcp", {})
+        ports = []
+        for port_number, port_info in tcp_ports.items():
+            port_tuple = (
+                f"{port_number}/tcp",
+                port_info.get("state", "unknown"),
+                port_info.get("reason", ""),
+                port_info.get("product", ""),
+                port_info.get("version", ""),
+                port_info.get("name", "")
             )
-            self.session.add(host)
-            self.session.flush()
+            ports.append(port_tuple)
         
-        return host
+        return {
+            'command': result.get("nmap", {}).get("command_line", ""),
+            'host': {
+                'vendor': vendor,
+                'name': hostname,
+                'type': hostname_type,
+                'addresses': {
+                    'ipv4': ipv4,
+                    'mac': mac
+                }
+            },
+            'ports': ports
+        }
 
 
 class NiktoResultProcessor(ScanResultProcessor):
-    """Procesa y guarda resultados de escaneos Nikto"""
+    """Procesa resultados de escaneos Nikto."""
     
-    def process_and_save(self, scan: NiktoScan, results: dict) -> None:
-
-        def assign_severity_to_nikto_incident(incident):
-            desc = incident.description.lower() if incident.description else ""
-            url = incident.url.lower() if incident.url else ""
-            method = incident.method.upper() if incident.method else ""
-
-            critical_patterns = [
-                ".env", "env.production", "env.local", ".git/", ".git/config",
-                "git/head", "phpinfo", "config.php", "database.yml", "wp-config.php",
-                "web.config", ".sql", "backup.sql", "dump.sql", "passwd", "shadow",
-                "credentials", "private_key", "id_rsa", "config.bak", "database.bak",
-                "shell", "webshell", "backdoor", "remote code execution",
-                "arbitrary code", "command injection", "sql injection",
-                "unrestricted file upload",
-            ]
-            for pattern in critical_patterns:
-                if pattern in desc or pattern in url:
-                    incident.severity = "CRITICAL"
-                    return
-
-            high_patterns = [
-                "outdated", "vulnerable version", "known vulnerability", "cve-",
-                "xss", "cross site scripting", "cross-site scripting", "csrf",
-                "authentication bypass", "authorization bypass", "privilege escalation",
-                "directory traversal", "path traversal", "../", "local file inclusion",
-                "remote file inclusion", "lfi", "rfi", "weak ssl", "weak tls",
-                "ssl v2", "ssl v3", "sslv2", "sslv3", "poodle", "heartbleed",
-                "shellshock", "default password", "default credential", "admin/admin",
-                "weak cipher", "insecure cipher", "null cipher", "export cipher",
-            ]
-            dangerous_methods = ["PUT", "DELETE", "TRACE", "CONNECT"]
-            for pattern in high_patterns:
-                if pattern in desc or pattern in url:
-                    incident.severity = "HIGH"
-                    return
-            if method in dangerous_methods and "allowed" in desc:
-                incident.severity = "HIGH"
-                return
-
-            medium_patterns = [
-                "directory indexing", "directory listing", "indexes",
-                "missing security header", "x-frame-options", "x-content-type-options",
-                "content-security-policy", "strict-transport-security", "x-xss-protection",
-                "clickjacking", "information disclosure", "information leakage",
-                "stack trace", "error message", "debug mode", "verbose error",
-                "source code disclosure", "path disclosure", "version disclosure",
-                "session fixation", "weak session", "cookie without", "cookie httponly",
-                "cookie secure", "unencrypted", "http basic auth", "weak authentication",
-                "robots.txt", "sitemap.xml", "cors misconfiguration", "open redirect",
-                "server-status", "server-info", "admin panel", "login panel",
-                "phpmyadmin", "adminer",
-            ]
-            for pattern in medium_patterns:
-                if pattern in desc or pattern in url:
-                    incident.severity = "MEDIUM"
-                    return
-
-            low_patterns = [
-                "server banner", "server header", "x-powered-by", "server version",
-                "apache/", "nginx/", "microsoft-iis", "options method", "head method",
-                "allowed http methods", "default page", "default installation",
-                "test page", "welcome page", "it works", "uncommon header",
-                "unusual header", "missing header", "cache control", "pragma",
-                "expires", "retrieved x-powered-by", "retrieved server", "ip address",
-                "internal ip", "retrieved via",
-            ]
-            for pattern in low_patterns:
-                if pattern in desc or pattern in url:
-                    incident.severity = "LOW"
-                    return
-
-            info_patterns = [
-                "the site uses", "appears to be", "may be", "possibly",
-                "cookie created", "retrieved", "hostname resolves", "scan completed",
-                "target ip", "end time", "start time",
-            ]
-            for pattern in info_patterns:
-                if pattern in desc:
-                    incident.severity = "INFO"
-                    return
-
-            incident.severity = "MEDIUM"
-
+    def process(self, raw_data: List[dict]) -> List[Dict[str, Any]]:
+        """Extrae incidentes de seguridad de resultados Nikto.
+        
+        Returns:
+            Lista de diccionarios con datos para crear NiktoIncident 
+            (description, osvdb_id, method, url, severity)
+        """
+        incidents = []
+        
+        for block in (raw_data or []):
+            block_incidents = self._extract_nikto_items(block)
+            for item in block_incidents:
+                severity = self._classify_threat_level(item)
+                incidents.append({
+                    'description': item.get('description', ''),
+                    'osvdb_id': item.get('osvdbid', ''),
+                    'method': item.get('method', ''),
+                    'url': item.get('uri', ''),
+                    'severity': severity
+                })
+        
+        return incidents
+    
+    def _extract_nikto_items(self, json_data: dict) -> List[dict]:
+        """Extrae items individuales del XML parseado de Nikto."""
         try:
-            all_incidents = []
-            for block in (results or []):
-                block_incidents = JSONManager.convert_json_to_individual_nikto_data(block)
-                all_incidents.extend(block_incidents)
-
-            for incident_data in all_incidents:
-                incident = self._create_incident_from_data(incident_data)
-                assign_severity_to_nikto_incident(incident)
-                db_incident = self._get_or_create_incident(incident)
-                if db_incident not in scan.incidents:
-                    scan.incidents.append(db_incident)
-
-            self.logger.debug(f"Buscando o creando host para target '{scan.target}'")
-            host = self._get_or_create_host(scan.target)
-            self.logger.debug(f"Host asociado al escaneo Nikto {scan.id}: {host.hostname} ({host.ip_address})")
-            scan.host = host
-            self.logger.info(
-                f"Escaneo Nikto {scan.id} guardado con {len(all_incidents)} incidentes"
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error guardando resultados Nikto: {e}", exc_info=True)
-            raise
-        
-    def _create_incident_from_data(self, incident_data: dict) -> NiktoIncident:
-        """Crea un objeto NiktoIncident desde datos procesados"""
-        incident = NiktoIncident()
-        incident.description = incident_data["description"]
-        incident.osvdb_id = incident_data["osvdbid"]
-        incident.method = incident_data["method"]
-        incident.url = incident_data["uri"]
-        return incident
+            items = json_data['niktoscan']['scandetails']['item']
+            if isinstance(items, dict):
+                return [{k.lstrip('@'): v for k, v in items.items()}]
+            return [{k.lstrip('@'): v for k, v in item.items()} for item in items]
+        except KeyError:
+            return []
     
-    def _get_or_create_incident(self, incident: NiktoIncident) -> NiktoIncident:
-        """Obtiene o crea un incidente en BD"""
-        existing = self.session.query(NiktoIncident).filter(
-            NiktoIncident.description == incident.description,
-            NiktoIncident.url == incident.url,
-            NiktoIncident.method == incident.method,
-        ).first()
+    def _classify_threat_level(self, item: dict) -> str:
+        """Clasifica la severidad de un incidente Nikto basado en patrones."""
+        desc = item.get('description', '').lower()
+        url = item.get('uri', '').lower()
+        method = item.get('method', '').upper()
         
-        if existing:
-            return existing
+        # Patrones críticos
+        critical_patterns = [
+            ".env", "env.production", "env.local", ".git/", ".git/config",
+            "git/head", "phpinfo", "config.php", "database.yml", "wp-config.php",
+            "web.config", ".sql", "backup.sql", "dump.sql", "passwd", "shadow",
+            "credentials", "private_key", "id_rsa", "config.bak", "database.bak",
+            "shell", "webshell", "backdoor", "remote code execution",
+            "arbitrary code", "command injection", "sql injection",
+            "unrestricted file upload",
+        ]
+        for pattern in critical_patterns:
+            if pattern in desc or pattern in url:
+                return "CRITICAL"
         
-        self.session.add(incident)
-        self.session.flush()
-        return incident
+        # Patrones altos
+        high_patterns = [
+            "outdated", "vulnerable version", "known vulnerability", "cve-",
+            "xss", "cross site scripting", "cross-site scripting", "csrf",
+            "authentication bypass", "authorization bypass", "privilege escalation",
+            "directory traversal", "path traversal", "../", "local file inclusion",
+            "remote file inclusion", "lfi", "rfi", "weak ssl", "weak tls",
+            "ssl v2", "ssl v3", "sslv2", "sslv3", "poodle", "heartbleed",
+            "shellshock", "default password", "default credential", "admin/admin",
+            "weak cipher", "insecure cipher", "null cipher", "export cipher",
+        ]
+        dangerous_methods = ["PUT", "DELETE", "TRACE", "CONNECT"]
+        
+        for pattern in high_patterns:
+            if pattern in desc or pattern in url:
+                return "HIGH"
+        if method in dangerous_methods and "allowed" in desc:
+            return "HIGH"
+        
+        # Patrones medios
+        medium_patterns = [
+            "directory indexing", "directory listing", "indexes",
+            "missing security header", "x-frame-options", "x-content-type-options",
+            "content-security-policy", "strict-transport-security", "x-xss-protection",
+            "clickjacking", "information disclosure", "information leakage",
+            "stack trace", "error message", "debug mode", "verbose error",
+            "source code disclosure", "path disclosure", "version disclosure",
+            "session fixation", "weak session", "cookie without", "cookie httponly",
+            "cookie secure", "unencrypted", "http basic auth", "weak authentication",
+            "robots.txt", "sitemap.xml", "cors misconfiguration", "open redirect",
+            "server-status", "server-info", "admin panel", "login panel",
+            "phpmyadmin", "adminer",
+        ]
+        for pattern in medium_patterns:
+            if pattern in desc or pattern in url:
+                return "MEDIUM"
+        
+        # Patrones bajos
+        low_patterns = [
+            "server banner", "server header", "x-powered-by", "server version",
+            "apache/", "nginx/", "microsoft-iis", "options method", "head method",
+            "allowed http methods", "default page", "default installation",
+            "test page", "welcome page", "it works", "uncommon header",
+            "unusual header", "missing header", "cache control", "pragma",
+            "expires", "retrieved x-powered-by", "retrieved server", "ip address",
+            "internal ip", "retrieved via",
+        ]
+        for pattern in low_patterns:
+            if pattern in desc or pattern in url:
+                return "LOW"
+        
+        # Patrones informativos
+        info_patterns = [
+            "the site uses", "appears to be", "may be", "possibly",
+            "cookie created", "retrieved", "hostname resolves", "scan completed",
+            "target ip", "end time", "start time",
+        ]
+        for pattern in info_patterns:
+            if pattern in desc:
+                return "INFO"
+        
+        return "MEDIUM"
 
 
 class OpenVASResultProcessor(ScanResultProcessor):
-    """Procesa y guarda resultados de escaneos OpenVAS"""
+    """Procesa resultados de escaneos OpenVAS/GVM."""
     
-    def process_and_save(self, scan: OpenVASScan, results: dict) -> None:
-        """Procesa resultados de OpenVAS y los guarda en BD"""
-        try:
-            # Procesar vulnerabilidades
-            vulnerability_map = self._process_vulnerabilities(results["vulnerabilities"])
-            
-            # Asociar host
-            host = self._get_or_create_host(scan.target)
-            scan.host_id = host.id
-            
-            # Crear resultados de escaneo
-            self._create_scan_results(scan, results["scan_results"], vulnerability_map)            
-            self.logger.info(f"Escaneo OpenVAS {scan.id} guardado con {len(scan.results)} resultados")
+    def process(self, raw_data: Any) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Set[str]]:
+        """Procesa datos de OpenVAS (ya parseados por OpenVASTask).
         
-        except Exception as e:
-            self.logger.error(f"Error guardando resultados OpenVAS: {e}", exc_info=True)
-            raise
+        Args:
+            raw_data: Dict con estructura {'vulnerabilities': [], 'scan_results': [], 'hosts': []}
+            
+        Returns:
+            Tuple conteniendo:
+            - Lista de dicts con datos de vulnerabilidades (OpenVASVulnerability)
+            - Lista de dicts con datos de resultados por host (OpenVASScanResult)
+            - Set de IPs de hosts afectados
+        """
+        vulnerabilities = raw_data.get('vulnerabilities', [])
+        scan_results = raw_data.get('scan_results', [])
+        hosts = set(raw_data.get('hosts', []))
+        
+        return vulnerabilities, scan_results, hosts
     
-    def _process_vulnerabilities(self, vulnerabilities_data: List[dict]) -> dict:
-        """Procesa y guarda vulnerabilidades"""
-        vulnerability_map = {}
+    def _parse_openvas_structure(self, report_xml: str) -> dict:
+        """Extrae estructura de datos del XML de OpenVAS."""
+        if isinstance(report_xml, str):
+            root = lxml_etree.fromstring(report_xml.encode('utf-8'))
+        elif isinstance(report_xml, bytes):
+            root = lxml_etree.fromstring(report_xml)
+        else:
+            import xml.etree.ElementTree as ET
+            xml_str = ET.tostring(report_xml, encoding='unicode')
+            root = lxml_etree.fromstring(xml_str.encode('utf-8'))
         
-        for vuln_data in vulnerabilities_data:
-            vuln = self._get_or_create_vulnerability(vuln_data)
-            vulnerability_map[vuln.nvt_oid] = vuln
+        report = root.xpath('//report')[0]
+        report_id = report.get('id')
         
-        return vulnerability_map
+        task = root.xpath('//task')[0]
+        task_id = task.get('id')
+        
+        results = root.xpath('//report/results/result')
+        
+        vulnerabilities = {}
+        scan_results = []
+        hosts_found = set()
+        
+        for result in results:
+            host_ip = result.xpath('host/text()')[0] if result.xpath('host/text()') else None
+            if not host_ip:
+                continue
+            
+            hosts_found.add(host_ip)
+            
+            nvt = result.xpath('nvt')[0] if result.xpath('nvt') else None
+            if nvt is None:
+                continue
+            
+            nvt_oid = nvt.get('oid')
+            if not nvt_oid:
+                continue
+            
+            # Procesar vulnerabilidad si es nueva
+            if nvt_oid not in vulnerabilities:
+                vuln_data = self._extract_vulnerability_data(nvt, result)
+                vulnerabilities[nvt_oid] = vuln_data
+            
+            # Agregar resultado de detección
+            scan_results.append({
+                'nvt_oid': nvt_oid,
+                'host_ip': host_ip,
+                'port': result.xpath('port/text()')[0] if result.xpath('port/text()') else None,
+                'threat': result.xpath('threat/text()')[0] if result.xpath('threat/text()') else None
+            })
+        
+        return {
+            'scan_data': {
+                'task_id': task_id,
+                'report_id': report_id,
+            },
+            'vulnerabilities': list(vulnerabilities.values()),
+            'scan_results': scan_results,
+            'hosts': hosts_found
+        }
     
-    def _get_or_create_vulnerability(self, vuln_data: dict) -> OpenVASVulnerability:
-        """Obtiene o crea una vulnerabilidad"""
-        nvt_oid = vuln_data["nvt_oid"]
+    def _extract_vulnerability_data(self, nvt, result) -> dict:
+        """Extrae datos completos de una vulnerabilidad NVT."""
+        name = nvt.xpath('name/text()')[0] if nvt.xpath('name/text()') else 'Unknown'
+        family = nvt.xpath('family/text()')[0] if nvt.xpath('family/text()') else None
         
-        vuln = self.session.query(OpenVASVulnerability).filter(
-            OpenVASVulnerability.nvt_oid == nvt_oid
-        ).one_or_none()
+        severity = result.xpath('severity/text()')[0] if result.xpath('severity/text()') else '0.0'
+        severity_score = float(severity) if severity else 0.0
         
-        if vuln:
-            return vuln
+        cvss_base = nvt.xpath('cvss_base/text()')[0] if nvt.xpath('cvss_base/text()') else None
+        cvss_base_score = float(cvss_base) if cvss_base else severity_score
         
-        vuln = OpenVASVulnerability(
-            nvt_oid=nvt_oid,
-            name=vuln_data["name"],
-            severity_score=vuln_data["severity_score"],
-            severity_class=vuln_data["severity_class"],
-            cvss_base_score=vuln_data["cvss_base_score"],
-            cvss_vector=vuln_data["cvss_vector"],
-            cve_ids=vuln_data["cve_ids"],
-            cert_refs=vuln_data["cert_refs"],
-            bugtraq_ids=vuln_data["bugtraq_ids"],
-            other_refs=vuln_data["other_refs"],
-            summary=vuln_data["summary"],
-            description=vuln_data["description"],
-            impact=vuln_data["impact"],
-            insight=vuln_data["insight"],
-            affected_software=vuln_data["affected_software"],
-            solution_type=vuln_data["solution_type"],
-            solution=vuln_data["solution"],
-            qod_value=vuln_data["qod_value"],
-            qod_type=vuln_data["qod_type"],
-            family=vuln_data["family"],
-            category=vuln_data["category"]
-        )
+        # Extraer CVSS Vector de tags
+        cvss_vector = None
+        cvss_tags = nvt.xpath('tags/text()')
+        tags_dict = {}
         
-        self.session.add(vuln)
-        self.session.flush()
-        return vuln
+        if cvss_tags:
+            tags_text = cvss_tags[0]
+            for tag in tags_text.split('|'):
+                if '=' in tag:
+                    key, value = tag.split('=', 1)
+                    tags_dict[key.strip().lower()] = value.strip()
+                if 'cvss_base_vector=' in tag.lower():
+                    cvss_vector = tag.split('=', 1)[1].strip()
+        
+        # Extraer referencias
+        refs = nvt.xpath('refs/ref')
+        cve_ids, cert_refs, bugtraq_ids, other_refs = self._categorize_references(refs)
+        
+        # Quality of Detection
+        qod = nvt.xpath('qod')[0] if nvt.xpath('qod') else None
+        qod_value = int(qod.xpath('value/text()')[0]) if qod and qod.xpath('value/text()') else None
+        qod_type = qod.xpath('type/text()')[0] if qod and qod.xpath('type/text()') else None
+        
+        return {
+            'nvt_oid': nvt.get('oid'),
+            'name': name,
+            'severity_score': severity_score,
+            'severity_class': self._categorize_severity(severity_score),
+            'cvss_base_score': cvss_base_score,
+            'cvss_vector': cvss_vector,
+            'cve_ids': ','.join(cve_ids) if cve_ids else None,
+            'cert_refs': ','.join(cert_refs) if cert_refs else None,
+            'bugtraq_ids': ','.join(bugtraq_ids) if bugtraq_ids else None,
+            'other_refs': ','.join(other_refs) if other_refs else None,
+            'summary': tags_dict.get('summary', ''),
+            'description': result.xpath('description/text()')[0] if result.xpath('description/text()') else tags_dict.get('vuldetect', ''),
+            'impact': tags_dict.get('impact', ''),
+            'insight': tags_dict.get('insight', ''),
+            'affected_software': tags_dict.get('affected', ''),
+            'solution_type': tags_dict.get('solution_type', 'Mitigation'),
+            'solution': tags_dict.get('solution', ''),
+            'qod_value': qod_value,
+            'qod_type': qod_type,
+            'family': family,
+            'category': nvt.xpath('category/text()')[0] if nvt.xpath('category/text()') else None
+        }
     
-    def _create_scan_results(
-        self,
-        scan: OpenVASScan,
-        results_data: List[dict],
-        vulnerability_map: dict
-    ) -> None:
-        """Crea registros de resultados asociando vulnerabilidades con hosts"""
-        for result in results_data:
-            nvt_oid = result["nvt_oid"]
-            host_ip = result["host_ip"]
-            
-            vulnerability = vulnerability_map[nvt_oid]
-            host = self._get_or_create_host(host_ip)
-            
-            scan_result = OpenVASScanResult(
-                openvas_scan_id=scan.id,
-                vulnerability_id=vulnerability.id,
-                host_id=host.id
-            )
-            
-            self.session.add(scan_result)
+    def _categorize_severity(self, score: float) -> str:
+        """Clasifica la severidad según score CVSS."""
+        if score == 0.0:
+            return 'Log'
+        elif score < 4.0:
+            return 'Low'
+        elif score < 7.0:
+            return 'Medium'
+        elif score < 9.0:
+            return 'High'
+        else:
+            return 'Critical'
+    
+    def _categorize_references(self, refs) -> Tuple[List[str], List[str], List[str], List[str]]:
+        """Clasifica referencias por tipo."""
+        cve_ids = []
+        cert_refs = []
+        bugtraq_ids = []
+        other_refs = []
         
-        self.session.flush()
+        for ref in refs:
+            ref_type = ref.get('type', '').upper()
+            ref_id = ref.get('id', '')
+            
+            if ref_type == 'CVE':
+                cve_ids.append(ref_id)
+            elif ref_type in ['CERT-BUND', 'DFN-CERT']:
+                cert_refs.append(f"{ref_type}:{ref_id}")
+            elif ref_type == 'BID':
+                bugtraq_ids.append(ref_id)
+            else:
+                other_refs.append(f"{ref_type}:{ref_id}")
+        
+        return cve_ids, cert_refs, bugtraq_ids, other_refs

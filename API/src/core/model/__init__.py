@@ -1,5 +1,5 @@
 from ._base import Base
-from .sentinel import (
+from .sentinel_model import (
     Host,
     NiktoIncident,
     NiktoScan,
@@ -12,20 +12,31 @@ from .sentinel import (
     Scan,
     ScanIncident,
     ScanStatus,
+    SentinelDocument,
     TargetPort,
 )
-from .acheron import Account, CreditCard, Storable, Vault
+from .acheron_model import Account, CreditCard, Storable, Vault
 from .aegis_model import AegisDocument, AegisDocumentAlert, AegisTip, Topic
-from .general import AccessToken, RefreshToken, Person, Rol, User
+from .general_model import AccessToken, Document, Person, RefreshToken, Rol, User
 
 __all__ = [
     # Base
     "Base",
-    # _base
+    # general
     "Person",
     "Rol",
     "User",
-    # sentinel
+    "AccessToken",
+    "RefreshToken",
+    # documents (jerarquía unificada)
+    "Document",
+    "AegisDocument",
+    "AegisTip",
+    "AegisDocumentAlert",
+    "SentinelDocument",
+    # aegis
+    "Topic",
+    # sentinel (scans)
     "Host",
     "Scan",
     "ScanStatus",
@@ -44,13 +55,4 @@ __all__ = [
     "Storable",
     "Account",
     "CreditCard",
-    # aegis
-    "Topic",
-    "AegisDocument",
-    "AegisPill",
-    "AegisTip",
-    "AegisDocumentAlert",
-    # general
-    "AccessToken",
-    "RefreshToken",
 ]

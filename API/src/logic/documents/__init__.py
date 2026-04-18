@@ -1,4 +1,4 @@
-from .scan_reports import (
+from .sentinel_reports import (
     PDFCreator,
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
@@ -15,5 +15,18 @@ __all__ = [
     "PDFCreator",
     "NmapPrintingStrategy",
     "NiktoPrintingStrategy",
-    "OpenVASPrintingStrategy"
+    "OpenVASPrintingStrategy",
+    "DocumentError",
+    "DocumentGenerationError",
+    "AIConnectionError",
+    "AIResponseError",
+    "AIFallbackExhaustedError",
+    "CircuitBreakerOpenError",
+    "AegisValidationError",
+    "AegisInsufficientContentError",
+    "AegisFetchError",
+    "ExporterError",
+    "ExporterFormatError",
+    "ExporterConfigurationError",
+    "PDFGenerationError",
 ]

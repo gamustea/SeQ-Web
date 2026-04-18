@@ -55,10 +55,8 @@ def _graceful_shutdown(signum, frame) -> None:
     _logger.info("[Shutdown] Proceso terminado.")
     sys.exit(0)
 
-
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT,  _graceful_shutdown)
-
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -84,25 +82,18 @@ def create_app() -> Flask:
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
 
-
 def _configure_cors(app: Flask) -> None:
     raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
     origins.append("http://127.0.0.1:3000")
     CORS(app, origins=origins, supports_credentials=True)
 
-
 def _configure_rate_limiting(app: Flask) -> None:
     """
     Asocia el único Limiter de la aplicación (definido en _shared.py)
     a esta instancia de Flask.
-
-    NO se crea un segundo Limiter aquí: tener dos instancias provoca que
-    Flask-Limiter aplique ambos default_limits y gane el más restrictivo,
-    lo que generaba 429 con solo 4-5 escaneos en paralelo.
-    """
+    """ 
     limiter.init_app(app)
-
 
 def _register_ui_route(app: Flask) -> None:
     """
@@ -131,7 +122,6 @@ def _register_ui_route(app: Flask) -> None:
             return send_from_directory(_UI_DIR, path)
 
         return send_from_directory(_UI_DIR, "pages/hub.html")
-
 
 def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(404)
@@ -172,4 +162,4 @@ def _register_error_handlers(app: Flask) -> None:
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)

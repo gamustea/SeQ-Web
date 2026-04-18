@@ -3,6 +3,7 @@ import socket
 import ipaddress
 import itertools
 import dns.resolver
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from urllib.parse import urlparse
 
@@ -60,7 +61,7 @@ def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optio
         future = executor.submit(socket.gethostbyaddr, ip)
         try:
             return future.result(timeout=timeout)[0]
-        except FuturesTimeout:
+        except TimeoutError:
             return None
         except (socket.herror, socket.gaierror):
             return None

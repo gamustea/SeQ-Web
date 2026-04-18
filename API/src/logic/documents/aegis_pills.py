@@ -1,13 +1,13 @@
 """
 aegis_pills.py
-──────────────
+─────────────
 Lógica de generación de píldoras de concienciación.
 
 Contiene:
     — Dataclasses de tránsito: AegisTipData, AegisContent, AegisAlert
     — Decoradores de resiliencia: retry_on_failure, circuit_breaker
     — AegisAlertFetcher: fetch concurrente de INCIBE y CIRCL
-    — AegisAIWriter: generación de contenido con Ollama
+    — AegisAIWriter: generación de contenido con Ollama (hereda de AIWriter)
 """
 
 from __future__ import annotations
@@ -26,14 +26,24 @@ from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import ollama
 from ddgs import DDGS
 
 from src.core.model import Topic
-from src.misc import SecOpsLogger
+from src.misc import ConfigReader, SecOpsLogger
+
+from src.logic.documents._base import AIWriter
+from src.core.exceptions import (
+    CircuitBreakerOpenError,
+    AegisValidationError,
+    AegisInsufficientContentError,
+    AegisFetchError,
+    AIResponseError,
+    AIFallbackExhaustedError,
+)
 
 
 # ============================================================================
@@ -93,7 +103,7 @@ Ejemplo de output válido para tema "Phishing Empresarial":
     "tips": [
         {
             "headline": "Verifica siempre el remitente real, no solo el nombre visible",
-            "body": "Los atacantes configuran nombres de display que imitan a directivos o IT support. Haz clic en el nombre del remitente para ver la dirección email real. Desconfía de dominios similares como 'company-it.com' en lugar de 'company.com'.",
+            "body": "Los atacantes configuran nombres de display (el nombre visible del remitente) que imitan con precisión a directivos, IT support o proveedores habituales. Sin embargo, el nombre visible no tiene ninguna validación técnica: cualquiera puede poner 'Carlos García - IT' como nombre de remitente. Para ver la dirección real, haz clic en el nombre del remitente en tu cliente de correo. Desconfía especialmente de dominios similares pero no idénticos al de tu empresa, como 'empresa-soporte.com' en lugar de 'empresa.com', o de dominios legítimos pero inusuales para ese tipo de comunicación.",
             "links": [
                 {"text": "Guía de Google sobre verificación de remitentes", "url": "https://support.google.com/mail/answer/185835"}
             ]
@@ -131,12 +141,12 @@ class AegisTipData:
 
     def __post_init__(self) -> None:
         if not self.headline or len(self.headline) > 150:
-            raise ValueError("headline debe tener entre 1 y 150 caracteres")
+            raise AegisValidationError("headline debe tener entre 1 y 150 caracteres", field="headline")
         if not self.body or len(self.body) < 50:
-            raise ValueError("body debe tener al menos 50 caracteres")
+            raise AegisValidationError("body debe tener al menos 50 caracteres", field="body")
         for link in self.links:
             if not isinstance(link, dict) or "text" not in link or "url" not in link:
-                raise ValueError("cada link debe ser un dict con 'text' y 'url'")
+                raise AegisValidationError("cada link debe ser un dict con 'text' y 'url'", field="links")
 
 
 @dataclass
@@ -246,7 +256,7 @@ class AegisAlert:
             object.__setattr__(self, "severity", mapping.get(self.severity.lower(), SeverityLevel.INFO))
 
         if not self.url.startswith(("http://", "https://")):
-            raise ValueError(f"URL inválida: {self.url}")
+            raise AegisValidationError(f"URL inválida: {self.url}", field="url", value=self.url)
 
 
 # ============================================================================
@@ -285,7 +295,7 @@ def circuit_breaker(threshold: int = 5, timeout: int = 60):
                 if failures >= threshold:
                     elapsed = time.time() - (last_failure_time or 0)
                     if elapsed < timeout:
-                        raise RuntimeError("Circuit breaker abierto")
+                        raise CircuitBreakerOpenError("Ollama")
                     failures = 0
 
             try:
@@ -655,57 +665,27 @@ class AegisAlertFetcher:
 # WRITER DE CONTENIDO
 # ============================================================================
 
-class AegisAIWriter:
+class AegisAIWriter(AIWriter):
     """
     Genera el contenido de una píldora mediante Ollama con few-shot prompting,
     tool calling para búsqueda web y validación estructural del JSON resultante.
+    
+    Si no se proporcionan host o model, se obtienen de las variables de entorno
+    OLLAMA_HOST y OLLAMA_MODEL (o valores por defecto).
     """
 
-    def __init__(self, host: str, model: str, logger: SecOpsLogger) -> None:
-        self.host    = host
-        self.model   = model
-        self.logger  = logger
-        self._client = ollama.Client(host=host)
-
-    # ── Búsqueda web ──────────────────────────────────────────────────────────
-
-    def _web_search(self, query: str, max_results: int = 5) -> str:
-        try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=max_results))
-            if not results:
-                return f"[BÚSQUEDA] Sin resultados para: {query}"
-            lines = [f"### Resultados de búsqueda: '{query}'\n"]
-            for i, r in enumerate(results, 1):
-                lines.append(
-                    f"{i}. **{r.get('title', 'Sin título')}**\n"
-                    f"   {r.get('body', '')[:200]}\n"
-                    f"   URL: {r.get('href', '')}\n"
-                )
-            return "\n".join(lines)
-        except Exception as exc:
-            self.logger.error(f"Error búsqueda web: {exc}")
-            return f"[ERROR BÚSQUEDA] {exc}"
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> None:
+        super().__init__()
 
     # ── Prompts ───────────────────────────────────────────────────────────────
 
     def _build_system_prompt(self) -> str:
-        return """\
-        Eres un redactor senior de concienciación en ciberseguridad con 15 años de experiencia 
-        en comunicación corporativa. Tu especialidad es transformar conceptos técnicos complejos 
-        en consejos prácticos y accionables para empleados no técnicos.
-
-        REGLAS ABSOLUTAS:
-        1. Generas EXCLUSIVAMENTE JSON válido, sin markdown, sin explicaciones previas ni posteriores.
-        2. NUNCA inventas URLs. Si no tienes fuentes verificadas, usa array vacío [].
-        3. La 'intro' DEBE ser EXTENSA y DETALLADA (mínimo 1200 caracteres, ideal 1500-1800). 
-        Desarrolla el contexto empresarial, las consecuencias del riesgo y por qué es relevante para la empresa.
-        4. Priorizas la precisión técnica sobre la creatividad cuando haya conflicto.
-        5. Adaptas el nivel de detalle al perfil de audiencia especificado.
-        6. Mantienes un tono profesional pero cercano, evitando alarmismo innecesario.
-        7. Cumples estrictamente el formato JSON solicitado, sin campos adicionales.
-        8. El 'subtitle' DEBE ser creativo, atractivo y ORIGINAL. NUNCA repitas literalmente el nombre del tema.
-        9. Si el tema es "Phishing", el subtitle podría ser "No muerdas el anzuelo: Protección contra ataques de ingeniería social"."""
+        prompts = ConfigReader.get_aegis_prompts()
+        return prompts.get("system", "")
 
     def _build_user_prompt(
         self,
@@ -715,6 +695,9 @@ class AegisAIWriter:
         tweaks:             dict[str, Any],
         verified_resources: str,
     ) -> str:
+        prompts = ConfigReader.get_aegis_prompts()
+        user_template = prompts.get("userTemplate", "")
+        
         company  = tweaks.get("company", "la empresa")
         sector   = tweaks.get("sector", "tecnología")
         audience = tweaks.get("audienceLevel", "mixed")
@@ -730,71 +713,34 @@ class AegisAIWriter:
             "non-technical": "no técnico (ventas, RRHH, dirección)",
         }.get(str(audience), "mixto")
 
-        if topic:
-            topic_context = (
-                f"\nTema seleccionado:\n"
-                f"- Título: {topic.title}\n"
-                f"- Descripción: {getattr(topic, 'description', 'No disponible')}\n"
-                f"- ID: {topic.id}"
-            )
-        else:
-            topic_context = (
-                f"\nTema genérico (ID {topic_id} no encontrado en base de datos):\n"
-                f"Genera contenido sobre ciberseguridad general para el sector {sector}."
-            )
-
-        return f"""\
-        {FEW_SHOT_EXAMPLES}
-
-        CONTEXTO DEL DESTINATARIO:
-        - Empresa: {company}
-        - Sector: {sector}
-        - Tecnologías en uso: {brands or "No especificadas"}
-        - Perfil de audiencia: {audience_profile}
-        - Tono requerido: {tone}
-        - Idioma: {language.upper()}
-        - Contacto de referencia: {contact}
-        {topic_context}
-        {f"- Enfoque específico solicitado: {focus}" if focus else ""}
-
-        RECURSOS VERIFICADOS (usar prioritariamente si son relevantes):
-        {verified_resources[:2000]}
-
-        INSTRUCCIONES DE GENERACIÓN:
-
-        1. ANÁLISIS PREVIO (interno, antes de generar):
-            - Identifica los riesgos más críticos para el sector {sector}
-            - Considera las tecnologías {brands or "mencionadas"} si están presentes
-            - Adapta la complejidad al perfil de audiencia
-
-        2. ESTRUCTURA REQUERIDA:
-            - subtitle: Título atractivo pero profesional (máx 80 caracteres) que NO sea idéntico a "{topic.title}". 
-                Debe captar la atención pero reflejar el espíritu del tema de forma original.
-            - intro: Extensa, como se indicó anteriormente, con contexto real y relevancia empresarial. Evita generalidades.
-            - tips: Array de 5-7 objetos con:
-               * headline: Acción específica o riesgo concreto (máx 100 caracteres)
-               * body: Explicación práctica con contexto real (mín 100, máx 300 caracteres)
-               * links: Máx 2 URLs verificadas por tip, solo si son oficiales
-            - closing: Llamada a la acción clara y concreta
-            - contactEmail: Email de contacto o string vacío
-
-        3. CONSTRAINTS TÉCNICOS:
-            - NO uses markdown dentro de strings (sin **, sin `, sin listas con -)
-            - URLs deben ser absolutas y verificables (https://...)
-            - Contenido específico, no genérico
-            - Incluye al menos un tip relacionado con {brands or "las tecnologías mencionadas"}
-
-        4. VALIDACIÓN FINAL:
-            - Verifica que el JSON sea parseable
-            - Confirma que no hay campos null (usa "" para strings vacíos)
-            - Asegúrate de que tips tenga entre 5 y 7 elementos exactos
-
-        Responde ÚNICAMENTE con el objeto JSON, sin texto adicional."""
+        topic_title = topic.title if topic else "Ciberseguridad General"
+        topic_description = getattr(topic, 'description', 'No disponible') if topic else f"Genérico para sector {sector}"
+        
+        replacements = {
+            "company": company,
+            "sector": sector,
+            "brands": brands or "No especificadas",
+            "audience": audience_profile,
+            "tone": tone,
+            "language": language.upper(),
+            "contact": contact,
+            "topic_title": topic_title,
+            "topic_description": topic_description,
+            "topic_id": str(topic.id) if topic else str(topic_id),
+            "focus": focus,
+            "verified_resources": verified_resources[:2000],
+        }
+        
+        result = user_template
+        for key, value in replacements.items():
+            result = result.replace("{{" + key + "}}", value)
+        
+        return result
 
     # ── Generación ────────────────────────────────────────────────────────────
 
     @circuit_breaker(threshold=3, timeout=60)
-    def generate_pill(
+    def generate(
         self,
         *,
         topic:             Topic | None,
@@ -807,6 +753,8 @@ class AegisAIWriter:
         """
         Genera el contenido de la píldora con tool calling y reintentos.
         Devuelve un AegisContent validado listo para persistir.
+        
+        Implementa el método abstracto generate() de AIWriter.
         """
         # Enriquecimiento de contexto con búsqueda web
         search_queries = [
@@ -885,7 +833,7 @@ class AegisAIWriter:
             except Exception as exc:
                 self.logger.error(f"Intento {attempt + 1} fallido: {exc}")
                 if attempt == MAX_RETRIES - 1:
-                    raise RuntimeError(f"Fallo tras {MAX_RETRIES} intentos: {exc}")
+                    raise AIFallbackExhaustedError(MAX_RETRIES, str(exc))
                 time.sleep(RETRY_DELAY_BASE ** attempt)
 
         data = self._parse_response(raw_response)
@@ -929,11 +877,11 @@ class AegisAIWriter:
                     body     = str(tip_data.get("body", ""))[:1000],
                     links    = valid_links[:2],
                 ))
-            except ValueError as exc:
+            except AegisValidationError as exc:
                 self.logger.warning(f"Tip {i + 1} descartado: {exc}")
 
         if len(tips) < 3:
-            raise ValueError(f"Insuficientes tips válidos: {len(tips)}")
+            raise AegisInsufficientContentError(3, len(tips))
 
         return AegisContent(
             topic_id      = resolved_topic_id,
@@ -952,7 +900,7 @@ class AegisAIWriter:
     def _parse_response(self, raw: str) -> dict:
         """Parseo robusto con múltiples estrategias de recuperación."""
         if not raw:
-            raise ValueError("Respuesta vacía del modelo")
+            raise AIResponseError("Respuesta vacía del modelo")
 
         # Intento directo
         try:
@@ -976,4 +924,4 @@ class AegisAIWriter:
             return json.loads(cleaned)
         except json.JSONDecodeError as exc:
             self.logger.error(f"No se pudo parsear respuesta: {raw[:500]}")
-            raise ValueError(f"JSON inválido tras limpieza: {exc}")
+            raise AIResponseError(f"JSON inválido tras limpieza: {exc}")
