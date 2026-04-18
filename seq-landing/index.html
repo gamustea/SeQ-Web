@@ -9,22 +9,22 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-primary: #0A0A0A;
-            --bg-secondary: #141414;
-            --surface: #1A1A1A;
-            --surface-elevated: #222222;
-            --accent-primary: #00FF88;
-            --accent-secondary: #00E5CC;
-            --accent-glow: rgba(0, 255, 136, 0.3);
-            --text-primary: #FFFFFF;
-            --text-secondary: #A0A0A0;
-            --text-muted: #666666;
-            --status-operational: #22C55E;
-            --status-dev: #F59E0B;
-            --danger: #EF4444;
-            --border-subtle: rgba(255, 255, 255, 0.08);
-            --gradient-primary: linear-gradient(135deg, #00FF88 0%, #00E5CC 100%);
-            --gradient-glow: linear-gradient(135deg, rgba(0, 255, 136, 0.2) 0%, rgba(0, 229, 204, 0.2) 100%);
+            --bg-primary: #080c14;
+            --bg-secondary: #0d1420;
+            --surface: #0d1420;
+            --surface-elevated: #131c2e;
+            --accent-primary: #38bdf8;
+            --accent-secondary: #7dd3fc;
+            --accent-glow: rgba(56, 189, 248, 0.3);
+            --text-primary: #e2e8f0;
+            --text-secondary: #8da4c0;
+            --text-muted: #4e6585;
+            --status-operational: #38bdf8;
+            --status-dev: #fbbf24;
+            --danger: #f87171;
+            --border-subtle: rgba(56, 189, 248, 0.1);
+            --gradient-primary: linear-gradient(135deg, #38bdf8 0%, #7dd3fc 100%);
+            --gradient-glow: linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(125, 211, 252, 0.2) 100%);
         }
 
         * {
@@ -150,14 +150,18 @@
             background: var(--bg-primary);
         }
 
-        .hero-video {
+        .hero-bg {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            object-fit: cover;
-            opacity: 0.6;
+            background: 
+                linear-gradient(180deg, rgba(8, 12, 20, 0.4) 0%, rgba(8, 12, 20, 0.8) 50%, rgba(8, 12, 20, 1) 100%),
+                url('SecOps-Logo.png') center/40% no-repeat;
+            background-position: center;
+            background-size: cover;
+            opacity: 0.15;
         }
 
         .hero-overlay {
@@ -167,9 +171,9 @@
             right: 0;
             bottom: 0;
             background: linear-gradient(180deg,
-                rgba(10, 10, 10, 0.3) 0%,
-                rgba(10, 10, 10, 0.7) 50%,
-                rgba(10, 10, 10, 1) 100%
+                rgba(8, 12, 20, 0.3) 0%,
+                rgba(8, 12, 20, 0.7) 50%,
+                rgba(8, 12, 20, 1) 100%
             );
         }
 
@@ -186,8 +190,8 @@
             align-items: center;
             gap: 0.5rem;
             padding: 0.5rem 1rem;
-            background: rgba(0, 255, 136, 0.1);
-            border: 1px solid rgba(0, 255, 136, 0.3);
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.3);
             border-radius: 100px;
             font-size: 0.85rem;
             color: var(--accent-primary);
@@ -382,7 +386,7 @@
 
         .module-card:hover {
             transform: translateY(-4px);
-            border-color: rgba(0, 255, 136, 0.3);
+            border-color: rgba(56, 189, 248, 0.3);
         }
 
         .module-card:hover::before {
@@ -508,7 +512,7 @@
         }
 
         .feature-card:hover {
-            border-color: rgba(0, 255, 136, 0.3);
+            border-color: rgba(56, 189, 248, 0.3);
             transform: translateY(-2px);
         }
 
@@ -549,7 +553,7 @@
 
         .feature-tag {
             padding: 0.3rem 0.7rem;
-            background: rgba(0, 255, 136, 0.1);
+            background: rgba(56, 189, 248, 0.1);
             border-radius: 6px;
             font-size: 0.75rem;
             font-weight: 500;
@@ -580,7 +584,7 @@
         }
 
         .tech-item:hover {
-            border-color: rgba(0, 255, 136, 0.3);
+            border-color: rgba(56, 189, 248, 0.3);
             background: var(--surface-elevated);
         }
 
@@ -656,7 +660,7 @@
 
         .code-dot.red { background: #EF4444; }
         .code-dot.yellow { background: #F59E0B; }
-        .code-dot.green { background: #22C55E; }
+        .code-dot.green { background: #38bdf8; }
 
         .code-label {
             font-family: 'JetBrains Mono', monospace;
@@ -672,7 +676,7 @@
             font-family: 'JetBrains Mono', monospace;
         }
 
-        .method-post { background: rgba(34, 197, 94, 0.2); color: #22C55E; }
+        .method-post { background: rgba(56, 189, 248, 0.2); color: #38bdf8; }
         .method-get { background: rgba(59, 130, 246, 0.2); color: #60A5FA; }
 
         .code-content {
@@ -696,7 +700,7 @@
         .code-number { color: #F78C6C; }
         .code-property { color: #82AAFF; }
         .code-comment { color: #546E7A; font-style: italic; }
-        .code-url { color: #00E5CC; }
+        .code-url { color: #7dd3fc; }
 
         /* Installation Section */
         .installation {
@@ -990,11 +994,7 @@
     <nav class="nav">
         <div class="nav-container">
             <a href="#" class="nav-logo">
-                <div class="nav-logo-icon">
-                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                    </svg>
-                </div>
+                <img src="SecOps-Logo.png" alt="SeQ" class="nav-logo-icon" style="width:40px;height:40px;border-radius:10px;">
                 <span class="nav-logo-text">SeQ</span>
             </a>
             <ul class="nav-links">
@@ -1022,10 +1022,7 @@
 
     <!-- Hero Section -->
     <section class="hero">
-        <video class="hero-video" autoplay muted loop playsinline>
-            <source src="./videos/hero_loop.mp4" type="video/mp4">
-        </video>
-        <div class="hero-overlay"></div>
+        <div class="hero-bg"></div>
         <div class="hero-content">
             <div class="hero-badge">
                 <span class="hero-badge-dot"></span>
@@ -1034,8 +1031,8 @@
             <h1 class="hero-title">SeQ</h1>
             <p class="hero-subtitle">Security Operations Platform</p>
             <p class="hero-description">
-                Sistema integral de seguridad con escaneo de vulnerabilidades y gestion cifrada de secretos.
-                Potenciado por Nmap, Nikto y OpenVAS.
+                Sistema integral de seguridad con escaneo de vulnerabilidades, analisis de IA
+                y concienciacion. Potenciado por Nmap, Nikto, OpenVAS y Ollama.
             </p>
             <div class="hero-actions">
                 <a href="https://github.com/gamustea/SeQ" target="_blank" class="btn btn-primary">
@@ -1073,10 +1070,10 @@
                     </svg>
                     Arquitectura Modular
                 </span>
-                <h2 class="section-title">Dos Modulos, Una Plataforma</h2>
+                <h2 class="section-title">Tres Modulos, Una Plataforma</h2>
                 <p class="section-description">
-                    SeQ combina capacidades de escaneo de vulnerabilidades con gestion segura de secretos
-                    en una solucion unificada.
+                    SeQ combina escaneo de vulnerabilidades, concienciacion en ciberseguridad
+                    y gestion cifrada de secretos en una solucion unificada.
                 </p>
             </div>
             <div class="modules-grid">
@@ -1096,7 +1093,7 @@
                         </span>
                     </div>
                     <h3 class="module-name">Sentinel</h3>
-                    <p class="module-tagline">REST API para escaneo de vulnerabilidades</p>
+                    <p class="module-tagline">REST API para escaneo de vulnerabilidades con IA</p>
                     <ul class="module-features">
                         <li>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1126,7 +1123,57 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="20 6 9 17 4 12"/>
                             </svg>
-                            Generacion de reportes PDF con patron Strategy
+                            Analisis de IA con Ollama (prompts especializados)
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            Reportes PDF con patron Strategy
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Aegis Module -->
+                <div class="module-card animate-on-scroll">
+                    <div class="module-header">
+                        <div class="module-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                <path d="M12 8v4M12 16h.01"/>
+                            </svg>
+                        </div>
+                        <span class="module-status status-operational">
+                            <span class="status-dot"></span>
+                            Operativo
+                        </span>
+                    </div>
+                    <h3 class="module-name">Aegis</h3>
+                    <p class="module-tagline">Concienciacion en ciberseguridad con IA</p>
+                    <ul class="module-features">
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            Generacion de pildoras por IA local (Ollama)
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            Contenido adaptado al contexto empresarial
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            Alertas de vulnerabilidades recientes (INCIBE-CERT)
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            Exportacion: Markdown, HTML, PDF, Email
                         </li>
                     </ul>
                 </div>
@@ -1326,6 +1373,26 @@
                         <span class="feature-tag">API Protection</span>
                     </div>
                 </div>
+
+                <!-- Ollama AI -->
+                <div class="feature-card animate-on-scroll">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+                            <path d="M12 2a10 10 0 1 1-10 10H12V2z"/>
+                        </svg>
+                    </div>
+                    <h3 class="feature-title">IA Local con Ollama</h3>
+                    <p class="feature-description">
+                        Analisis de seguridad potenciado por IA local. Prompts especializados
+                        para Nmap, Nikto, OpenVAS y Aegis.
+                    </p>
+                    <div class="feature-tags">
+                        <span class="feature-tag">Ollama</span>
+                        <span class="feature-tag">Local AI</span>
+                        <span class="feature-tag">Tool Calling</span>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
@@ -1424,6 +1491,13 @@
                     <div class="tech-info">
                         <div class="tech-name">OpenVAS</div>
                         <div class="tech-category">Vuln Analysis</div>
+                    </div>
+                </div>
+                <div class="tech-item animate-on-scroll">
+                    <div class="tech-icon">🤖</div>
+                    <div class="tech-info">
+                        <div class="tech-name">Ollama</div>
+                        <div class="tech-category">Local AI</div>
                     </div>
                 </div>
                 <div class="tech-item animate-on-scroll">
@@ -1657,11 +1731,7 @@
     <footer class="footer">
         <div class="footer-container">
             <div class="footer-logo">
-                <div class="footer-logo-icon">
-                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                    </svg>
-                </div>
+                <img src="SecOps-Logo.png" alt="SeQ" class="footer-logo-icon" style="width:48px;height:48px;border-radius:12px;">
                 <span class="footer-logo-text">SeQ</span>
             </div>
             <div class="footer-links">
