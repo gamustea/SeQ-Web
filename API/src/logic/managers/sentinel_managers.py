@@ -1160,16 +1160,8 @@ class OpenVASScanManager(ScanManager):
             self.logger.error(f"Error obteniendo escaneos OpenVAS: {e}", exc_info=True)
             raise
 
-    def _execute_scan_in_thread(
-        self, 
-        scan_id: int, 
-        task: OpenVASTask, 
-        skip_normalize: bool = False
-    ) -> None:
+    def _execute_scan_in_thread(self, scan_id: int, task: OpenVASTask, skip_normalize: bool = False) -> None:
         """Execute OpenVAS scan in a background thread.
-
-        Override for OpenVAS: needs to update task_id and report_id
-        after the task executes.
 
         Args:
             scan_id: ID of the scan to execute.
@@ -1182,63 +1174,117 @@ class OpenVASScanManager(ScanManager):
             if not skip_normalize:
                 target_ip, _ = normalize_target(task.target)
                 task.target = target_ip
+
+            super()._execute_scan_in_thread(scan_id, task)
+
             scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan:
-                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado")
-                return
-
-            thread_manager.logger.info(f"Iniciando escaneo OpenVAS {scan_id}")
-
-            task.scan()
-            success = task.wait(timeout=task.timeout + 30)
-
-            if not success or task.results is None:
-                thread_manager.logger.error(
-                    f"Escaneo {scan_id} falló. Estado: {task.status}"
-                )
-                thread_manager._mark_scan_as(scan, ScanStatus.FAILED)
+            if scan and task.task_id:
+                scan.task_id = task.task_id
+                scan.report_id = task.report_id
                 thread_manager._safe_commit()
-                return
-
-            scan.task_id = task.task_id
-            scan.report_id = task.report_id
-            scan.status = ScanStatus.FINISHED.value
-            thread_manager.session.add(scan)
-
-            thread_manager.logger.info(f"Guardando resultados de escaneo {scan_id}")
-            processor = thread_manager._get_result_processor()
-            processor.process_and_save(scan, task.results)
-            thread_manager._safe_commit()
-
-            thread_manager.logger.info(f"Escaneo OpenVAS {scan_id} completado")
 
         except Exception as e:
             thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
-
             try:
+                thread_manager._safe_rollback()
                 error_scan = thread_manager.get_scan_by_id(scan_id)
                 if error_scan:
                     thread_manager._mark_scan_as(error_scan, ScanStatus.FAILED)
+                    thread_manager._safe_commit()
             except Exception as update_err:
                 thread_manager.logger.error(f"Error actualizando estado: {update_err}")
-
         finally:
             thread_manager.close_session()
-            self._unregister_task(scan_id)
 
-    def generate_report(self, scan_id: int) -> bytes:
+    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
         """Generate a PDF report for an OpenVAS scan.
 
         Args:
             scan_id: ID of the scan.
+            ai_report: Include AI-generated analysis in the report.
 
         Returns:
-            Report bytes.
-
-        Raises:
-            NotImplementedError: OpenVAS report generation is handled by endpoint.
+            Document ID of the generated document.
         """
-        raise NotImplementedError("La generación de reportes para OpenVAS se maneja en el endpoint")
+        scan = self.get_scan_by_id(scan_id)
+        if not scan:
+            self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
+            raise ValueError(f"Escaneo {scan_id} no encontrado")
+
+        document = SentinelDocument(
+            scan_id=scan.id,
+            scan_type=scan.scan_type,
+            document_type="sentinel",
+            filename="",
+            format="pdf",
+            status="pending",
+            user_id=scan.user_id
+        )
+        
+        self.session.add(document)
+        self.session.flush()
+        
+        document.status = "running"
+        self.session.commit()
+
+        thread = threading.Thread(
+            target=self._generate_pdf_async,
+            args=(document.id, scan.id, ai_report),
+            daemon=True,
+            name=f"PDFGeneration-Scan-{scan.id}"
+        )
+
+        thread.start()
+        return document.id
+
+    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False):
+        """Generate PDF asynchronously in a background thread.
+
+        Args:
+            document_id: ID of the document to update.
+            scan_id: ID of the source scan.
+            ai_report: Include AI-generated analysis in the report.
+        """
+        thread_manager = self.__class__(self.active_user)
+        document = None
+        
+        try:
+            document = thread_manager.get_document_by_id(document_id)
+            if not document:
+                thread_manager.logger.error(f"Documento {document_id} no encontrado para generación de PDF")
+                return
+
+            scan = thread_manager.get_scan_by_id(scan_id)
+            if not scan:
+                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado para generación de PDF")
+                return
+
+            scan_type = scan.scan_type
+            if scan_type != "openvas":
+                thread_manager.logger.error(f"Tipo de escaneo {scan_type} no soportado para generación de PDF para OpenVASScanManager")
+                return
+
+            thread_manager.logger.info(f"Generando informe para el escaneo OpenVAS {scan_id}")
+            
+            strategy = OpenVASPrintingStrategy(scan)
+            pdf_creator = PDFCreator(strategy)
+            pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
+
+            document.filename = pdf_path
+            document.status = "done"
+            document.generated_at = datetime.utcnow()
+            thread_manager._safe_commit()
+            
+            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
+
+        except Exception as e:
+            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
+            if document:
+                document.status = "error"
+                thread_manager._safe_commit()
+        
+        finally:
+            thread_manager.close_session()
 
     def _extract_domain_data(self, processor, task, scan):
         return processor.process(task.results)

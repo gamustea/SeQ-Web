@@ -15,6 +15,7 @@ Classes:
     NiktoPrintingStrategy: Strategy for Nikto scan reports.
     NmapAIWriter: AI writer for Nmap scan analysis.
     NiktoAIWriter: AI writer for Nikto scan analysis.
+    OpenVASAIWriter: AI writer for OpenVAS scan analysis.
 """
 
 import os
@@ -49,7 +50,7 @@ from reportlab.platypus import (
 )
 
 from src.misc import ConfigReader, DirectoryType, SentinelTool, SecOpsLogger
-from src.core.model import NmapScan, NiktoScan, Scan, Host, Topic, NiktoIncident
+from src.core.model import NmapScan, NiktoScan, OpenVASScan, Scan, Host, Topic, NiktoIncident
 from src.logic.documents._base import AIWriter
 from src.core.exceptions import (
     AIConnectionError,
@@ -1138,6 +1139,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
             scan: OpenVASScan instance to generate report from.
         """
         super().__init__(scan)
+        self.writer = OpenVASAIWriter()
         
         palette_config = ConfigReader.get_tool_color_palette(SentinelTool.OPENVAS)
         
@@ -1176,6 +1178,8 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
             host_table = theme.kv_table(host_info, col_widths=[2 * inch, 4 * inch])
             elements.append(host_table)
             elements.append(Spacer(1, 0.1 * inch))
+
+        started = getattr(scan, "started_at", None)
         started_str = started.strftime("%d/%m/%Y %H:%M:%S") if started else "N/A"
         results = getattr(scan, "results", []) or []
 
@@ -1248,23 +1252,23 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
             elements.append(table)
             elements.append(Spacer(1, 0.3 * inch))
 
-        # Detalle de vulnerabilidades
-        elements.append(PageBreak())
-        elements.append(Paragraph("Vulnerabilidades detectadas", theme.subtitle))
-        elements.append(Spacer(1, 0.1 * inch))
+            # Detalle de vulnerabilidades
+            elements.append(PageBreak())
+            elements.append(Paragraph("Vulnerabilidades detectadas", theme.subtitle))
+            elements.append(Spacer(1, 0.1 * inch))
 
-        if not results:
-            elements.append(Paragraph("No se detectaron vulnerabilidades.", theme.info))
-            return
+            if not results:
+                elements.append(Paragraph("No se detectaron vulnerabilidades.", theme.info))
+                return
 
-        severity_priority = {
-            "CRITICAL": 0,
-            "HIGH": 1,
-            "MEDIUM": 2,
-            "LOW": 3,
-            "LOG": 4,
-            "UNKNOWN": 5,
-        }
+            severity_priority = {
+                "CRITICAL": 0,
+                "HIGH": 1,
+                "MEDIUM": 2,
+                "LOW": 3,
+                "LOG": 4,
+                "UNKNOWN": 5,
+            }
 
         def sort_key(res):
             vuln = res.vulnerability
@@ -1439,6 +1443,9 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
                 elements.append(table)
 
             elements.append(Spacer(1, 0.2 * inch))
+
+        if ai_report:
+            self._append_ai_analysis(elements, theme)
 
     def get_filename_suffix(self) -> str:
         """Get the PDF filename suffix.
@@ -2274,6 +2281,266 @@ class NiktoAIWriter(AIWriter):
                 for rec in result["recommendations"]:
                     rec["cve_refs"] = []
                     
+            return result
+        except json.JSONDecodeError:
+            return {
+                "executive_summary": "Error en análisis de IA",
+                "risk_level": "INFORMATIVO",
+                "technical_analysis": "No se pudo generar el análisis automático.",
+                "recommendations": [],
+                "conclusions": "Revisar manualmente los hallazgos brutos."
+            }
+
+
+class OpenVASAIWriter(AIWriter):
+    """AI writer for OpenVAS vulnerability scan analysis.
+    
+    Generates security analysis for OpenVAS scans using Ollama.
+    Analyzes aggregated findings grouped by security controls rather than
+    individual vulnerabilities, providing calibrated risk assessments.
+    
+    The system prompt enforces:
+    - Controls over counts (one misconfigured control = one issue)
+    - Never escalate risk based on number of findings
+    - Distinguish between confirmed vs potential vulnerabilities
+    
+    Attributes:
+        model: Ollama model name (from env var or default).
+        _client: Ollama client instance.
+        _prompts: Prompt configuration from SecOpsConfig.json.
+    """
+
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> None:
+        """Initialize OpenVAS AI writer.
+        
+        Args:
+            host: Ollama host (optional, from env var if not provided).
+            model: Ollama model name (optional, from env var if not provided).
+        """
+        super().__init__()
+        self._prompts = ConfigReader().get_prompts_config()
+
+    def _preprocess_vulnerabilities(self, vulnerabilities: list) -> dict:
+        """Preprocess vulnerabilities by grouping them into security controls.
+        
+        Args:
+            vulnerabilities: List of vulnerability dictionaries.
+            
+        Returns:
+            Dictionary with controls and metrics.
+        """
+        if not vulnerabilities:
+            return {"error": "No vulnerabilities"}
+        
+        controls = {
+            "input_validation": [],
+            "authentication": [],
+            "session_management": [],
+            "data_protection": [],
+            "access_control": [],
+            "cryptography": [],
+            "information_disclosure": [],
+        }
+        
+        for vuln in vulnerabilities:
+            name = str(vuln.get("name", "")).lower()
+            desc = str(vuln.get("description", "")).lower()
+            combined = name + " " + desc
+            
+            if any(x in combined for x in ["sql injection", "command injection", "ldap injection", "xml injection", "xxe", "xpath injection"]):
+                controls["input_validation"].append(vuln)
+            elif any(x in combined for x in ["authentication", "credential", "default password", "brute force", "weak password"]):
+                controls["authentication"].append(vuln)
+            elif any(x in combined for x in ["session fixation", "session id", "weak session"]):
+                controls["session_management"].append(vuln)
+            elif any(x in combined for x in ["encryption", "ssl", "tls", "certificate", "unencrypted", "weak cryptographic"]):
+                controls["cryptography"].append(vuln)
+            elif any(x in combined for x in ["idor", "broken access control", "privilege", "authorization"]):
+                controls["access_control"].append(vuln)
+            elif any(x in combined for x in ["information disclosure", "debug", "verbose error", "version disclosure", "banner"]):
+                controls["information_disclosure"].append(vuln)
+            else:
+                controls["data_protection"].append(vuln)
+        
+        return {
+            "controls": controls,
+            "metrics": {
+                "total_raw": len(vulnerabilities),
+                "by_severity": self._count_by_severity(vulnerabilities),
+                "controls_affected": sum(1 for v in controls.values() if len(v) > 0)
+            }
+        }
+
+    def _count_by_severity(self, vulnerabilities: list) -> dict:
+        """Count vulnerabilities by severity class."""
+        counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "LOG": 0}
+        for v in vulnerabilities:
+            sev = str(v.get("severity_class", "")).upper()
+            if sev in counts:
+                counts[sev] += 1
+        return counts
+
+    def _build_system_prompt(self) -> str:
+        prompts_config = ConfigReader().get_prompts_config()
+        return prompts_config.get("openvas", {}).get("system", "")
+
+    def _build_user_prompt(self, scan_data: dict, processed: dict) -> str:
+        target = scan_data.get("target", "desconocido")
+        started = scan_data.get("started_at", "N/A")
+        metrics = processed.get("metrics", {})
+        controls = processed.get("controls", {})
+
+        severity_counts = metrics.get("by_severity", {})
+        severity_str = f"CRITICAL: {severity_counts.get('CRITICAL', 0)}, HIGH: {severity_counts.get('HIGH', 0)}, MEDIUM: {severity_counts.get('MEDIUM', 0)}, LOW: {severity_counts.get('LOW', 0)}"
+
+        vulns_for_ai = []
+        for control_name, findings in controls.items():
+            if not findings:
+                continue
+            # Prefer findings with real CVSS score; fall back to one LOG entry
+            # per control as context signal (avoids flooding with detection noise).
+            scored = [f for f in findings if float(f.get("severity_score", 0.0)) > 0.0]
+            sample = scored[:3] if scored else findings[:1]
+            for f in sample:
+                vulns_for_ai.append({
+                    "control": control_name,
+                    "name": f.get("name", "")[:120],
+                    "severity": f.get("severity_class", "LOG"),
+                    "cvss_score": f.get("severity_score", 0.0),
+                    "description": f.get("description", "")[:200]
+                })
+
+        prompts_config = ConfigReader().get_prompts_config()
+        template = prompts_config.get("openvas", {}).get("userTemplate", "")
+
+        return template.replace("{{target}}", str(target)) \
+                    .replace("{{started}}", str(started)) \
+                    .replace("{{total_vulns}}", str(metrics.get("total_raw", 0))) \
+                    .replace("{{severity_counts}}", severity_str) \
+                    .replace("{{vulns_json}}", json.dumps(vulns_for_ai, indent=2, ensure_ascii=False))
+
+    def _assess_control_severity(self, control_name: str, findings: list) -> str:
+        """Assess the base severity for a security control."""
+        severity_map = {
+            "input_validation": "CRÍTICO",
+            "authentication": "ALTO",
+            "access_control": "ALTO",
+            "data_protection": "MEDIO",
+            "cryptography": "MEDIO",
+            "session_management": "MEDIO",
+            "information_disclosure": "BAJO"
+        }
+        return severity_map.get(control_name, "MEDIO")
+
+    def generate(self, scan: OpenVASScan) -> dict:
+        """Generate AI security analysis for an OpenVAS scan.
+        
+        Args:
+            scan: OpenVASScan object with scan data.
+            
+        Returns:
+            Dictionary with keys: executive_summary, risk_level, technical_analysis,
+            recommendations, conclusions.
+        """
+        scan_data = {
+            "target": scan.target,
+            "started_at": scan.started_at.isoformat() if getattr(scan, 'started_at', None) else "N/A",
+        }
+        
+        vulnerabilities = []
+        for result in (getattr(scan, 'results', None) or []):
+            vuln = result.vulnerability if hasattr(result, 'vulnerability') else result
+            vulnerabilities.append({
+                "name": getattr(vuln, "name", ""),
+                "description": getattr(vuln, "description", ""),
+                "severity_class": getattr(vuln, "severity_class", "LOG"),
+                "severity_score": getattr(vuln, "severity_score", 0.0),
+                "threat": getattr(vuln, "threat", ""),
+                "method": getattr(vuln, "method", ""),
+            })
+        
+        processed = self._preprocess_vulnerabilities(vulnerabilities)
+        
+        if processed.get("error"):
+            return {
+                "executive_summary": "Escaneo sin vulnerabilidades detectadas o datos insuficientes.",
+                "risk_level": "INFORMATIVO",
+                "technical_analysis": "No se detectaron vulnerabilidades en el escaneo.",
+                "recommendations": [],
+                "conclusions": "Continuar con monitoreo regular."
+            }
+        
+        prompt = self._build_user_prompt(scan_data, processed)
+        
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Buscar información sobre vulnerabilidades específicas y mitigaciones.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        }]
+        
+        raw_response = None
+        attempt = 0
+        for attempt in range(3):
+            try:
+                messages = [
+                    {"role": "system", "content": self._build_system_prompt()},
+                    {"role": "user",   "content": prompt},
+                ]
+                resp = self._client.chat(
+                    model    = self.model,
+                    messages = messages,
+                    tools    = tools,
+                    format   = "json",
+                    options  = {
+                        "num_predict": 2048,
+                        "temperature": 0.1,
+                        "top_p": 0.75,
+                        "repeat_penalty": 1.3,
+                    },
+                )
+                raw_response = resp.message.content.strip()
+                if raw_response:
+                    break
+            except Exception as exc:
+                if attempt == 2:
+                    raise AIFallbackExhaustedError(3, str(exc))
+                time.sleep(1.5 ** attempt)
+        
+        return self._parse_response(raw_response)
+
+    def _parse_response(self, raw: str) -> dict:
+        """Parse the AI response JSON with validation."""
+        if not raw:
+            raise AIResponseError("Respuesta vacía", attempt=attempt)
+        
+        try:
+            result = json.loads(raw)
+            valid = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
+            risk_level = result.get("risk_level") or ""
+            if risk_level.upper() not in valid:
+                result["risk_level"] = "BAJO"
+            
+            result.setdefault("executive_summary", "Análisis completado.")
+            result.setdefault("technical_analysis", "No hay análisis técnico disponible.")
+            result.setdefault("conclusions", "Revisar los resultados.")
+            
+            if isinstance(result.get("recommendations"), list):
+                for rec in result["recommendations"]:
+                    if not isinstance(rec, dict):
+                        rec = {"title": "Recomendación", "description": "", "remediation": "", "priority": "MEDIA"}
+                    rec.setdefault("cve_refs", [])
+            
             return result
         except json.JSONDecodeError:
             return {

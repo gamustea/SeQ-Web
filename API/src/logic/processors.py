@@ -262,26 +262,23 @@ class NiktoResultProcessor(ScanResultProcessor):
 class OpenVASResultProcessor(ScanResultProcessor):
     """Procesa resultados de escaneos OpenVAS/GVM."""
     
-    def process(self, raw_xml: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Set[str]]:
-        """Parsea XML de OpenVAS y extrae vulnerabilidades y resultados.
+    def process(self, raw_data: Any) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Set[str]]:
+        """Procesa datos de OpenVAS (ya parseados por OpenVASTask).
         
+        Args:
+            raw_data: Dict con estructura {'vulnerabilities': [], 'scan_results': [], 'hosts': []}
+            
         Returns:
             Tuple conteniendo:
             - Lista de dicts con datos de vulnerabilidades (OpenVASVulnerability)
             - Lista de dicts con datos de resultados por host (OpenVASScanResult)
             - Set de IPs de hosts afectados
         """
-        parsed = self._parse_openvas_structure(raw_xml)
+        vulnerabilities = raw_data.get('vulnerabilities', [])
+        scan_results = raw_data.get('scan_results', [])
+        hosts = set(raw_data.get('hosts', []))
         
-        vulnerabilities = []
-        for vuln in parsed['vulnerabilities']:
-            vulnerabilities.append(vuln)
-        
-        scan_results = []
-        for result in parsed['scan_results']:
-            scan_results.append(result)
-        
-        return vulnerabilities, scan_results, parsed['hosts']
+        return vulnerabilities, scan_results, hosts
     
     def _parse_openvas_structure(self, report_xml: str) -> dict:
         """Extrae estructura de datos del XML de OpenVAS."""
