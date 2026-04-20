@@ -60,6 +60,7 @@ class AegisManager(BaseManager):
             tweaks      = tweaks or {}
             document_id = self._create_pending_document(topic_id)
 
+            self.logger.debug(f"Creando píldora con tweaks{tweaks}")
             thread_manager = self.__class__(self.user)
             threading.Thread(
                 target  = thread_manager._run_generation_workflow,
@@ -281,12 +282,15 @@ class AegisManager(BaseManager):
             self.session.flush()
 
             for i, tip in enumerate(content.tips, 1):
+                links_value = tip.links if tip.links else None
+                if links_value:
+                    links_value = [{"text": lk["text"], "url": lk["url"]} for lk in links_value]
                 self.session.add(AegisTip(
                     document_id = document_id,
                     position    = i,
                     headline    = tip.headline,
                     body        = tip.body,
-                    links_json  = tip.links or None,
+                    links_json  = links_value,
                 ))
 
             self._safe_commit()

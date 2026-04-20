@@ -880,8 +880,8 @@ class AegisAIWriter(AIWriter):
             except AegisValidationError as exc:
                 self.logger.warning(f"Tip {i + 1} descartado: {exc}")
 
-        if len(tips) < 3:
-            raise AegisInsufficientContentError(3, len(tips))
+        if len(tips) < 7:
+            raise AegisInsufficientContentError(7, len(tips))
 
         return AegisContent(
             topic_id      = resolved_topic_id,

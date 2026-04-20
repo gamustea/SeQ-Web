@@ -421,7 +421,7 @@ def aegis_delete_document():
 
             mgr.delete_document(doc_id)
 
-            _logger.info(f"Aegis doc {doc_id} eliminado " + chr(0xe2) + " user={get_current_username()}")
+            _logger.info(f"Aegis doc {doc_id} eliminado para usuario {get_current_username()}")
             return jsonify({"message": "Documento eliminado correctamente", "documentId": doc_id}), 200
 
     except (MissingParameterError, ValidationError) as exc:
