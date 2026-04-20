@@ -517,14 +517,12 @@ class AegisAlertFetcher:
                 self.logger.warning(f"CIRCL error para '{brand}': {e}")
                 continue
 
-            # FIX: Extraer correctamente la estructura anidada
             results = data.get("results", {}) if isinstance(data, dict) else {}
             cve_list = results.get("cvelistv5", []) if isinstance(results, dict) else []
             
             if not isinstance(cve_list, list):
                 continue
 
-            # Ordenar por fecha descendente
             def extract_date(entry):
                 try:
                     if isinstance(entry, (list, tuple)) and len(entry) > 1:
@@ -794,7 +792,7 @@ class AegisAIWriter(AIWriter):
                     tools    = tools,
                     format   = "json",
                     options  = {
-                        "num_predict":    4096,
+                        "num_predict":    8192,
                         "temperature":    0.4 if attempt == 0 else 0.7,
                         "top_p":          0.9,
                         "repeat_penalty": 1.1,
@@ -818,7 +816,7 @@ class AegisAIWriter(AIWriter):
                         model    = self.model,
                         messages = messages,
                         format   = "json",
-                        options  = {"num_predict": 4096, "temperature": 0.5},
+                        options  = {"num_predict": 8192, "temperature": 0.5},
                     )
 
                 raw_response = resp.message.content.strip()
@@ -895,9 +893,28 @@ class AegisAIWriter(AIWriter):
         )
 
     def _parse_response(self, raw: str) -> dict:
-        """Parseo robusto con múltiples estrategias de recuperación."""
+        """
+        Parseo robusto con múltiples estrategias de recuperación.
+
+        Detecta explìtamente si la respuesta viene truncada por el límite de
+        num_predict antes de intentar extraer un JSON parcial, evitando que
+        un objeto incompleto pase la validación con menos tips de los esperados.
+        """
         if not raw:
             raise AIResponseError("Respuesta vacía del modelo")
+
+        # Detección temprana de truncado: el JSON no cierra su llave raíz
+        # Un JSON completo siempre termina en '}' (ignorando whitespace)
+        stripped = raw.rstrip()
+        if stripped and stripped[-1] != '}':
+            self.logger.warning(
+                f"Respuesta truncada detectada (num_predict alcanzado). "
+                f"\xdaltimos 80 chars: {repr(stripped[-80:])}"
+            )
+            raise AIResponseError(
+                "Respuesta truncada por límite de tokens: el JSON no está completo. "
+                "Aumenta num_predict o reduce el tamaño del prompt."
+            )
 
         # Intento directo
         try:
@@ -905,8 +922,7 @@ class AegisAIWriter(AIWriter):
         except json.JSONDecodeError:
             pass
 
-        # Extracción de bloque JSON con patrones alternativos
-        for pattern in [r'\{[\s\S]*\}', r'```(?:json)?\s*([\s\S]*?)\s*```', r'JSON:\s*(\{[\s\S]*\})']:
+        for pattern in [r'```(?:json)?\s*([\s\S]*?)\s*```', r'JSON:\s*(\{[\s\S]*\})', r'\{[\s\S]*\}']:
             match = re.search(pattern, raw)
             if match:
                 try:
@@ -914,7 +930,6 @@ class AegisAIWriter(AIWriter):
                 except json.JSONDecodeError:
                     continue
 
-        # Limpieza agresiva
         cleaned = re.sub(r'^[^{]*', '', raw)
         cleaned = re.sub(r'[^}]*$', '', cleaned)
         try:
