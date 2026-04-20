@@ -92,6 +92,7 @@ from src.logic.documents.aegis_exporters import (
     MarkdownExporter,
     MarkdownTemplate,
     JsonExporter,
+    HTMLExporter,
     get_exporter_for_format,
 )
 from src.misc import SecOpsLogger
@@ -606,7 +607,7 @@ def export_document(doc_id: int):
         try:
             export_format = ExportFormat(format_str.lower())
         except ValueError:
-            return jsonify({"error": "unsupported_format", "message": f"Formato '{format_str}' no soportado", "supported": ["md", "json"]}), 400
+            return jsonify({"error": "unsupported_format", "message": f"Formato '{format_str}' no soportado", "supported": ["md", "json", "html"]}), 400
 
         uid = get_current_user_id()
 
@@ -625,8 +626,10 @@ def export_document(doc_id: int):
                     include_toc            = options.get("includeToc",   False),
                     include_metadata_block = options.get("includeMetadata", True),
                 ))
-            else:
+            elif export_format == ExportFormat.JSON:
                 exporter = JsonExporter()
+            else:
+                exporter = get_exporter_for_format(export_format)
 
             result = exporter.export(export_data)
 
@@ -692,7 +695,7 @@ def download_export(doc_id: int):
                 return jsonify({"error": "not_ready", "message": str(exc)}), 409
 
             export_data = ExportData.from_document_dict(doc_info, doc_id)
-            exporter    = MarkdownExporter() if export_format == ExportFormat.MARKDOWN else JsonExporter()
+            exporter    = get_exporter_for_format(export_format)
             result      = exporter.export(export_data)
 
             disposition = "inline" if inline else "attachment"
