@@ -1,4 +1,3 @@
-
 import json
 import os
 import logging
@@ -324,19 +323,54 @@ class ConfigReader:
                     "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
 
     @staticmethod
-    def get_aegis_config() -> dict[str, str]:
+    def get_aegis_config() -> dict:
         """
-        La config de Aegis (parámetros del modelo, etc.)
+        La config de Aegis completa, sin modificaciones.
         no son secretos → siempre desde el JSON.
-        Excepción: OLLAMA_HOST si se define en el entorno.
+        
+        Usa get_aegis_prompts() y get_directory_of() para acceder
+        a las subsecciones específicas de forma tipada.
         """
-        cfg = ConfigReader._load_configs()["aegis"].copy()
-        if "directories" in cfg:
-            del cfg["directories"]
-        if "prompts" in cfg:
-            del cfg["prompts"]
+        return ConfigReader._load_configs().get("aegis", {})
 
-        return cfg
+    @staticmethod
+    def get_aegis_tips_amount() -> int:
+        """
+        Número de tips que debe generar el modelo por píldora.
+        
+        Clave JSON: aegis.tipsAmount
+        Default: 7
+        """
+        cfg = ConfigReader._load_configs().get("aegis", {})
+        return int(cfg.get("tipsAmount", 7))
+
+    @staticmethod
+    def get_aegis_vulnerabilities_antiquity() -> int:
+        """
+        Antigüedad máxima en años de las vulnerabilidades a incluir en alertas.
+        
+        Clave JSON: aegis.vulnerabilitiesAntiquity
+        Default: 5
+        """
+        cfg = ConfigReader._load_configs().get("aegis", {})
+        return int(cfg.get("vulnerabilitiesAntiquity", 5))
+
+    @staticmethod
+    def get_aegis_brands() -> list[dict]:
+        """
+        Catálogo completo de marcas soportadas para la búsqueda de alertas.
+
+        Cada entrada contiene:
+            label         — Nombre legible para el usuario (ej. "HPE")
+            circl_vendor  — Vendor ID en CIRCL/NVD (ej. "hpe")
+            circl_product — Product ID en CIRCL/NVD (ej. "hpe")
+            aliases       — Términos alternativos usados en texto libre (INCIBE RSS)
+
+        Clave JSON: aegis.brands
+        Default: []
+        """
+        cfg = ConfigReader._load_configs().get("aegis", {})
+        return list(cfg.get("brands", []))
 
     @staticmethod
     def get_aegis_prompts() -> dict:

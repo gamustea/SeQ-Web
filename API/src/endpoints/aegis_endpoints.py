@@ -23,6 +23,7 @@ Gestión de Documentos
     DELETE /aegis/document  — Eliminar documento
     GET  /aegis/documents   — Listar todos los documentos del usuario
     GET  /aegis/topics      — Listar temas disponibles
+    GET  /aegis/brands      — Listar marcas disponibles para filtrado de alertas
 
 Exportación
     GET  /aegis/export/formats          — Listar formatos disponibles
@@ -45,6 +46,7 @@ Límites de tasa:
     • /delete: 30/hour, 100/day
     • /documents: 60/hour, 300/day
     • /topics: 120/hour, 600/day
+    • /brands: 120/hour, 600/day
 
 ────────────────────────────────────────────────────────────────────────────────
 EJEMPLOS DE USO
@@ -95,7 +97,7 @@ from src.logic.documents.aegis_exporters import (
     HTMLExporter,
     get_exporter_for_format,
 )
-from src.misc import SecOpsLogger
+from src.misc import ConfigReader, SecOpsLogger
 
 from ._shared import (
     get_aegis_manager,
@@ -496,6 +498,48 @@ def aegis_get_topics():
 
     except Exception as exc:
         _logger.error(f"Error en /aegis/topics: {exc}", exc_info=True)
+        err, code = create_error_response(ExceptionHandler.wrap_exception(exc, logger=_logger), include_debug_info=False)
+        return jsonify(err), code
+
+
+@aegis_bp.get("/brands")
+@require_oauth_token
+@limiter.limit("120 per hour; 600 per day")
+def aegis_get_brands():
+    """Devuelve el catálogo de marcas disponibles para filtrado de alertas de vulnerabilidad.
+
+    Cada marca incluye el nombre legible para el usuario ('label'), los identificadores
+    que usan internamente CIRCL/NVD ('circl_vendor', 'circl_product') y los términos
+    alternativos con los que aparece en el RSS de INCIBE ('aliases').
+
+    Este endpoint no requiere ningún parámetro. El resultado puede usarse directamente
+    para poblar un selector en el frontend y enviar el 'label' elegido como valor
+    de 'associatedBrands' en el body de /aegis/generate.
+
+    Returns:
+        200 — Catálogo de marcas.
+            {
+                "count": 19,
+                "brands": [
+                    {
+                        "label":         "HPE",
+                        "circl_vendor":  "hpe",
+                        "circl_product": "hpe",
+                        "aliases":       ["hewlett packard enterprise", "hp enterprise"]
+                    },
+                    ...
+                ]
+            }
+
+    Example:
+        curl "https://api.example.com/aegis/brands" \\
+             -H "Authorization: Bearer <token>"
+    """
+    try:
+        brands = ConfigReader.get_aegis_brands()
+        return jsonify({"count": len(brands), "brands": brands}), 200
+    except Exception as exc:
+        _logger.error(f"Error en /aegis/brands: {exc}", exc_info=True)
         err, code = create_error_response(ExceptionHandler.wrap_exception(exc, logger=_logger), include_debug_info=False)
         return jsonify(err), code
 

@@ -64,7 +64,6 @@ class AlertSource(str, Enum):
 
 
 MAX_BRANDS         = 5
-MAX_ALERT_AGE_YEARS = 5
 MAX_RETRIES        = 3
 RETRY_DELAY_BASE   = 1.5  # segundos, backoff exponencial
 
@@ -73,26 +72,6 @@ FALLBACK_BRANDS: list[str] = [
     "Oracle", "SAP", "VMware", "Fortinet", "Palo Alto",
     "Juniper", "IBM", "Linux", "Android", "Chrome",
 ]
-
-BRAND_SLUGS: dict[str, tuple[str, str]] = {
-    "Microsoft": ("microsoft", "windows"),
-    "Cisco":     ("cisco",     "ios"),
-    "Apple":     ("apple",     "macos"),
-    "Google":    ("google",    "chrome"),
-    "Adobe":     ("adobe",     "acrobat"),
-    "Android":   ("google",    "android"),
-    "HPE":       ("hp",        "hpe"),
-    "SonicWall": ("sonicwall", "sonicos"),
-    "Konica":    ("konicaminolta", "printer"),
-    "Juniper":   ("juniper",   "junos"),
-    "VMware":    ("vmware",    "esxi"),
-    "Palo Alto": ("paloaltonetworks", "pan-os"),
-    "SAP":       ("sap",       "netweaver"),
-    "Oracle":    ("oracle",    "database"),
-    "Mozilla":   ("mozilla",   "firefox"),
-    "Linux":     ("linux",     "kernel"),
-    "Fortinet":  ("fortinet",  "fortios"),
-}
 
 FEW_SHOT_EXAMPLES = """
 Ejemplo de output válido para tema "Phishing Empresarial":
@@ -360,8 +339,22 @@ class AegisAlertFetcher:
     _lock       = threading.Lock()
 
     def __init__(self, logger: SecOpsLogger, fallback_brands: list[str] | None = None) -> None:
-        self.logger           = logger
-        self._fallback_brands = fallback_brands or FALLBACK_BRANDS[:]
+        self.logger               = logger
+        self._max_alert_age_years = ConfigReader.get_aegis_vulnerabilities_antiquity()
+
+        # Construir los lookups de marcas desde el catálogo centralizado del config
+        brand_catalogue           = ConfigReader.get_aegis_brands()
+        self._brand_slugs: dict[str, tuple[str, str]] = {
+            b["label"]: (b["circl_vendor"], b["circl_product"])
+            for b in brand_catalogue
+        }
+        self._brand_aliases: dict[str, list[str]] = {
+            b["label"]: [a.lower() for a in b.get("aliases", [])]
+            for b in brand_catalogue
+            if b.get("aliases")
+        }
+        catalogue_labels          = [b["label"] for b in brand_catalogue]
+        self._fallback_brands     = fallback_brands or catalogue_labels or FALLBACK_BRANDS[:]
 
     # ── Caché ─────────────────────────────────────────────────────────────────
 
@@ -396,7 +389,7 @@ class AegisAlertFetcher:
             return True
         try:
             pub_date = datetime.strptime(date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            cutoff   = datetime.now(timezone.utc) - timedelta(days=365 * MAX_ALERT_AGE_YEARS)
+            cutoff   = datetime.now(timezone.utc) - timedelta(days=365 * self._max_alert_age_years)
             return pub_date >= cutoff
         except ValueError:
             self.logger.warning(f"Fecha no parseable '{date_str}', asumiendo reciente")
@@ -462,12 +455,13 @@ class AegisAlertFetcher:
                     severity = level
                     break
 
-            # Matching de marcas
+            # Matching de marcas: nombre canónico + aliases de texto libre
             matched = []
             for brand in brands:
                 if brand_counts[brand] >= max_per_brand:
                     continue
-                if brand.lower() in haystack:
+                search_terms = [brand.lower()] + self._brand_aliases.get(brand, [])
+                if any(term in haystack for term in search_terms):
                     matched.append(brand)
                     brand_counts[brand] += 1
 
@@ -505,7 +499,7 @@ class AegisAlertFetcher:
             if brand_counts[brand] >= max_per_brand:
                 continue
 
-            vendor, product = BRAND_SLUGS.get(brand, (brand.lower().replace(" ", ""), ""))
+            vendor, product = self._brand_slugs.get(brand, (brand.lower().replace(" ", ""), ""))
             url = (
                 f"https://cve.circl.lu/api/search/{vendor}/{product}"
                 if product else 
@@ -729,6 +723,7 @@ class AegisAIWriter(AIWriter):
             "topic_id": str(topic.id) if topic else str(topic_id),
             "focus": focus,
             "verified_resources": verified_resources[:2000],
+            "tips_amount": str(ConfigReader.get_aegis_tips_amount()),
         }
         
         result = user_template
@@ -838,6 +833,8 @@ class AegisAIWriter(AIWriter):
 
         data = self._parse_response(raw_response)
 
+        tips_amount = ConfigReader.get_aegis_tips_amount()
+
         raw_subtitle = str(data.get("subtitle", "")).strip()
         
         if not raw_subtitle or raw_subtitle.lower() == topic_title.lower():
@@ -880,8 +877,8 @@ class AegisAIWriter(AIWriter):
             except AegisValidationError as exc:
                 self.logger.warning(f"Tip {i + 1} descartado: {exc}")
 
-        if len(tips) < 7:
-            raise AegisInsufficientContentError(7, len(tips))
+        if len(tips) < tips_amount:
+            raise AegisInsufficientContentError(tips_amount, len(tips))
 
         return AegisContent(
             topic_id      = resolved_topic_id,
