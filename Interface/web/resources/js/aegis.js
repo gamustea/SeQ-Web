@@ -558,15 +558,72 @@ function _triggerDownload(blob, filename) {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   INIT
-══════════════════════════════════════════════════════════════ */
+    BRANDS
+    ══════════════════════════════════════════════════════════════ */
+let selectedBrands = [];
+
+async function loadBrands() {
+  const res = await apiFetch('/aegis/brands');
+  if (!res?.ok) return;
+  const data = await res.json();
+  const brands = data.brands || [];
+  const select = document.getElementById('brand-select');
+  if (!select) return;
+  brands.forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b.label;
+    opt.textContent = b.label;
+    select.appendChild(opt);
+  });
+}
+
+function renderSelectedBrands() {
+  const container = document.getElementById('selected-brands');
+  if (!container) return;
+  container.innerHTML = '';
+  selectedBrands.forEach(brand => {
+    const tag = document.createElement('span');
+    tag.className = 'brand-tag';
+    tag.innerHTML = `${SeqUI.escHtml(brand)}<span class="brand-tag__remove" data-brand="${SeqUI.escHtml(brand)}">&times;</span>`;
+    container.appendChild(tag);
+  });
+  container.querySelectorAll('.brand-tag__remove').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const brand = e.currentTarget.dataset.brand;
+      selectedBrands = selectedBrands.filter(b => b !== brand);
+      renderSelectedBrands();
+      updateBrandsInput();
+    });
+  });
+  updateBrandsInput();
+}
+
+function updateBrandsInput() {
+  const hidden = document.getElementById('input-brands');
+  if (hidden) hidden.value = selectedBrands.join(',');
+}
+
+if (document.getElementById('brand-select')) {
+  document.getElementById('brand-select').addEventListener('change', e => {
+    const brand = e.target.value;
+    if (brand && !selectedBrands.includes(brand)) {
+      selectedBrands.push(brand);
+      renderSelectedBrands();
+    }
+    e.target.value = '';
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+    INIT
+    ══════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', async () => {
   if (!SeqUI.requireSession()) return;
   SeqUI.initTopbar();
   if (btnGenerate) btnGenerate.disabled = true;
   showProgress(false);
 
-  await Promise.all([loadTopics(), loadHistory()]);
+  await Promise.all([loadTopics(), loadHistory(), loadBrands()]);
   await checkPendingGeneration();
 
   console.log('[Aegis] Initialized');
