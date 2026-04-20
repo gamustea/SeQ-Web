@@ -225,7 +225,7 @@ class AegisManager(BaseManager):
             )
 
             # 5. Persistencia
-            self._persist_content_atomic(document_id, content)
+            self._persist_content_atomic(document_id, content, tweaks.get("mentionContact"))
             self._persist_alerts_atomic(document_id, alerts)
 
             # 6. Escritura del archivo de archivo
@@ -259,7 +259,7 @@ class AegisManager(BaseManager):
     # PERSISTENCIA (privado)
     # =========================================================================
 
-    def _persist_content_atomic(self, document_id: int, content: AegisContent) -> None:
+    def _persist_content_atomic(self, document_id: int, content: AegisContent, contact_email_from_tweaks: str | None = None) -> None:
         """
         Persiste el contenido de la píldora directamente en AegisDocument
         y los tips en AegisTip. Elimina tips previos si los hubiera.
@@ -273,7 +273,7 @@ class AegisManager(BaseManager):
             doc.subtitle      = content.subtitle
             doc.intro         = content.intro
             doc.closing       = content.closing
-            doc.contact_email = content.contact_email or None
+            doc.contact_email = content.contact_email or contact_email_from_tweaks or None
             doc.company       = content.company
 
             # Eliminación de tips previos
@@ -422,6 +422,8 @@ class AegisManager(BaseManager):
                 doc.title = title[:64]
             if filename:
                 doc.filename = filename[:128]
+            if status == "done":
+                doc.generated_at = datetime.utcnow()
             if error and status == "error":
                 doc.title = f"[ERR{document_id}] {error[:50]}"[:64]
 
