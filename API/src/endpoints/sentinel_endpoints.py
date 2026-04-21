@@ -1,28 +1,76 @@
 """
-endpoints/sentinel.py
-─────────────────────
-Blueprint de escaneos (Sentinel). Registrado en /sentinel.
+sentinel_endpoints.py
+══════════════════════════════════════════════════════════════════════════════
 
-Estado y control
-    GET  /sentinel/is-finished              — ¿ha finalizado un escaneo?
-    GET  /sentinel/scan-status              — estado/progreso de un escaneo
-    POST /sentinel/scans/<scan_id>/cancel   — cancelar un escaneo en curso
+Blueprint de la API REST para el módulo Sentinel (escaneos de seguridad).
+
+Este módulo proporciona endpoints para lanzar, monitorizar y gestionar escaneos
+de seguridad utilizando tres motores de escaneo:
+
+    • Nmap      — Escaneo de puertos y detección de servicios
+    • Nikto     — Escaneo de vulnerabilidades web
+    • OpenVAS   — Escaneo completo de vulnerabilidades (GMP)
+
+────────────────────────────────────────────────────────────────────────────────
+ENDPOINTS DISPONIBLES
+────────────────────────────────────────────────────────────────────────────────
+
+Estado y Control
+    GET  /sentinel/is-finished?id=<scan_id>     — ¿Ha finalizado un escaneo?
+    GET  /sentinel/scan-status?id=<scan_id>    — Estado y progreso del escaneo
+    POST /sentinel/scans/<scan_id>/cancel       — Cancelar escaneo en curso
 
 Lanzamiento
-    POST /sentinel/nmap                     — lanzar escaneo Nmap
-    POST /sentinel/nikto                    — lanzar escaneo Nikto
-    POST /sentinel/openvas                  — lanzar escaneo OpenVAS
+    POST /sentinel/nmap    — Lanzar escaneo Nmap (soporta rangos CIDR/múltiples IPs)
+    POST /sentinel/nikto   — Lanzar escaneo Nikto
+    POST /sentinel/openvas — Lanzar escaneo OpenVAS (un solo host)
 
 Resultados
-    GET  /sentinel/results                  — todos los escaneos del usuario
-    GET  /sentinel/results/<scan_id>        — un escaneo concreto
+    GET /sentinel/results              — Listar todos los escaneos del usuario
+    GET /sentinel/results/<scan_id>    — Obtener detalle de un escaneo
 
-PDF
-    GET  /sentinel/generate-pdf             — descargar PDF
-    GET  /sentinel/generate-pdf-base64      — obtener PDF en base64
+PDF y Documentos
+    GET /sentinel/generate-pdf?id=<scan_id>         — Solicitar generación async de PDF
+    GET /sentinel/document-status                — Consultar estado de generación
+    GET /sentinel/document/<id>/download         — Descargar documento generado
+    GET /sentinel/generate-pdf-base64           — (Legacy) Obtener PDF en Base64
 
 Eliminación
-    DELETE /sentinel/<scan_id>              — eliminar escaneo
+    DELETE /sentinel/<scan_id> — Eliminar un escaneo
+
+────────────────────────────────────────────────────────────────────────────────
+AUTENTICACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+Todos los endpoints requieren un token OAuth2 válido en el header:
+    Authorization: Bearer <access_token>
+
+Los límites de tasa (rate limiting) están configurados por endpoint:
+    • is-finished, scan-status, results, document-status: 300/hour, 2000/day
+    • nmap, nikto: 20/hour, 100/day
+    • openvas: 10/hour, 50/day
+    • generate-pdf: 30/hour, 100/day
+    • cancel, delete: 60/hour, 200/day
+
+────────────────────────────────────────────────────────────────────────────────
+EJEMPLOS DE USO
+────────────────────────────────────────────────────────────────────────────────
+
+# Lanzar escaneo Nmap
+curl -X POST https://api.example.com/sentinel/nmap \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"target": "192.168.1.0/24", "ports": "22,80,443", "timeout": 300}'
+
+# Listar escaneos con paginación
+curl "https://api.example.com/sentinel/results?type=nmap&page=1&per_page=20" \
+  -H "Authorization: Bearer <token>"
+
+# Obtener estado de un escaneo
+curl "https://api.example.com/sentinel/scan-status?id=42" \
+  -H "Authorization: Bearer <token>"
+
+────────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
@@ -31,11 +79,13 @@ import base64
 import os
 import time
 import ipaddress
+import threading
 from datetime import datetime
 from typing import Optional
 
 from flask import Blueprint, jsonify, request, send_file
 
+from src.core.model import SentinelDocument
 from src.core.exceptions import (
     ExceptionHandler,
     MissingParameterError,
@@ -46,6 +96,7 @@ from src.core.exceptions import (
     create_error_response,
 )
 from src.misc import IPValidator, PortValidator, SecOpsLogger
+from src.logic.documents.sentinel_reports import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
 
 from ._shared import (
     CANCELLABLE_STATES,
@@ -64,45 +115,8 @@ from ._shared import (
 )
 
 
-
 sentinel_bp = Blueprint("sentinel", __name__)
 _logger     = SecOpsLogger("sentinel").get_logger()
-
-
-
-@sentinel_bp.get("/is-finished")
-@require_oauth_token
-@limiter.limit("300 per hour; 2000 per day")
-def is_scan_finished():
-    """Indica si un escaneo ya finalizó."""
-    try:
-        scan_id = _parse_scan_id_from_args()
-        uid     = get_current_user_id()
-        nmap, nikto, openvas = get_user_managers(uid)
-
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        verify_scan_ownership(scan, uid, scan_id)
-
-        manager  = resolve_manager(scan_type, nmap, nikto, openvas)
-        finished = manager.is_scan_finished(scan.id)
-
-        return jsonify({
-            "message":    f"El escaneo {scan_id} {'está' if finished else 'no está'} terminado",
-            "scanId":     scan_id,
-            "isFinished": finished,
-            "scanType":   scan_type,
-        }), 200
-
-    except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en is-finished: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
 
 
 @sentinel_bp.get("/scan-status")
@@ -113,16 +127,16 @@ def get_scan_status():
     try:
         scan_id = _parse_scan_id_from_args()
         uid     = get_current_user_id()
-        nmap, nikto, openvas = get_user_managers(uid)
+        
+        with get_user_managers(uid) as (nmap, nikto, openvas):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
+            if not scan:
+                raise ScanNotFoundError(scan_id)
+            verify_scan_ownership(scan, uid, scan_id)
 
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        verify_scan_ownership(scan, uid, scan_id)
-
-        manager  = resolve_manager(scan_type, nmap, nikto, openvas)
-        status   = manager.get_scan_status(scan.id)
-        progress = manager.get_scan_progress(scan.id)
+            manager  = resolve_manager(scan_type, nmap, nikto, openvas)
+            status   = manager.get_scan_status(scan.id)
+            progress = manager.get_scan_progress(scan.id)
 
         response = {
             "message":  f"Estado del escaneo {scan_id}: {status}",
@@ -149,24 +163,24 @@ def get_scan_status():
 @require_oauth_token
 @limiter.limit("60 per hour; 200 per day")
 def cancel_scan(scan_id: int):
-    """Cancela un escaneo en curso (estados 'pending' o 'running')."""
+    """Cancela un escaneo en curso."""
     try:
         uid = get_current_user_id()
-        nmap, nikto, openvas = get_user_managers(uid)
+        
+        with get_user_managers(uid) as (nmap, nikto, openvas):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
+            if not scan:
+                raise ScanNotFoundError(scan_id)
+            verify_scan_ownership(scan, uid, scan_id)
 
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        verify_scan_ownership(scan, uid, scan_id)
-
-        if scan.status not in CANCELLABLE_STATES:
-            return jsonify({
-                "error":            "invalid_state",
-                "message":          f"El escaneo no se puede cancelar en estado: {scan.status}",
-                "scanId":           scan_id,
-                "currentStatus":    scan.status,
-                "cancellableStates": sorted(CANCELLABLE_STATES),
-            }), 400
+            if scan.status not in CANCELLABLE_STATES:
+                return jsonify({
+                    "error":            "invalid_state",
+                    "message":          f"El escaneo no se puede cancelar en estado: {scan.status}",
+                    "scanId":           scan_id,
+                    "currentStatus":    scan.status,
+                    "cancellableStates": sorted(CANCELLABLE_STATES),
+                }), 400
 
         manager = resolve_manager(scan_type, nmap, nikto, openvas)
         if not manager.cancel_scan(scan_id):
@@ -190,7 +204,7 @@ def cancel_scan(scan_id: int):
 @require_oauth_token
 @limiter.limit("20 per hour; 100 per day")
 def start_nmap_scan():
-    """Lanza uno o más escaneos Nmap (soporta rangos CIDR y rangos de IPs)."""
+    """Lanza uno o más escaneos Nmap."""
     data = _require_json()
     if isinstance(data, tuple):
         return data
@@ -203,37 +217,28 @@ def start_nmap_scan():
         return jsonify(err), code
 
     try:
-        timeout = int(data.get("timeout", 300))   # 5 min por defecto
+        timeout = int(data.get("timeout", 300))
         if timeout <= 0:
-            raise ValidationError(field="timeout",
-                                  message="El timeout debe ser positivo",
-                                  value=timeout)
+            raise ValidationError(field="timeout", message="El timeout debe ser positivo", value=timeout)
     except (TypeError, ValueError):
-        raise ValidationError(field="timeout",
-                              message="El timeout debe ser un entero válido",
-                              value=data.get("timeout"))
+        raise ValidationError(field="timeout", message="El timeout debe ser un entero válido", value=data.get("timeout"))
 
     try:
         uid = get_current_user_id()
-        nmap_manager, _, _ = get_user_managers(uid)
+        with get_user_managers(uid) as (nmap_manager, _, _):
+            valid, hosts, msg = IPValidator.validate(host)
+            if not valid:
+                raise ValidationError(field="target", message=msg, value=host)
 
-        valid, hosts, msg = IPValidator.validate(host)
-        if not valid:
-            raise ValidationError(field="target", message=msg, value=host)
+            valid, _, msg = PortValidator.validate(ports)
+            if not valid:
+                raise ValidationError(field="ports", message=msg, value=ports)
 
-        valid, _, msg = PortValidator.validate(ports)
-        if not valid:
-            raise ValidationError(field="ports", message=msg, value=ports)
-
-        scan_ids = []
-        for target_host in hosts:
-            scan_id = nmap_manager.run_scan(
-                target_host=target_host, 
-                target_ports=ports,
-                timeout=timeout
-            )
-            scan_ids.append(scan_id)
-            _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={get_current_username()}")
+            scan_ids = []
+            for target_host in hosts:
+                scan_id = nmap_manager.run_scan(target_host=target_host, target_ports=ports, timeout=timeout)
+                scan_ids.append(scan_id)
+                _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={get_current_username()}")
 
         return jsonify({
             "message":    "Escaneo(s) Nmap iniciado(s) correctamente",
@@ -277,9 +282,9 @@ def start_nikto_scan():
 
     try:
         uid = get_current_user_id()
-        _, nikto_manager, _ = get_user_managers(uid)
-        scan_id = nikto_manager.run_scan(target, timeout=timeout)
-        _logger.info(f"Nikto lanzado: ID={scan_id} target={target} timeout={timeout} user={get_current_username()}")
+        with get_user_managers(uid) as (_, nikto_manager, _):
+            scan_id = nikto_manager.run_scan(target, timeout=timeout)
+            _logger.info(f"Nikto lanzado: ID={scan_id} target={target} timeout={timeout} user={get_current_username()}")
         return jsonify({"message": "Escaneo Nikto iniciado correctamente", "scanId": scan_id, "target": target, "timeout": timeout, "user": get_current_username()}), 201
 
     except (MissingParameterError, ValidationError, ScanExecutionError) as exc:
@@ -319,15 +324,15 @@ def start_openvas_scan():
             raise ValidationError(field="target", message="OpenVAS solo acepta un host a la vez", value=target, expected="Una sola IP")
 
         uid = get_current_user_id()
-        _, _, openvas_manager = get_user_managers(uid)
-        
-        target_ip = hosts[0]
-        try:
-            ipaddress.ip_address(target_ip)
-        except ValueError:
-            target_ip, _ = normalize_target(target_ip)
-        
-        scan_id = openvas_manager.run_scan(target_ip, scan_config=scan_config, skip_normalize=True)
+        with get_user_managers(uid) as (_, _, openvas_manager):
+            target_ip = hosts[0]
+            try:
+                ipaddress.ip_address(target_ip)
+            except ValueError:
+                from src.misc import normalize_target
+                _, target_ip = normalize_target(target_ip)
+            
+            scan_id = openvas_manager.run_scan(target_ip, scan_config=scan_config, skip_normalize=True)
         _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={get_current_username()}")
         return jsonify({"message": "Escaneo OpenVAS iniciado correctamente", "scanId": scan_id, "target": target_ip, "scanConfig": scan_config, "user": get_current_username(), "note": "Use /sentinel/scan-status para verificar el progreso."}), 201
 
@@ -345,7 +350,7 @@ def start_openvas_scan():
 @require_oauth_token
 @limiter.limit("300 per hour; 2000 per day")
 def retrieve_all_scans():
-    """Lista todos los escaneos del usuario. Filtrable por ?type=nmap|nikto|openvas|all. Soporta paginación con ?page=1&per_page=20."""
+    """Lista todos los escaneos del usuario con soporte de paginación."""
     try:
         scan_type = request.args.get("type", "all").lower()
         if scan_type not in VALID_SCAN_TYPES:
@@ -357,26 +362,26 @@ def retrieve_all_scans():
         per_page = min(max(1, per_page), 100)
 
         uid = get_current_user_id()
-        nmap_mgr, nikto_mgr, openvas_mgr = get_user_managers(uid)
-        all_results = []
+        with get_user_managers(uid) as (nmap_mgr, nikto_mgr, openvas_mgr):
+            all_results = []
 
-        if scan_type in ("nmap", "all"):
-            try:
-                all_results.extend(_format_nmap_scans(nmap_mgr.get_scans_for_user()))
-            except Exception as exc:
-                _logger.error(f"Error obteniendo Nmap scans: {exc}")
+            if scan_type in ("nmap", "all"):
+                try:
+                    all_results.extend(_format_nmap_scans(nmap_mgr.get_scans_for_user(), nmap_mgr))
+                except Exception as exc:
+                    _logger.error(f"Error obteniendo Nmap scans: {exc}")
 
-        if scan_type in ("nikto", "all"):
-            try:
-                all_results.extend(_format_nikto_scans(nikto_mgr.get_scans_for_user()))
-            except Exception as exc:
-                _logger.error(f"Error obteniendo Nikto scans: {exc}")
+            if scan_type in ("nikto", "all"):
+                try:
+                    all_results.extend(_format_nikto_scans(nikto_mgr.get_scans_for_user(), nikto_mgr))
+                except Exception as exc:
+                    _logger.error(f"Error obteniendo Nikto scans: {exc}")
 
-        if scan_type in ("openvas", "all"):
-            try:
-                all_results.extend(_format_openvas_scans(openvas_mgr.get_scans_for_user()))
-            except Exception as exc:
-                _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
+            if scan_type in ("openvas", "all"):
+                try:
+                    all_results.extend(_format_openvas_scans(openvas_mgr.get_scans_for_user(), openvas_mgr))
+                except Exception as exc:
+                    _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
 
         total_results = len(all_results)
         start = (page - 1) * per_page
@@ -409,30 +414,29 @@ def retrieve_all_scans():
 @require_oauth_token
 @limiter.limit("300 per hour; 2000 per day")
 def retrieve_scan_by_id(scan_id: int):
-    """Devuelve el detalle completo de un escaneo concreto."""
+    """Devuelve el detalle completo de un escaneo específico."""
     try:
         uid = get_current_user_id()
-        nmap, nikto, openvas = get_user_managers(uid)
+        with get_user_managers(uid) as (nmap, nikto, openvas):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
+            if not scan:
+                raise ScanNotFoundError(scan_id)
+            verify_scan_ownership(scan, uid, scan_id)
 
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        verify_scan_ownership(scan, uid, scan_id)
-
-        if scan_type == "nmap":
-            result = _format_nmap_scans([scan])[0]
-            result["openPorts"] = [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason, "product": p.product, "version": p.version} for p in scan.open_ports_relation]
-        elif scan_type == "nikto":
-            result = _format_nikto_scans([scan])[0]
-        else:
-            result = _format_openvas_scans([scan])[0]
-            result["severityBreakdown"] = {
-                "critical": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
-                "high":     sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
-                "medium":   sum(1 for r in scan.results if r.vulnerability.severity_class == "Medium"),
-                "low":      sum(1 for r in scan.results if r.vulnerability.severity_class == "Low"),
-                "info":     sum(1 for r in scan.results if r.vulnerability.severity_class == "Log"),
-            }
+            if scan_type == "nmap":
+                result = _format_nmap_scans([scan], nmap)[0]
+                result["openPorts"] = [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason, "product": p.product, "version": p.version} for p in scan.open_ports_relation]
+            elif scan_type == "nikto":
+                result = _format_nikto_scans([scan], nikto)[0]
+            else:
+                result = _format_openvas_scans([scan], openvas)[0]
+                result["severityBreakdown"] = {
+                    "critical": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
+                    "high":     sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
+                    "medium":   sum(1 for r in scan.results if r.vulnerability.severity_class == "Medium"),
+                    "low":      sum(1 for r in scan.results if r.vulnerability.severity_class == "Low"),
+                    "info":     sum(1 for r in scan.results if r.vulnerability.severity_class == "Log"),
+                }
 
         return jsonify({"message": "Escaneo obtenido correctamente", "result": result, "user": get_current_username()}), 200
 
@@ -450,33 +454,33 @@ def retrieve_scan_by_id(scan_id: int):
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
 def generate_pdf():
-    """Genera y descarga el PDF de un escaneo finalizado."""
+    """Solicita la generación asíncrona de un PDF."""
     try:
         scan_id = _parse_scan_id_from_args()
-        uid     = get_current_user_id()
-        nmap, nikto, openvas = get_user_managers(uid)
+        ai_report_str = request.args.get("aiReport", "false").lower()
+        ai_report = ai_report_str == "true"
+        
+        uid = get_current_user_id()
+        with get_user_managers(uid) as (nmap, nikto, openvas):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
 
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        verify_scan_ownership(scan, uid, scan_id)
+            manager = resolve_manager(scan_type, nmap, nikto, openvas)
+            if not manager.is_scan_finished(scan.id):
+                raise ValidationError(field="scan_id", message=f"El escaneo {scan_id} no está finalizado aún", value=scan_id)
+        
+            doc_id = manager.generate_report(scan_id=scan_id, ai_report=ai_report)   
+        _logger.info(f"Generación de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {get_current_username()} con AI Report: {ai_report}")
 
-        manager = resolve_manager(scan_type, nmap, nikto, openvas)
-        if not manager.is_scan_finished(scan.id):
-            raise ValidationError(field="scan_id", message=f"El escaneo {scan_id} no está finalizado aún", value=scan_id)
+        return jsonify({
+            "message": "Generación de PDF iniciada",
+            "documentId": doc_id,
+            "scanId": scan_id,
+            "status": "pending",
+            "aiReport": ai_report,
+            "downloadUrl": f"/sentinel/document/{doc_id}/download"
+        }), 202
 
-        try:
-            pdf_path = build_pdf_creator(scan).print_pdf()
-        except Exception as exc:
-            raise ReportGenerationError(scan_id, str(exc))
-
-        if not pdf_path or not os.path.exists(pdf_path):
-            raise ReportGenerationError(scan_id, "El archivo PDF no se generó correctamente")
-
-        _logger.info(f"PDF generado para escaneo {scan_id} — user={get_current_username()}")
-        return send_file(pdf_path, mimetype="application/pdf", as_attachment=True, download_name=f"{scan_type}_scan_{scan_id}.pdf")
-
-    except (MissingParameterError, ValidationError, ScanNotFoundError, ReportGenerationError) as exc:
+    except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
     except Exception as exc:
@@ -486,39 +490,216 @@ def generate_pdf():
         return jsonify(err), code
 
 
+@sentinel_bp.get("/document-status")
+@require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
+def get_document_status():
+    """Consulta el estado de generación de un documento."""
+    try:
+        uid = get_current_user_id()
+        
+        document_id = request.args.get("document_id", type=int)
+        scan_id = request.args.get("scan_id", type=int)
+        
+        if not document_id and not scan_id:
+            raise MissingParameterError("document_id o scan_id")
+        
+        with get_user_managers(uid) as (nmap_mgr, _, _):
+            from src.core.model import SentinelDocument
+            
+            if document_id:
+                doc = nmap_mgr.session.query(SentinelDocument).filter(
+                    SentinelDocument.id == document_id,
+                    SentinelDocument.user_id == uid
+                ).first()
+            else:
+                doc = nmap_mgr.session.query(SentinelDocument).filter(
+                    SentinelDocument.scan_id == scan_id,
+                    SentinelDocument.user_id == uid
+                ).first()
+            
+            if not doc:
+                raise ScanNotFoundError(document_id or scan_id)
+            
+            download_url = None
+            if doc.status == "done" and doc.filename:
+                download_url = f"/sentinel/document/{doc.id}/download"
+        
+        return jsonify({
+            "documentId": doc.id,
+            "scanId": doc.scan_id,
+            "status": doc.status,
+            "aiReport": doc.enrichment_json is not None,
+            "createdAt": doc.created_at.isoformat() if doc.created_at else None,
+            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+            "downloadUrl": download_url
+        }), 200
+        
+    except MissingParameterError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+    except ScanNotFoundError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+    except Exception as exc:
+        _logger.error(f"Error consultando estado de documento: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@sentinel_bp.get("/is-finished")
+@require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
+def is_scan_finished():
+    """Indica si un escaneo ha finalizado.
+
+    Args (query params):
+        id (int): ID del escaneo a verificar.
+
+    Returns:
+        200 — JSON con el estado de finalización.
+            {
+                "message": "El escaneo 42 está terminado",
+                "scanId": 42,
+                "isFinished": true,
+                "scanType": "nmap"
+            }
+        400 — Error de validación (parámetro 'id' faltante o inválido).
+        404 — Escaneo no encontrado.
+        401 — Token OAuth2 inválido o ausente.
+
+    Example:
+        curl "http://localhost:5000/sentinel/is-finished?id=42" \\
+             -H "Authorization: Bearer <token>"
+    """
+    try:
+        scan_id = _parse_scan_id_from_args()
+        uid     = get_current_user_id()
+        with get_user_managers(uid) as (nmap, nikto, openvas):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
+            if not scan:
+                raise ScanNotFoundError(scan_id)
+            verify_scan_ownership(scan, uid, scan_id)
+
+            manager  = resolve_manager(scan_type, nmap, nikto, openvas)
+            finished = manager.is_scan_finished(scan.id)
+
+        return jsonify({
+            "message":    f"El escaneo {scan_id} {'está' if finished else 'no está'} terminado",
+            "scanId":     scan_id,
+            "isFinished": finished,
+            "scanType":   scan_type,
+        }), 200
+
+    except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@sentinel_bp.get("/document/<int:document_id>/download")
+@require_oauth_token
+@limiter.limit("30 per hour; 100 per day")
+def download_document(document_id: int):
+    """Descarga un documento generado previamente.
+
+    Args (path):
+        document_id (int): ID del documento a descargar.
+
+    Returns:
+        200 — Archivo PDF como attachment.
+        400 — El documento aún no está listo (status != 'done').
+        404 — Documento no encontrado.
+
+    Example:
+        curl "http://localhost:5000/sentinel/document/123/download" \\
+                -H "Authorization: Bearer <token>" \\
+                -o reporte.pdf
+    """
+    try:
+        uid = get_current_user_id()
+        with get_user_managers(uid) as (nmap_mgr, _, _):
+            doc = nmap_mgr.get_document_by_id(document_id)
+            if not doc or doc.user_id != uid:
+                raise ValueError("Documento no encontrado o acceso denegado")
+            
+            if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
+                raise ValidationError(field="document_id", message=f"El documento {document_id} aún no está disponible para descarga", value=document_id)
+            
+            _logger.info(f"Descarga de documento {document_id} solicitada por {get_current_username()}")
+            return send_file(doc.filename, mimetype="application/pdf", as_attachment=True, download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf")
+        
+    except ScanNotFoundError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+    except ValidationError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+    except Exception as exc:
+        _logger.error(f"Error descargando documento {document_id}: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
 @sentinel_bp.get("/generate-pdf-base64")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
 def generate_pdf_base64():
-    """Devuelve el PDF de un escaneo como string base64."""
+    """Devuelve el PDF codificado en Base64 para integraciones cliente.
+
+    Útil cuando se necesita incluir el PDF en una respuesta JSON o передать
+    el contenido directamente al frontend.
+
+    Args (query params):
+        id (int): ID del escaneo.
+
+    Returns:
+        200 — JSON con el PDF en Base64.
+            {
+                "message": "PDF generado exitosamente",
+                "scanId": 42,
+                "scanType": "nmap",
+                "filename": "nmap_scan_42.pdf",
+                "pdfBase64": "JVBERi0xLjQK...",
+                "contentType": "application/pdf",
+                "user": "admin"
+            }
+        400 — El escaneo aún no ha terminado.
+        413 — El PDF supera el límite de tamaño (10MB). Usa /generate-pdf.
+        404 — Escaneo no encontrado.
+
+    Example:
+        curl "http://localhost:5000/sentinel/generate-pdf-base64?id=42" \\
+             -H "Authorization: Bearer <token>"
+    """
     try:
         scan_id = _parse_scan_id_from_args()
         uid     = get_current_user_id()
-        nmap, nikto, openvas = get_user_managers(uid)
+        with get_user_managers(uid) as (nmap, nikto, openvas):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
+            if not scan:
+                raise ScanNotFoundError(scan_id)
+            verify_scan_ownership(scan, uid, scan_id)
 
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        verify_scan_ownership(scan, uid, scan_id)
+            manager = resolve_manager(scan_type, nmap, nikto, openvas)
+            if not manager.is_scan_finished(scan.id):
+                raise ValidationError(field="scan_id", message=f"El escaneo {scan_id} no está finalizado aún", value=scan_id)
 
-        manager = resolve_manager(scan_type, nmap, nikto, openvas)
-        if not manager.is_scan_finished(scan.id):
-            raise ValidationError(field="scan_id", message=f"El escaneo {scan_id} no está finalizado aún", value=scan_id)
+            try:
+                pdf_path = build_pdf_creator(scan).print_pdf()
+            except Exception as exc:
+                raise ReportGenerationError(scan_id, str(exc))
 
-        try:
-            pdf_path = build_pdf_creator(scan).print_pdf()
-        except Exception as exc:
-            raise ReportGenerationError(scan_id, str(exc))
+            if not pdf_path or not os.path.exists(pdf_path):
+                raise ReportGenerationError(scan_id, "El archivo PDF no se generó correctamente")
 
-        if not pdf_path or not os.path.exists(pdf_path):
-            raise ReportGenerationError(scan_id, "El archivo PDF no se generó correctamente")
+            pdf_size = os.path.getsize(pdf_path)
+            if pdf_size > MAX_PDF_SIZE_BYTES:
+                return jsonify({"error": "payload_too_large", "message": f"El PDF ({pdf_size // (1024*1024)} MB) supera el límite. Usa /generate-pdf para descarga directa.", "scanId": scan_id}), 413
 
-        pdf_size = os.path.getsize(pdf_path)
-        if pdf_size > MAX_PDF_SIZE_BYTES:
-            return jsonify({"error": "payload_too_large", "message": f"El PDF ({pdf_size // (1024*1024)} MB) supera el límite. Usa /generate-pdf para descarga directa.", "scanId": scan_id}), 413
-
-        with open(pdf_path, "rb") as f:
-            pdf_b64 = base64.b64encode(f.read()).decode()
+            with open(pdf_path, "rb") as f:
+                pdf_b64 = base64.b64encode(f.read()).decode()
 
         return jsonify({"message": "PDF generado exitosamente", "scanId": scan_id, "scanType": scan_type, "filename": f"{scan_type}_scan_{scan_id}.pdf", "pdfBase64": pdf_b64, "contentType": "application/pdf", "user": get_current_username()}), 200
 
@@ -536,24 +717,48 @@ def generate_pdf_base64():
 @require_oauth_token
 @limiter.limit("60 per hour; 200 per day")
 def delete_scan(scan_id: int):
-    """Elimina un escaneo. Si está en curso, lo cancela primero."""
+    """Elimina un escaneo del sistema.
+
+    Si el escaneo está en curso (estado 'pending' o 'running'), se cancela
+    automáticamente antes de eliminarlo.
+
+    Args (path):
+        scan_id (int): ID del escaneo a eliminar.
+
+    Returns:
+        200 — Escaneo eliminado correctamente.
+            {
+                "message": "Escaneo eliminado correctamente",
+                "scanId": 42,
+                "scanType": "nmap",
+                "user": "admin"
+            }
+        404 — Escaneo no encontrado.
+        500 — Error al intentar eliminar.
+
+    Warning:
+        Esta acción es irreversible. Se perderán todos los datos del escaneo.
+
+    Example:
+        curl -X DELETE "http://localhost:5000/sentinel/42" \\
+             -H "Authorization: Bearer <token>"
+    """
     try:
         uid = get_current_user_id()
-        nmap, nikto, openvas = get_user_managers(uid)
+        with get_user_managers(uid) as (nmap, nikto, openvas):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
+            if not scan:
+                raise ScanNotFoundError(scan_id)
+            verify_scan_ownership(scan, uid, scan_id)
 
-        scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        verify_scan_ownership(scan, uid, scan_id)
+            manager = resolve_manager(scan_type, nmap, nikto, openvas)
 
-        manager = resolve_manager(scan_type, nmap, nikto, openvas)
+            if scan.status in CANCELLABLE_STATES:
+                _logger.info(f"Cancelando escaneo {scan_id} antes de eliminar")
+                manager.cancel_scan(scan_id)
 
-        if scan.status in CANCELLABLE_STATES:
-            _logger.info(f"Cancelando escaneo {scan_id} antes de eliminar")
-            manager.cancel_scan(scan_id)
-
-        if not manager.delete_scan(scan_id):
-            return jsonify({"error": "deletion_failed", "message": "No se pudo eliminar el escaneo", "scanId": scan_id}), 500
+            if not manager.delete_scan(scan_id):
+                return jsonify({"error": "deletion_failed", "message": "No se pudo eliminar el escaneo", "scanId": scan_id}), 500
 
         _logger.info(f"Escaneo {scan_type} {scan_id} eliminado por {get_current_username()}")
         return jsonify({"message": "Escaneo eliminado correctamente", "scanId": scan_id, "scanType": scan_type, "user": get_current_username()}), 200
@@ -568,7 +773,15 @@ def delete_scan(scan_id: int):
         return jsonify(err), code
 
 
-def _require_json():
+def _require_json() -> dict:
+    """Extrae y valida el cuerpo de la petición como JSON.
+
+    Returns:
+        dict: Datos JSON parseados.
+
+    Raises:
+        400: Si el Content-Type no es application/json o el JSON es inválido.
+    """
     if not request.is_json:
         return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
     data = request.get_json(silent=True)
@@ -578,6 +791,18 @@ def _require_json():
 
 
 def _require_str(data: dict, field: str) -> str:
+    """Extrae un campo obligatorio del JSON y lo valida como string no vacío.
+
+    Args:
+        data: Diccionario con los datos del request.
+        field: Nombre del campo a extraer.
+
+    Returns:
+        str: El valor del campo, triminado de espacios.
+
+    Raises:
+        MissingParameterError: Si el campo falta o está vacío.
+    """
     value = data.get(field)
     if not value or not str(value).strip():
         raise MissingParameterError(field)
@@ -585,6 +810,15 @@ def _require_str(data: dict, field: str) -> str:
 
 
 def _parse_scan_id_from_args() -> int:
+    """Extrae el parámetro 'id' de la query string como entero.
+
+    Returns:
+        int: El ID del escaneo.
+
+    Raises:
+        MissingParameterError: Si el parámetro 'id' no existe.
+        ValidationError: Si el valor no es un entero válido.
+    """
     raw = request.args.get("id")
     if not raw:
         raise MissingParameterError("id")
@@ -595,12 +829,44 @@ def _parse_scan_id_from_args() -> int:
 
 
 def _ts(dt) -> str:
+    """Convierte un objeto datetime a string ISO 8601.
+
+    Args:
+        dt: Objeto datetime o string.
+
+    Returns:
+        str: Representación ISO del datetime.
+    """
     return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
 
 
-def _format_nmap_scans(scans) -> list:
-    return [
+def _format_nmap_scans(scans: list, manager=None) -> list:
+    """Formatea una lista de escaneos Nmap para la respuesta JSON.
+
+    Args:
+        scans: Lista de objetos NmapScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
+
+    Returns:
+        list: Lista de diccionarios con los datos del escaneo en formato JSON.
+
+    Estructura del resultado:
         {
+            "id": int,
+            "scanType": "nmap",
+            "target": str,
+            "status": str,
+            "startedAt": str (ISO 8601),
+            "openPorts": [
+                {"port": "80/tcp", "reason": "syn-ack", "product": "Apache", "version": "2.4"}
+            ],
+            "totalOpenPorts": int,
+            "documentId": int (optional)
+        }
+    """
+    results = []
+    for s in scans:
+        entry = {
             "id":             s.id,
             "scanType":       "nmap",
             "target":         s.target,
@@ -609,13 +875,52 @@ def _format_nmap_scans(scans) -> list:
             "openPorts":      [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason} for p in s.open_ports_relation],
             "totalOpenPorts": len(s.open_ports_relation),
         }
-        for s in scans
-    ]
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results
 
 
-def _format_nikto_scans(scans) -> list:
-    return [
+def _format_nikto_scans(scans: list, manager=None) -> list:
+    """Formatea una lista de escaneos Nikto para la respuesta JSON.
+
+    Args:
+        scans: Lista de objetos NiktoScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
+
+    Returns:
+        list: Lista de diccionarios con los datos del escaneo en formato JSON.
+
+    Estructura del resultado:
         {
+            "id": int,
+            "scanType": "nikto",
+            "target": str,
+            "status": str,
+            "startedAt": str (ISO 8601),
+            "incidents": [
+                {
+                    "osvdbId": int,
+                    "method": "GET",
+                    "url": "/admin",
+                    "description": str,
+                    "severity": "MEDIUM",
+                    "discoveredAt": str (ISO 8601)
+                }
+            ],
+            "totalIncidents": int,
+            "documentId": int (optional)
+        }
+    """
+    results = []
+    for s in scans:
+        entry = {
             "id":             s.id,
             "scanType":       "nikto",
             "target":         s.target,
@@ -634,13 +939,47 @@ def _format_nikto_scans(scans) -> list:
             ],
             "totalIncidents": len(s.incidents),
         }
-        for s in scans
-    ]
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results
 
 
-def _format_openvas_scans(scans) -> list:
-    return [
+def _format_openvas_scans(scans: list, manager=None) -> list:
+    """Formatea una lista de escaneos OpenVAS para la respuesta JSON.
+
+    Args:
+        scans: Lista de objetos OpenVASScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
+
+    Returns:
+        list: Lista de diccionarios con los datos del escaneo en formato JSON.
+
+    Estructura del resultado:
         {
+            "id": int,
+            "scanType": "openvas",
+            "target": str,
+            "taskId": str,
+            "reportId": str,
+            "status": str,
+            "startedAt": str (ISO 8601),
+            "vulnerabilities": [...],
+            "totalVulnerabilities": int,
+            "criticalCount": int,
+            "highCount": int,
+            "documentId": int (optional)
+        }
+    """
+    results = []
+    for s in scans:
+        entry = {
             "id":                   s.id,
             "scanType":             "openvas",
             "target":               s.target,
@@ -670,5 +1009,13 @@ def _format_openvas_scans(scans) -> list:
             "criticalCount":        sum(1 for r in s.results if r.vulnerability.severity_class == "Critical"),
             "highCount":            sum(1 for r in s.results if r.vulnerability.severity_class == "High"),
         }
-        for s in scans
-    ]
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results

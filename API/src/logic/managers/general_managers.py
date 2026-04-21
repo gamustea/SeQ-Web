@@ -17,13 +17,12 @@ from src.logic.secrets import Encoder
 
 from ._base import BaseManager
 
-_config = ConfigReader()
 (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_EXPIRE_DAYS,
     JWT_SECRET_KEY,
     JWT_ALGORITHM
-) = _config.get_oauth_config()
+) = ConfigReader.get_oauth_config()
 
 
 class UserManager(BaseManager):

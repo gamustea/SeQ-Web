@@ -2,29 +2,53 @@
 
 **SeQ** es una plataforma de operaciones de seguridad compuesta por tres módulos principales:
 
-- **Sentinel** — API REST de escaneo de vulnerabilidades (operativo).
+- **Sentinel** — API REST de escaneo de vulnerabilidades con análisis de IA (operativo).
 - **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (operativo, en expansión).
-- **Aegis** — Módulo de concienciación en ciberseguridad y vigilancia de vulnerabilidades, basado en IA local (en desarrollo avanzado).
+- **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades,potenciado por IA local (operativo).
 
 ---
 
 ## Índice
 
-- [Requisitos previos](#requisitos-previos)
-- [Instalación](#instalación)
-- [Módulo Sentinel — Escaneo de Vulnerabilidades](#módulo-sentinel--escaneo-de-vulnerabilidades)
-  - [Autenticación OAuth 2.0](#autenticación-oauth-20)
-  - [Gestión de usuarios](#gestión-de-usuarios)
-  - [Escaneo con Nmap](#escaneo-con-nmap)
-  - [Escaneo con Nikto](#escaneo-con-nikto)
-  - [Escaneo con OpenVAS](#escaneo-con-openvas)
-  - [Consulta de resultados](#consulta-de-resultados)
-  - [Generación de informes PDF](#generación-de-informes-pdf)
-- [Módulo Aegis — Concienciación y alertas](#módulo-aegis--concienciación-y-alertas)
-- [Módulo Acheron — Vault](#módulo-acheron--vault)
-- [Infraestructura Docker](#infraestructura-docker)
-- [Estructura del proyecto](#estructura-del-proyecto)
-- [Stack tecnológico](#stack-tecnológico)
+- [SeQ — Security Operations Platform](#seq--security-operations-platform)
+  - [Índice](#índice)
+  - [Requisitos previos](#requisitos-previos)
+  - [Instalación](#instalación)
+  - [Módulo Sentinel — Escaneo de Vulnerabilidades](#módulo-sentinel--escaneo-de-vulnerabilidades)
+    - [Autenticación OAuth 2.0](#autenticación-oauth-20)
+      - [Obtener token de acceso](#obtener-token-de-acceso)
+      - [Renovar token](#renovar-token)
+      - [Revocar tokens](#revocar-tokens)
+    - [Gestión de usuarios](#gestión-de-usuarios)
+    - [Escaneo con Nmap](#escaneo-con-nmap)
+      - [Iniciar escaneo](#iniciar-escaneo)
+    - [Escaneo con Nikto](#escaneo-con-nikto)
+      - [Iniciar escaneo](#iniciar-escaneo-1)
+    - [Escaneo con OpenVAS](#escaneo-con-openvas)
+      - [Iniciar escaneo](#iniciar-escaneo-2)
+    - [Generación de informes PDF con IA](#generación-de-informes-pdf-con-ia)
+      - [Generar PDF con análisis de IA](#generar-pdf-con-análisis-de-ia)
+      - [Prompts especializados](#prompts-especializados)
+    - [Consulta de resultados](#consulta-de-resultados)
+    - [Generación de informes PDF](#generación-de-informes-pdf)
+  - [Módulo Aegis — Concienciación y alertas](#módulo-aegis--concienciación-y-alertas)
+    - [¿Qué hace Aegis?](#qué-hace-aegis)
+    - [Endpoints principales](#endpoints-principales)
+      - [Iniciar generación de una píldora](#iniciar-generación-de-una-píldora)
+      - [Consultar estado de una píldora](#consultar-estado-de-una-píldora)
+      - [Descargar la píldora como Markdown](#descargar-la-píldora-como-markdown)
+      - [Otros endpoints Aegis](#otros-endpoints-aegis)
+      - [Arquitectura de IA en Aegis](#arquitectura-de-ia-en-aegis)
+  - [Módulo Acheron — Vault](#módulo-acheron--vault)
+    - [Endpoints](#endpoints)
+      - [Vault](#vault)
+      - [Storables (objetos del vault)](#storables-objetos-del-vault)
+      - [Ejemplo: añadir una cuenta](#ejemplo-añadir-una-cuenta)
+      - [Ejemplo: añadir una tarjeta de crédito](#ejemplo-añadir-una-tarjeta-de-crédito)
+    - [Componentes](#componentes)
+  - [Infraestructura Docker](#infraestructura-docker)
+  - [Estructura del proyecto](#estructura-del-proyecto)
+  - [Stack tecnológico](#stack-tecnológico)
 
 ---
 
@@ -256,6 +280,49 @@ Content-Type: application/json
 
 ---
 
+### Generación de informes PDF con IA
+
+Sentinel integra análisis de inteligencia artificial mediante **Ollama** para todos los tipos de escaneo (Nmap, Nikto, OpenVAS). Los informes PDF pueden incluir un análisis ejecutivo generado por IA que proporciona:
+
+- **Resumen ejecutivo** contextualizado.
+- **Nivel de riesgo calibrado** (CRÍTICO/ALTO/MEDIO/BAJO/INFORMATIVO).
+- **Análisis técnico** detallado por controles de seguridad.
+- **Recomendaciones priorizadas** con acciones específicas.
+- **Conclusiones** con siguientes pasos recomendados.
+
+#### Generar PDF con análisis de IA
+
+```http
+GET /sentinel/generate-pdf?id=<id>&aiReport=true
+Authorization: Bearer <token>
+```
+
+El parámetro `aiReport=true` activa la generación del análisis IA. El proceso:
+
+1. **Preprocesamiento**: Los hallazgos se agrupan por controles de seguridad (no por cantidad de hallazgos individuales).
+2. **Prompt ingeniería**: Se usa un system prompt especializado que aplica el principio "Controls, Not Counts":
+   - 10 vulnerabilidades de XSS = UN control (output encoding) con deficiencias.
+   - El riesgo lo determina el TIPO de control afectado, no el número de hallazgos.
+3. **Generación**: Ollama genera el análisis en JSON estructurado.
+4. **Renderizado**: El análisis se inserta en el PDF con el formato estandarizado.
+
+#### Prompts especializados
+
+Los prompts están centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`:
+
+| Escáner | Sistema de prompts |
+|---|---|
+| **Nmap** | Evalúa superficie de ataque, distingue puertos abiertos de vulnerabilidades confirmadas. |
+| **Nikto** | Analiza controles de seguridad web (transport, session, client protection). |
+| **OpenVAS** | Agrupa vulnerabilidades por controles (input validation, authentication, cryptography). |
+
+Cada prompt enforcing:
+- Nunca inventar CVEs o vulnerabilidades.
+- Preferir subestimación a sobreestimación.
+- Distinguir entre hardening ausente y protección crítica ausente.
+
+---
+
 ### Consulta de resultados
 
 | Método | Endpoint | Descripción |
@@ -285,6 +352,8 @@ Los informes adaptan su formato al tipo de escaneo (Nmap, Nikto u OpenVAS) media
 
 > 🧠 **Aegis** amplía SeQ más allá del escaneo técnico: genera contenido de concienciación en ciberseguridad para empleados y acompaña cada píldora con un resumen de vulnerabilidades recientes relevantes.
 
+> ⚡ **Estado: Operativo** — Aegis genera píldoras de concienciación mediante IA local (Ollama), combina alertas de vulnerabilidades y exporta contenido en múltiples formatos.
+
 ### ¿Qué hace Aegis?
 
 - **Píldoras de concienciación** en formato Markdown (`.md`) generadas por un modelo de IA local vía Ollama.
@@ -293,6 +362,7 @@ Los informes adaptan su formato al tipo de escaneo (Nmap, Nikto u OpenVAS) media
   - Feed de avisos de INCIBE-CERT.
   - CVEs recientes obtenidos de la API pública de CIRCL / NVD.
 - Todo el contenido se guarda como documentos propios del usuario (`AegisDocument`) y se accede vía API.
+- **Exportación múltiple**: Markdown, HTML, PDF, o email formateado.
 
 ### Endpoints principales
 
@@ -361,6 +431,21 @@ Devuelve el fichero `.md` como descarga (`Content-Type: text/markdown`). El cuer
 
 - La píldora principal redactada por el modelo de IA.
 - Una sección adicional con **vulnerabilidades y avisos de seguridad** formateados en Markdown.
+
+#### Otros endpoints Aegis
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/aegis/topics` | Lista todos los topics disponibles |
+| `GET` | `/aegis/documents` | Lista documentos del usuario |
+| `GET` | `/aegis/documents/<id>` | Detalle de un documento |
+| `GET` | `/aegis/download_as_html?id=<id>` | Exporta como HTML formateado |
+| `GET` | `/aegis/download_as_pdf?id=<id>` | Exporta como PDF |
+| `DELETE` | `/aegis/documents/<id>` | Elimina un documento |
+
+#### Arquitectura de IA en Aegis
+
+Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`. El sistema prompt incluye generación exclusiva en JSON válido, intro extensiva (mínimo 1500 caracteres), subtítulo creativo y original, y tips accionables con enlaces verificados.
 
 ---
 
@@ -452,21 +537,54 @@ Content-Type: application/json
 
 ## Infraestructura Docker
 
-El directorio `API/docker/` contiene los archivos Docker Compose para levantar los servicios de apoyo necesarios:
+El directorio `API/docker/` contiene los archivos Docker Compose para levantar los servicios de apoyo necesarios.
+
+### Servicios principales
+
+| Servicio | Puerto | Descripción |
+|---|---|---|
+| **PostgreSQL** | 5432 | Base de datos principal |
+| **OpenVAS/GVM** | 9390 | Escáner de vulnerabilidades (API Greenbone) |
+| **Ollama** | 11434 | IA local para Sentinel y Aegis |
+
+### Levantamiento de servicios
 
 ```bash
-# Levantar OpenVAS / GVM
-cd API/docker/openvas
+# Levantar todos los servicios de infraestructura
+cd API/docker
 docker-compose up -d
 
-# Levantar PostgreSQL
-cd API/docker/postgres
+# O individualmente por servicio:
+cd API/docker/postgres     # PostgreSQL
 docker-compose up -d
 
-# Levantar Ollama (IA local para Aegis)
-cd API/docker/ollama
+cd API/docker/openvas       # OpenVAS / GVM
+docker-compose up -d
+
+cd API/docker/ollama        # Ollama (IA local)
 docker-compose up -d
 ```
+
+### Configuración de Ollama
+
+Para IA en Sentinel y Aegis, se requiere Ollama con un modelo compatible (ej. `llama3.1`):
+
+```bash
+# Desde el contenedor Ollama
+docker exec -it ollama ollama pull llama3.1
+
+# O directamente en el host si Ollama está instalado
+ollama pull llama3.1
+```
+
+Las variables de entorno para la API se configuran en `.env`:
+
+```
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=llama3.1
+```
+
+> **Nota**: OpenVAS puede tardar varios minutos en iniciar la primera vez (descarga de plugins NVT). Verifica el estado en `http://localhost:9390`.
 
 ---
 

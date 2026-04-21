@@ -1,10 +1,11 @@
 from .enviroment_utils import (
     DirectoryChecker,
     DirectoryType,
+    SentinelTool,
     ConfigReader,
     SecOpsLogger,
     PlatformDetector,
-    PlatformType
+    PlatformType,
 )
 from .inet_utils import (
     resolve_domain,
@@ -13,11 +14,11 @@ from .inet_utils import (
     IPValidator,
     PortValidator
 )
-from .conversion import JSONManager
 
 __all__ = [
     "DirectoryChecker",
     "DirectoryType",
+    "SentinelTool",
     "ConfigReader",
     "SecOpsLogger",
     "PlatformDetector",
