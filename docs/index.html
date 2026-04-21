@@ -74,6 +74,44 @@
       animation: hero-pulse 8s ease-in-out infinite;
     }
 
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+      opacity: 0;
+      animation: fade-in 0.8s ease 0.3s forwards;
+    }
+
+    .hero-badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
     @keyframes hero-pulse {
       0%, 100% { opacity: 0.5; transform: scale(1); }
       50% { opacity: 1; transform: scale(1.1); }
@@ -188,7 +226,7 @@
       border: 1px solid var(--border-solid);
       border-radius: var(--radius);
       padding: 2rem;
-      transition: all 0.3s ease;
+      transition: all 0.15s ease;
       opacity: 0;
       transform: translateY(20px);
     }
@@ -265,7 +303,7 @@
       padding: 1.5rem;
       opacity: 0;
       transform: translateY(20px);
-      transition: all 0.3s ease;
+      transition: all 0.15s ease;
     }
 
     .feature-item.visible {
@@ -307,7 +345,7 @@
       color: var(--text-dim);
       opacity: 0;
       transform: translateY(10px);
-      transition: all 0.3s ease;
+      transition: all 0.15s ease;
     }
 
     .tech-tag.visible {
@@ -359,11 +397,16 @@
 </head>
 <body>
   <section class="hero">
+    <div class="hero-grid"></div>
     <div class="container">
+      <div class="hero-badge">
+        <span class="hero-badge-dot"></span>
+        Código abierto
+      </div>
       <h1>SeQ</h1>
       <p class="tagline">Security Operations Platform — Plataforma integral de operaciones de seguridad con análisis de IA</p>
       <div class="hero-cta">
-        <a href="README.md" class="btn btn--primary">Documentación</a>
+        <a href="../README.md" class="btn btn--primary">Documentación</a>
         <a href="https://github.com/gamustea/SeQ" class="btn btn--ghost" target="_blank">GitHub</a>
       </div>
     </div>
