@@ -256,10 +256,6 @@ class AegisManager(BaseManager):
         finally:
             self.close_session()
 
-    # =========================================================================
-    # PERSISTENCIA (privado)
-    # =========================================================================
-
     def _persist_content_atomic(self, document_id: int, content: AegisContent, contact_email_from_tweaks: str | None = None) -> None:
         """
         Persiste el contenido de la píldora directamente en AegisDocument
@@ -274,7 +270,8 @@ class AegisManager(BaseManager):
             doc.subtitle      = content.subtitle
             doc.intro         = content.intro
             doc.closing       = content.closing
-            doc.contact_email = content.contact_email or contact_email_from_tweaks or None
+            default_email = "seguridad@empresa.com"
+            doc.contact_email = contact_email_from_tweaks if contact_email_from_tweaks and contact_email_from_tweaks != default_email else (content.contact_email or None)
             doc.company       = content.company
 
             # Eliminación de tips previos
@@ -335,10 +332,6 @@ class AegisManager(BaseManager):
         except Exception as exc:
             self.session.rollback()
             raise RuntimeError(f"Error persistiendo alertas: {exc}")
-
-    # =========================================================================
-    # HELPERS (privado)
-    # =========================================================================
 
     def _read_cfg(self) -> dict:
         stack_dir = Path(ConfigReader.get_directory_of(DirectoryType.STACK_AEGIS))

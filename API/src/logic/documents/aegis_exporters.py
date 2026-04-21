@@ -337,8 +337,9 @@ class MarkdownExporter(AegisExporter):
             "*Este documento fue generado automáticamente por el sistema Aegis "
             "de concienciación en ciberseguridad.*",
         ]
-        if data.contact_email:
-            lines.append(f"*Para más información, contacta con: {data.contact_email}*")
+        contact_email = data.contact_email
+        if contact_email:
+            lines.append(f"*Para más información, contacta con {"el responsable de SeQ en tu empresa." if (contact_email == "seguridad@empresa.com") else contact_email}*")
         lines.append("")
         lines.append(f"*ID del documento: {data.document_id}*")
         return lines
@@ -480,8 +481,10 @@ class HTMLExporter(AegisExporter):
             "<div class='footer'>",
             "<p>Este documento fue generado automáticamente por el sistema Aegis de concienciación en ciberseguridad.</p>",
         ]
-        if data.contact_email:
-            footer.append(f"<p>Para más información, contacta con: {data.contact_email}</p>")
+
+        contact_email = data.contact_email
+        if contact_email:
+            footer.append(f"<p>Para más información, contacta con {"el responsable de SeQ en tu empresa." if (contact_email == "seguridad@empresa.com") else contact_email}</p>")
         footer.append(f"<p>ID del documento: {data.document_id}</p>")
         footer.append("</div>")
         footer.append("</body>")
