@@ -64,7 +64,6 @@ class AlertSource(str, Enum):
 
 
 MAX_BRANDS         = 5
-MAX_ALERT_AGE_YEARS = 5
 MAX_RETRIES        = 3
 RETRY_DELAY_BASE   = 1.5  # segundos, backoff exponencial
 
@@ -73,26 +72,6 @@ FALLBACK_BRANDS: list[str] = [
     "Oracle", "SAP", "VMware", "Fortinet", "Palo Alto",
     "Juniper", "IBM", "Linux", "Android", "Chrome",
 ]
-
-BRAND_SLUGS: dict[str, tuple[str, str]] = {
-    "Microsoft": ("microsoft", "windows"),
-    "Cisco":     ("cisco",     "ios"),
-    "Apple":     ("apple",     "macos"),
-    "Google":    ("google",    "chrome"),
-    "Adobe":     ("adobe",     "acrobat"),
-    "Android":   ("google",    "android"),
-    "HPE":       ("hp",        "hpe"),
-    "SonicWall": ("sonicwall", "sonicos"),
-    "Konica":    ("konicaminolta", "printer"),
-    "Juniper":   ("juniper",   "junos"),
-    "VMware":    ("vmware",    "esxi"),
-    "Palo Alto": ("paloaltonetworks", "pan-os"),
-    "SAP":       ("sap",       "netweaver"),
-    "Oracle":    ("oracle",    "database"),
-    "Mozilla":   ("mozilla",   "firefox"),
-    "Linux":     ("linux",     "kernel"),
-    "Fortinet":  ("fortinet",  "fortios"),
-}
 
 FEW_SHOT_EXAMPLES = """
 Ejemplo de output válido para tema "Phishing Empresarial":
@@ -360,8 +339,22 @@ class AegisAlertFetcher:
     _lock       = threading.Lock()
 
     def __init__(self, logger: SecOpsLogger, fallback_brands: list[str] | None = None) -> None:
-        self.logger           = logger
-        self._fallback_brands = fallback_brands or FALLBACK_BRANDS[:]
+        self.logger               = logger
+        self._max_alert_age_years = ConfigReader.get_aegis_vulnerabilities_antiquity()
+
+        # Construir los lookups de marcas desde el catálogo centralizado del config
+        brand_catalogue           = ConfigReader.get_aegis_brands()
+        self._brand_slugs: dict[str, tuple[str, str]] = {
+            b["label"]: (b["circl_vendor"], b["circl_product"])
+            for b in brand_catalogue
+        }
+        self._brand_aliases: dict[str, list[str]] = {
+            b["label"]: [a.lower() for a in b.get("aliases", [])]
+            for b in brand_catalogue
+            if b.get("aliases")
+        }
+        catalogue_labels          = [b["label"] for b in brand_catalogue]
+        self._fallback_brands     = fallback_brands or catalogue_labels or FALLBACK_BRANDS[:]
 
     # ── Caché ─────────────────────────────────────────────────────────────────
 
@@ -396,7 +389,7 @@ class AegisAlertFetcher:
             return True
         try:
             pub_date = datetime.strptime(date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            cutoff   = datetime.now(timezone.utc) - timedelta(days=365 * MAX_ALERT_AGE_YEARS)
+            cutoff   = datetime.now(timezone.utc) - timedelta(days=365 * self._max_alert_age_years)
             return pub_date >= cutoff
         except ValueError:
             self.logger.warning(f"Fecha no parseable '{date_str}', asumiendo reciente")
@@ -462,12 +455,13 @@ class AegisAlertFetcher:
                     severity = level
                     break
 
-            # Matching de marcas
+            # Matching de marcas: nombre canónico + aliases de texto libre
             matched = []
             for brand in brands:
                 if brand_counts[brand] >= max_per_brand:
                     continue
-                if brand.lower() in haystack:
+                search_terms = [brand.lower()] + self._brand_aliases.get(brand, [])
+                if any(term in haystack for term in search_terms):
                     matched.append(brand)
                     brand_counts[brand] += 1
 
@@ -505,7 +499,7 @@ class AegisAlertFetcher:
             if brand_counts[brand] >= max_per_brand:
                 continue
 
-            vendor, product = BRAND_SLUGS.get(brand, (brand.lower().replace(" ", ""), ""))
+            vendor, product = self._brand_slugs.get(brand, (brand.lower().replace(" ", ""), ""))
             url = (
                 f"https://cve.circl.lu/api/search/{vendor}/{product}"
                 if product else 
@@ -523,14 +517,12 @@ class AegisAlertFetcher:
                 self.logger.warning(f"CIRCL error para '{brand}': {e}")
                 continue
 
-            # FIX: Extraer correctamente la estructura anidada
             results = data.get("results", {}) if isinstance(data, dict) else {}
             cve_list = results.get("cvelistv5", []) if isinstance(results, dict) else []
             
             if not isinstance(cve_list, list):
                 continue
 
-            # Ordenar por fecha descendente
             def extract_date(entry):
                 try:
                     if isinstance(entry, (list, tuple)) and len(entry) > 1:
@@ -729,6 +721,7 @@ class AegisAIWriter(AIWriter):
             "topic_id": str(topic.id) if topic else str(topic_id),
             "focus": focus,
             "verified_resources": verified_resources[:2000],
+            "tips_amount": str(ConfigReader.get_aegis_tips_amount()),
         }
         
         result = user_template
@@ -799,7 +792,7 @@ class AegisAIWriter(AIWriter):
                     tools    = tools,
                     format   = "json",
                     options  = {
-                        "num_predict":    4096,
+                        "num_predict":    8192,
                         "temperature":    0.4 if attempt == 0 else 0.7,
                         "top_p":          0.9,
                         "repeat_penalty": 1.1,
@@ -823,7 +816,7 @@ class AegisAIWriter(AIWriter):
                         model    = self.model,
                         messages = messages,
                         format   = "json",
-                        options  = {"num_predict": 4096, "temperature": 0.5},
+                        options  = {"num_predict": 8192, "temperature": 0.5},
                     )
 
                 raw_response = resp.message.content.strip()
@@ -837,6 +830,8 @@ class AegisAIWriter(AIWriter):
                 time.sleep(RETRY_DELAY_BASE ** attempt)
 
         data = self._parse_response(raw_response)
+
+        tips_amount = ConfigReader.get_aegis_tips_amount()
 
         raw_subtitle = str(data.get("subtitle", "")).strip()
         
@@ -880,8 +875,8 @@ class AegisAIWriter(AIWriter):
             except AegisValidationError as exc:
                 self.logger.warning(f"Tip {i + 1} descartado: {exc}")
 
-        if len(tips) < 3:
-            raise AegisInsufficientContentError(3, len(tips))
+        if len(tips) < tips_amount:
+            raise AegisInsufficientContentError(tips_amount, len(tips))
 
         return AegisContent(
             topic_id      = resolved_topic_id,
@@ -898,9 +893,28 @@ class AegisAIWriter(AIWriter):
         )
 
     def _parse_response(self, raw: str) -> dict:
-        """Parseo robusto con múltiples estrategias de recuperación."""
+        """
+        Parseo robusto con múltiples estrategias de recuperación.
+
+        Detecta explìtamente si la respuesta viene truncada por el límite de
+        num_predict antes de intentar extraer un JSON parcial, evitando que
+        un objeto incompleto pase la validación con menos tips de los esperados.
+        """
         if not raw:
             raise AIResponseError("Respuesta vacía del modelo")
+
+        # Detección temprana de truncado: el JSON no cierra su llave raíz
+        # Un JSON completo siempre termina en '}' (ignorando whitespace)
+        stripped = raw.rstrip()
+        if stripped and stripped[-1] != '}':
+            self.logger.warning(
+                f"Respuesta truncada detectada (num_predict alcanzado). "
+                f"\xdaltimos 80 chars: {repr(stripped[-80:])}"
+            )
+            raise AIResponseError(
+                "Respuesta truncada por límite de tokens: el JSON no está completo. "
+                "Aumenta num_predict o reduce el tamaño del prompt."
+            )
 
         # Intento directo
         try:
@@ -908,8 +922,7 @@ class AegisAIWriter(AIWriter):
         except json.JSONDecodeError:
             pass
 
-        # Extracción de bloque JSON con patrones alternativos
-        for pattern in [r'\{[\s\S]*\}', r'```(?:json)?\s*([\s\S]*?)\s*```', r'JSON:\s*(\{[\s\S]*\})']:
+        for pattern in [r'```(?:json)?\s*([\s\S]*?)\s*```', r'JSON:\s*(\{[\s\S]*\})', r'\{[\s\S]*\}']:
             match = re.search(pattern, raw)
             if match:
                 try:
@@ -917,7 +930,6 @@ class AegisAIWriter(AIWriter):
                 except json.JSONDecodeError:
                     continue
 
-        # Limpieza agresiva
         cleaned = re.sub(r'^[^{]*', '', raw)
         cleaned = re.sub(r'[^}]*$', '', cleaned)
         try:

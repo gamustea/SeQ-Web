@@ -105,9 +105,12 @@
           </label>
 
           <label class="form-field">
-            <span class="form-field__label">Marcas asociadas <small>(separadas por coma)</small></span>
-            <input id="input-brands" class="form-field__input" type="text"
-                   placeholder="Microsoft, Cisco, Adobe…" maxlength="200" />
+            <span class="form-field__label">Marcas asociadas</span>
+            <div id="selected-brands" class="selected-brands"></div>
+            <select id="brand-select" class="form-field__input">
+              <option value="" selected disabled>Seleccionar marca...</option>
+            </select>
+            <input id="input-brands" type="hidden" />
           </label>
 
           <label class="form-field">
