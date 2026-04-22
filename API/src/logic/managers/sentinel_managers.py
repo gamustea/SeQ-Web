@@ -554,6 +554,75 @@ class NmapScanManager(ScanManager):
 
         except Exception as e:
             self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
+
+    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
+        scan = self.get_scan_by_id(scan_id)
+        if not scan:
+            self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
+            raise ValueError(f"Escaneo {scan_id} no encontrado")
+
+        print(f"Creando documento con ia: {ai_report}")
+        document = SentinelDocument(
+            scan_id         = scan.id,
+            scan_type       = scan.scan_type,
+            document_type   = "sentinel",
+            filename        = "",
+            format          = "pdf",
+            status          = "pending",
+            user_id         = scan.user_id,
+            is_ai_generated = 1 if ai_report else 0,
+        )
+         
+        self.session.add(document)
+        self.session.flush()
+         
+        document.status = "running"
+        self.session.commit()
+
+        thread = threading.Thread(
+            target=self._generate_pdf_async,
+            args=(document.id, scan.id, ai_report),
+            daemon=True,
+            name=f"PDFGeneration-Scan-{scan.id}"
+        )
+
+        thread.start()
+        return document.id
+        """Start an Nmap scan.
+
+        Args:
+            target_host: Target IP address or hostname.
+            target_ports: Port range to scan (e.g., "1-1000").
+            timeout: Maximum scan duration in seconds.
+
+        Returns:
+            Scan ID of the created scan record.
+        """
+        try:
+            scan = self._create_scan_record(target=target_host)
+            scan_id = scan.id
+
+            task = NmapScanTask(
+                target_host=target_host,
+                target_ports=target_ports,
+                timeout=timeout
+            )
+
+            thread = threading.Thread(
+                target=self._execute_scan_in_thread,
+                args=(scan_id, task),
+                daemon=True,
+                name=f"NmapScan-{scan_id}"
+            )
+
+            self._register_task(scan_id, task, thread)
+            thread.start()
+
+            self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
+            return scan_id
+
+        except Exception as e:
+            self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
             raise
 
     def _create_scan_record(self, target: str) -> NmapScan:
@@ -620,6 +689,8 @@ class NmapScanManager(ScanManager):
             self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
             raise ValueError(f"Escaneo {scan_id} no encontrado")
 
+        
+        self.logger.info(f"Creando documento con ai_report: {ai_report}")
         document = SentinelDocument(
             scan_id=scan.id,
             scan_type=scan.scan_type,
@@ -627,7 +698,8 @@ class NmapScanManager(ScanManager):
             filename="",
             format="pdf",
             status="pending",
-            user_id=scan.user_id
+            user_id=scan.user_id,
+            is_ai_generated = 1 if ai_report else 0
         )
         
         self.session.add(document)
@@ -877,13 +949,14 @@ class NiktoScanManager(ScanManager):
             raise ValueError(f"Escaneo {scan_id} no encontrado")
 
         document = SentinelDocument(
-            scan_id=scan.id,
-            scan_type=scan.scan_type,
-            document_type="sentinel",
-            filename="",
-            format="pdf",
-            status="pending",
-            user_id=scan.user_id
+            scan_id         = scan.id,
+            scan_type       = scan.scan_type,
+            document_type   = "sentinel",
+            filename        = "",
+            format          = "pdf",
+            status          = "pending",
+            user_id         = scan.user_id,
+            is_ai_generated = 1 if ai_report else 0,
         )
         
         self.session.add(document)
@@ -1212,13 +1285,14 @@ class OpenVASScanManager(ScanManager):
             raise ValueError(f"Escaneo {scan_id} no encontrado")
 
         document = SentinelDocument(
-            scan_id=scan.id,
-            scan_type=scan.scan_type,
-            document_type="sentinel",
-            filename="",
-            format="pdf",
-            status="pending",
-            user_id=scan.user_id
+            scan_id         = scan.id,
+            scan_type       = scan.scan_type,
+            document_type   = "sentinel",
+            filename        = "",
+            format          = "pdf",
+            status          = "pending",
+            user_id         = scan.user_id,
+            is_ai_generated = 1 if ai_report else 0,
         )
         
         self.session.add(document)

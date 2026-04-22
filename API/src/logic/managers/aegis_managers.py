@@ -388,12 +388,13 @@ class AegisManager(BaseManager):
         placeholder = f"pending_{ts}_{self.user.id}_{topic_id}"
 
         doc = AegisDocument(
-            title    = placeholder[:64],
-            filename = f"{placeholder}.json"[:128],
-            status   = "pending",
-            format   = "json",
-            topic_id = topic_id,
-            user_id  = self.user.id,
+            title          = placeholder[:64],
+            filename       = f"{placeholder}.json"[:128],
+            status         = "pending",
+            format         = "json",
+            topic_id      = topic_id,
+            user_id       = self.user.id,
+            is_ai_generated = 1,
         )
         self.session.add(doc)
         self._safe_commit()
