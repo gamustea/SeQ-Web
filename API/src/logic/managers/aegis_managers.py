@@ -60,6 +60,7 @@ class AegisManager(BaseManager):
             tweaks      = tweaks or {}
             document_id = self._create_pending_document(topic_id)
 
+            self.logger.debug(f"Creando píldora con tweaks{tweaks}")
             thread_manager = self.__class__(self.user)
             threading.Thread(
                 target  = thread_manager._run_generation_workflow,
@@ -225,7 +226,7 @@ class AegisManager(BaseManager):
             )
 
             # 5. Persistencia
-            self._persist_content_atomic(document_id, content)
+            self._persist_content_atomic(document_id, content, tweaks.get("mentionContact"))
             self._persist_alerts_atomic(document_id, alerts)
 
             # 6. Escritura del archivo de archivo
@@ -255,11 +256,7 @@ class AegisManager(BaseManager):
         finally:
             self.close_session()
 
-    # =========================================================================
-    # PERSISTENCIA (privado)
-    # =========================================================================
-
-    def _persist_content_atomic(self, document_id: int, content: AegisContent) -> None:
+    def _persist_content_atomic(self, document_id: int, content: AegisContent, contact_email_from_tweaks: str | None = None) -> None:
         """
         Persiste el contenido de la píldora directamente en AegisDocument
         y los tips en AegisTip. Elimina tips previos si los hubiera.
@@ -273,7 +270,8 @@ class AegisManager(BaseManager):
             doc.subtitle      = content.subtitle
             doc.intro         = content.intro
             doc.closing       = content.closing
-            doc.contact_email = content.contact_email or None
+            default_email = "seguridad@empresa.com"
+            doc.contact_email = contact_email_from_tweaks if contact_email_from_tweaks and contact_email_from_tweaks != default_email else (content.contact_email or None)
             doc.company       = content.company
 
             # Eliminación de tips previos
@@ -281,12 +279,15 @@ class AegisManager(BaseManager):
             self.session.flush()
 
             for i, tip in enumerate(content.tips, 1):
+                links_value = tip.links if tip.links else None
+                if links_value:
+                    links_value = [{"text": lk["text"], "url": lk["url"]} for lk in links_value]
                 self.session.add(AegisTip(
                     document_id = document_id,
                     position    = i,
                     headline    = tip.headline,
                     body        = tip.body,
-                    links_json  = tip.links or None,
+                    links_json  = links_value,
                 ))
 
             self._safe_commit()
@@ -331,10 +332,6 @@ class AegisManager(BaseManager):
         except Exception as exc:
             self.session.rollback()
             raise RuntimeError(f"Error persistiendo alertas: {exc}")
-
-    # =========================================================================
-    # HELPERS (privado)
-    # =========================================================================
 
     def _read_cfg(self) -> dict:
         stack_dir = Path(ConfigReader.get_directory_of(DirectoryType.STACK_AEGIS))
@@ -422,6 +419,8 @@ class AegisManager(BaseManager):
                 doc.title = title[:64]
             if filename:
                 doc.filename = filename[:128]
+            if status == "done":
+                doc.generated_at = datetime.utcnow()
             if error and status == "error":
                 doc.title = f"[ERR{document_id}] {error[:50]}"[:64]
 

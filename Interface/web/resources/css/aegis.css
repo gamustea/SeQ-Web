@@ -125,6 +125,23 @@
 }
 .form-field__input::placeholder { color: var(--text-muted); opacity: 0.45; }
 
+.selected-brands {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px;
+  min-height: 24px;
+}
+.brand-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px;
+  background: var(--accent-dim); border: 1px solid var(--border-med);
+  border-radius: var(--radius-sm); font-size: 0.75rem;
+  color: var(--accent);
+}
+.brand-tag__remove {
+  cursor: pointer; opacity: 0.6; transition: opacity 0.2s;
+  display: flex; align-items: center;
+}
+.brand-tag__remove:hover { opacity: 1; }
+
 /* ══════════════════════════════════════════════════════════════
    TOPICS
    ══════════════════════════════════════════════════════════════ */
@@ -516,6 +533,36 @@
 
 .history-item__actions {
   display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px;
+}
+
+.export-select-sm {
+  font-size: 0.65rem;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border-solid);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+.export-select-sm:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.export-format-select {
+  font-size: 0.75rem;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border-solid);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+.export-format-select:focus {
+  border-color: var(--accent);
+  outline: none;
 }
 
 /* ══════════════════════════════════════════════════════════════

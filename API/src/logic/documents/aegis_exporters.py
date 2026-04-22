@@ -35,10 +35,6 @@ from src.core.exceptions import (
 _logger = SecOpsLogger(name="AegisExporters").get_logger()
 
 
-# ============================================================================
-# ENUMERACIONES Y TIPOS DE DATOS
-# ============================================================================
-
 class ExportFormat(str, Enum):
     JSON     = "json"
     MARKDOWN = "md"
@@ -112,10 +108,6 @@ class ExportData:
         )
 
 
-# ============================================================================
-# BASE Y CONFIGURACIÓN
-# ============================================================================
-
 @dataclass
 class MarkdownTemplate:
     """Configuración de plantilla para el exportador Markdown."""
@@ -182,10 +174,6 @@ class AegisExporter(ABC):
         except Exception:
             return iso_string
 
-
-# ============================================================================
-# EXPORTADOR MARKDOWN
-# ============================================================================
 
 class MarkdownExporter(AegisExporter):
 
@@ -349,16 +337,160 @@ class MarkdownExporter(AegisExporter):
             "*Este documento fue generado automáticamente por el sistema Aegis "
             "de concienciación en ciberseguridad.*",
         ]
-        if data.contact_email:
-            lines.append(f"*Para más información, contacta con: {data.contact_email}*")
+        contact_email = data.contact_email
+        if contact_email:
+            lines.append(f"*Para más información, contacta con {"el responsable de SeQ en tu empresa." if (contact_email == "seguridad@empresa.com") else contact_email}*")
         lines.append("")
         lines.append(f"*ID del documento: {data.document_id}*")
         return lines
 
 
-# ============================================================================
-# EXPORTADOR JSON
-# ============================================================================
+class HTMLExporter(AegisExporter):
+    """Exportador de documentos Aegis a HTML."""
+
+    format             = ExportFormat.HTML
+    extension          = "html"
+    mimetype           = "text/html; charset=utf-8"
+    supports_streaming = False
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def export(self, data: ExportData, output_path: Path | None = None) -> ExportResult:
+        content       = self._generate_content(data)
+        content_bytes = content.encode("utf-8")
+        filename      = output_path.with_suffix(f".{self.extension}").name if output_path else self.generate_filename(data)
+
+        if output_path:
+            output_path.with_suffix(f".{self.extension}").write_text(content, encoding="utf-8")
+
+        return ExportResult(
+            content      = content_bytes,
+            filename     = filename,
+            mimetype     = self.mimetype,
+            format       = self.format,
+            size_bytes   = len(content_bytes),
+            generated_at = datetime.now(),
+        )
+
+    def _generate_content(self, data: ExportData) -> str:
+        return "\n".join([
+            self._html_header(data),
+            self._html_body(data),
+            self._html_footer(data),
+        ])
+
+    def _html_header(self, data: ExportData) -> str:
+        return f"""<!DOCTYPE html>
+        <html lang="{data.language}">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{self._sanitize(data.subtitle)}</title>
+            <style>
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; color: #333; }}
+                h1 {{ color: #1a365d; border-bottom: 2px solid #38bdf8; padding-bottom: 10px; }}
+                h2 {{ color: #2c5282; margin-top: 30px; }}
+                h3 {{ color: #2b6cb0; }}
+                .meta {{ color: #666; font-size: 0.9em; margin-bottom: 20px; }}
+                .tip {{ background: #f7fafc; padding: 15px; margin: 15px 0; border-left: 4px solid #38bdf8; }}
+                .alert {{ background: #fff5f5; padding: 15px; margin: 15px 0; border-left: 4px solid #f56565; }}
+                .alert-high {{ border-left-color: #ed8936; }}
+                .alert-medium {{ border-left-color: #ecc94b; }}
+                .alert-low {{ border-left-color: #48bb78; }}
+                .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 0.85em; color: #718096; }}
+                a {{ color: #3182ce; }}
+            </style>
+        </head>
+        <body>"""
+
+    def _html_body(self, data: ExportData) -> str:
+        parts = [
+            f"<h1>{self._sanitize(data.subtitle)}</h1>",
+            f"<div class='meta'>",
+            f"<p><strong>Píldora de Concienciación en Ciberseguridad</strong></p>",
+            f"<p>Empresa: {self._sanitize(data.company)}</p>",
+            f"<p>Fecha de generación: {self._format_datetime(data.generated_at)}</p>",
+            f"</div>",
+        ]
+
+        if data.intro:
+            intro_paragraphs = data.intro.split("\n\n")
+            for p in intro_paragraphs:
+                if p.strip():
+                    parts.append(f"<p>{p.strip()}</p>")
+
+        if data.tips:
+            parts.append("<h2>Consejos Prácticos</h2>")
+            for tip in data.tips:
+                headline = self._sanitize(tip.get("headline", ""))
+                body = self._sanitize(tip.get("body", ""))
+                parts.append("<div class='tip'>")
+                if headline:
+                    parts.append(f"<h3>{headline}</h3>")
+                if body:
+                    for p in body.split("\n"):
+                        if p.strip():
+                            parts.append(f"<p>{p.strip()}</p>")
+                links = tip.get("links") or []
+                if links:
+                    parts.append("<p><strong>Recursos relacionados:</strong></p>")
+                    for link in links:
+                        text = self._sanitize(link.get("text", "Enlace"))
+                        url = link.get("url", "#")
+                        parts.append(f"<p><a href='{url}'>{text}</a></p>")
+                parts.append("</div>")
+
+        if data.alerts:
+            parts.append("<h2>Alertas de Seguridad Recientes</h2>")
+            for alert in data.alerts:
+                title = self._sanitize(alert.get("title", "Alerta"))
+                description = self._sanitize(alert.get("description", ""))
+                source = alert.get("sourceLabel", "Fuente desconocida")
+                severity = alert.get("severity", "").lower()
+                
+                alert_class = "alert"
+                if severity in ["alta", "high"]:
+                    alert_class += " alert-high"
+                elif severity in ["media", "medium"]:
+                    alert_class += " alert-medium"
+                elif severity in ["baja", "low"]:
+                    alert_class += " alert-low"
+                
+                parts.append(f"<div class='{alert_class}'>")
+                parts.append(f"<h3>{title}</h3>")
+                parts.append(f"<p><strong>Fuente:</strong> {source}</p>")
+                if severity:
+                    parts.append(f"<p><strong>Severidad:</strong> {severity.upper()}</p>")
+                if description:
+                    parts.append(f"<p>{description}</p>")
+                url = alert.get("url", "#")
+                parts.append(f"<p><a href='{url}'>Ver detalle completo</a></p>")
+                parts.append("</div>")
+
+        if data.closing:
+            parts.append("<h2>Conclusión</h2>")
+            for p in data.closing.split("\n"):
+                if p.strip():
+                    parts.append(f"<p>{p.strip()}</p>")
+
+        return "\n".join(parts)
+
+    def _html_footer(self, data: ExportData) -> str:
+        footer = [
+            "<div class='footer'>",
+            "<p>Este documento fue generado automáticamente por el sistema Aegis de concienciación en ciberseguridad.</p>",
+        ]
+
+        contact_email = data.contact_email
+        if contact_email:
+            footer.append(f"<p>Para más información, contacta con {"el responsable de SeQ en tu empresa." if (contact_email == "seguridad@empresa.com") else contact_email}</p>")
+        footer.append(f"<p>ID del documento: {data.document_id}</p>")
+        footer.append("</div>")
+        footer.append("</body>")
+        footer.append("</html>")
+        return "\n".join(footer)
+
 
 class JsonExporter(AegisExporter):
 
@@ -421,6 +553,7 @@ def get_exporter_for_format(format_type: ExportFormat | str) -> AegisExporter:
     exporters: dict[ExportFormat, type[AegisExporter]] = {
         ExportFormat.MARKDOWN: MarkdownExporter,
         ExportFormat.JSON:     JsonExporter,
+        ExportFormat.HTML:     HTMLExporter,
     }
 
     exporter_class = exporters.get(format_type)

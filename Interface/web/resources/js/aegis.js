@@ -324,13 +324,18 @@ function renderHistory() {
         </div>
         <div class="history-item__actions">
           ${doc.status === 'done' ? `
-            <button class="btn btn--sm btn--ghost" data-action="view"    data-id="${doc.id}">Ver</button>
-            <button class="btn btn--sm btn--ghost" data-action="dl-md"   data-id="${doc.id}">MD</button>
-            <button class="btn btn--sm btn--ghost" data-action="dl-json" data-id="${doc.id}">JSON</button>
+            <button class="btn btn--sm btn--ghost" data-action="view" data-id="${doc.id}">Ver</button>
+            <select class="export-select-sm" data-id="${doc.id}">
+              <option value="" disabled selected>Export</option>
+              <option value="md">MD</option>
+              <option value="html">HTML</option>
+              <option value="json">JSON</option>
+            </select>
           ` : ''}
           <button class="btn btn--sm btn--ghost btn--danger" data-action="delete" data-id="${doc.id}">✕</button>
         </div>`;
       item.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', handleHistoryAction));
+      item.querySelectorAll('.export-select-sm').forEach(s => s.addEventListener('change', handleExportSelect));
     }
     frag.appendChild(item);
   });
@@ -341,9 +346,14 @@ function handleHistoryAction(e) {
   const { action, id } = e.currentTarget.dataset;
   const docId = parseInt(id, 10);
   if      (action === 'view')    loadAndShowDocument(docId);
-  else if (action === 'dl-md')   downloadExport(docId, 'md');
-  else if (action === 'dl-json') downloadExport(docId, 'json');
   else if (action === 'delete')  confirmDelete(docId);
+}
+
+function handleExportSelect(e) {
+  const format = e.target.value;
+  const docId = parseInt(e.target.dataset.id, 10);
+  if (format && docId) downloadExport(docId, format);
+  e.target.value = "";
 }
 
 document.getElementById('sort-select')?.addEventListener('change', e => {
@@ -383,13 +393,20 @@ function renderDocument(doc) {
     </div>
     <h2 class="pill-header__title">${SeqUI.escHtml(pill.subtitle || doc.title || 'Sin título')}</h2>
     <div class="pill-header__actions">
-      <button class="btn btn--sm btn--primary" id="btn-dl-md">⬇ Markdown</button>
-      <button class="btn btn--sm btn--ghost"   id="btn-dl-json">⬇ JSON</button>
-      <button class="btn btn--sm btn--ghost"   id="btn-preview-md">👁 Preview</button>
+      <select id="export-format-select" class="export-format-select">
+        <option value="" disabled selected>Exportar...</option>
+        <option value="md">Markdown</option>
+        <option value="html">HTML</option>
+        <option value="json">JSON</option>
+      </select>
+      <button class="btn btn--sm btn--ghost" id="btn-preview-md">👁 Preview</button>
     </div>`;
   viewerContent.appendChild(header);
-  header.querySelector('#btn-dl-md')?.addEventListener('click',      () => downloadExport(doc.id, 'md'));
-  header.querySelector('#btn-dl-json')?.addEventListener('click',    () => downloadExport(doc.id, 'json'));
+  header.querySelector('#export-format-select')?.addEventListener('change', e => {
+    const format = e.target.value;
+    if (format) downloadExport(doc.id, format);
+    e.target.value = "";
+  });
   header.querySelector('#btn-preview-md')?.addEventListener('click', () => previewMarkdown(doc.id));
 
   /* Divider */
@@ -541,15 +558,72 @@ function _triggerDownload(blob, filename) {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   INIT
-══════════════════════════════════════════════════════════════ */
+    BRANDS
+    ══════════════════════════════════════════════════════════════ */
+let selectedBrands = [];
+
+async function loadBrands() {
+  const res = await apiFetch('/aegis/brands');
+  if (!res?.ok) return;
+  const data = await res.json();
+  const brands = data.brands || [];
+  const select = document.getElementById('brand-select');
+  if (!select) return;
+  brands.forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b.label;
+    opt.textContent = b.label;
+    select.appendChild(opt);
+  });
+}
+
+function renderSelectedBrands() {
+  const container = document.getElementById('selected-brands');
+  if (!container) return;
+  container.innerHTML = '';
+  selectedBrands.forEach(brand => {
+    const tag = document.createElement('span');
+    tag.className = 'brand-tag';
+    tag.innerHTML = `${SeqUI.escHtml(brand)}<span class="brand-tag__remove" data-brand="${SeqUI.escHtml(brand)}">&times;</span>`;
+    container.appendChild(tag);
+  });
+  container.querySelectorAll('.brand-tag__remove').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const brand = e.currentTarget.dataset.brand;
+      selectedBrands = selectedBrands.filter(b => b !== brand);
+      renderSelectedBrands();
+      updateBrandsInput();
+    });
+  });
+  updateBrandsInput();
+}
+
+function updateBrandsInput() {
+  const hidden = document.getElementById('input-brands');
+  if (hidden) hidden.value = selectedBrands.join(',');
+}
+
+if (document.getElementById('brand-select')) {
+  document.getElementById('brand-select').addEventListener('change', e => {
+    const brand = e.target.value;
+    if (brand && !selectedBrands.includes(brand)) {
+      selectedBrands.push(brand);
+      renderSelectedBrands();
+    }
+    e.target.value = '';
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+    INIT
+    ══════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', async () => {
   if (!SeqUI.requireSession()) return;
   SeqUI.initTopbar();
   if (btnGenerate) btnGenerate.disabled = true;
   showProgress(false);
 
-  await Promise.all([loadTopics(), loadHistory()]);
+  await Promise.all([loadTopics(), loadHistory(), loadBrands()]);
   await checkPendingGeneration();
 
   console.log('[Aegis] Initialized');
