@@ -179,3 +179,129 @@ body {
   .hub-grid { padding: 16px 16px 48px; gap: 16px; }
   .module-card { padding: 24px; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   TERMINAL DEMO
+   ══════════════════════════════════════════════════════════════ */
+.terminal-demo {
+  margin-top: 40px;
+  display: flex;
+  justify-content: center;
+}
+
+.terminal-window {
+  width: 100%;
+  max-width: 800px;
+  background: rgba(13, 20, 32, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #0d1420;
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.terminal-btn {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.terminal-btn.close { background: #ff5f56; }
+.terminal-btn.minimize { background: #ffbd2e; }
+.terminal-btn.maximize { background: #27ca40; }
+
+.terminal-title {
+  flex: 1;
+  text-align: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.terminal-body {
+  padding: 16px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  min-height: 200px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.terminal-line {
+  line-height: 1.6;
+}
+
+.terminal-line {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.prompt {
+  color: var(--success);
+  white-space: pre;
+}
+
+.prompt-user {
+  color: var(--success);
+}
+
+.prompt-path {
+  color: #818cf8;
+}
+
+.command-text {
+  color: var(--text);
+}
+
+.cursor {
+  color: var(--success);
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.terminal-output {
+  margin-top: 12px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.terminal-output .json-key {
+  color: #818cf8;
+}
+
+.terminal-output .json-string {
+  color: #34d399;
+}
+
+.terminal-output .json-number {
+  color: #f472b6;
+}
+
+.terminal-output .json-boolean {
+  color: #fbbf24;
+}
+
+.terminal-output .json-null {
+  color: var(--text-muted);
+}
