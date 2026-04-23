@@ -22,11 +22,14 @@ import time
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from sqlalchemy import text  
+from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from src.core.model import Base
+from urllib.parse import quote_plus
 
 from src.endpoints import register_blueprints
 from src.endpoints._shared import limiter
-from src.misc import SecOpsLogger, ConfigReader
+from src.misc import SecOpsLogger, ConfigReader, ConfigReader
 from src.logic.managers import initialize_engine, warmup_connection
 
 
@@ -336,7 +339,7 @@ def _init_db(app: Flask) -> None:
 
     print("[+] ¡Datos iniciales insertados con éxito!")
 
-app = create_app(True)
+app = create_app()
 
 if __name__ == "__main__":
     app.run(debug=False, host='0.0.0.0', port=5000)
