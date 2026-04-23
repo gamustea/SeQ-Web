@@ -11,7 +11,7 @@ from typing import List,Optional
 from pathlib import Path
 
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class PlatformType(Enum):
@@ -245,7 +245,14 @@ class ConfigReader:
     @staticmethod
     def get_directory_of(directory_type: DirectoryType) -> str:
         """
-        Los directorios no son secretos → siempre desde el JSON.
+        Los directorios no son secretos → siempre desde el JSON,
+        pero permite sobrescribir via variables de entorno.
+        
+        Variables de entorno reconocidas:
+        - TEMP_DIR: directorio temporal
+        - LOG_DIR: directorio de logs
+        - OUTPUT_DIR: directorio de salida (sentinel/aegis)
+        - RESOURCE_DIR: directorio de recursos
         
         Args:
             directory_type: DirectoryType enum member.
@@ -253,10 +260,24 @@ class ConfigReader:
         Returns:
             Absolute path string to the directory.
         """
+        dir_key = directory_type.value
+        
+        env_mapping = {
+            "tempdir": "TEMP_DIR",
+            "logdir": "LOG_DIR",
+            "output": "OUTPUT_DIR",
+            "stack": "OUTPUT_DIR",
+            "resourcedir": "RESOURCE_DIR",
+        }
+        
+        env_var = env_mapping.get(dir_key)
+        if env_var:
+            env_value = os.getenv(env_var)
+            if env_value:
+                return env_value
+        
         configs = ConfigReader._load_configs()
         
-        dir_key = directory_type.value
-
         if "." in dir_key:
             parts = dir_key.split(".")
             module_key = parts[0]
