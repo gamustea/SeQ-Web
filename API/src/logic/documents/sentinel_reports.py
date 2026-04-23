@@ -1770,6 +1770,49 @@ class NmapAIWriter(AIWriter):
         super().__init__()
         self._prompts = ConfigReader().get_prompts_config()
 
+    def _classify_network_context(self, target: str) -> dict:
+        """Classify target as private LAN or public network deterministically.
+
+        Args:
+            target: IP address or hostname string.
+
+        Returns:
+            Dictionary with keys:
+                - is_private (bool): True if target is a private/LAN address.
+                - network_type (str): Human-readable label ("LAN privada" | "Red pública").
+                - max_risk_level (str): Hard ceiling for risk_level ("MEDIO" | "CRÍTICO").
+                - context_note (str): One-line explanation to inject into the prompt.
+        """
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(target.strip())
+            is_private = addr.is_private or addr.is_loopback or addr.is_link_local
+        except ValueError:
+            # Hostname — treat as public unless it looks internal
+            lower = target.lower()
+            is_private = any(lower.endswith(s) for s in (
+                ".local", ".lan", ".internal", ".intranet", ".corp", ".home"
+            )) or lower in ("localhost",)
+
+        if is_private:
+            return {
+                "is_private":    True,
+                "network_type":  "LAN privada",
+                "max_risk_level": "MEDIO",
+                "context_note":  (
+                    "CONTEXTO DE RED CONFIRMADO: El target es una IP privada (LAN). "
+                    "El host NO está expuesto a internet. "
+                    "risk_level máximo permitido = MEDIO. "
+                    "SSH, HTTP y DNS en LAN son servicios estándar: riesgo BAJO salvo anomalía confirmada."
+                ),
+            }
+        return {
+            "is_private":    False,
+            "network_type":  "Red pública",
+            "max_risk_level": "CRÍTICO",
+            "context_note":  "CONTEXTO DE RED CONFIRMADO: El target es una IP o dominio público.",
+        }
+
     def _build_system_prompt(self) -> str:
         """Build the system prompt defining analyst persona and principles.
         
@@ -1779,12 +1822,13 @@ class NmapAIWriter(AIWriter):
         prompts_config = ConfigReader().get_prompts_config()
         return prompts_config.get("nmap", {}).get("system", "")
 
-    def _build_user_prompt(self, scan_data: dict, open_ports: list) -> str:
-        """Build the user prompt with scan data and port analysis.
+    def _build_user_prompt(self, scan_data: dict, open_ports: list, network_ctx: dict) -> str:
+        """Build the user prompt with scan data, port analysis and network context.
         
         Args:
             scan_data: Dictionary with scan metadata (target, timestamps).
             open_ports: List of open port dictionaries.
+            network_ctx: Output of _classify_network_context().
             
         Returns:
             Formatted user prompt string.
@@ -1812,17 +1856,24 @@ class NmapAIWriter(AIWriter):
                 "categoria_funcional": self._infer_functional_category(service, port_num)
             })
         
-        # Obtener template aquí dentro usando ConfigReader, igual que NiktoAIWriter
         prompts_config = ConfigReader().get_prompts_config()
-        template = prompts_config.get("nmap", {}).get("user_template", "")
+        template = prompts_config.get("nmap", {}).get("userTemplate", "")
         
-        # Reemplazar placeholders {{variable}} según el formato del SecConfig.json
-        return template.replace("{{target}}", str(target)) \
-                    .replace("{{started}}", str(started)) \
-                    .replace("{{total_ports}}", str(len(ports_info))) \
-                    .replace("{{distribution}}", str(analysis_context["distribution"])) \
-                    .replace("{{profile_type}}", str(analysis_context["profile_type"])) \
-                    .replace("{{ports_json}}", json.dumps(ports_info, indent=2, ensure_ascii=False))
+        # Prepend the hard network-context fact so it appears before any reasoning
+        context_header = (
+            f"[DATO VERIFICADO — NO MODIFICAR]\n"
+            f"{network_ctx['context_note']}\n"
+            f"[FIN DATO VERIFICADO]\n\n"
+        )
+
+        rendered = template.replace("{{target}}", str(target)) \
+                           .replace("{{started}}", str(started)) \
+                           .replace("{{total_ports}}", str(len(ports_info))) \
+                           .replace("{{distribution}}", str(analysis_context["distribution"])) \
+                           .replace("{{profile_type}}", str(analysis_context["profile_type"])) \
+                           .replace("{{ports_json}}", json.dumps(ports_info, indent=2, ensure_ascii=False))
+
+        return context_header + rendered
 
     def _analyze_port_patterns(self, open_ports: list) -> dict:
         """Analyze port patterns to infer system context.
@@ -1905,6 +1956,11 @@ class NmapAIWriter(AIWriter):
             "status": getattr(scan, 'status', 'unknown'),
         }
         
+        # Classify network context deterministically before calling the model.
+        # This produces a hard cap on risk_level enforced in _parse_response
+        # regardless of what the model outputs.
+        network_ctx = self._classify_network_context(str(scan.target))
+
         open_ports = []
         for relation in (getattr(scan, 'open_ports_relation', None) or []):
             port_obj = getattr(relation, "port", None)
@@ -1919,7 +1975,7 @@ class NmapAIWriter(AIWriter):
                 "reason": getattr(relation, "reason", ""),
             })
         
-        prompt = self._build_user_prompt(scan_data, open_ports)
+        prompt = self._build_user_prompt(scan_data, open_ports, network_ctx)
         
         tools = [{
             "type": "function",
@@ -1981,12 +2037,20 @@ class NmapAIWriter(AIWriter):
                     raise AIFallbackExhaustedError(3, str(exc))
                 time.sleep(1.5 ** attempt)
         
-        return self._parse_response(raw_response)
+        return self._parse_response(raw_response, network_ctx=network_ctx)
 
-    def _parse_response(self, raw: str) -> dict:
-        """Parseo robusto de la respuesta JSON con validación de integridad."""
+    def _parse_response(self, raw: str, attempt: int = 0, network_ctx: Optional[dict] = None) -> dict:
+        """Parseo robusto de la respuesta JSON con validación de integridad.
+        
+        Applies a hard risk_level cap derived from network_ctx so that, for
+        example, a private LAN target can never be rated higher than MEDIO
+        regardless of what the model outputs.
+        """
         if not raw:
             raise AIResponseError("Respuesta vacía del modelo", attempt=attempt)
+
+        # Ordered severity scale used for cap enforcement
+        _RISK_ORDER = ["INFORMATIVO", "BAJO", "MEDIO", "ALTO", "CRÍTICO"]
         
         try:
             result = json.loads(raw)
@@ -2002,8 +2066,17 @@ class NmapAIWriter(AIWriter):
                         ]
             
             valid_levels = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
-            if result.get("risk_level", "").upper() not in valid_levels:
+            risk_level = result.get("risk_level")
+            if risk_level is None or not isinstance(risk_level, str) or risk_level.upper() not in valid_levels:
                 result["risk_level"] = "INFORMATIVO"
+
+            # Hard cap: if network context limits the maximum risk level, enforce it
+            # regardless of what the model decided.
+            if network_ctx:
+                cap = network_ctx.get("max_risk_level", "CRÍTICO").upper()
+                current = result["risk_level"].upper()
+                if _RISK_ORDER.index(current) > _RISK_ORDER.index(cap):
+                    result["risk_level"] = cap
                 
             return result
             
@@ -2150,7 +2223,7 @@ class NiktoAIWriter(AIWriter):
             }
 
         prompts_config = ConfigReader().get_prompts_config()
-        template = prompts_config.get("nikto", {}).get("user_template", "")
+        template = prompts_config.get("nikto", {}).get("userTemplate", "")
 
         return template.replace("{{target}}", str(target)) \
                     .replace("{{started}}", str(started)) \
@@ -2259,7 +2332,7 @@ class NiktoAIWriter(AIWriter):
         
         return self._parse_response(raw_response)
 
-    def _parse_response(self, raw: str) -> dict:
+    def _parse_response(self, raw: str, attempt: int = 0) -> dict:
         """Parse the AI response JSON with validation.
         
         Args:
@@ -2274,7 +2347,8 @@ class NiktoAIWriter(AIWriter):
         try:
             result = json.loads(raw)
             valid = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
-            if result.get("risk_level", "").upper() not in valid:
+            risk_level = result.get("risk_level")
+            if risk_level is None or not isinstance(risk_level, str) or risk_level.upper() not in valid:
                 result["risk_level"] = "BAJO"
             
             if isinstance(result.get("recommendations"), list):
@@ -2519,7 +2593,7 @@ class OpenVASAIWriter(AIWriter):
         
         return self._parse_response(raw_response)
 
-    def _parse_response(self, raw: str) -> dict:
+    def _parse_response(self, raw: str, attempt: int = 0) -> dict:
         """Parse the AI response JSON with validation."""
         if not raw:
             raise AIResponseError("Respuesta vacía", attempt=attempt)
@@ -2527,8 +2601,8 @@ class OpenVASAIWriter(AIWriter):
         try:
             result = json.loads(raw)
             valid = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
-            risk_level = result.get("risk_level") or ""
-            if risk_level.upper() not in valid:
+            risk_level = result.get("risk_level")
+            if risk_level is None or not isinstance(risk_level, str) or risk_level.upper() not in valid:
                 result["risk_level"] = "BAJO"
             
             result.setdefault("executive_summary", "Análisis completado.")
