@@ -309,6 +309,28 @@ class ScanManager(BaseManager, ABC):
             self.logger.error(f"Error obteniendo documento: {e}", exc_info=True)
             raise
 
+    def get_documents_for_user(self) -> List[SentinelDocument]:
+        """Get all documents for the active user.
+
+        Returns:
+            List of SentinelDocument instances.
+        """
+        try:
+            self._check_session()
+            documents = self.session.query(SentinelDocument).filter(
+                SentinelDocument.user_id == self.active_user.id
+            ).order_by(
+                SentinelDocument.created_at.desc()
+            ).all()
+
+            self.logger.info(f"Se obtuvieron {len(documents)} documentos")
+            return documents
+
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error obteniendo documentos: {e}", exc_info=True)
+            raise
+
     def is_scan_finished(self, scan_id: int) -> Optional[bool]:
         """Check if a scan has finished.
 

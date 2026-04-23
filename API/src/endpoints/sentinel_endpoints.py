@@ -548,6 +548,119 @@ def get_document_status():
         return jsonify(err), code
 
 
+@sentinel_bp.get("/documents")
+@require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
+def get_all_documents():
+    """Obtiene todos los documentos del usuario.
+    
+    Query params:
+        scan_type (str): Filtrar por tipo de escaneo. Valores válidos: nmap, nikto, openvas, all. Default: all.
+    """
+    try:
+        uid = get_current_user_id()
+        scan_type_filter = request.args.get("scan_type", "all").lower()
+        
+        valid_types = ["nmap", "nikto", "openvas", "all"]
+        if scan_type_filter not in valid_types:
+            return jsonify({"error": f"Tipo de escaneo inválido. Valores válidos: {', '.join(valid_types)}"}), 400
+        
+        with get_user_managers(uid) as (nmap_mgr, _, _):
+            documents = nmap_mgr.get_documents_for_user()
+            
+            if scan_type_filter != "all":
+                documents = [d for d in documents if d.scan_type == scan_type_filter]
+            
+            docs_list = []
+            for doc in documents:
+                download_url = None
+                if doc.status == "done" and doc.filename:
+                    download_url = f"/sentinel/document/{doc.id}/download"
+                
+                docs_list.append({
+                    "documentId": doc.id,
+                    "scanId": doc.scan_id,
+                    "scanType": doc.scan_type,
+                    "status": doc.status,
+                    "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
+                    "createdAt": doc.created_at.isoformat() if doc.created_at else None,
+                    "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+                    "downloadUrl": download_url
+                })
+        
+        return jsonify({
+            "documents": docs_list,
+            "total": len(docs_list),
+            "filter": scan_type_filter
+        }), 200
+        
+    except Exception as exc:
+        _logger.error(f"Error obteniendo documentos: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@sentinel_bp.get("/scan/<int:scan_id>/documents")
+@require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
+def get_documents_by_scan(scan_id: int):
+    """Obtiene todos los documentos de un escaneo concreto.
+    
+    Args:
+        scan_id (path): ID del escaneo.
+        
+    Returns:
+        200 — Lista de documentos del escaneo.
+        404 — Escaneo no encontrado.
+    """
+    try:
+        uid = get_current_user_id()
+        
+        with get_user_managers(uid) as (nmap_mgr, _, _):
+            scan = nmap_mgr.get_scan_by_id(scan_id)
+            if not scan:
+                return jsonify({"error": "Escaneo no encontrado"}), 404
+            
+            if scan.user_id != uid:
+                return jsonify({"error": "No tienes permisos para acceder a este escaneo"}), 403
+            
+            from src.core.model import SentinelDocument
+            documents = nmap_mgr.session.query(SentinelDocument).filter(
+                SentinelDocument.scan_id == scan_id,
+                SentinelDocument.user_id == uid
+            ).order_by(SentinelDocument.created_at.desc()).all()
+            
+            docs_list = []
+            for doc in documents:
+                download_url = None
+                if doc.status == "done" and doc.filename:
+                    download_url = f"/sentinel/document/{doc.id}/download"
+                
+                docs_list.append({
+                    "documentId": doc.id,
+                    "scanId": doc.scan_id,
+                    "scanType": doc.scan_type,
+                    "status": doc.status,
+                    "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
+                    "createdAt": doc.created_at.isoformat() if doc.created_at else None,
+                    "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+                    "downloadUrl": download_url
+                })
+        
+        return jsonify({
+            "scanId": scan_id,
+            "documents": docs_list,
+            "total": len(docs_list)
+        }), 200
+        
+    except Exception as exc:
+        _logger.error(f"Error obteniendo documentos del escaneo {scan_id}: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
 @sentinel_bp.get("/is-finished")
 @require_oauth_token
 @limiter.limit("300 per hour; 2000 per day")
@@ -599,7 +712,6 @@ def is_scan_finished():
 
 @sentinel_bp.get("/document/<int:document_id>/download")
 @require_oauth_token
-@limiter.limit("30 per hour; 100 per day")
 def download_document(document_id: int):
     """Descarga un documento generado previamente.
 
@@ -618,25 +730,80 @@ def download_document(document_id: int):
     """
     try:
         uid = get_current_user_id()
+        _logger.info(f"Download request for document {document_id} by user {uid}")
+        
         with get_user_managers(uid) as (nmap_mgr, _, _):
             doc = nmap_mgr.get_document_by_id(document_id)
             if not doc or doc.user_id != uid:
-                raise ValueError("Documento no encontrado o acceso denegado")
+                _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
+                return jsonify({"error": "Documento no encontrado o acceso denegado"}), 404
             
             if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
-                raise ValidationError(field="document_id", message=f"El documento {document_id} aún no está disponible para descarga", value=document_id)
+                _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
+                return jsonify({"error": f"El documento {document_id} aún no está disponible para descarga"}), 400
             
-            _logger.info(f"Descarga de documento {document_id} solicitada por {get_current_username()}")
+            _logger.info(f"Serving document {document_id}: {doc.filename}")
             return send_file(doc.filename, mimetype="application/pdf", as_attachment=True, download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf")
         
-    except ScanNotFoundError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except ValidationError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
     except Exception as exc:
         _logger.error(f"Error descargando documento {document_id}: {exc}", exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@sentinel_bp.get("/document/<int:document_id>/download-test")
+def download_document_test(document_id: int):
+    """Endpoint de prueba sin auth para verificar la descarga."""
+    try:
+        with get_user_managers(1) as (nmap_mgr, _, _):
+            doc = nmap_mgr.get_document_by_id(document_id)
+            if not doc:
+                return jsonify({"error": "Documento no encontrado"}), 404
+            
+            if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
+                return jsonify({"error": "Documento no disponible", "status": doc.status, "filename": doc.filename}), 400
+            
+            return send_file(doc.filename, mimetype="application/pdf", as_attachment=True, download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf")
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@sentinel_bp.route("/document/<int:document_id>", methods=["DELETE"])
+@require_oauth_token
+@limiter.limit("30 per hour; 100 per day")
+def delete_document(document_id: int):
+    """Elimina un documento.
+    
+    Args (path):
+        document_id (int): ID del documento a eliminar.
+        
+    Returns:
+        200 — Documento eliminado correctamente.
+        404 — Documento no encontrado.
+        403 — Sin permisos.
+    """
+    try:
+        uid = get_current_user_id()
+        with get_user_managers(uid) as (nmap_mgr, _, _):
+            doc = nmap_mgr.get_document_by_id(document_id)
+            if not doc or doc.user_id != uid:
+                return jsonify({"error": "Documento no encontrado o acceso denegado"}), 404
+            
+            scan_id = doc.scan_id
+            
+            if doc.filename and os.path.exists(doc.filename):
+                try:
+                    os.remove(doc.filename)
+                except Exception as e:
+                    _logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}")
+            
+            nmap_mgr.session.delete(doc)
+            nmap_mgr._safe_commit()
+            
+            _logger.info(f"Documento {document_id} eliminado por {get_current_username()}")
+            return jsonify({"message": "Documento eliminado", "documentId": document_id, "scanId": scan_id}), 200
+        
+    except Exception as exc:
+        _logger.error(f"Error eliminando documento {document_id}: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
