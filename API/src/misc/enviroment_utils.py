@@ -185,8 +185,6 @@ class ConfigReader:
         cls._configs_path = None
         cls._load_configs()
 
-    # ── Getters ───────────────────────────────────────────────────────────────
-
     @staticmethod
     def get_ollama_config() -> tuple[str, str]:
         """
