@@ -216,10 +216,6 @@ class _Task(ABC):
             self.logger.error(f"Error en wait: {e}", exc_info=True)
             return False
 
-    def is_finished(self) -> bool:
-        """Indica si la tarea ha finalizado."""
-        return self._finished.is_set()
-
     def cancel(self) -> None:
         """Cancela el escaneo."""
         self._cancel_event.set()
@@ -237,14 +233,6 @@ class _Task(ABC):
         self._finished.set()
         self.logger.info("Escaneo cancelado")
 
-    def get_status_string(self) -> str:
-        """Obtiene el estado como string."""
-        return self.status.value
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Nmap
-# ──────────────────────────────────────────────────────────────────────────────
 
 class NmapScanTask(_Task):
     """Implementación concreta para escaneos Nmap."""
@@ -290,16 +278,14 @@ class NmapScanTask(_Task):
 
     def _process_results(self) -> None:
         try:
-            if not self._output_file.exists():
-                self.logger.error(f"Archivo XML no existe: {self._output_file}")
-                self.results = None
-                return
-            if self._output_file.stat().st_size == 0:
-                self.logger.error(f"Archivo XML está vacío: {self._output_file}")
+            output_file = self._output_file
+
+            if not output_file.exists():
+                self.logger.error(f"Archivo XML no existe: {output_file}")
                 self.results = None
                 return
 
-            with self._output_file.open("r", encoding="utf-8") as f:
+            with output_file.open("r", encoding="utf-8") as f:
                 xml_data = f.read()
 
             if not xml_data.strip():
@@ -308,7 +294,7 @@ class NmapScanTask(_Task):
                 return
 
             self.results = self._parse_nmap_xml(xml_data)
-            self.logger.info(f"Resultados procesados: {self._output_file}")
+            self.logger.info(f"Resultados procesados: {output_file}")
 
         except Exception as e:
             self.logger.error(f"Error procesando resultados: {e}", exc_info=True)
@@ -419,10 +405,6 @@ class NmapScanTask(_Task):
         return {"nmap": nmap_meta, "scan": scan, "stats": stats}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Nikto
-# ──────────────────────────────────────────────────────────────────────────────
-
 class NiktoScanTask(_Task):
     """Implementación concreta para escaneos Nikto."""
 
@@ -514,10 +496,6 @@ class NiktoScanTask(_Task):
             self.results = None
             raise
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# OpenVAS
-# ──────────────────────────────────────────────────────────────────────────────
 
 class OpenVASTask(_Task):
     """
