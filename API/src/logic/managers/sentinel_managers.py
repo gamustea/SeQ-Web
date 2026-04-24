@@ -457,6 +457,7 @@ class ScanManager(BaseManager, ABC):
             if not success or has_no_results:
                 thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
                 thread_manager._mark_scan_as(scan, ScanStatus.FAILED)
+                thread_manager._safe_commit()
                 return
 
             thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")

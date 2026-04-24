@@ -589,14 +589,12 @@ class OpenVASTask(_Task):
 
     def _execute_openvas_scan(self) -> None:
         try:
-            # Fase 1: setup
             with self._create_gmp_connection() as gmp:
                 gmp.authenticate(self.username, self.password)
                 target_id = self._get_or_create_target(gmp)
                 scanner_id = self._get_default_scanner(gmp)
                 self._create_and_start_task(gmp, target_id, scanner_id)
-
-            # Fase 2: polling (reconecta en cada iteración)
+                
             self._wait_for_completion()
 
             if self.status == TaskStatus.CANCELLED:

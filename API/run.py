@@ -80,6 +80,7 @@ def create_app(fresh_db_init = False) -> Flask:
 
     if fresh_db_init:
         _init_db(app)
+        _init_db(app)
 
     _logger.info("Inicializando base de datos...")
     engine = initialize_engine()
@@ -339,7 +340,7 @@ def _init_db(app: Flask) -> None:
 
     print("[+] ¡Datos iniciales insertados con éxito!")
 
-app = create_app(False)
+app = create_app(True)
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=5000)
