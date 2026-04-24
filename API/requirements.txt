@@ -45,5 +45,5 @@ ddgs
 psutil
 duckduckgo-search>=6.0
 flask-jwt-extended>=4.6.0
-dotenv>=1.2.2
+python-dotenv>=1.2.2
 
