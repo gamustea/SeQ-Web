@@ -9,7 +9,7 @@
    CONFIG  — ajustar según entorno
 ══════════════════════════════════════════════════════════════ */
 const SEQ_CONFIG = Object.freeze({
-  API_BASE:  'http://localhost:5000',
+  API_BASE:  '',
   LOGIN_URL: '/pages/login.html',
 });
 

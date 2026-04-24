@@ -1,0 +1,10 @@
+# .dockerignore — evita copiar archivos innecesarios al contexto de build
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.log
+.vscode
+*.md
+AGENTS.md
