@@ -293,116 +293,13 @@ class NmapScanTask(_Task):
                 self.results = None
                 return
 
-            self.results = self._parse_nmap_xml(xml_data)
+            self.results = xml_data
             self.logger.info(f"Resultados procesados: {output_file}")
 
         except Exception as e:
             self.logger.error(f"Error procesando resultados: {e}", exc_info=True)
             self.results = None
             raise
-
-    def _parse_nmap_xml(self, xml_data: str) -> dict:
-        root = ET.fromstring(xml_data)
-
-        nmap_meta = {
-            "command_line": root.get("args", ""),
-            "version": root.get("version", ""),
-            "scanflags": "",
-            "scaninfo": {}
-        }
-        scaninfo_el = root.find("scaninfo")
-        if scaninfo_el is not None:
-            nmap_meta["scaninfo"] = {
-                "type": scaninfo_el.get("type", ""),
-                "protocol": scaninfo_el.get("protocol", ""),
-                "numservices": scaninfo_el.get("numservices", ""),
-                "services": scaninfo_el.get("services", ""),
-            }
-
-        stats = {}
-        runstats = root.find("runstats")
-        if runstats is not None:
-            finished = runstats.find("finished")
-            hosts_el = runstats.find("hosts")
-            stats = {
-                "timestr": finished.get("timestr", "") if finished is not None else "",
-                "elapsed": finished.get("elapsed", "") if finished is not None else "",
-                "uphosts": hosts_el.get("up", "0") if hosts_el is not None else "0",
-                "downhosts": hosts_el.get("down", "0") if hosts_el is not None else "0",
-                "totalhosts": hosts_el.get("total", "0") if hosts_el is not None else "0",
-            }
-
-        scan = {}
-        for host in root.findall("host"):
-            addr_el = host.find("address[@addrtype='ipv4']")
-            if addr_el is None:
-                addr_el = host.find("address")
-            if addr_el is None:
-                continue
-            ip = addr_el.get("addr", "unknown")
-
-            addresses = {}
-            vendor = {}
-            for a in host.findall("address"):
-                atype = a.get("addrtype", "")
-                addr_val = a.get("addr", "")
-                addresses[atype] = addr_val
-                if atype == "mac" and a.get("vendor"):
-                    vendor[addr_val] = a.get("vendor", "")
-
-            status_el = host.find("status")
-            status = {
-                "state": status_el.get("state", "unknown") if status_el is not None else "unknown",
-                "reason": status_el.get("reason", "") if status_el is not None else "",
-            }
-
-            hostnames = []
-            hostnames_el = host.find("hostnames")
-            if hostnames_el is not None:
-                for hn in hostnames_el.findall("hostname"):
-                    hostnames.append({"name": hn.get("name", ""), "type": hn.get("type", "")})
-            if not hostnames:
-                hostnames.append({"name": ip, "type": "PTR"})
-
-            tcp_ports = {}
-            udp_ports = {}
-            ports_el = host.find("ports")
-            if ports_el is not None:
-                for port_el in ports_el.findall("port"):
-                    proto = port_el.get("protocol", "tcp")
-                    portid = int(port_el.get("portid", 0))
-                    state_el = port_el.find("state")
-                    service_el = port_el.find("service")
-
-                    port_data = {
-                        "state": state_el.get("state", "") if state_el is not None else "",
-                        "reason": state_el.get("reason", "") if state_el is not None else "",
-                        "name": service_el.get("name", "") if service_el is not None else "",
-                        "product": service_el.get("product", "") if service_el is not None else "",
-                        "version": service_el.get("version", "") if service_el is not None else "",
-                        "extrainfo": service_el.get("extrainfo", "") if service_el is not None else "",
-                        "conf": service_el.get("conf", "") if service_el is not None else "",
-                        "cpe": "",
-                    }
-                    cpe_el = service_el.find("cpe") if service_el is not None else None
-                    if cpe_el is not None and cpe_el.text:
-                        port_data["cpe"] = cpe_el.text
-
-                    if proto == "tcp":
-                        tcp_ports[portid] = port_data
-                    else:
-                        udp_ports[portid] = port_data
-
-            scan[ip] = {
-                "hostnames": hostnames,
-                "addresses": addresses,
-                "vendor": vendor,
-                "status": status,
-                "tcp": tcp_ports,
-                "udp": udp_ports,
-            }
-
-        return {"nmap": nmap_meta, "scan": scan, "stats": stats}
 
 
 class NiktoScanTask(_Task):
@@ -458,25 +355,6 @@ class NiktoScanTask(_Task):
 
         return nikto_cmd
 
-    def _parse_nikto_xml(self, xml_path: str) -> List[Dict]:
-        """Parsea archivo XML de Nikto a lista de diccionarios."""
-        import xmltodict
-
-        xml_file = Path(xml_path)
-        if not xml_file.is_file():
-            return []
-
-        try:
-            content = xml_file.read_text(encoding='utf-8')
-            pattern = re.compile(r'(<niktoscan.*?>.*?</niktoscan>)', re.DOTALL)
-            matches = pattern.findall(content)
-            if not matches:
-                return []
-            return [xmltodict.parse(m) for m in matches]
-        except Exception as e:
-            self.logger.error(f"Error parseando XML Nikto: {e}")
-            return []
-
     def _process_results(self) -> None:
         try:
             if not self.temp_path.exists():
@@ -488,7 +366,7 @@ class NiktoScanTask(_Task):
                 self.results = None
                 return
 
-            self.results = self._parse_nikto_xml(str(self.temp_path))
+            self.results = str(self.temp_path)
             self.logger.info("Resultados Nikto procesados")
 
         except Exception as e:
@@ -867,155 +745,9 @@ class OpenVASTask(_Task):
         try:
             if not self._report_xml:
                 raise RuntimeError("No hay reporte XML disponible")
-            self.results = self._parse_openvas_report(self._report_xml)
+            self.results = self._report_xml
             self.logger.info("Resultados OpenVAS procesados correctamente")
         except Exception as e:
             self.logger.error(f"Error procesando resultados OpenVAS: {e}", exc_info=True)
             self.results = None
             raise
-
-    def _parse_openvas_report(self, report_xml: str) -> Dict:
-        """Parsea XML de reporte OpenVAS a estructura de datos planos."""
-
-        def _classify_severity(score: float) -> str:
-            if score == 0.0:
-                return 'Log'
-            elif score < 4.0:
-                return 'Low'
-            elif score < 7.0:
-                return 'Medium'
-            elif score < 9.0:
-                return 'High'
-            return 'Critical'
-
-        def _extract_references(refs) -> Tuple[List[str], List[str], List[str], List[str]]:
-            cve_ids, cert_refs, bugtraq_ids, other_refs = [], [], [], []
-            for ref in refs:
-                ref_type = ref.get('type', '').upper()
-                ref_id = ref.get('id', '')
-                if ref_type == 'CVE':
-                    cve_ids.append(ref_id)
-                elif ref_type in ('CERT-BUND', 'DFN-CERT'):
-                    cert_refs.append(f"{ref_type}:{ref_id}")
-                elif ref_type == 'BID':
-                    bugtraq_ids.append(ref_id)
-                else:
-                    other_refs.append(f"{ref_type}:{ref_id}")
-            return cve_ids, cert_refs, bugtraq_ids, other_refs
-
-        # Normalizar entrada
-        if isinstance(report_xml, str):
-            root = lxml_etree.fromstring(report_xml.encode('utf-8'))
-        elif isinstance(report_xml, bytes):
-            root = lxml_etree.fromstring(report_xml)
-        else:
-            xml_str = ET.tostring(report_xml, encoding='unicode')
-            root = lxml_etree.fromstring(xml_str.encode('utf-8'))
-
-        report_els = root.xpath('//report')
-        task_els = root.xpath('//task')
-
-        if not report_els:
-            raise RuntimeError("El XML del reporte no contiene elemento <report>")
-
-        report_id = report_els[0].get('id')
-        task_id = task_els[0].get('id') if task_els else None
-
-        vulnerabilities: Dict[str, dict] = {}
-        scan_results: List[dict] = []
-        hosts_found: set = set()
-
-        for result in root.xpath('//report/results/result'):
-            host_ip = next(iter(result.xpath('host/text()')), None)
-            if not host_ip:
-                continue
-            hosts_found.add(host_ip)
-
-            nvt = next(iter(result.xpath('nvt')), None)
-            if nvt is None:
-                continue
-
-            nvt_oid = nvt.get('oid')
-            if not nvt_oid:
-                continue
-
-            if nvt_oid not in vulnerabilities:
-                name = next(iter(nvt.xpath('name/text()')), 'Unknown')
-                family = next(iter(nvt.xpath('family/text()')), None)
-
-                severity_raw = next(iter(result.xpath('severity/text()')), '0.0')
-                try:
-                    severity_score = float(severity_raw)
-                except ValueError:
-                    severity_score = 0.0
-
-                cvss_base_raw = next(iter(nvt.xpath('cvss_base/text()')), None)
-                try:
-                    cvss_base_score = float(cvss_base_raw) if cvss_base_raw else severity_score
-                except ValueError:
-                    cvss_base_score = severity_score
-
-                tags_dict: Dict[str, str] = {}
-                cvss_vector = None
-                tags_text = next(iter(nvt.xpath('tags/text()')), '')
-                if tags_text:
-                    for tag in tags_text.split('|'):
-                        if '=' in tag:
-                            key, value = tag.split('=', 1)
-                            k = key.strip().lower()
-                            tags_dict[k] = value.strip()
-                            if k == 'cvss_base_vector':
-                                cvss_vector = value.strip()
-
-                cve_ids, cert_refs, bugtraq_ids, other_refs = _extract_references(nvt.xpath('refs/ref'))
-
-                qod = next(iter(nvt.xpath('qod')), None)
-                qod_value = None
-                qod_type = None
-                if qod is not None:
-                    try:
-                        qod_value = int(next(iter(qod.xpath('value/text()')), 0))
-                    except (ValueError, TypeError):
-                        pass
-                    qod_type = next(iter(qod.xpath('type/text()')), None)
-
-                vulnerabilities[nvt_oid] = {
-                    'nvt_oid': nvt_oid,
-                    'name': name,
-                    'severity_score': severity_score,
-                    'severity_class': _classify_severity(severity_score),
-                    'cvss_base_score': cvss_base_score,
-                    'cvss_vector': cvss_vector,
-                    'cve_ids': ','.join(cve_ids) or None,
-                    'cert_refs': ','.join(cert_refs) or None,
-                    'bugtraq_ids': ','.join(bugtraq_ids) or None,
-                    'other_refs': ','.join(other_refs) or None,
-                    'summary': tags_dict.get('summary', ''),
-                    'description': (
-                        next(iter(result.xpath('description/text()')), None)
-                        or tags_dict.get('vuldetect', '')
-                    ),
-                    'impact': tags_dict.get('impact', ''),
-                    'insight': tags_dict.get('insight', ''),
-                    'affected_software': tags_dict.get('affected', ''),
-                    'solution_type': tags_dict.get('solution_type', 'Mitigation'),
-                    'solution': tags_dict.get('solution', ''),
-                    'qod_value': qod_value,
-                    'qod_type': qod_type,
-                    'family': family,
-                    'category': next(iter(nvt.xpath('category/text()')), None),
-                }
-
-            scan_results.append({
-                'nvt_oid': nvt_oid,
-                'host_ip': host_ip,
-                'port': next(iter(result.xpath('port/text()')), None),
-                'threat': next(iter(result.xpath('threat/text()')), None),
-            })
-
-        return {
-            'scan_data': {'task_id': task_id, 'report_id': report_id},
-            'vulnerabilities': list(vulnerabilities.values()),
-            'scan_results': scan_results,
-            'hosts': list(hosts_found),
-        }

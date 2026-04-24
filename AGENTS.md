@@ -8,7 +8,6 @@ docker compose --profile dev up -d
 
 # 2. Inicializar y arrancar API (desarrollo local)
 cd API
-python init_db.py   # Initialize PostgreSQL database (port 15432)
 python run.py       # Start API at http://0.0.0.0:5000
 ```
 

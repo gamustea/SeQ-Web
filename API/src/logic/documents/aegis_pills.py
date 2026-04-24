@@ -121,8 +121,6 @@ class AegisTipData:
     def __post_init__(self) -> None:
         if not self.headline or len(self.headline) > 150:
             raise AegisValidationError("headline debe tener entre 1 y 150 caracteres", field="headline")
-        if not self.body or len(self.body) < 50:
-            raise AegisValidationError("body debe tener al menos 50 caracteres", field="body")
         for link in self.links:
             if not isinstance(link, dict) or "text" not in link or "url" not in link:
                 raise AegisValidationError("cada link debe ser un dict con 'text' y 'url'", field="links")
@@ -875,8 +873,6 @@ class AegisAIWriter(AIWriter):
             except AegisValidationError as exc:
                 self.logger.warning(f"Tip {i + 1} descartado: {exc}")
 
-        if len(tips) < tips_amount:
-            raise AegisInsufficientContentError(tips_amount, len(tips))
 
         return AegisContent(
             topic_id      = resolved_topic_id,
