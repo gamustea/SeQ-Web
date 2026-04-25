@@ -46,6 +46,6 @@ Thumbs.db
 .cxx
 local.properties
 
-API/data/*
+API/src/data/*
 
 *.prof
