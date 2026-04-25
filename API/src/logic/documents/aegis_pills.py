@@ -236,9 +236,6 @@ class AegisAlert:
             raise AegisValidationError(f"URL inválida: {self.url}", field="url", value=self.url)
 
 
-# ============================================================================
-# DECORADORES DE RESILIENCIA
-# ============================================================================
 
 def retry_on_failure(max_retries: int = MAX_RETRIES, exceptions: tuple = (Exception,)):
     """Reintentos con backoff exponencial y jitter."""
@@ -340,7 +337,6 @@ class AegisAlertFetcher:
         self.logger               = logger
         self._max_alert_age_years = ConfigReader.get_aegis_vulnerabilities_antiquity()
 
-        # Construir los lookups de marcas desde el catálogo centralizado del config
         brand_catalogue           = ConfigReader.get_aegis_brands()
         self._brand_slugs: dict[str, tuple[str, str]] = {
             b["label"]: (b["circl_vendor"], b["circl_product"])
@@ -650,10 +646,6 @@ class AegisAlertFetcher:
 
         return unique_alerts[:20]
 
-
-# ============================================================================
-# WRITER DE CONTENIDO
-# ============================================================================
 
 class AegisAIWriter(AIWriter):
     """

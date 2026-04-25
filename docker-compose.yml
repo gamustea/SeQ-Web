@@ -40,7 +40,7 @@ services:
         max-file: "3"
 
   ollama:
-    image: ollama/ollama:0.6.5
+    image: ollama/ollama:latest
     container_name: OllamaSeQ
     env_file:
       - API/docker/.env

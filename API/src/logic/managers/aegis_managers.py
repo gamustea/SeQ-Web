@@ -60,7 +60,6 @@ class AegisManager(BaseManager):
             tweaks      = tweaks or {}
             document_id = self._create_pending_document(topic_id)
 
-            self.logger.debug(f"Creando píldora con tweaks{tweaks}")
             thread_manager = self.__class__(self.user)
             threading.Thread(
                 target  = thread_manager._run_generation_workflow,
