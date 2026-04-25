@@ -70,7 +70,7 @@ class AegisDocument(Document):
     id            = Column(Integer,     ForeignKey("Document.id"), primary_key=True)
 
     # Identificación interna
-    title         = Column(String(64),  unique=True, nullable=False)
+    title         = Column(String(64), nullable=False)
 
     # Contenido de la píldora
     subtitle      = Column(String(128), nullable=True)

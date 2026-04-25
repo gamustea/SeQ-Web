@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Tuple, Optional, Set
 import json
 import re
+import xml.etree.ElementTree as ET
+import xmltodict
 from pathlib import Path
 
 from lxml import etree as lxml_etree
@@ -39,14 +41,20 @@ class ScanResultProcessor(ABC):
 class NmapResultProcessor(ScanResultProcessor):
     """Procesa resultados de escaneos Nmap."""
     
-    def process(self, raw_data: dict, target: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    def process(self, raw_data: dict | str, target: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """Extrae información de hosts y puertos de resultados Nmap.
+        
+        Args:
+            raw_data: XML string o dict parseado del resultado Nmap.
         
         Returns:
             Tuple conteniendo:
             - Dict con datos del host (hostname, vendor, ip_address, mac_address)
             - List de dicts con datos de puertos (protocol, state, reason, product, version, given_use)
         """
+        if isinstance(raw_data, str):
+            raw_data = self._parse_nmap_xml(raw_data)
+        
         parsed = self._parse_nmap_structure(raw_data, target)
         
         host_data = {
@@ -137,18 +145,129 @@ class NmapResultProcessor(ScanResultProcessor):
             },
             'ports': ports
         }
+    
+    def _parse_nmap_xml(self, xml_data: str) -> dict:
+        import xml.etree.ElementTree as ET
+        
+        root = ET.fromstring(xml_data)
+
+        nmap_meta = {
+            "command_line": root.get("args", ""),
+            "version": root.get("version", ""),
+            "scanflags": "",
+            "scaninfo": {}
+        }
+        scaninfo_el = root.find("scaninfo")
+        if scaninfo_el is not None:
+            nmap_meta["scaninfo"] = {
+                "type": scaninfo_el.get("type", ""),
+                "protocol": scaninfo_el.get("protocol", ""),
+                "numservices": scaninfo_el.get("numservices", ""),
+                "services": scaninfo_el.get("services", ""),
+            }
+
+        stats = {}
+        runstats = root.find("runstats")
+        if runstats is not None:
+            finished = runstats.find("finished")
+            hosts_el = runstats.find("hosts")
+            stats = {
+                "timestr": finished.get("timestr", "") if finished is not None else "",
+                "elapsed": finished.get("elapsed", "") if finished is not None else "",
+                "uphosts": hosts_el.get("up", "0") if hosts_el is not None else "0",
+                "downhosts": hosts_el.get("down", "0") if hosts_el is not None else "0",
+                "totalhosts": hosts_el.get("total", "0") if hosts_el is not None else "0",
+            }
+
+        scan = {}
+        for host in root.findall("host"):
+            addr_el = host.find("address[@addrtype='ipv4']")
+            if addr_el is None:
+                addr_el = host.find("address")
+            if addr_el is None:
+                continue
+            ip = addr_el.get("addr", "unknown")
+
+            addresses = {}
+            vendor = {}
+            for a in host.findall("address"):
+                atype = a.get("addrtype", "")
+                addr_val = a.get("addr", "")
+                addresses[atype] = addr_val
+                if atype == "mac" and a.get("vendor"):
+                    vendor[addr_val] = a.get("vendor", "")
+
+            status_el = host.find("status")
+            status = {
+                "state": status_el.get("state", "unknown") if status_el is not None else "unknown",
+                "reason": status_el.get("reason", "") if status_el is not None else "",
+            }
+
+            hostnames = []
+            hostnames_el = host.find("hostnames")
+            if hostnames_el is not None:
+                for hn in hostnames_el.findall("hostname"):
+                    hostnames.append({"name": hn.get("name", ""), "type": hn.get("type", "")})
+            if not hostnames:
+                hostnames.append({"name": ip, "type": "PTR"})
+
+            tcp_ports = {}
+            udp_ports = {}
+            ports_el = host.find("ports")
+            if ports_el is not None:
+                for port_el in ports_el.findall("port"):
+                    proto = port_el.get("protocol", "tcp")
+                    portid = int(port_el.get("portid", 0))
+                    state_el = port_el.find("state")
+                    service_el = port_el.find("service")
+
+                    port_data = {
+                        "state": state_el.get("state", "") if state_el is not None else "",
+                        "reason": state_el.get("reason", "") if state_el is not None else "",
+                        "name": service_el.get("name", "") if service_el is not None else "",
+                        "product": service_el.get("product", "") if service_el is not None else "",
+                        "version": service_el.get("version", "") if service_el is not None else "",
+                        "extrainfo": service_el.get("extrainfo", "") if service_el is not None else "",
+                        "conf": service_el.get("conf", "") if service_el is not None else "",
+                        "cpe": "",
+                    }
+                    cpe_el = service_el.find("cpe") if service_el is not None else None
+                    if cpe_el is not None and cpe_el.text:
+                        port_data["cpe"] = cpe_el.text
+
+                    if proto == "tcp":
+                        tcp_ports[portid] = port_data
+                    else:
+                        udp_ports[portid] = port_data
+
+            scan[ip] = {
+                "hostnames": hostnames,
+                "addresses": addresses,
+                "vendor": vendor,
+                "status": status,
+                "tcp": tcp_ports,
+                "udp": udp_ports,
+            }
+
+        return {"nmap": nmap_meta, "scan": scan, "stats": stats}
 
 
 class NiktoResultProcessor(ScanResultProcessor):
     """Procesa resultados de escaneos Nikto."""
     
-    def process(self, raw_data: List[dict]) -> List[Dict[str, Any]]:
+    def process(self, raw_data: List[dict] | str) -> List[Dict[str, Any]]:
         """Extrae incidentes de seguridad de resultados Nikto.
+        
+        Args:
+            raw_data: Path al archivo XML o lista de dicts parseados.
         
         Returns:
             Lista de diccionarios con datos para crear NiktoIncident 
             (description, osvdb_id, method, url, severity)
         """
+        if isinstance(raw_data, str):
+            raw_data = self._parse_nikto_xml(raw_data)
+        
         incidents = []
         
         for block in (raw_data or []):
@@ -257,6 +376,25 @@ class NiktoResultProcessor(ScanResultProcessor):
                 return "INFO"
         
         return "MEDIUM"
+    
+    def _parse_nikto_xml(self, xml_path: str) -> List[Dict]:
+        import xmltodict
+
+        xml_file = Path(xml_path)
+        if not xml_file.is_file():
+            return []
+
+        try:
+            content = xml_file.read_text(encoding='utf-8')
+            pattern = re.compile(r'(<niktoscan.*?>.*?</niktoscan>)', re.DOTALL)
+            matches = pattern.findall(content)
+            if not matches:
+                return []
+            return [xmltodict.parse(m) for m in matches]
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error parseando XML Nikto: {e}")
+            return []
 
 
 class OpenVASResultProcessor(ScanResultProcessor):
@@ -266,7 +404,7 @@ class OpenVASResultProcessor(ScanResultProcessor):
         """Procesa datos de OpenVAS (ya parseados por OpenVASTask).
         
         Args:
-            raw_data: Dict con estructura {'vulnerabilities': [], 'scan_results': [], 'hosts': []}
+            raw_data: XML string o dict con estructura {'vulnerabilities': [], 'scan_results': [], 'hosts': []}
             
         Returns:
             Tuple conteniendo:
@@ -274,6 +412,9 @@ class OpenVASResultProcessor(ScanResultProcessor):
             - Lista de dicts con datos de resultados por host (OpenVASScanResult)
             - Set de IPs de hosts afectados
         """
+        if isinstance(raw_data, str):
+            raw_data = self._parse_openvas_structure(raw_data)
+        
         vulnerabilities = raw_data.get('vulnerabilities', [])
         scan_results = raw_data.get('scan_results', [])
         hosts = set(raw_data.get('hosts', []))

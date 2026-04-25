@@ -339,11 +339,8 @@ class MarkdownExporter(AegisExporter):
         ]
         contact_email = data.contact_email
         if contact_email:
-            if contact_email == "seguridad@empresa.com":
-                contact_text = "el responsable de SeQ en tu empresa."
-            else:
-                contact_text = contact_email
-            lines.append(f"*Para más información, contacta con {contact_text}*")
+            contact_info = "el responsable de SeQ en tu empresa." if (contact_email == "seguridad@empresa.com") else contact_email
+            lines.append(f"*Para más información, contacta con {contact_info}*")
         lines.append("")
         lines.append(f"*ID del documento: {data.document_id}*")
         return lines

@@ -3,8 +3,11 @@
 ## Quick Start
 
 ```bash
+# 1. Levantar servicios Docker (infraestructura)
+docker compose --profile dev up -d
+
+# 2. Inicializar y arrancar API (desarrollo local)
 cd API
-python init_db.py   # Initialize PostgreSQL database (port 15432)
 python run.py       # Start API at http://0.0.0.0:5000
 ```
 
@@ -19,27 +22,39 @@ Entry point: `API/run.py`
 Blueprints: `API/src/endpoints/`
 Models: `API/src/core/model/`
 
-## Required Setup
+## Docker Setup
 
-- Python 3.10+
-- PostgreSQL (default: port **15432**, not 5432)
-- Docker services (via `cd API && docker-compose up -d`):
-  - PostgreSQL
-  - Ollama (`OLLAMA_MODEL=qwen2.5:14b` in .env)
-  - OpenVAS/GVM
+Uses profiles to switch between development and container modes:
+
+```bash
+# Modo desarrollo: levanta BD + Ollama + OpenVAS en Docker; API corre en local
+docker compose --profile dev up -d
+python API/run.py
+
+# Modo contenedor: todo dentro de Docker (API + Web incluidas)
+docker compose --profile container up -d
+
+# Limpiar
+docker compose down
+```
+
+Los servicios de infra (postgres, ollama, openvas) están siempre en el perfil `dev`, por lo que puedes cambiar de un modo a otro sin tocar nada.
 
 ## Commands
 
 | Action | Command |
 |--------|---------|
-| Run API | `python API/run.py` |
-| Docker stack | `docker-compose -f API/docker-compose.yml up -d` |
+| Run API (desarrollo) | `python API/run.py` |
+| Docker infra | `docker compose --profile dev up -d` |
+| Docker todo | `docker compose --profile container up -d` |
 | Test user | username: `root`, password: default (admin) |
 
 ## Key Config Files
 
-- `API/SecOpsConfig.json` — AI prompts (system/user templates for Nmap, Nikto, OpenVAS, Aegis)
-- `API/.env` — DB port (15432), JWT secrets, Ollama host/model
+- `API/SecOpsConfig.json` — AI prompts
+- `API/.env` — Credenciales, conecta a `localhost:15432` (desarrollo local)
+- `API/.env.docker` — Overrides para cuando la API corre dentro del contenedor (`POSTGRES_HOST=postgres`, etc.)
+- `API/entrypoint.sh` — Carga `.env.docker` antes de arrancar la API dentro del contenedor
 - `API/requirements.txt` — Python dependencies
 
 ## API Patterns

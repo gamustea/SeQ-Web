@@ -2,7 +2,7 @@
   "general": {
     "directories": {
       "tempdir": "C:/tmp/secapp",
-      "logdir": ".",
+      "logdir": "..",
       "resourcedir": "../shared/resources/images"
     }
   },

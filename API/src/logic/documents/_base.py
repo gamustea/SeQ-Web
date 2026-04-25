@@ -39,7 +39,8 @@ class AIWriter(ABC):
             self.model = model
             
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
-        self._client = ollama.Client(host=self.host)
+        self.logger.info(f"[Ollama] Inicializando cliente con host={self.host}, model={self.model}")
+        self._client = ollama.Client(host=self.host, timeout=300)
 
     # ── Búsqueda web ───────────────────────────────────────────────────────────
 
@@ -98,13 +99,21 @@ class AIWriter(ABC):
             "repeat_penalty": 1.1,
         }
         
-        resp = self._client.chat(
-            model    = self.model,
-            messages = messages,
-            tools    = tools,
-            format   = "json",
-            options  = options,
-        )
+        self.logger.info(f"[Ollama] Calling model={self.model} at {self.host}")
+        
+        try:
+            self.logger.info(f"[Ollama] Sending request to {self.host}/api/chat")
+            resp = self._client.chat(
+                model    = self.model,
+                messages = messages,
+                tools    = tools,
+                format   = "json",
+                options  = options,
+            )
+            self.logger.info(f"[Ollama] Response received successfully")
+        except Exception as e:
+            self.logger.error(f"[Ollama] Error connecting to {self.host}: {e}")
+            raise
         
         if getattr(resp.message, "tool_calls", None):
             messages.append({

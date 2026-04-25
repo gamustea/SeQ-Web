@@ -1,9 +1,8 @@
 FROM nginx:alpine
 
-COPY pages/ /usr/share/nginx/html/pages/
+COPY pages/ /usr/share/nginx/html/
 COPY resources/ /usr/share/nginx/html/resources/
-
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
