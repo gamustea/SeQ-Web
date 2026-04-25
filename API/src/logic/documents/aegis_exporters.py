@@ -485,7 +485,11 @@ class HTMLExporter(AegisExporter):
 
         contact_email = data.contact_email
         if contact_email:
-            footer.append(f"<p>Para más información, contacta con {"el responsable de SeQ en tu empresa." if (contact_email == "seguridad@empresa.com") else contact_email}</p>")
+            if contact_email == "seguridad@empresa.com":
+                contact_text = "el responsable de SeQ en tu empresa."
+            else:
+                contact_text = contact_email
+            footer.append(f"<p>Para más información, contacta con {contact_text}</p>")
         footer.append(f"<p>ID del documento: {data.document_id}</p>")
         footer.append("</div>")
         footer.append("</body>")

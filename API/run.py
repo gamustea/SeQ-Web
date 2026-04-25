@@ -29,7 +29,7 @@ from urllib.parse import quote_plus
 
 from src.endpoints import register_blueprints
 from src.endpoints._shared import limiter
-from src.misc import SecOpsLogger, ConfigReader
+from src.misc import SecOpsLogger, ConfigReader, ConfigReader
 from src.logic.managers import initialize_engine, warmup_connection
 
 
@@ -343,4 +343,4 @@ def _init_db(app: Flask) -> None:
 app = create_app(False)
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)
