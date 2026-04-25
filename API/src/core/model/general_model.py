@@ -43,9 +43,10 @@ class Document(Base):
     filename      = Column(String(256), nullable=False)
     format        = Column(String(10),  nullable=False)           # pdf | json | md
 
-    status        = Column(String(20),  nullable=False, default="pending")
-    created_at    = Column(DateTime,    nullable=False, default=datetime.utcnow)
-    generated_at  = Column(DateTime,    nullable=True)
+    status          = Column(String(20),  nullable=False, default="pending")
+    created_at      = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    generated_at    = Column(DateTime,    nullable=True)
+    is_ai_generated = Column(Integer,     nullable=False, default=1)  # 1=True, 0=False
 
     user_id       = Column(Integer, ForeignKey("User.id"), nullable=False)
     user          = relationship("User", back_populates="documents")
