@@ -1,36 +1,44 @@
-# Entornos virtuales
+# ============================================
+# Python
+# ============================================
 venv/
 .venv/
-
-# Archivos de configuración de editores
-.vscode/
-.idea/
-
-# Archivos de Python compilados
-src/__pycache__/
 *.py[cod]
 *$py.class
-
-# Archivos de logs
-log/*.log
-*.log
-
-# Archivos de entorno
-.env
-.env.*
-
-# Dependencias
 *.egg-info/
 dist/
 build/
+__pycache__/
+*.prof
 
-# Archivos de sistema
-.DS_Store
-Thumbs.db
+# ============================================
+# Entornos y credenciales
+# ============================================
+.env
+.env.*
 
-*.pdf
+# ============================================
+# Datos y logs
+# ============================================
+*.log
+log/
+API/src/data/
 
+# ============================================
+# Documentación generada
+# ============================================
+docs/
+
+# ============================================
+# IDE / Editores
+# ============================================
+.vscode/
+.idea/
 *.iml
+
+# ============================================
+# Android / Gradle
+# ============================================
 .gradle
 /local.properties
 /.idea/caches
@@ -39,14 +47,19 @@ Thumbs.db
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
-.DS_Store
-/build
+build/
 /captures
+.local.properties
 .externalNativeBuild
 .cxx
-local.properties
 
-API/src/data/*
-docs/
+# ============================================
+# Sistema operativo
+# ============================================
+.DS_Store
+Thumbs.db
 
-*.prof
+# ============================================
+# Otros
+# ============================================
+*.pdf
