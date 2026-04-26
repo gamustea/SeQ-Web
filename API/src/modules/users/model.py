@@ -1,3 +1,20 @@
+"""
+Database models for user authentication and authorization.
+
+This module contains SQLAlchemy models for managing users, access tokens,
+and refresh tokens for OAuth 2.0 authentication.
+
+Classes:
+    User: Main user entity with credentials and relationships.
+    AccessToken: OAuth 2.0 access token for API authentication.
+    RefreshToken: OAuth 2.0 refresh token for token renewal.
+
+Example:
+>>> from src.modules.users.model import User, AccessToken
+>>> user = User(username="admin", email="admin@example.com")
+>>> print(user)
+'User(id=None, username='admin', person_id=None)'
+"""
 
 from datetime import datetime
 
@@ -7,9 +24,32 @@ from sqlalchemy.orm import relationship
 from src.modules.shared import Base
 
 
+# =========================================================================
+# TOKEN MODELS
+# =========================================================================
+
 class AccessToken(Base):
     """
-    Almacena tokens de acceso OAuth 2.0 emitidos a usuarios.
+    OAuth 2.0 access token issued to users for API authentication.
+
+    Stores access tokens with expiration times and revocation status.
+    Tokens are validated against expiry and revocation state.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        token: Unique token string (indexed for fast lookup).
+        user_id: Foreign key to User.id.
+        expires_at: Token expiration timestamp.
+        created_at: Token creation timestamp (automatic).
+        revoked: Revocation status (0=active, 1=revoked).
+
+    Relationships:
+        user: User that owns this token.
+
+    Example:
+    >>> token = AccessToken(token="abc123...", user_id=1, expires_at=datetime(2025,1,1))
+    >>> token.is_valid()
+    True
     """
     __tablename__ = "AccessToken"
 
@@ -23,6 +63,12 @@ class AccessToken(Base):
     user = relationship("User", back_populates="tokens")
 
     def is_valid(self) -> bool:
+        """
+        Check if the token is still valid.
+
+        Returns:
+            True if token is not revoked and has not expired.
+        """
         return not self.revoked and datetime.utcnow() < self.expires_at  # type: ignore
 
     def __str__(self):
@@ -31,7 +77,26 @@ class AccessToken(Base):
 
 class RefreshToken(Base):
     """
-    Almacena tokens de refresco para renovar access tokens.
+    OAuth 2.0 refresh token for renewing access tokens.
+
+    Stores refresh tokens with expiration times and revocation status.
+    Used to obtain new access tokens when the current one expires.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        token: Unique token string (indexed for fast lookup).
+        user_id: Foreign key to User.id.
+        expires_at: Token expiration timestamp.
+        created_at: Token creation timestamp (automatic).
+        revoked: Revocation status (0=active, 1=revoked).
+
+    Relationships:
+        user: User that owns this token.
+
+    Example:
+    >>> token = RefreshToken(token="refresh123...", user_id=1, expires_at=datetime(2025,1,1))
+    >>> token.is_valid()
+    True
     """
     __tablename__ = "RefreshToken"
 
@@ -45,24 +110,54 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
     def is_valid(self) -> bool:
+        """
+        Check if the token is still valid.
+
+        Returns:
+            True if token is not revoked and has not expired.
+        """
         return not self.revoked and datetime.utcnow() < self.expires_at  # type: ignore
 
     def __str__(self):
         return f"RefreshToken(id={self.id}, user_id={self.user_id})"
 
 
+# =========================================================================
+# USER MODEL
+# =========================================================================
+
 class User(Base):
     """
-    Representa un usuario del sistema con credenciales de acceso.
+    Represents a user in the system with authentication credentials.
+
+    Stores user identity information including username, email, and
+    hashed passwords. Maintains relationships to all user data
+    including scans, documents, tokens, and vaults.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        username: Unique username (max 64 characters).
+        email: Unique email address (max 128 characters).
+        first_name: User's first name (max 64 characters).
+        last_name: User's last name (max 64 characters).
+        created_at: Account creation timestamp (automatic).
+        password_hash: Hashed password (max 128 characters).
+        password_salt: Salt used for password hashing (max 128 characters).
+
+    Relationships:
+        scans: List of Scan objects (security scans performed).
+        tokens: List of AccessToken objects (active OAuth tokens).
+        refresh_tokens: List of RefreshToken objects (token refresh tokens).
+        vaults: List of Vault objects (encrypted secrets vaults).
+        documents: List of all Document objects (polymorphic relationship).
 
     Columnas:
         id (int): Identificador único del usuario.
         username (str): Nombre de usuario único (máx. 64 caracteres).
         password_hash / password_salt: Credenciales hasheadas.
-        person_id (int): ID de la persona asociada (clave foránea).
         email (str): Correo electrónico (máx. 128 caracteres).
 
-    Relaciones:
+    Relationships:
         scans           → lista de Scan
         tokens          → AccessToken
         refresh_tokens  → RefreshToken
@@ -94,7 +189,19 @@ class User(Base):
     )
 
     def __str__(self):
+        """
+        Return a string representation of the User instance.
+
+        Returns:
+            String with id, username, and person_id.
+        """
         return f"User(id={self.id}, username='{self.username}', person_id={self.person_id})"
 
     def __repr__(self):
+        """
+        Return a debug representation of the User instance.
+
+        Returns:
+            String with id and username.
+        """
         return f"<User(id={self.id}, username='{self.username}')>"

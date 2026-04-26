@@ -39,6 +39,10 @@ class BaseManager:
         logger: Logger instance for the class.
         _owns_session: Boolean indicating if the manager owns the session.
 
+    Example:
+    >>> class UserManager(BaseManager):
+    ...     def get_user(self, user_id):
+    ...         return self._get_by_field(User, 'id', user_id)
     """
 
     def __init__(self, session: Optional[Session] = None):
