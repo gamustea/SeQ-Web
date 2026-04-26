@@ -26,7 +26,22 @@ jobs:
 
       - name: Generate Python documentation
         run: |
-          pdoc --output docs/py --html-first API/src/modules
+          pdoc -o docs/py API/src/modules
+        env:
+          JWT_SECRET_KEY: dummy_secret_key_for_docs
+          JWT_ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRY_MINUTES: 30
+          REFRESH_TOKEN_EXPIRY_DAYS: 7
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: dummy
+          POSTGRES_PASSWORD: dummy
+          POSTGRES_DB: dummy
+          OLLAMA_HOST: http://localhost:11434
+          OPENVAS_HOST: localhost
+          OPENVAS_PORT: 9390
+          OPENVAS_USER: admin
+          OPENVAS_PASSWORD: admin
 
       - name: Update docs README
         run: |
@@ -49,7 +64,9 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git checkout docs || git checkout -b docs
+          git fetch origin docs || true
+          git checkout docs || git checkout -b docs origin/docs || git checkout -b docs
+          git rebase origin/docs 2>/dev/null || true
           git add -A
           git diff --staged --quiet || git commit -m 'docs: auto-generate API documentation'
-          git push --force-with-lease origin docs
+          git push origin docs --force-with-lease
