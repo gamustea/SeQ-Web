@@ -23,12 +23,10 @@ from flask_cors import CORS
 from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
 
-from src.modules.shared import Base, Document, limiter, initialize_engine, warmup_connection
+from src.modules.shared import BaseManager, Base, Document, limiter
 from src.modules.misc import SecOpsLogger, ConfigReader
 from src.modules.users import (
     AccessToken, 
-    Person, 
-    Rol, 
     User, 
     RefreshToken, 
     oauth_bp, 
@@ -101,8 +99,7 @@ def create_app(fresh_db_init = False) -> Flask:
         _init_db()
 
     _logger.info("Inicializando base de datos...")
-    engine = initialize_engine()
-    warmup_connection()
+    BaseManager.warmup_connection()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
@@ -234,31 +231,18 @@ def _init_db() -> None:
     print("[+] ¡Tablas creadas correctamente!")
 
     # 3. Inserción de los datos iniciales
-    print("[*] Insertando datos de prueba (Person y User)...")
-    with engine.connect() as conn:
-        # 1. Insertamos el Rol primero para satisfacer la clave foránea
-        # IMPORTANTE: Si tu modelo Rol usa otra columna en lugar de 'name' (ej. 'nombre' o 'descripcion'), cámbialo aquí.
+    print("[*] Insertando datos de prueba (User)...")
+    with engine.connect() as conn:        
         conn.execute(text("""
-            INSERT INTO "Rol" (id, name, description, hierarchy_level)
-            VALUES (1, 'Admin', '', 0);
-        """))
-
-        # 2. Insertamos la Persona
-        conn.execute(text("""
-            INSERT INTO "Person" (first_name, last_name, alias, created_at)
-            VALUES ('Gabriel', 'Musteata', 'artexian', CURRENT_DATE);
-        """))
-        
-        # 3. Finalmente insertamos el Usuario (ahora el rol_id 1 y person_id 1 ya existen)
-        conn.execute(text("""
-            INSERT INTO "User" (username, password_hash, password_salt, email, person_id, rol_id)
+            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at)
             VALUES (
             'root',
+            'Gabriel', 
+            'Musteata',
             '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
             'c167837c1c2a860031d861164d69bd79',
             'gmiganescu@gmail.com',
-            1,
-            1
+            CURRENT_DATE
             );
         """))
 
@@ -358,7 +342,7 @@ def _init_db() -> None:
 
     print("[+] ¡Datos iniciales insertados con éxito!")
 
-app = create_app(False)
 
 if __name__ == "__main__":
+    app = create_app(False)
     app.run(debug=True, host='0.0.0.0', port=5000)

@@ -1,3 +1,22 @@
+"""
+AI-powered document generation module.
+
+This module provides the base class for all AI-powered content writers
+using Ollama as the LLM backend. It handles client initialization,
+web search integration, retry logic, and response parsing.
+
+Classes:
+    AIWriter: Abstract base class for domain-specific AI writers.
+
+Example:
+    >>> class MyWriter(AIWriter):
+    ...     def _build_system_prompt(self) -> str:
+    ...         return "You are a helpful assistant."
+    ...     def _build_user_prompt(self, data) -> str:
+    ...         return f"Analyze: {data}"
+    ...     def generate(self, data):
+    ...         return self._call_model([{"role": "user", "content": self._build_user_prompt(data)}])
+"""
 
 from abc import ABC, abstractmethod
 from typing import Any, Optional
@@ -5,20 +24,44 @@ from typing import Any, Optional
 import ollama
 from ollama import ChatResponse
 
+
 class AIWriter(ABC):
     """
-    Clase base abstracta para writers que generan contenido mediante IA (Ollama).
-    
-    Proporciona la infraestructura común: cliente Ollama, búsqueda web,
-    manejo de reintentos y parseo de respuestas.
-    
-    Las subclases deben implementar:
-        - _build_system_prompt(): Prompt del sistema específico del dominio
-        - _build_user_prompt(): Prompt de usuario con parámetros específicos
-        - generate(): Método principal de generación que retorna contenido específico
-    
-    Si host o model son None, se obtienen de las variables de entorno OLLAMA_HOST
-    y OLLAMA_MODEL (o valores por defecto).
+    Abstract base class for AI-powered content writers using Ollama.
+
+    Provides common infrastructure for all AI writers including:
+    - Ollama client initialization and configuration
+    - Web search integration with DuckDuckGo
+    - Tool call handling and response processing
+    - Error handling and retry logic
+
+    Subclasses must implement:
+        - _build_system_prompt(): Domain-specific system prompt
+        - _build_user_prompt(): User prompt with domain parameters
+        - generate(): Main generation method returning domain content
+
+    If host or model are not provided, they are read from environment
+    variables OLLAMA_HOST and OLLAMA_MODEL (or defaults).
+
+    Attributes:
+        host: Ollama server URL.
+        model: Ollama model name.
+        logger: Logger instance for the class.
+        _client: Ollama client instance.
+
+    Example:
+    >>> class ReportWriter(AIWriter):
+    ...     def _build_system_prompt(self) -> str:
+    ...         return "You are a security analyst."
+    ...     def _build_user_prompt(self, scan) -> str:
+    ...         return f"Analyze this scan: {scan.target}"
+    ...     def generate(self, scan):
+    ...         prompt = self._build_user_prompt(scan)
+    ...         messages = [
+    ...             {"role": "system", "content": self._build_system_prompt()},
+    ...             {"role": "user", "content": prompt}
+    ...         ]
+    ...         return self._call_model(messages)
     """
 
     def __init__(
@@ -26,6 +69,15 @@ class AIWriter(ABC):
         host: Optional[str] = None,
         model: Optional[str] = None,
     ) -> None:
+        """
+        Initialize the AI writer with Ollama configuration.
+
+        Args:
+            host: Optional Ollama server URL. If not provided, reads from
+                   environment or ConfigReader defaults.
+            model: Optional Ollama model name. If not provided, reads from
+                   environment or ConfigReader defaults.
+        """
         from src.modules.misc import ConfigReader, SecOpsLogger
         env_host, env_model = ConfigReader.get_ollama_config()
         
@@ -40,10 +92,27 @@ class AIWriter(ABC):
         self.logger.info(f"[Ollama] Inicializando cliente con host={self.host}, model={self.model}")
         self._client = ollama.Client(host=self.host, timeout=300)
 
-    # ── Búsqueda web ───────────────────────────────────────────────────────────
+
+    # =========================================================================
+    # WEB SEARCH
+    # =========================================================================
 
     def _web_search(self, query: str, max_results: int = 5) -> str:
-        """Realiza una búsqueda web con DuckDuckGo."""
+        """
+        Perform a web search using DuckDuckGo.
+
+        Executes a text search and returns formatted results with titles,
+        descriptions, and URLs. Used by the model to fetch current
+        information during analysis.
+
+        Args:
+            query: Search query string.
+            max_results: Maximum number of results to return (default: 5).
+
+        Returns:
+            Formatted string with search results, or error message if
+            the search fails or returns no results.
+        """
         from ddgs import DDGS
         
         try:
@@ -63,24 +132,53 @@ class AIWriter(ABC):
             self.logger.error(f"Error búsqueda web: {exc}")
             return f"[ERROR BÚSQUEDA] {exc}"
 
-    # ── Métodos abstractos ───────────────────────────────────────────────────
+
+    # =========================================================================
+    # ABSTRACT METHODS
+    # =========================================================================
 
     @abstractmethod
     def _build_system_prompt(self) -> str:
-        """Construye el prompt del sistema específico del dominio."""
+        """
+        Build the domain-specific system prompt.
+
+        Returns:
+            System prompt string defining the AI persona and behavior.
+        """
         pass
 
     @abstractmethod
     def _build_user_prompt(self, *args: Any, **kwargs: Any) -> str:
-        """Construye el prompt de usuario con parámetros específicos del dominio."""
+        """
+        Build the user prompt with domain-specific parameters.
+
+        Args:
+            *args: Positional arguments specific to the domain.
+            **kwargs: Keyword arguments specific to the domain.
+
+        Returns:
+            User prompt string with formatted data.
+        """
         pass
 
     @abstractmethod
     def generate(self, *args: Any, **kwargs: Any) -> Any:
-        """Genera el contenido específico del dominio. Debe ser implementado por subclases."""
+        """
+        Generate domain-specific content using the AI model.
+
+        Args:
+            *args: Positional arguments for content generation.
+            **kwargs: Keyword arguments for content generation.
+
+        Returns:
+            Generated content in the format specific to the subclass.
+        """
         pass
 
-    # ── Helpers comunes ─────────────────────────────────────────────────────
+
+    # =========================================================================
+    # COMMON HELPERS
+    # =========================================================================
 
     def _call_model(
         self,
@@ -89,7 +187,25 @@ class AIWriter(ABC):
         temperature: float = 0.5,
         num_predict: int = 4096,
     ) -> ChatResponse:
-        """Llama al modelo Ollama con manejo de tool calls."""
+        """
+        Call the Ollama model with message history and optional tools.
+
+        Sends messages to the model and handles tool call responses
+        automatically by performing web searches when the model requests them.
+        Configures model parameters like temperature and max tokens.
+
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'.
+            tools: Optional list of tool definitions for function calling.
+            temperature: Sampling temperature (default: 0.5).
+            num_predict: Maximum tokens to predict (default: 4096).
+
+        Returns:
+            ChatResponse object from Ollama with the model's reply.
+
+        Raises:
+            Exception: If connection to Ollama fails.
+        """
         options = {
             "num_predict":    num_predict,
             "temperature":    temperature,

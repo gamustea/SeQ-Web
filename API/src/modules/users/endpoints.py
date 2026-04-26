@@ -12,7 +12,6 @@ ENDPOINTS DISPONIBLES
 ────────────────────────────────────────────────────────────────────────────────
 
 Registro
-    POST /users/sign-up-person — Registrar una nueva Persona
     POST /users/sign-up        — Registrar un Usuario vinculado a una Persona
 
 Autenticación
@@ -25,12 +24,11 @@ Gestión
 AUTENTICACIÓN
 ────────────────────────────────────────────────────────────────────────────────
 
-Todos los endpoints excepto /sign-up-person, /sign-up y /check-credentials
+Todos los endpoints excepto /sign-up y /check-credentials
 requieren un token OAuth2 válido en el header:
     Authorization: Bearer <access_token>
 
 Límites de tasa:
-    • sign-up-person: 10/hour, 20/day
     • sign-up: 10/hour, 20/day
     • check-credentials: 10/minute, 30/hour
     • change-password: 5/hour, 10/day
@@ -38,11 +36,6 @@ Límites de tasa:
 ────────────────────────────────────────────────────────────────────────────────
 EJEMPLOS DE USO
 ────────────────────────────────────────────────────────────────────────────────
-
-# Registrar una persona
-curl -X POST https://api.example.com/users/sign-up-person \
-  -H "Content-Type: application/json" \
-  -d '{"firstName": "John", "lastName": "Doe", "alias": "johnd"}'
 
 # Registrar un usuario
 curl -X POST https://api.example.com/users/sign-up \
@@ -119,64 +112,6 @@ def get_oauth_manager():
     finally:
         om.close_session()
 
-@users_bp.post("/sign-up-person")
-@limiter.limit("10 per hour; 20 per day")
-def sign_up_person():
-    """Registra una nueva Persona en el sistema.
-
-    Args (JSON body):
-        firstName (str): Nombre de pila de la persona.
-        lastName  (str): Apellido(s) de la persona.
-        alias     (str): Alias único para identificar a la persona.
-
-    Returns:
-        201 — Persona creada exitosamente.
-            {
-                "message": "Persona registrada exitosamente",
-                "personId": 1,
-                "firstName": "John",
-                "lastName": "Doe"
-            }
-        400 — Error de validación (campos faltantes).
-        409 — El alias ya existe en el sistema.
-
-    Example:
-        curl -X POST https://api.example.com/users/sign-up-person \\
-             -H "Content-Type: application/json" \\
-             -d '{"firstName": "John", "lastName": "Doe", "alias": "johnd"}'
-    """
-    data = _require_json()
-    if isinstance(data, tuple):          # respuesta de error
-        return data
-
-    try:
-        first_name = _require_field(data, "firstName")
-        last_name  = _require_field(data, "lastName")
-        alias      = _require_field(data, "alias")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-
-    try:
-        with user_manager() as user_mgr:
-            person = user_mgr.sign_in_person(first_name, last_name, alias)
-        _logger.info(f"Persona registrada: {first_name} {last_name} (ID: {person.id})")
-        return jsonify({
-            "message":   "Persona registrada exitosamente",
-            "personId":  person.id,
-            "firstName": person.first_name,
-            "lastName":  person.last_name,
-        }), 201
-
-    except (ExistingUserError,) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en sign-up-person: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
-
 
 @users_bp.post("/sign-up")
 @limiter.limit("10 per hour; 20 per day")
@@ -184,10 +119,11 @@ def sign_up_user():
     """Registra un nuevo Usuario vinculándolo a una Persona existente.
 
     Args (JSON body):
-        username (str): Nombre de usuario único.
-        password (str): Contraseña del usuario.
-        email    (str): Correo electrónico válido.
-        alias    (str): Alias de la persona vinculada.
+        username    (str): Nombre de usuario único.
+        first_name  (str): Nombre real del usuario.
+        last_name   (str): Apellido del usuario.
+        password    (str): Contraseña del usuario.
+        email       (str): Correo electrónico válido.
 
     Returns:
         201 — Usuario creado exitosamente.
@@ -202,25 +138,32 @@ def sign_up_user():
 
     Example:
         curl -X POST https://api.example.com/users/sign-up \\
-             -H "Content-Type: application/json" \\
-             -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd"}'
+            -H "Content-Type: application/json" \\
+            -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd"}'
     """
     data = _require_json()
     if isinstance(data, tuple):
         return data
 
     try:
-        username = _require_field(data, "username")
-        password = _require_field(data, "password")
-        email    = _require_field(data, "email")
-        alias    = _require_field(data, "alias")
+        username    = _require_field(data, "username")
+        email       = _require_field(data, "email")
+        first_name  = _require_field(data, "first_name")
+        last_name   = _require_field(data, "last_name")
+        password    = _require_field(data, "password")
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
 
     try:
-        with user_manager() as user_mgr:
-            user = user_mgr.sign_in_user(username, password, email, alias)
+        with get_user_manager() as manager:
+            user = manager.sign_in_user(
+                username = username,
+                email = email,
+                first_name = first_name,
+                last_name = last_name,
+                password = password
+            )
         _logger.info(f"Usuario registrado: {username} (ID: {user.id})")
         return jsonify({
             "message":  "Usuario registrado exitosamente",
@@ -264,8 +207,8 @@ def check_credentials():
 
     Example:
         curl -X POST https://api.example.com/users/check-credentials \\
-             -H "Content-Type: application/json" \\
-             -d '{"username": "johnd", "password": "password123"}'
+                -H "Content-Type: application/json" \\
+                -d '{"username": "johnd", "password": "password123"}'
     """
     data = _require_json()
     if isinstance(data, tuple):

@@ -1,3 +1,33 @@
+"""
+Database models for Sentinel security scanning module.
+
+This module contains SQLAlchemy models for vulnerability scanning including:
+- Network hosts and port management
+- Scan base class with polymorphic inheritance
+- Nmap, Nikto, and OpenVAS scan implementations
+- Vulnerability and result tracking
+- Scan document generation
+
+Classes:
+    Host: Network host entity for scan targets.
+    Scan: Base class for all scan types (polymorphic).
+    Port: Network port definition.
+    NmapScan: Nmap network scanning results.
+    OpenPort: Open port discovered during Nmap scan.
+    NiktoScan: Nikto web vulnerability scan results.
+    NiktoIncident: Individual Nikto finding.
+    OpenVASScan: OpenVAS vulnerability scan results.
+    OpenVASVulnerability: Stored vulnerability definition.
+    OpenVASScanResult: Scan result linking scan to vulnerability.
+    SentinelDocument: Generated PDF report from scan.
+
+Example:
+    >>> from src.modules.sentinel.model import Scan, NmapScan
+    >>> scan = NmapScan(target="192.168.1.1", user_id=1)
+    >>> print(scan)
+    NmapScan(id=None, target='192.168.1.1', puertos_abiertos=0, inicio=N/A)
+"""
+
 from datetime import datetime
 from enum import Enum
 
@@ -19,7 +49,9 @@ from sqlalchemy.orm import relationship
 from src.modules.shared import Base, Document
 
 
-# ── Tablas de asociación ───────────────────────────────────────────────────────
+# =========================================================================
+# ASSOCIATION TABLES
+# =========================================================================
 
 TargetPort = Table(
     "TargetPort",
@@ -36,10 +68,27 @@ ScanIncident = Table(
 )
 
 
-# ── Modelos de escaneo ─────────────────────────────────────────────────────────
+# =========================================================================
+# HOST MODEL
+# =========================================================================
 
 class Host(Base):
+    """
+    Network host entity representing a target for security scans.
 
+    Stores host identification information including hostname, IP address,
+    MAC address, and vendor information from ARP/Network scans.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        hostname: Unique hostname (max 64 characters).
+        ip_address: IPv4/IPv6 address (max 15 characters).
+        mac_address: MAC address (max 17 characters).
+        vendor: Device vendor from MAC OUI lookup (max 64 characters).
+
+    Relationships:
+        scans: List of Scan objects targeting this host.
+    """
     __tablename__ = "Host"
 
     id          = Column(Integer,    primary_key=True, autoincrement=True)
@@ -51,7 +100,21 @@ class Host(Base):
     scans = relationship("Scan", back_populates="host", cascade="all, delete-orphan")
 
 
+# =========================================================================
+# ENUMS
+# =========================================================================
+
 class ScanStatus(Enum):
+    """
+    Enumeration of possible scan execution states.
+
+    Attributes:
+        PENDING: Scan created but not yet started.
+        RUNNING: Scan is currently executing.
+        FINISHED: Scan completed successfully.
+        FAILED: Scan encountered an error.
+        CANCELLED: Scan was cancelled by user.
+    """
     PENDING   = "pending"
     RUNNING   = "running"
     FINISHED  = "finished"
@@ -59,10 +122,32 @@ class ScanStatus(Enum):
     CANCELLED = "cancelled"
 
 
+# =========================================================================
+# SCAN BASE
+# =========================================================================
+
 class Scan(Base):
     """
-    Clase base para todos los tipos de escaneos de seguridad.
-    Utiliza herencia polimórfica para diferentes tipos de escaneo.
+    Base class for all security scan types.
+
+    Uses polymorphic inheritance to support different scan implementations
+    (Nmap, Nikto, OpenVAS) while maintaining a common interface.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        target: Scan target (IP or domain, max 255 characters).
+        started_at: Scan start timestamp (automatic).
+        status: Current scan status (pending/running/finished/failed/cancelled).
+        user_id: Foreign key to User.id (scan owner).
+        scan_type: Polymorphic discriminator (nmap/nikto/openvas).
+        frecuent: Whether this is a scheduled/repeated scan.
+        host_id: Optional foreign key to Host.
+        finished_at: Scan completion timestamp (nullable).
+
+    Relationships:
+        user: User who initiated the scan.
+        host: Target host if resolved.
+        sentinel_document: Generated PDF report (one-to-one).
 
     Columnas:
         id (int): Identificador único del escaneo.
@@ -70,10 +155,6 @@ class Scan(Base):
         started_at (datetime): Fecha y hora de inicio del escaneo.
         user_id (int): ID del usuario que ejecuta el escaneo (clave foránea).
         scan_type (str): Tipo de escaneo (para discriminador polimórfico).
-
-    Relaciones:
-        user: Usuario que ejecutó el escaneo
-        host: Host analizado
     """
 
     __tablename__ = "Scan"
@@ -104,15 +185,44 @@ class Scan(Base):
     }
 
     def __str__(self):
+        """
+        Return a string representation of the Scan instance.
+
+        Returns:
+            String with id, type, target, and start time.
+        """
         started = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
         return f"Scan(id={self.id}, tipo='{self.scan_type}', target='{self.target}', inicio={started})"
 
     def __repr__(self):
+        """
+        Return a debug representation of the Scan instance.
+
+        Returns:
+            String with id, type, and target.
+        """
         return f"<Scan(id={self.id}, type='{self.scan_type}', target='{self.target}')>"
 
 
-class Port(Base):
+# =========================================================================
+# PORT MODELS
+# =========================================================================
 
+class Port(Base):
+    """
+    Network port definition for tracking scanned ports.
+
+    Stores port protocol information and relationships to Nmap scans
+    and discovered open ports.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        protocol: Port protocol (e.g., "tcp", "udp", max 255 characters).
+
+    Relationships:
+        nmap_target_scans: NmapScan objects targeting this port.
+        open_port_entries: OpenPort entries where this port was found open.
+    """
     __tablename__ = "Port"
 
     id       = Column(Integer,     primary_key=True, autoincrement=True)
@@ -129,13 +239,45 @@ class Port(Base):
     )
 
     def __str__(self):
+        """
+        Return a string representation of the Port instance.
+
+        Returns:
+            String with id and protocol.
+        """
         return f"Port(id={self.id}, protocol='{self.protocol}')"
 
     def __repr__(self):
+        """
+        Return a debug representation of the Port instance.
+
+        Returns:
+            String with id and protocol.
+        """
         return f"<Port(id={self.id}, {self.protocol})>"
 
 
+# =========================================================================
+# NMAP MODELS
+# =========================================================================
+
 class NmapScan(Scan):
+    """
+    Nmap network scan results.
+
+    Inherits from Scan and stores specific Nmap data including
+    target ports and discovered open ports with service information.
+
+    Attributes:
+        id: Primary key (foreign key to Scan.id).
+        target_ports: List of Port objects being scanned.
+        open_ports_relation: List of OpenPort entries with scan results.
+
+    Example:
+        >>> scan = NmapScan(target="10.0.0.1", user_id=1)
+        >>> print(scan)
+        NmapScan(id=None, target='10.0.0.1', puertos_abiertos=0, inicio=N/A)
+    """
 
     __tablename__ = "NmapScan"
 
@@ -154,16 +296,45 @@ class NmapScan(Scan):
     __mapper_args__ = {"polymorphic_identity": "nmap"}
 
     def __str__(self):
+        """
+        Return a string representation of the NmapScan instance.
+
+        Returns:
+            String with id, target, open port count, and start time.
+        """
         started   = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
         num_ports = len(self.open_ports_relation) if self.open_ports_relation else 0
         return f"NmapScan(id={self.id}, target='{self.target}', puertos_abiertos={num_ports}, inicio={started})"
 
     def __repr__(self):
+        """
+        Return a debug representation of the NmapScan instance.
+
+        Returns:
+            String with id and target.
+        """
         return f"<NmapScan(id={self.id}, target='{self.target}')>"
 
 
 class OpenPort(Base):
+    """
+    Open port discovered during an Nmap scan.
 
+    Stores the relationship between a port, an Nmap scan, and
+    discovered service information.
+
+    Attributes:
+        port_id: Foreign key to Port.id (part of primary key).
+        nmap_scan_id: Foreign key to NmapScan.id (part of primary key).
+        reason: Reason port was determined to be open.
+        product: Detected service product name.
+        version: Detected service version.
+        given_use: Nmap service detection result.
+
+    Relationships:
+        port: Port entity.
+        nmap_scan: NmapScan that discovered this open port.
+    """
     __tablename__ = "OpenPort"
 
     port_id      = Column(Integer, ForeignKey("Port.id"),    primary_key=True)
@@ -177,11 +348,30 @@ class OpenPort(Base):
     nmap_scan = relationship("NmapScan", back_populates="open_ports_relation")
 
     def __repr__(self):
+        """
+        Return a debug representation of the OpenPort instance.
+
+        Returns:
+            String with port_id and scan_id.
+        """
         return f"<OpenPort(port_id={self.port_id}, scan_id={self.nmap_scan_id})>"
 
 
-class NiktoScan(Scan):
+# =========================================================================
+# NIKTO MODELS
+# =========================================================================
 
+class NiktoScan(Scan):
+    """
+    Nikto web vulnerability scan results.
+
+    Inherits from Scan and stores Nikto-specific data including
+    discovered web vulnerabilities/incidents.
+
+    Attributes:
+        id: Primary key (foreign key to Scan.id).
+        incidents: List of NiktoIncident objects with findings.
+    """
     __tablename__ = "NiktoScan"
 
     id = Column(Integer, ForeignKey("Scan.id"), primary_key=True)
@@ -193,11 +383,36 @@ class NiktoScan(Scan):
     __mapper_args__ = {"polymorphic_identity": "nikto"}
 
     def __repr__(self):
+        """
+        Return a debug representation of the NiktoScan instance.
+
+        Returns:
+            String with id and target.
+        """
         return f"<NiktoScan(id={self.id}, target='{self.target}')>"
 
 
 class NiktoIncident(Base):
+    """
+    Individual vulnerability finding from a Nikto scan.
 
+    Stores a single web vulnerability discovered during scanning,
+    including OSVDB reference, affected URL, and severity.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        osvdb_id: OSVDB reference identifier.
+        method: HTTP method used to discover (GET, POST, etc.).
+        url: Affected URL path.
+        description: Vulnerability description.
+        severity: Severity level (INFO, LOW, MEDIUM, HIGH, CRITICAL).
+        port: Target port number.
+        references: Additional reference URLs.
+        discovered_at: Discovery timestamp (automatic).
+
+    Relationships:
+        nikto_scans: NiktoScan objects containing this incident.
+    """
     __tablename__ = "NiktoIncident"
 
     id           = Column(Integer,    primary_key=True, autoincrement=True)
@@ -215,11 +430,37 @@ class NiktoIncident(Base):
     )
 
     def __repr__(self):
+        """
+        Return a debug representation of the NiktoIncident instance.
+
+        Returns:
+            String with id, OSVDB id, and severity.
+        """
         return f"<NiktoIncident(id={self.id}, osvdb='{self.osvdb_id}', severity='{self.severity}')>"
 
 
-class OpenVASScan(Scan):
+# =========================================================================
+# OPENVAS MODELS
+# =========================================================================
 
+class OpenVASScan(Scan):
+    """
+    OpenVAS vulnerability scan results.
+
+    Inherits from Scan and stores OpenVAS-specific data including
+    task and report identifiers, and detected vulnerabilities.
+
+    Attributes:
+        id: Primary key (foreign key to Scan.id).
+        task_id: OpenVAS task identifier.
+        report_id: OpenVAS report identifier.
+        scan_config_name: OpenVAS scan configuration used.
+        scanner_name: OpenVAS scanner name.
+        results: List of OpenVASScanResult objects with findings.
+
+    Table Constraints:
+        Unique constraint on (task_id, report_id) to prevent duplicates.
+    """
     __tablename__ = "OpenVASScan"
 
     id               = Column(Integer,     ForeignKey("Scan.id"), primary_key=True)
@@ -240,7 +481,41 @@ class OpenVASScan(Scan):
 
 
 class OpenVASVulnerability(Base):
+    """
+    Stored vulnerability definition from OpenVAS NVT feed.
 
+    Represents a unique vulnerability with CVSS scoring, CVE references,
+    and remediation information.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        nvt_oid: OpenVAS NVT OID (unique, indexed).
+        name: Vulnerability name/title.
+        severity_score: Numeric severity score.
+        severity_class: Severity category (Critical/High/Medium/Low/Log).
+        cvss_base_score: CVSS v2 base score.
+        cvss_vector: CVSS vector string.
+        cve_ids: Comma-separated CVE identifiers.
+        cert_refs: CERT-Bund references.
+        bugtraq_ids: BugTraq IDs.
+        other_refs: Other reference identifiers.
+        summary: Brief summary.
+        description: Full description.
+        impact: Impact description.
+        insight: Insight into the vulnerability.
+        affected_software: Affected software list.
+        solution_type: Type of solution (VendorFix, Workaround, etc.).
+        solution: Solution description.
+        qod_value: Quality of Detection value.
+        qod_type: Quality of Detection type.
+        family: NVT family.
+        category: NVT category.
+        created_at: Creation timestamp (automatic).
+        updated_at: Last update timestamp (automatic).
+
+    Relationships:
+        scan_results: OpenVASScanResult objects linking to this vulnerability.
+    """
     __tablename__ = "OpenVASVulnerability"
 
     id                = Column(Integer,     primary_key=True, autoincrement=True)
@@ -271,11 +546,34 @@ class OpenVASVulnerability(Base):
     scan_results = relationship("OpenVASScanResult", back_populates="vulnerability")
 
     def __repr__(self):
+        """
+        Return a debug representation of the OpenVASVulnerability instance.
+
+        Returns:
+            String with NVT OID.
+        """
         return f"<OpenVASVulnerability(nvt_oid='{self.nvt_oid}')>"
 
 
 class OpenVASScanResult(Base):
+    """
+    Result linking an OpenVAS scan to a detected vulnerability.
 
+    Represents a single vulnerability finding in a specific scan,
+    including host where it was detected.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        openvas_scan_id: Foreign key to OpenVASScan.id (indexed, cascading delete).
+        vulnerability_id: Foreign key to OpenVASVulnerability.id (indexed).
+        host_id: Foreign key to Host.id where vulnerability was found.
+        detected_at: Detection timestamp (automatic).
+
+    Relationships:
+        openvas_scan: OpenVASScan containing this result.
+        vulnerability: OpenVASVulnerability detected.
+        host: Host where vulnerability was detected.
+    """
     __tablename__ = "OpenVASScanResult"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
@@ -289,25 +587,29 @@ class OpenVASScanResult(Base):
     host          = relationship("Host")
 
 
-# ── Documento de informe ───────────────────────────────────────────────────────
+# =========================================================================
+# DOCUMENT MODEL
+# =========================================================================
 
 class SentinelDocument(Document):
     """
-    Informe PDF generado a partir de un escaneo Sentinel.
+    PDF report generated from a Sentinel security scan.
 
-    Hereda de Document (general_model.py):
+    Inherits from Document (shared model) and adds scan-specific fields.
+    Stores the generated PDF path, scan type, and cached AI enrichment.
+
+    Inherits from Document:
         id, document_type, filename, format, status,
         created_at, generated_at, user_id, user
 
-    Campos propios:
-        scan_id         — FK al escaneo origen (Scan)
-        scan_type       — 'nmap' | 'nikto' | 'openvas'
-                          Redundante con Scan.scan_type, pero evita joins
-                          en listados y queries de estado.
-        enrichment_json — resultado cacheado de Ollama (JSONB, nullable).
+    Attributes:
+        id: Primary key (foreign key to Document.id).
+        scan_id: Foreign key to Scan.id (cascade delete).
+        scan_type: Scan type ('nmap', 'nikto', 'openvas') for filtering without join.
+        enrichment_json: Cached AI analysis result (JSONB, nullable).
+        scan: Relationship to the source Scan.
 
-    Estructura de enrichment_json por scan_type:
-
+    enrichment_json Structure by scan_type:
         nmap:
         {
           "summary": "...",
@@ -323,10 +625,10 @@ class SentinelDocument(Document):
           ...
         ]
 
-    Notas:
-        - enrichment_json es nullable: los PDFs sin IA también usan este modelo.
-        - Se escribe una sola vez por el worker; nunca se sobreescribe en 'done'.
-        - El campo scan_type permite filtrar sin join a Scan.
+    Notes:
+        - enrichment_json is nullable: PDFs without AI also use this model.
+        - Written once by worker; never overwritten in 'done' state.
+        - scan_type field allows filtering without joining Scan table.
     """
 
     __tablename__ = "SentinelDocument"
@@ -345,10 +647,21 @@ class SentinelDocument(Document):
 
     @property
     def is_enriched(self) -> bool:
-        """True si el enriquecimiento IA ya está disponible."""
+        """
+        Check if AI enrichment is available.
+
+        Returns:
+            True if enrichment_json is not None.
+        """
         return self.enrichment_json is not None
 
     def __repr__(self) -> str:
+        """
+        Return a debug representation of the SentinelDocument instance.
+
+        Returns:
+            String with id, scan_id, scan_type, and status.
+        """
         return (
             f"<SentinelDocument(id={self.id}, scan_id={self.scan_id}, "
             f"scan_type='{self.scan_type}', status='{self.status}')>"

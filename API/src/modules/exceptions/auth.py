@@ -47,11 +47,11 @@ class UserNotFoundError(AuthenticationError):
 class UserBindingError(AuthenticationError):
     default_code = ErrorCode.UNBINDABLE_USER
 
-    def __init__(self, username: str, alias: str):
+    def __init__(self, username: str):
         super().__init__(
             message=f"No se pudo vincular el usuario '{username}' con una persona existente",
             details={"username": username},
-            user_message=f"Error al crear el usuario debido a datos incompletos; no se tiene constancia de una persona con alias '{alias}'"
+            user_message=f"Error al crear el usuario debido a datos incompletos"
         )
 
 
@@ -68,9 +68,9 @@ class DuplicatedUserCredentials(AuthenticationError):
 class ExistingUserError(AuthenticationError):
     default_code = ErrorCode.USER_ALREADY_EXISTS
 
-    def __init__(self, username: str):
+    def __init__(self, username: str, email: str):
         super().__init__(
-            message=f"Usuario '{username}' ya existe",
-            details={"username": username},
-            user_message="El usuario ya existe."
+            message="Se ha intentado crear un usuario con un email o nombre de usuario existentes",
+            details={"username": username, "email": email},
+            user_message=f"""Ya existe un usuario con los siguientes parámetros: {f"email: {email}" if email is not None else "" } {"|" if username is not None and email is not None else ""} {f"username: {username}" if username is not None else "" }"""
         )
