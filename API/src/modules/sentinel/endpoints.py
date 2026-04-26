@@ -17,7 +17,7 @@ ENDPOINTS DISPONIBLES
 
 Estado y Control
     GET  /sentinel/is-finished?id=<scan_id>     — ¿Ha finalizado un escaneo?
-    GET  /sentinel/scan-status?id=<scan_id>    — Estado y progreso del escaneo
+    GET  /sentinel/scan-status?id=<scan_id>     — Estado y progreso del escaneo
     POST /sentinel/scans/<scan_id>/cancel       — Cancelar escaneo en curso
 
 Lanzamiento
@@ -31,9 +31,9 @@ Resultados
 
 PDF y Documentos
     GET /sentinel/generate-pdf?id=<scan_id>         — Solicitar generación async de PDF
-    GET /sentinel/document-status                — Consultar estado de generación
-    GET /sentinel/document/<id>/download         — Descargar documento generado
-    GET /sentinel/generate-pdf-base64           — (Legacy) Obtener PDF en Base64
+    GET /sentinel/document-status                   — Consultar estado de generación
+    GET /sentinel/document/<id>/download            — Descargar documento generado
+    GET /sentinel/generate-pdf-base64               — (Legacy) Obtener PDF en Base64
 
 Eliminación
     DELETE /sentinel/<scan_id> — Eliminar un escaneo
@@ -58,17 +58,17 @@ EJEMPLOS DE USO
 
 # Lanzar escaneo Nmap
 curl -X POST https://api.example.com/sentinel/nmap \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"target": "192.168.1.0/24", "ports": "22,80,443", "timeout": 300}'
+    -H "Authorization: Bearer <token>" \
+    -H "Content-Type: application/json" \
+    -d '{"target": "192.168.1.0/24", "ports": "22,80,443", "timeout": 300}'
 
 # Listar escaneos con paginación
 curl "https://api.example.com/sentinel/results?type=nmap&page=1&per_page=20" \
-  -H "Authorization: Bearer <token>"
+    -H "Authorization: Bearer <token>"
 
 # Obtener estado de un escaneo
 curl "https://api.example.com/sentinel/scan-status?id=42" \
-  -H "Authorization: Bearer <token>"
+    -H "Authorization: Bearer <token>"
 
 ────────────────────────────────────────────────────────────────────────────────
 """
@@ -126,7 +126,11 @@ def resolve_manager(
         return nikto_manager
     return openvas_manager
 
-def verify_scan_ownership(scan: Scan, user_id: int, scan_id: int) -> None:
+def verify_scan_ownership(
+    scan: Scan, 
+    user_id: int, 
+    scan_id: int
+) -> None:
     """
     Verifica que el escaneo pertenece al usuario. Responde 404 en caso
     contrario para evitar enumerar IDs ajenos.

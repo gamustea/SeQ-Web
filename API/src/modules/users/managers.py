@@ -238,12 +238,6 @@ class UserManager(BaseManager):
             obj = self.session.query(model).filter(
                 getattr(model, field) == value
             ).one_or_none()
-
-            if obj:
-                self.logger.debug(f"{model.__name__} con {field}='{value}' encontrado")
-            else:
-                self.logger.debug(f"{model.__name__} con {field}='{value}' no encontrado")
-
             return obj
 
         except Exception as e:

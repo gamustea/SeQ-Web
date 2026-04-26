@@ -33,53 +33,14 @@ from .managers import (
     ScanManager,
 )
 
-# Lazy imports to avoid circular import
-def get_sentinel_endpoints():
-    from .endpoints import sentinel_bp
-    return sentinel_bp
+from .reports import (
+    NmapPrintingStrategy,
+    NiktoPrintingStrategy,
+    OpenVASPrintingStrategy,
+    PDFCreator
+)
 
-def get_processors():
-    from .processors import (
-        NmapResultProcessor,
-        NiktoResultProcessor,
-        OpenVASResultProcessor,
-    )
-    return NmapResultProcessor, NiktoResultProcessor, OpenVASResultProcessor
-
-def get_tasks():
-    from .tasks import (
-        NiktoScanTask,
-        NmapScanTask,
-        OpenVASTask,
-        TaskStatus,
-        _Task,
-    )
-    return NiktoScanTask, NmapScanTask, OpenVASTask, TaskStatus, _Task
-
-def get_reports():
-    from .reports import (
-        PDFCreator,
-        NmapPrintingStrategy,
-        NiktoPrintingStrategy,
-        OpenVASPrintingStrategy,
-    )
-    return PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy
-
-
-# For backwards compatibility
-sentinel_bp = None
-NmapResultProcessor = None
-NiktoResultProcessor = None
-OpenVASResultProcessor = None
-NiktoScanTask = None
-NmapScanTask = None
-OpenVASTask = None
-TaskStatus = None
-_Task = None
-PDFCreator = None
-NmapPrintingStrategy = None
-NiktoPrintingStrategy = None
-OpenVASPrintingStrategy = None
+from .endpoints import sentinel_bp
 
 __all__ = [
     # Models
@@ -104,16 +65,6 @@ __all__ = [
     "ScanManager",
     # Endpoints
     "sentinel_bp",
-    # Processors
-    "NmapResultProcessor",
-    "NiktoResultProcessor",
-    "OpenVASResultProcessor",
-    # Tasks
-    "NiktoScanTask",
-    "NmapScanTask",
-    "OpenVASTask",
-    "TaskStatus",
-    "_Task",
     # Reports
     "PDFCreator",
     "NmapPrintingStrategy",

@@ -25,17 +25,20 @@ from urllib.parse import quote_plus
 
 from src.modules.shared import Base, Document, limiter, initialize_engine, warmup_connection
 from src.modules.misc import SecOpsLogger, ConfigReader
-from src.modules.users import get_user_endpoints, get_oauth_endpoints, AccessToken, Person, Rol, User, RefreshToken
-from src.modules.sentinel import get_sentinel_endpoints
+from src.modules.users import (
+    AccessToken, 
+    Person, 
+    Rol, 
+    User, 
+    RefreshToken, 
+    oauth_bp, 
+    users_bp
+)
+from src.modules.sentinel import sentinel_bp
 from src.modules.acheron import acheron_bp
 from src.modules.aegis import aegis_bp
 from src.modules.health import health_bp
 from src.modules.pages import pages_bp
-
-# Get endpoints lazily to avoid circular imports
-users_bp = get_user_endpoints()
-oauth_bp = get_oauth_endpoints()
-sentinel_bp = get_sentinel_endpoints()
 
 
 _logger = SecOpsLogger(name="APIMain").get_logger()

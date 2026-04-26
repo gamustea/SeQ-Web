@@ -18,6 +18,7 @@ from .model import (
     RefreshToken,
 )
 from .permissions import require_oauth_token
+from .endpoints import oauth_bp, users_bp
 
 
 def get_user_manager():
@@ -41,15 +42,6 @@ def get_oauth_manager():
         finally:
             om.close_session()
     return _om()
-
-def get_user_endpoints():
-    from .endpoints import users_bp
-    return users_bp
-
-def get_oauth_endpoints():
-    from .endpoints import oauth_bp
-    return oauth_bp
-
 
 # For backwards compatibility - lazily loaded at first access
 class _LazyLoader:
@@ -88,12 +80,12 @@ __all__ = [
     "User",
     "AccessToken",
     "RefreshToken",
-    # Lazy getters
+    
     "get_user_manager",
     "get_oauth_manager",
     "get_user_endpoints",
     "get_oauth_endpoints",
-    # For backwards compatibility
+    
     "users_bp",
     "oauth_bp",
 ]

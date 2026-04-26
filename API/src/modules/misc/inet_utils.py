@@ -218,7 +218,7 @@ class PortValidator:
         ports_str = ports_str.strip()
 
         if not ports_str:
-            return False, [], "La cadena de puertos estÃ¡ vacÃ­a"
+            return False, [], "La cadena de puertos está vací­a"
 
         segmentos = ports_str.split(",")
         ultimo_puerto = 0
@@ -228,7 +228,7 @@ class PortValidator:
             segmento = segmento.strip()
 
             if not segmento:
-                return False, [], f"Segmento vacÃ­o encontrado en la posiciÃ³n {i+1}"
+                return False, [], f"Segmento vací­o encontrado en la posición {i+1}"
 
             if "-" in segmento:
                 partes = segmento.split("-")
