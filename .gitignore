@@ -46,8 +46,6 @@ Thumbs.db
 .cxx
 local.properties
 
-API/src/config/SecConfig.json
-
-API/data/*
+API/src/data/*
 
 *.prof
