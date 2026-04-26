@@ -1,0 +1,828 @@
+"""
+AI Writers for security scan analysis.
+
+This module provides AI-powered analysis classes for different scan types:
+- NmapAIWriter: Analyzes Nmap network scans
+- NiktoAIWriter: Analyzes Nikto web vulnerability scans
+- OpenVASAIWriter: Analyzes OpenVAS vulnerability scans
+
+Each writer uses Ollama to generate security analysis, recommendations,
+and risk assessments based on scan data.
+"""
+
+import json
+import re
+import time
+
+import ollama
+
+from typing import Optional, Dict, Any
+
+from src.modules.misc import ConfigReader
+from src.modules.shared import AIWriter
+from src.modules.exceptions import (
+    AIConnectionError,
+    AIResponseError,
+    AIFallbackExhaustedError,
+)
+
+from .model import NmapScan, NiktoScan, OpenVASScan
+
+
+class NmapAIWriter(AIWriter):
+    """AI writer for Nmap scan security analysis.
+
+    Generates security analysis and recommendations for Nmap network scans
+    using Ollama. Provides objective evaluation of attack surfaces,
+    distinguishing between exposed services and confirmed vulnerabilities.
+
+    The system prompt enforces strict principles:
+    - Open port ≠ Vulnerability
+    - Prefer underestimation to overestimation
+    - Never invent CVEs or assume missing authentication
+
+    Attributes:
+        model: Ollama model name (from env var or default).
+        _client: Ollama client instance.
+        _prompts: Prompt configuration from SecConfig.json.
+    """
+
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> None:
+        """Initialize Nmap AI writer.
+
+        Args:
+            host: Ollama host (optional, from env var if not provided).
+            model: Ollama model name (optional, from env var if not provided).
+        """
+        super().__init__()
+        self._prompts = ConfigReader().get_prompts_config()
+
+    def _classify_network_context(self, target: str) -> dict:
+        """Classify target as private LAN or public network deterministically.
+
+        Args:
+            target: IP address or hostname string.
+
+        Returns:
+            Dictionary with keys:
+                - is_private (bool): True if target is a private/LAN address.
+                - network_type (str): Human-readable label ("LAN privada" | "Red pública").
+                - max_risk_level (str): Hard ceiling for risk_level ("MEDIO" | "CRÍTICO").
+                - context_note (str): One-line explanation to inject into the prompt.
+        """
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(target.strip())
+            is_private = addr.is_private or addr.is_loopback or addr.is_link_local
+        except ValueError:
+            lower = target.lower()
+            is_private = any(lower.endswith(s) for s in (
+                ".local", ".lan", ".internal", ".intranet", ".corp", ".home"
+            )) or lower in ("localhost",)
+
+        if is_private:
+            return {
+                "is_private":    True,
+                "network_type":  "LAN privada",
+                "max_risk_level": "MEDIO",
+                "context_note":  (
+                    "CONTEXTO DE RED CONFIRMADO: El target es una IP privada (LAN). "
+                    "El host NO está expuesto a internet. "
+                    "risk_level máximo permitido = MEDIO. "
+                    "SSH, HTTP y DNS en LAN son servicios estándar: riesgo BAJO salvo anomalía confirmada."
+                ),
+            }
+        return {
+            "is_private":    False,
+            "network_type":  "Red pública",
+            "max_risk_level": "CRÍTICO",
+            "context_note":  "CONTEXTO DE RED CONFIRMADO: El target es una IP o dominio público.",
+        }
+
+    def _build_system_prompt(self) -> str:
+        """Build the system prompt defining analyst persona and principles."""
+        prompts_config = ConfigReader().get_prompts_config()
+        return prompts_config.get("nmap", {}).get("system", "")
+
+    def _build_user_prompt(self, scan_data: dict, open_ports: list, network_ctx: dict) -> str:
+        """Build the user prompt with scan data, port analysis and network context."""
+        target = scan_data.get("target", "desconocido")
+        started = scan_data.get("started_at", "N/A")
+
+        analysis_context = self._analyze_port_patterns(open_ports)
+
+        ports_info = []
+        for op in open_ports:
+            port_num = op.get("port", {}).get("port", "N/A")
+            protocol = op.get("port", {}).get("protocol", "tcp")
+            service = op.get("given_use", "unknown")
+            product = op.get("product", "")
+            version = op.get("version", "")
+
+            port_type = "sistema" if isinstance(port_num, int) and port_num < 1024 else "usuario"
+
+            ports_info.append({
+                "puerto": f"{port_num}/{protocol}",
+                "servicio": service,
+                "implementacion": f"{product} {version}".strip() if (product or version) else "No identificada",
+                "tipo_puerto": port_type,
+                "categoria_funcional": self._infer_functional_category(service, port_num)
+            })
+
+        prompts_config = ConfigReader().get_prompts_config()
+        template = prompts_config.get("nmap", {}).get("userTemplate", "")
+
+        context_header = (
+            f"[DATO VERIFICADO — NO MODIFICAR]\n"
+            f"{network_ctx['context_note']}\n"
+            f"[FIN DATO VERIFICADO]\n\n"
+        )
+
+        rendered = template.replace("{{target}}", str(target)) \
+                        .replace("{{started}}", str(started)) \
+                        .replace("{{total_ports}}", str(len(ports_info))) \
+                        .replace("{{distribution}}", str(analysis_context["distribution"])) \
+                        .replace("{{profile_type}}", str(analysis_context["profile_type"])) \
+                        .replace("{{ports_json}}", json.dumps(ports_info, indent=2, ensure_ascii=False))
+
+        return context_header + rendered
+
+    def _analyze_port_patterns(self, open_ports: list) -> dict:
+        """Analyze port patterns to infer system context."""
+        if not open_ports:
+            return {"distribution": "ninguno", "profile_type": "Host sin servicios detectados"}
+
+        ports = []
+        for op in open_ports:
+            p = op.get("port", {}).get("port", 0)
+            if isinstance(p, int):
+                ports.append(p)
+
+        priviliged = sum(1 for p in ports if p < 1024)
+        userland = sum(1 for p in ports if p >= 1024)
+        web_like = any(p in [80, 443, 8080, 8443] for p in ports)
+        admin_like = any(p in [22, 23, 3389, 5900] for p in ports)
+
+        if priviliged >= 3 and userland <= 2:
+            profile = "Servidor de infraestructura (mix privilegiado estándar)"
+        elif web_like and admin_like:
+            profile = "Servidor web con gestión remota"
+        elif userland > priviliged:
+            profile = "Aplicación/Servicio específico (puertos dinámicos predominantes)"
+        elif priviliged == 1 and not userland:
+            profile = "Servicio único dedicado"
+        else:
+            profile = "Configuración híbrida estándar"
+
+        return {
+            "distribution": f"{priviliged} sistema / {userland} aplicación",
+            "profile_type": profile
+        }
+
+    def _infer_functional_category(self, service_name: str, port: int) -> str:
+        """Infer functional category based on service behavior."""
+        service = str(service_name).lower()
+
+        if any(x in service for x in ['ssh', 'telnet', 'rdp', 'vnc', 'shell']):
+            return "acceso_remoto"
+        elif any(x in service for x in ['http', 'www', 'web', 'proxy']):
+            return "web_api"
+        elif any(x in service for x in ['dns', 'domain', 'dhcp', 'ntp', 'ldap']):
+            return "servicio_red"
+        elif any(x in service for x in ['sql', 'db', 'mongo', 'redis', 'postgres', 'mysql']):
+            return "almacenamiento_datos"
+        elif port in [111, 2049, 445, 139, 21]:
+            return "comparticion_archivos"
+        else:
+            return "servicio_especifico"
+
+    def generate(self, scan: NmapScan) -> dict:
+        """Generate AI security analysis for an Nmap scan."""
+        scan_data = {
+            "target": scan.target,
+            "started_at": scan.started_at.isoformat() if getattr(scan, 'started_at', None) else "N/A",
+            "finished_at": scan.finished_at.isoformat() if getattr(scan, 'finished_at', None) else "N/A",
+            "status": getattr(scan, 'status', 'unknown'),
+        }
+
+        network_ctx = self._classify_network_context(str(scan.target))
+
+        open_ports = []
+        for relation in (getattr(scan, 'open_ports_relation', None) or []):
+            port_obj = getattr(relation, "port", None)
+            open_ports.append({
+                "port": {
+                    "port": getattr(port_obj, "port", "N/A") if port_obj else "N/A",
+                    "protocol": getattr(port_obj, "protocol", "") if port_obj else "",
+                },
+                "given_use": getattr(relation, "given_use", ""),
+                "product": getattr(relation, "product", ""),
+                "version": getattr(relation, "version", ""),
+                "reason": getattr(relation, "reason", ""),
+            })
+
+        prompt = self._build_user_prompt(scan_data, open_ports, network_ctx)
+
+        tools = [{
+            "type": "function",
+            "function": {
+                "name":        "web_search",
+                "description": "Buscar CVEs específicos para versiones exactas de software SOLO si se detectan versiones obsoletas o con vulnerabilidades conocidas documentadas.",
+                "parameters": {
+                    "type":       "object",
+                    "properties": {"query": {"type": "string", "description": "Término de búsqueda CVE específico"}},
+                    "required":   ["query"],
+                },
+            },
+        }]
+
+        raw_response = None
+        for attempt in range(3):
+            try:
+                messages = [
+                    {"role": "system", "content": self._build_system_prompt()},
+                    {"role": "user",   "content": prompt},
+                ]
+                resp = self._client.chat(
+                    model    = self.model,
+                    messages = messages,
+                    tools    = tools,
+                    format   = "json",
+                    options  = {
+                        "num_predict":    2048,
+                        "temperature":    0.15,
+                        "top_p":          0.8,
+                        "repeat_penalty": 1.2,
+                    },
+                )
+
+                if getattr(resp.message, "tool_calls", None):
+                    messages.append({
+                        "role":       "assistant",
+                        "content":    resp.message.content or "",
+                        "tool_calls": resp.message.tool_calls,
+                    })
+                    for tc in resp.message.tool_calls:
+                        query         = tc.function.arguments.get("query", "")
+                        search_result = self._web_search(query)
+                        messages.append({"role": "tool", "content": search_result})
+
+                    resp = self._client.chat(
+                        model    = self.model,
+                        messages = messages,
+                        format   = "json",
+                        options  = {"num_predict": 2048, "temperature": 0.15},
+                    )
+
+                raw_response = resp.message.content.strip()
+                if raw_response:
+                    break
+
+            except Exception as exc:
+                if attempt == 2:
+                    raise AIFallbackExhaustedError(3, str(exc))
+                time.sleep(1.5 ** attempt)
+
+        return self._parse_response(raw_response, network_ctx=network_ctx)
+
+    def _parse_response(self, raw: str, attempt: int = 0, network_ctx: Optional[dict] = None) -> dict:
+        """Parseo robusto de la respuesta JSON con validación de integridad."""
+        if not raw:
+            raise AIResponseError("Respuesta vacía del modelo", attempt=attempt)
+
+        _RISK_ORDER = ["INFORMATIVO", "BAJO", "MEDIO", "ALTO", "CRÍTICO"]
+
+        try:
+            result = json.loads(raw)
+
+            if isinstance(result.get("recommendations"), list):
+                for rec in result["recommendations"]:
+                    if not isinstance(rec.get("cve_refs"), list):
+                        rec["cve_refs"] = []
+                    else:
+                        rec["cve_refs"] = [
+                            cve for cve in rec["cve_refs"]
+                            if isinstance(cve, str) and re.match(r'^CVE-\d{4}-\d{4,}$', cve)
+                        ]
+
+            valid_levels = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
+            risk_level = result.get("risk_level")
+            if risk_level is None or not isinstance(risk_level, str) or risk_level.upper() not in valid_levels:
+                result["risk_level"] = "INFORMATIVO"
+
+            if network_ctx:
+                cap = network_ctx.get("max_risk_level", "CRÍTICO").upper()
+                current = result["risk_level"].upper()
+                if _RISK_ORDER.index(current) > _RISK_ORDER.index(cap):
+                    result["risk_level"] = cap
+
+            return result
+
+        except json.JSONDecodeError:
+            pass
+
+        for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
+            match = re.search(pattern, raw, re.MULTILINE)
+            if match:
+                try:
+                    json_str = match.group(1) if match.groups() else match.group()
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    continue
+
+        cleaned = re.sub(r'^[^{]*', '', raw)
+        cleaned = re.sub(r'[^}]*$', '', cleaned)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            raise ValueError(f"No se pudo parsear la respuesta: {raw[:200]}")
+
+
+class NiktoAIWriter(AIWriter):
+    """AI writer for Nikto scan security analysis.
+
+    Generates security analysis for Nikto web vulnerability scans using Ollama.
+    Analyzes aggregated findings grouped by security controls rather than
+    individual incidents, providing calibrated risk assessments.
+
+    The system prompt enforces:
+    - Controls over counts (one misconfigured control = one issue)
+    - Never escalate risk based on number of findings
+    - Distinguish between placeholder SSL certs and real invalid certs
+
+    Attributes:
+        model: Ollama model name (from env var or default).
+        _client: Ollama client instance.
+        _prompts: Prompt configuration from SecConfig.json.
+    """
+
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> None:
+        """Initialize Nikto AI writer."""
+        super().__init__()
+        self._prompts = ConfigReader().get_prompts_config()
+
+    def _preprocess_incidents(self, incidents: list) -> dict:
+        """Preprocess incidents by grouping them into security controls."""
+        if not incidents:
+            return {"error": "No incidents"}
+
+        controls = {
+            "transport_security": [],
+            "session_management": [],
+            "information_disclosure": [],
+            "client_protection": [],
+            "access_control": [],
+            "configuration": [],
+            "noise": []
+        }
+
+        for inc in incidents:
+            desc = str(inc.get("description", "")).lower()
+            url = str(inc.get("url", ""))
+            method = str(inc.get("method", "GET"))
+            severity = str(inc.get("severity", "INFO")).upper()
+
+            if "hash(" in url or "0x" in url or len(url) > 200:
+                controls["noise"].append(inc)
+                continue
+
+            if any(x in desc for x in ["cookie", "session", "httponly", "secure flag"]):
+                controls["session_management"].append(inc)
+            elif any(x in desc for x in ["certificate", "ssl", "tls", "https", "cn=", "hostname"]):
+                controls["transport_security"].append(inc)
+            elif any(x in desc for x in ["x-frame-options", "csp", "content-security", "clickjacking", "xss"]):
+                controls["client_protection"].append(inc)
+            elif any(x in desc for x in ["method", "put", "delete", "trace", "debug", "options"]):
+                controls["access_control"].append(inc)
+            elif any(x in desc for x in ["banner", "version", "x-powered-by", "server:", "etag", "inode"]):
+                controls["information_disclosure"].append(inc)
+            elif any(x in desc for x in ["robots.txt", "directory", "index of", "accessible"]):
+                controls["configuration"].append(inc)
+            else:
+                controls["information_disclosure"].append(inc)
+
+        total_valid = sum(len(v) for k, v in controls.items() if k != "noise")
+
+        return {
+            "controls": controls,
+            "metrics": {
+                "total_raw": len(incidents),
+                "noise_filtered": len(controls["noise"]),
+                "effective_findings": total_valid,
+                "critical_controls_missing": sum(
+                    1 for k, v in controls.items()
+                    if k in ["transport_security", "session_management"] and len(v) > 0
+                )
+            }
+        }
+
+    def _build_system_prompt(self) -> str:
+        prompts_config = ConfigReader().get_prompts_config()
+        return prompts_config.get("nikto", {}).get("system", "")
+
+    def _build_user_prompt(self, scan_data: dict, processed: dict) -> str:
+        target = scan_data.get("target", "desconocido")
+        started = scan_data.get("started_at", "N/A")
+        metrics = processed.get("metrics", {})
+        controls = processed.get("controls", {})
+
+        controls_summary = {}
+        for control_name, findings in controls.items():
+            if control_name == "noise" or not findings:
+                continue
+
+            unique_issues = set()
+            for f in findings[:3]:
+                desc = f.get("description", "")[:120]
+                unique_issues.add(desc)
+
+            controls_summary[control_name] = {
+                "instancias_detectadas": len(findings),
+                "ejemplos_representativos": list(unique_issues),
+                "techo_teorico": self._assess_control_severity(control_name, findings)
+            }
+
+        prompts_config = ConfigReader().get_prompts_config()
+        template = prompts_config.get("nikto", {}).get("userTemplate", "")
+
+        return template.replace("{{target}}", str(target)) \
+                    .replace("{{started}}", str(started)) \
+                    .replace("{{total_raw}}", str(metrics.get("total_raw", 0))) \
+                    .replace("{{noise_filtered}}", str(metrics.get("noise_filtered", 0))) \
+                    .replace("{{effective_findings}}", str(metrics.get("effective_findings", 0))) \
+                    .replace("{{controls_json}}", json.dumps(controls_summary, indent=2, ensure_ascii=False))
+
+    def _assess_control_severity(self, control_name: str, findings: list) -> str:
+        """Assess the base severity for a security control."""
+        severity_map = {
+            "transport_security": "ALTO",
+            "session_management": "MEDIO",
+            "access_control": "MEDIO",
+            "client_protection": "BAJO",
+            "information_disclosure": "BAJO",
+            "configuration": "BAJO"
+        }
+        return severity_map.get(control_name, "BAJO")
+
+    def generate(self, scan: NiktoScan) -> dict:
+        """Generate AI security analysis for a Nikto scan."""
+        scan_data = {
+            "target": scan.target,
+            "started_at": scan.started_at.isoformat() if getattr(scan, 'started_at', None) else "N/A",
+        }
+
+        incidents = []
+        for incident in (getattr(scan, 'incidents', None) or []):
+            incidents.append({
+                "osvdb_id": getattr(incident, "osvdb_id", None),
+                "url": getattr(incident, "url", ""),
+                "method": getattr(incident, "method", ""),
+                "description": getattr(incident, "description", ""),
+                "severity": getattr(incident, "severity", "INFO"),
+            })
+
+        processed = self._preprocess_incidents(incidents)
+
+        if processed["metrics"]["effective_findings"] == 0:
+            return {
+                "executive_summary": "Escaneo con datos insuficientes o ruido técnico predominante. No se detectaron controles de seguridad evaluables.",
+                "risk_level": "INFORMATIVO",
+                "technical_analysis": "Los hallazgos del escaneo consisten principalmente en datos corruptos o falsos positivos técnicos (URLs malformadas, referencias de memoria). Se recomienda verificar la configuración del escáner.",
+                "recommendations": [],
+                "conclusions": "Requiere re-escaneo con configuración adecuada."
+            }
+
+        prompt = self._build_user_prompt(scan_data, processed)
+
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Buscar información sobre configuración segura de certificados SSL o mejores prácticas de headers de seguridad.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        }]
+
+        raw_response = None
+        for attempt in range(3):
+            try:
+                messages = [
+                    {"role": "system", "content": self._build_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ]
+                resp = self._client.chat(
+                    model=self.model,
+                    messages=messages,
+                    tools=tools,
+                    format="json",
+                    options={
+                        "num_predict": 2048,
+                        "temperature": 0.1,
+                        "top_p": 0.75,
+                        "repeat_penalty": 1.3,
+                    },
+                )
+
+                if getattr(resp.message, "tool_calls", None):
+                    messages.append({
+                        "role": "assistant",
+                        "content": resp.message.content or "",
+                        "tool_calls": resp.message.tool_calls,
+                    })
+                    for tc in resp.message.tool_calls:
+                        query = tc.function.arguments.get("query", "")
+                        search_result = self._web_search(query)
+                        messages.append({"role": "tool", "content": search_result})
+
+                    resp = self._client.chat(
+                        model=self.model,
+                        messages=messages,
+                        format="json",
+                        options={"num_predict": 2048, "temperature": 0.1},
+                    )
+
+                raw_response = resp.message.content.strip()
+                if raw_response:
+                    break
+
+            except Exception as exc:
+                if attempt == 2:
+                    raise AIFallbackExhaustedError(3, str(exc))
+                time.sleep(1.5 ** attempt)
+
+        return self._parse_response(raw_response)
+
+    def _parse_response(self, raw: str, attempt: int = 0) -> dict:
+        """Parse the AI response JSON with validation."""
+        if not raw:
+            raise AIResponseError("Respuesta vacía", attempt=attempt)
+
+        try:
+            result = json.loads(raw)
+            valid = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
+            risk_level = result.get("risk_level")
+            if risk_level is None or not isinstance(risk_level, str) or risk_level.upper() not in valid:
+                result["risk_level"] = "BAJO"
+
+            result.setdefault("executive_summary", "Análisis completado.")
+            result.setdefault("technical_analysis", "Análisis de controles de seguridad completado.")
+            result.setdefault("recommendations", [])
+            result.setdefault("conclusions", "Continuar monitoreo de seguridad.")
+
+            return result
+        except json.JSONDecodeError:
+            for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
+                match = re.search(pattern, raw, re.MULTILINE)
+                if match:
+                    try:
+                        json_str = match.group(1) if match.groups() else match.group()
+                        return json.loads(json_str)
+                    except json.JSONDecodeError:
+                        continue
+            raise AIResponseError(f"Respuesta inválida: {raw[:200]}", attempt=attempt)
+
+
+class OpenVASAIWriter(AIWriter):
+    """AI writer for OpenVAS vulnerability scan analysis.
+
+    Generates security analysis for OpenVAS scans using Ollama.
+    Analyzes aggregated findings grouped by security controls rather than
+    individual vulnerabilities, providing calibrated risk assessments.
+
+    The system prompt enforces:
+    - Controls over counts (one misconfigured control = one issue)
+    - Never escalate risk based on number of findings
+    - Distinguish between confirmed vs potential vulnerabilities
+
+    Attributes:
+        model: Ollama model name (from env var or default).
+        _client: Ollama client instance.
+        _prompts: Prompt configuration from SecOpsConfig.json.
+    """
+
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> None:
+        """Initialize OpenVAS AI writer."""
+        super().__init__()
+        self._prompts = ConfigReader().get_prompts_config()
+
+    def _preprocess_vulnerabilities(self, vulnerabilities: list) -> dict:
+        """Preprocess vulnerabilities by grouping them into security controls."""
+        if not vulnerabilities:
+            return {"error": "No vulnerabilities"}
+
+        controls = {
+            "input_validation": [],
+            "authentication": [],
+            "session_management": [],
+            "data_protection": [],
+            "access_control": [],
+            "cryptography": [],
+            "information_disclosure": [],
+        }
+
+        for vuln in vulnerabilities:
+            name = str(vuln.get("name", "")).lower()
+            desc = str(vuln.get("description", "")).lower()
+            combined = name + " " + desc
+
+            if any(x in combined for x in ["sql injection", "command injection", "ldap injection", "xml injection", "xxe", "xpath injection"]):
+                controls["input_validation"].append(vuln)
+            elif any(x in combined for x in ["authentication", "credential", "default password", "brute force", "weak password"]):
+                controls["authentication"].append(vuln)
+            elif any(x in combined for x in ["session fixation", "session id", "weak session"]):
+                controls["session_management"].append(vuln)
+            elif any(x in combined for x in ["encryption", "ssl", "tls", "certificate", "unencrypted", "weak cryptographic"]):
+                controls["cryptography"].append(vuln)
+            elif any(x in combined for x in ["idor", "broken access control", "privilege", "authorization"]):
+                controls["access_control"].append(vuln)
+            elif any(x in combined for x in ["information disclosure", "debug", "verbose error", "version disclosure", "banner"]):
+                controls["information_disclosure"].append(vuln)
+            else:
+                controls["data_protection"].append(vuln)
+
+        return {
+            "controls": controls,
+            "metrics": {
+                "total_raw": len(vulnerabilities),
+                "by_severity": self._count_by_severity(vulnerabilities),
+                "controls_affected": sum(1 for v in controls.values() if len(v) > 0)
+            }
+        }
+
+    def _count_by_severity(self, vulnerabilities: list) -> dict:
+        """Count vulnerabilities by severity class."""
+        counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "LOG": 0}
+        for v in vulnerabilities:
+            sev = str(v.get("severity_class", "")).upper()
+            if sev in counts:
+                counts[sev] += 1
+        return counts
+
+    def _build_system_prompt(self) -> str:
+        prompts_config = ConfigReader().get_prompts_config()
+        return prompts_config.get("openvas", {}).get("system", "")
+
+    def _build_user_prompt(self, scan_data: dict, processed: dict) -> str:
+        target = scan_data.get("target", "desconocido")
+        started = scan_data.get("started_at", "N/A")
+        metrics = processed.get("metrics", {})
+        controls = processed.get("controls", {})
+
+        severity_counts = metrics.get("by_severity", {})
+        severity_str = f"CRITICAL: {severity_counts.get('CRITICAL', 0)}, HIGH: {severity_counts.get('HIGH', 0)}, MEDIUM: {severity_counts.get('MEDIUM', 0)}, LOW: {severity_counts.get('LOW', 0)}"
+
+        vulns_for_ai = []
+        for control_name, findings in controls.items():
+            if not findings:
+                continue
+            scored = [f for f in findings if float(f.get("severity_score", 0.0)) > 0.0]
+            sample = scored[:3] if scored else findings[:1]
+            for f in sample:
+                vulns_for_ai.append({
+                    "control": control_name,
+                    "name": f.get("name", "")[:120],
+                    "severity": f.get("severity_class", "LOG"),
+                    "cvss_score": f.get("severity_score", 0.0),
+                    "description": f.get("description", "")[:200]
+                })
+
+        prompts_config = ConfigReader().get_prompts_config()
+        template = prompts_config.get("openvas", {}).get("userTemplate", "")
+
+        return template.replace("{{target}}", str(target)) \
+                    .replace("{{started}}", str(started)) \
+                    .replace("{{total_vulns}}", str(metrics.get("total_raw", 0))) \
+                    .replace("{{severity_counts}}", severity_str) \
+                    .replace("{{vulns_json}}", json.dumps(vulns_for_ai, indent=2, ensure_ascii=False))
+
+    def _assess_control_severity(self, control_name: str, findings: list) -> str:
+        """Assess the base severity for a security control."""
+        severity_map = {
+            "input_validation": "CRÍTICO",
+            "authentication": "ALTO",
+            "access_control": "ALTO",
+            "data_protection": "MEDIO",
+            "cryptography": "MEDIO",
+            "session_management": "MEDIO",
+            "information_disclosure": "BAJO"
+        }
+        return severity_map.get(control_name, "MEDIO")
+
+    def generate(self, scan: OpenVASScan) -> dict:
+        """Generate AI security analysis for an OpenVAS scan."""
+        scan_data = {
+            "target": scan.target,
+            "started_at": scan.started_at.isoformat() if getattr(scan, 'started_at', None) else "N/A",
+        }
+
+        vulnerabilities = []
+        for result in (getattr(scan, 'results', None) or []):
+            vuln = result.vulnerability if hasattr(result, 'vulnerability') else result
+            vulnerabilities.append({
+                "name": getattr(vuln, "name", ""),
+                "description": getattr(vuln, "description", ""),
+                "severity_class": getattr(vuln, "severity_class", "LOG"),
+                "severity_score": getattr(vuln, "severity_score", 0.0),
+                "threat": getattr(vuln, "threat", ""),
+                "method": getattr(vuln, "method", ""),
+            })
+
+        processed = self._preprocess_vulnerabilities(vulnerabilities)
+
+        if processed.get("error"):
+            return {
+                "executive_summary": "Escaneo sin vulnerabilidades detectadas o datos insuficientes.",
+                "risk_level": "INFORMATIVO",
+                "technical_analysis": "No se detectaron vulnerabilidades en el escaneo.",
+                "recommendations": [],
+                "conclusions": "Continuar con monitoreo regular."
+            }
+
+        prompt = self._build_user_prompt(scan_data, processed)
+
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Buscar información sobre vulnerabilidades específicas y mitigaciones.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        }]
+
+        raw_response = None
+        for attempt in range(3):
+            try:
+                messages = [
+                    {"role": "system", "content": self._build_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ]
+                resp = self._client.chat(
+                    model    = self.model,
+                    messages = messages,
+                    tools    = tools,
+                    format   = "json",
+                    options  = {
+                        "num_predict": 2048,
+                        "temperature": 0.1,
+                        "top_p": 0.75,
+                        "repeat_penalty": 1.3,
+                    },
+                )
+                raw_response = resp.message.content.strip()
+                if raw_response:
+                    break
+            except Exception as exc:
+                if attempt == 2:
+                    raise AIFallbackExhaustedError(3, str(exc))
+                time.sleep(1.5 ** attempt)
+
+        return self._parse_response(raw_response)
+
+    def _parse_response(self, raw: str, attempt: int = 0) -> dict:
+        """Parse the AI response JSON with validation."""
+        if not raw:
+            raise AIResponseError("Respuesta vacía", attempt=attempt)
+
+        try:
+            result = json.loads(raw)
+            valid = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
+            risk_level = result.get("risk_level")
+            if risk_level is None or not isinstance(risk_level, str) or risk_level.upper() not in valid:
+                result["risk_level"] = "BAJO"
+
+            result.setdefault("executive_summary", "Análisis completado.")
+            result.setdefault("technical_analysis", "Análisis de vulnerabilidades completado.")
+            result.setdefault("recommendations", [])
+            result.setdefault("conclusions", "Continuar con el plan de remediación.")
+
+            return result
+        except json.JSONDecodeError:
+            for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
+                match = re.search(pattern, raw, re.MULTILINE)
+                if match:
+                    try:
+                        json_str = match.group(1) if match.groups() else match.group()
+                        return json.loads(json_str)
+                    except json.JSONDecodeError:
+                        continue
+            raise AIResponseError(f"Respuesta inválida: {raw[:200]}", attempt=attempt)
