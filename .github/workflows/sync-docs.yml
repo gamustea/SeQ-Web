@@ -1,0 +1,55 @@
+name: Generate and Sync Documentation
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r API/requirements.txt
+          pip install pdoc
+
+      - name: Generate Python documentation
+        run: |
+          pdoc --output docs/py --html-first API/src/modules
+
+      - name: Update docs README
+        run: |
+          cat > docs/README.md << 'EOF'
+          # Documentation
+
+          Generated documentation for SecOps modules.
+
+          ## Available Documentation
+
+          - [Python API](py/) - Auto-generated API documentation
+
+          ## Future
+
+          - Java API (Javadoc)
+          - Additional language documentation
+          EOF
+
+      - name: Commit and push changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout docs || git checkout -b docs
+          git add -A
+          git diff --staged --quiet || git commit -m 'docs: auto-generate API documentation'
+          git push --force-with-lease origin docs
