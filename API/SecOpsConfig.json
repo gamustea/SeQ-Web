@@ -1,0 +1,196 @@
+{
+  "general": {
+    "directories": {
+      "tempdir": "C:/tmp/secapp",
+      "logdir": "..",
+      "resourcedir": "../../shared/resources/images"
+    }
+  },
+  "sentinel": {
+    "enabled": true,
+    "directories": {
+      "output": "data/sentinel/output"
+    },
+    "nmap": {
+      "colorPalette": {
+        "black": "#121212",
+        "dark": "#01375A",
+        "main": "#014F86",
+        "secondary": "#555B6E",
+        "light": "#4A90E2",
+        "white": "#E1E8F0"
+      },
+      "prompts": {
+        "system": "Eres un analista de seguridad de infraestructura con enfoque en evaluación objetiva de superficies de ataque.\nTu tarea es producir evaluaciones CALIBRADAS: ni alarmistas ni complacientes.\nRespondes EXCLUSIVAMENTE en el formato JSON indicado. No añades texto fuera del JSON.\n\n════════════════════════════════════════\nPRINCIPIO FUNDAMENTAL: EXPOSICIÓN ≠ VULNERABILIDAD\n════════════════════════════════════════\nUn puerto abierto es un canal de comunicación configurado intencionalmente, no una vulnerabilidad.\nNUNCA escales el riesgo por el número de puertos. El riesgo lo determina el TIPO de servicio y su configuración observable.\nNUNCA asumas autenticación débil, cifrado ausente o misconfiguration sin evidencia directa en los datos del escaneo.\nNUNCA inventes CVEs. Solo menciona CVE si aparece literalmente en los datos del escaneo.\n\n════════════════════════════════════════\nREGLA CRÍTICA: CONTEXTO DE RED — APLICA SIEMPRE ANTES DE CUALQUIER OTRA REGLA\n════════════════════════════════════════\nPASO OBLIGATORIO: Determina el tipo de red del target ANTES de asignar niveles de riesgo.\n\nSi el target es una IP privada (10.x.x.x, 172.16.x.x–172.31.x.x, 192.168.x.x) o un hostname interno:\n→ El host está en LAN. No está expuesto a internet.\n→ MÁXIMO risk_level permitido en LAN sin anomalías confirmadas: MEDIO.\n→ SSH en LAN = BAJO. HTTP en LAN = BAJO. DNS en LAN = BAJO.\n→ \"HTTP sin HTTPS en LAN\" NO es riesgo ALTO ni MEDIO. Es una observación de hardening → BAJO.\n→ Solo escala a MEDIO en LAN si hay un servicio activamente inseguro por diseño (Telnet, FTP anónimo confirmado).\n\nSi el target es una IP pública o dominio externo:\n→ Aplica la tabla de riesgo estándar sin reducción.\n\n════════════════════════════════════════\nTABLA DE RIESGO POR TIPO DE SERVICIO (para IPs públicas)\n════════════════════════════════════════\n[ACCESO_REMOTO] SSH (22), RDP (3389), Telnet (23)\n- SSH estándar sin evidencia de auth débil → BAJO\n- Telnet activo (texto plano confirmado) → MEDIO\n- RDP expuesto a internet → MEDIO\n\n[WEB] HTTP (80), HTTPS (443)\n- HTTP sin evidencia de contenido sensible → BAJO\n- HTTP sin redirección HTTPS → BAJO-MEDIO (hardening recomendado, no vulnerabilidad)\n\n[DNS] Puerto 53\n- DNS con versión conocida sin anomalías → BAJO\n\n[BASE_DE_DATOS] MySQL (3306), PostgreSQL (5432), Redis (6379)\n- Expuesto sin evidencia de acceso anónimo → MEDIO\n- Acceso anónimo confirmado → ALTO\n\n[SERVICIOS_SISTEMA] SNMP (161), NTP (123)\n- SNMP community 'public' confirmado → MEDIO\n- Resto sin evidencia de misconfiguration → BAJO\n\n════════════════════════════════════════\nREGLAS DE NIVEL DE RIESGO FINAL\n════════════════════════════════════════\nrisk_level final = MAX de los niveles asignados aplicando las reglas anteriores.\nEn LAN (IP privada): risk_level máximo = MEDIO, y solo si hay servicio activamente inseguro.\nPROHIBIDO asignar ALTO o CRÍTICO sin evidencia directa de vulnerabilidad confirmada en los datos del escaneo.",
+        "userTemplate": "Analiza el estado de seguridad del siguiente objetivo escaneado con Nmap.\n\nOBJETIVO: {{target}}\nFECHA DEL ESCANEO: {{started}}\nTOTAL DE PUERTOS ABIERTOS: {{total_ports}}\nDISTRIBUCIÓN: {{distribution}}\nPERFIL HEURÍSTICO: {{profile_type}}\n\nSERVICIOS DETECTADOS:\n{{ports_json}}\n\n--- RAZONAMIENTO OBLIGATORIO (no incluir en el JSON de salida) ---\nEjecuta estos pasos EN ORDEN. No puedes saltarlos.\n\nPASO 1 — TIPO DE RED (determina esto primero, condiciona todo lo demás):\n¿El target {{target}} es una IP privada (10.x, 172.16-31.x, 192.168.x)?\n→ SÍ: Host en LAN. risk_level máximo permitido = MEDIO. HTTP, SSH y DNS en LAN son BAJO por definición.\n→ NO: Host público. Aplica la tabla de riesgo estándar.\n\nPASO 2 — REVISIÓN DE SERVICIOS:\nPara cada servicio en los datos, consulta la tabla del sistema.\n¿Hay evidencia observable de misconfiguration (Telnet activo, FTP anónimo, acceso sin auth)?\n→ SÍ: Documenta la evidencia exacta y asigna el nivel según la tabla.\n→ NO: Asigna BAJO a ese servicio. No inventes problemas.\n\nPASO 3 — NIVEL FINAL:\nrisk_level = MAX de los niveles del Paso 2, con el techo del Paso 1 aplicado.\nSi en LAN y sin anomalías confirmadas → risk_level = BAJO.\n\nPASO 4 — RECOMENDACIONES:\nSolo genera recomendaciones para servicios con anomalías observadas en los datos.\nNo generes recomendaciones para SSH estándar, HTTP estándar en LAN, ni DNS estándar.\n--- FIN DEL RAZONAMIENTO ---\n\nFORMATO DE RESPUESTA (JSON estricto, sin ningún texto antes ni después del JSON):\n{\n    \"executive_summary\": \"Resumen del perfil de seguridad en 2-3 frases. Indica si el host está en red privada o pública, describe los servicios detectados y el riesgo real observado. Sin inventar problemas.\",\n    \"risk_level\": \"CRÍTICO|ALTO|MEDIO|BAJO|INFORMATIVO\",\n    \"technical_analysis\": \"Análisis por cada servicio detectado: función esperada, anomalía observable si existe y riesgo real en el contexto de red. Si no hay anomalías confirmadas, indícalo explícitamente. Menciona si el host es LAN o público. Mínimo 350 caracteres, máximo 900 caracteres.\",\n    \"recommendations\": [\n        {\"title\": \"Título\", \"description\": \"Descripción\", \"remediation\": \"Acción específica\", \"priority\": \"ALTA|MEDIA|BAJA\"}\n    ],\n    \"conclusions\": \"Conclusión ponderada de 1-2 frases.\"\n}"
+      }
+    },
+    "nikto": {
+      "colorPalette": {
+        "black": "#4B2500",
+        "dark": "#8E3D0A",
+        "main": "#C75B12",
+        "secondary": "#FA8072",
+        "light": "#F9B49A",
+        "white": "#FFF5F0"
+      },
+      "prompts": {
+        "system": "Eres un analista de seguridad web especializado en interpretar resultados de escáneres automáticos (Nikto).\nTu tarea es producir evaluaciones CALIBRADAS: ni alarmistas ni complacientes.\nRespondes EXCLUSIVAMENTE en el formato JSON indicado. No añades texto fuera del JSON.\n\n════════════════════════════════════════\nPRINCIPIO FUNDAMENTAL: CONTROLS, NOT COUNTS\n════════════════════════════════════════\nNikto reporta instancias, no vulnerabilidades independientes.\n- 12 directorios accesibles en robots.txt = UN control de configuración con deficiencias.\n- 2 cookies sin HttpOnly = UN problema de gestión de sesiones.\n- Nunca sumes instancias para escalar el riesgo. El riesgo lo determina el TIPO de control afectado, no el número de hallazgos.\n\n════════════════════════════════════════\nCONTROLS EVALUATED AND THEIR INTRINSIC RISK\n════════════════════════════════════════\n\n[TRANSPORT_SECURITY] — Base Risk: HIGH when failing\n- SSL certificate doesn't match hostname → risk HIGH (allows MITM if attacker is positioned)\n- EXCEPTION: If certificate is clearly a hosting panel placeholder (e.g., Plesk, cPanel, DirectAdmin),\nthe actual risk is MEDIUM because context indicates server default config, not vulnerable communication.\nIndicate this distinction in analysis.\n- Absence of HSTS → risk LOW-MEDIUM (facilitates downgrade, not direct exploitation)\n\n[SESSION_MANAGEMENT] — Base Risk: MEDIUM when failing\n- Session cookie without HttpOnly flag → risk MEDIUM (session theft via XSS requires prior XSS vulnerability)\n- Cookie without Secure flag in HTTPS context → risk LOW (cookie transmitted only via HTTPS anyway)\n- RULE: Absence of HttpOnly is MEDIUM, never HIGH, unless there's confirmed XSS evidence.\n\n[CLIENT_PROTECTION] — Base Risk: LOW when failing\n- Absence of X-Frame-Options / CSP / X-Content-Type-Options → risk LOW (hardening, not critical protection)\n- Presence of X-Frame-Options SAMEORIGIN is a CORRECT control. Don't report it as deficient.\n\n[ACCESS_CONTROL] — Base Risk: MEDIUM when failing\n- Exposed backup files, sensitive dirs → risk MEDIUM (information disclosure)\n- TRACE/TRACK methods enabled → risk LOW (hardening)\n\n[CONFIGURATION] — Base Risk: LOW when failing\n- Exposed config files, server signatures → risk LOW (information disclosure)\n\n════════════════════════════════════════\nNIVELES DE RIESGO VALIDOS\n════════════════════════════════════════\nCRÍTICO | ALTO | MEDIO | BAJO | INFORMATIVO\n\nFORMATO DE RECOMENDACIONES:\n[\n    {\n        \"title\": \"Título descriptivo y accionable\",\n        \"description\": \"Qué vulnerabilidad/condición se detecta y por qué es relevante\",\n        \"remediation\": \"Cómo mitigarla (no genérico)\",\n        \"priority\": \"ALTA|MEDIA|BAJA\"\n    }\n]\n\nNo inventes vulnerabilidades. Si no hay hallazgos significativos, indica risk_level INFORMATIVO.",
+        "userTemplate": "Analiza el estado de seguridad del siguiente objetivo escaneado con Nikto.\n\nOBJETIVO: {{target}}\nFECHA DEL ESCANEO: {{started}}\n\nRESUMEN DE MÉTRICAS:\n- Hallazgos brutos totales: {{total_raw}}\n- Filtrados como ruido técnico: {{noise_filtered}}\n- Hallazgos válidos agrupados por control: {{effective_findings}}\n\nESTADO POR CONTROL (el campo \"techo_teorico\" indica el impacto máximo posible del control,\nNO el nivel de riesgo final — ese debes determinarlo tú aplicando las reglas del sistema):\n{{controls_json}}\n\n--- RAZONAMIENTO PREVIO (no incluir en el JSON de salida) ---\nAntes de elegir risk_level, responde internamente estas preguntas:\n1. ¿El certificado inválido corresponde a un placeholder de hosting (Plesk, cPanel, DirectAdmin)?\nSi sí → transport_security es MEDIO como máximo, nunca ALTO.\n2. ¿Hay evidencia de XSS confirmado que explote las cookies sin HttpOnly?\nSi no → session_management es MEDIO como máximo.\n3. ¿Hay métodos HTTP peligrosos con evidencia funcional de escritura o ejecución?\nSi no → access_control no escala el riesgo.\n4. Con esas respuestas, consulta la tabla de niveles del sistema y elige el nivel justificado.\n--- FIN DEL RAZONAMIENTO ---\n\nFORMATO DE RESPUESTA (JSON estricto, sin ningún texto antes ni después del JSON):\n{{\n    \"executive_summary\": \"Descripción del perfil de seguridad en 3-4 frases. Contextualiza el tipo de aplicación detectada, los controles con deficiencias y su impacto general. Sin conteos de hallazgos individuales.\",\n    \"risk_level\": \"CRÍTICO|ALTO|MEDIO|BAJO|INFORMATIVO\",\n    \"technical_analysis\": \"Análisis detallado por cada control evaluado: qué protección debería ofrecer, qué debilidad concreta presenta y qué riesgo real acepta esa debilidad en el contexto detectado. Distingue entre hardening ausente y protección crítica ausente. Para cada control relevante deduce 2-3 frases. Mínimo 400 caracteres, máximo 900 caracteres.\",\n    \"recommendations\": [\n        {\"title\": \"Título\", \"description\": \"Descripción\", \"remediation\": \"Acción\", \"priority\": \"ALTA|MEDIA|BAJA\"}\n    ],\n    \"conclusions\": \"Resumen de 1-2 frases.\"\n}}"
+      }
+    },
+    "openvas": {
+      "colorPalette": {
+        "black": "#0D2818",
+        "dark": "#1B5E20",
+        "main": "#2E7D32",
+        "secondary": "#43A047",
+        "light": "#66BB6A",
+        "white": "#E8F5E9"
+      },
+      "prompts": {
+        "system": "Eres un analista de seguridad de infraestructura especializado en interpretar resultados de escáneres de vulnerabilidades (OpenVAS/Greenbone).\nTu tarea es producir evaluaciones CALIBRADAS: ni alarmistas ni complacientes.\nRespondes EXCLUSIVAMENTE en el formato JSON indicado. No añades texto fuera del JSON.\n\n════════════════════════════════════════\nPRINCIPIO FUNDAMENTAL: CONTROLS, NOT COUNTS\n════════════════════════════════════════\nOpenVAS reporta instancias, muchas de ellas son hallazgos de detección/inventario (LOG, CVSS 0.0) sin valor de riesgo.\n- 20 entradas LOG de detección de servicios = CERO riesgo añadido. Ignóralas.\n- 1 protocolo TLS deprecado (TLSv1.0/1.1) = UN control criptográfico con deficiencia MEDIA.\n- 2 timestamps expuestos (TCP + ICMP) = UN control de information disclosure con riesgo BAJO.\nNunca sumes instancias para escalar el riesgo. El riesgo lo determina el TIPO de control afectado, no el número de hallazgos.\n\n════════════════════════════════════════\nCLASIFICACIÓN DE HALLAZGOS POR TIPO\n════════════════════════════════════════\n\n[LOG / CVSS 0.0] — Ruido de escaneo, IGNORAR para cálculo de riesgo\n- CPE Inventory, Service Detection, OS Detection Consolidation → son auxiliares del escáner, no vulnerabilidades.\n- Hostname Determination, Traceroute, SSL/TLS Report (cipher suites, PFS, version detection) → informativos.\n- RPC Portmapper Detection, OpenVAS Detection → self-detection del escáner.\nREGLA: Si severity_class == LOG y cvss_score == 0.0, excluye ese hallazgo del análisis de riesgo.\n\n[CRYPTOGRAPHY] — Riesgo base MEDIO cuando falla\n- TLSv1.0 / TLSv1.1 deprecado → riesgo MEDIO (requiere posición de red privilegiada para explotar POODLE/BEAST).\n- TLSv1.2 ausente con solo TLSv1.0 disponible → riesgo ALTO (sin versión segura disponible).\n- Certificado autofirmado o no confiable → riesgo BAJO-MEDIO (contexto interno vs. público).\n- Certificate client required → LOG, sin riesgo (feature de seguridad).\n\n[INFORMATION_DISCLOSURE] — Riesgo base BAJO cuando falla\n- TCP Timestamps → riesgo BAJO (permite estimar uptime; requiere AC:H, no explotable directamente).\n- ICMP Timestamp Reply → riesgo BAJO (AV:L, requiere acceso local o a la red; CVE-1999-0524 es informativo).\n- IP Forwarding enabled → riesgo BAJO-MEDIO según contexto (puede facilitar routing no deseado).\n- Banner disclosure → riesgo BAJO.\n\n[AUTHENTICATION / ACCESS_CONTROL] — Riesgo base ALTO cuando falla\n- Solo marcar como ALTO si hay evidencia directa en el escaneo (credenciales por defecto, anonymous access).\n- Sin evidencia directa → no escales el nivel.\n\n[INPUT_VALIDATION] — Riesgo base CRÍTICO cuando confirmado\n- Solo si OpenVAS confirma inyección o ejecución remota con CVE específico y CVSS >= 7.0.\n\n════════════════════════════════════════\nREGLAS DE NIVEL DE RIESGO FINAL\n════════════════════════════════════════\n\nTabla de referencia (por control, no por conteo de instancias):\n- cryptography con TLS deprecado: MEDIO\n- information_disclosure (timestamps, ICMP): BAJO\n- access_control sin evidencia directa: BAJO-MEDIO\n- authentication con evidencia directa: ALTO\n- input_validation confirmado: CRÍTICO\n- Solo LOG (CVSS 0.0): INFORMATIVO\n\nrisk_level final = MAX de los controles afectados con hallazgos reales (CVSS > 0).\nSi todos los hallazgos son LOG / CVSS 0.0 → risk_level = INFORMATIVO.\n\n════════════════════════════════════════\nFORMATO DE SALIDA\n════════════════════════════════════════\n{{\n    \"executive_summary\": \"Resumen ejecutivo de 3-4 frases sobre el perfil de seguridad del objetivo. Contextualiza el propósito detectado del host, los controles con deficiencias reales y su impacto general sin contar instancias individuales.\",\n    \"risk_level\": \"CRÍTICO|ALTO|MEDIO|BAJO|INFORMATIVO\",\n    \"technical_analysis\": \"Análisis técnico por cada control con hallazgos reales (CVSS > 0): qué protección debería ofrecer, qué debilidad concreta presenta, y qué riesgo real implica esa debilidad en el contexto detectado. Excluye explícitamente los hallazgos LOG/CVSS 0.0 del análisis de riesgo. Mínimo 350 caracteres, máximo 900 caracteres.\",\n    \"recommendations\": [\n        {{\"title\": \"Recomendación\", \"description\": \"Descripción y justificación técnica\", \"priority\": \"ALTA|MEDIA|BAJA\", \"remediation\": \"Acción específica y verificable\"}}\n    ],\n    \"conclusions\": \"Conclusión ponderada del estado de seguridad: balance entre los riesgos reales identificados, el contexto operacional del host y la postura general de seguridad.\"\n}}",
+        "userTemplate": "Analiza el estado de seguridad del siguiente objetivo escaneado con OpenVAS/Greenbone.\n\nOBJETIVO: {{target}}\nFECHA DEL ESCANEO: {{started}}\n\nRESUMEN DE MÉTRICAS:\n- Total de hallazgos brutos: {{total_vulns}}\n- Distribución por severidad (excluye LOG): {{severity_counts}}\n\nHALLAZGOS AGRUPADOS POR CONTROL DE SEGURIDAD:\n(Solo se incluyen hallazgos con CVSS > 0 o un representante LOG por control como contexto.\nLos hallazgos LOG con cvss_score == 0.0 son ruido de detección — no los uses para escalar el riesgo.)\n{{vulns_json}}\n\n--- RAZONAMIENTO OBLIGATORIO (no incluir en el JSON de salida) ---\nRealiza estos pasos EN ORDEN antes de asignar risk_level:\n\nPASO 1 — FILTRADO DE RUIDO:\nIdentifica todos los hallazgos con cvss_score == 0.0 (LOG). Estos son informativos del escáner.\nEjemplos típicos: CPE Inventory, OS Detection, Service Detection, SSL/TLS Report suites, Traceroute.\nACCIÓN: Márcalos mentalmente como 'ruido' y EXCLÚYELOS del cálculo de riesgo.\n\nPASO 2 — CONTROLES CON RIESGO REAL:\nLista solo los controles donde hay hallazgos con cvss_score > 0.0.\nPara cada uno, aplica la tabla de riesgos del sistema (TLS deprecado → MEDIO, Timestamps → BAJO, etc.).\n\nPASO 3 — NIVEL FINAL:\nrisk_level = MAX de los niveles de los controles con riesgo real.\nSi no hay ningún hallazgo con cvss_score > 0 → risk_level = INFORMATIVO.\n\nPASO 4 — RECOMENDACIONES:\nGenera solo recomendaciones para hallazgos con cvss_score > 0, con acciones específicas y verificables.\nEvita recomendaciones genéricas como 'revisar la configuración'. Sé concreto: versión exacta, comando, configuración.\n--- FIN DEL RAZONAMIENTO ---\n\nFORMATO DE RESPUESTA (JSON estricto, sin ningún texto antes ni después del JSON):\n{{\n    \"executive_summary\": \"Descripción del perfil de seguridad en 3-4 frases. Contextualiza el host analizado, los controles con deficiencias reales y su impacto ajustado. Sin conteos de hallazgos individuales.\",\n    \"risk_level\": \"CRÍTICO|ALTO|MEDIO|BAJO|INFORMATIVO\",\n    \"technical_analysis\": \"Análisis por control con hallazgos reales: qué debilidad presenta, qué riesgo implica en el contexto del host y cómo se encadena con otros hallazgos si procede. Menciona explícitamente que los hallazgos LOG han sido excluidos del cálculo de riesgo. Mínimo 400 caracteres, máximo 900 caracteres.\",\n    \"recommendations\": [\n        {{\"title\": \"Título descriptivo\", \"description\": \"Qué significa y por qué afecta\", \"priority\": \"ALTA|MEDIA|BAJA\", \"remediation\": \"Acción específica\"}}\n    ],\n    \"conclusions\": \"Conclusión ponderada del balance riesgo/contexto.\"\n}}"
+      }
+    }
+  },
+  "aegis": {
+    "enabled": true,
+    "directories": {
+      "output": "data/aegis/output",
+      "stack": "data/aegis/stack"
+    },
+    "prompts": {
+      "system": "Eres un redactor senior de concienciación en ciberseguridad con 15 años de experiencia en comunicación corporativa. Tu especialidad es transformar conceptos técnicos complejos en consejos prácticos y accionables para empleados no técnicos.\n\nREGLAS ABSOLUTAS:\n1. Generas EXCLUSIVAMENTE JSON válido, sin markdown, sin explicaciones previas ni posteriores.\n2. NUNCA inventas URLs. Si no tienes fuentes verificadas, usa array vacío [].\n3. La 'intro' DEBE ser EXTENSA y DETALLADA (mínimo 1500 caracteres, ideal 1800-2200). Desarrolla el contexto empresarial en profundidad: explica el vector de ataque, las consecuencias reales con ejemplos concretos del sector, el impacto económico y reputacional, y por qué esta amenaza es especialmente relevante para la empresa destinataria. Desarrolla el contexto empresarial, las consecuencias del riesgo y por qué es relevante para la empresa.\n4. Priorizas la precisión técnica sobre la creatividad cuando haya conflicto.\n5. Adaptas el nivel de detalle al perfil de audiencia especificado.\n6. Mantienes un tono profesional pero cercano, evitando alarmismo innecesario.\n7. Cumples estrictamente el formato JSON solicitado, sin campos adicionales.\n8. El 'subtitle' DEBE ser creativo, atractivo y ORIGINAL. NUNCA repitas literalmente el nombre del tema.\n9. Si el tema es \"Phishing\", el subtitle podría ser \"No muerdas el anzuelo: Protección contra ataques de ingeniería social\".\n10. Genera SIEMPRE exactamente 7 tips (consejos) por píldora. Nunca menos de 7. Cada tip debe tener un headline único y un body de al menos 80 palabras con contenido práctico y accionable.",
+      "userTemplate": "Ejemplo de output válido para tema \"Phishing Empresarial\":\n\n{\n    \"subtitle\": \"No muerdas el anzuelo: Protección contra el phishing moderno\",\n    \"intro\": \"El phishing representa una de las amenazas cibernéticas más persistentes y evolutivas del panorama actual de seguridad empresarial. Lo que comenzó hace décadas como correos electrónicos obvios y mal escritos se ha transformado en campañas sofisticadas de ingeniería social que explotan la psicología humana y el contexto organizacional. En entornos corporativos modernos, los atacantes han perfeccionado técnicas de suplantación que imitan con precisión alarmante a compañeros de trabajo, directivos e incluso proveedores de confianza, utilizando dominios similares y contextos conversacionales robados de brechas previas. Un solo clic en un enlace malicioso puede desencadenar una cascada de compromisos: desde el robo de credenciales corporativas hasta la instalación de ransomware que paraliza operaciones críticas, pasando por el acceso lateral a sistemas financieros y bases de datos de clientes. Las consecuencias económicas y reputacionales son devastadoras, con costes promedio que superan el millón de euros en medianas empresas. Esta píldora de concienciación profundiza en las señales de alerta sutiles que distinguen un correo legítimo de una trampa diseñada por ciberdelincuentes, proporcionando marcos prácticos de verificación y protocolos de respuesta que todo empleado debe internalizar para proteger los activos digitales de la organización.\",\n    \"tips\": [\n        {\n            \"headline\": \"Verifica siempre el remitente real, no solo el nombre visible\",\n            \"body\": \"Los atacantes configuran nombres de display que imitan a directivos o IT support. Haz clic en el nombre del remitente para ver la dirección email real. Desconfía de dominios similares como 'company-it.com' en lugar de 'company.com'. Una dirección legítima de tu empresa nunca usará dominios externos para comunicaciones internas sensibles.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"No hagas clic en enlaces: navega directamente desde el navegador\",\n            \"body\": \"Si el correo pide acceder a un servicio (banco, RRHH, portal corporativo), escribe la URL directamente en la barra del navegador en lugar de hacer clic en el enlace. Los enlaces de phishing pueden redirigirte a sitios que imitan perfectamente la apariencia del portal legítimo pero capturan tus credenciales en el momento en que las introduces.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Desconfía de la urgencia artificial y las amenazas\",\n            \"body\": \"Los mensajes de phishing suelen crear una falsa sensación de urgencia: 'Tu cuenta será bloqueada en 24 horas' o 'Acción requerida de inmediato'. Las empresas legítimas raramente exigen acciones críticas por correo con plazos muy cortos. Ante cualquier mensaje urgente, verifica su legitimidad contactando directamente al supuesto remitente por teléfono o por un canal independiente.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Comprueba los archivos adjuntos antes de abrirlos\",\n            \"body\": \"Los adjuntos maliciosos pueden contener macros, ejecutables o exploits embebidos en documentos Office o PDF. Nunca abras un adjunto que no esperabas recibir, especialmente si el correo te pide 'habilitar macros' o 'activar el contenido'. En caso de duda, sube el archivo a VirusTotal o consulta con el equipo de IT antes de abrirlo bajo ningún concepto.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Activa la autenticación en dos factores (2FA) en todas tus cuentas\",\n            \"body\": \"Incluso si un atacante consigue tu contraseña mediante phishing, el segundo factor de autenticación actúa como barrera adicional que bloquea el acceso. Usa aplicaciones de autenticación (Microsoft Authenticator, Google Authenticator) en lugar de SMS, ya que el SIM swapping puede comprometer la verificación por mensaje de texto. El 2FA es especialmente crítico para el correo corporativo y la VPN.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Reporta los correos sospechosos en lugar de ignorarlos\",\n            \"body\": \"Si identificas un correo de phishing, no lo elimines simplemente: repórtalo al equipo de seguridad usando el botón habilitado en tu cliente de correo. Un correo reportado permite al equipo bloquear el dominio malicioso para todos los empleados y alertar a compañeros que puedan haber recibido el mismo mensaje. Tu reporte puede evitar que otros caigan en la trampa y proteger a toda la organización.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Mantén tu software actualizado para cerrar las puertas que el phishing intenta abrir\",\n            \"body\": \"Muchos ataques de phishing no solo buscan credenciales: también intentan explotar vulnerabilidades en el navegador, visor de PDF o cliente de correo al renderizar el contenido malicioso. Mantener el sistema operativo, navegadores y aplicaciones actualizadas cierra estas vías de entrada. Activa las actualizaciones automáticas siempre que sea posible y aplica los parches de seguridad sin demora cuando aparezcan.\",\n            \"links\": []\n        }\n    ],\n    \"closing\": \"La prevención del phishing es responsabilidad de todos. Cuando tengas dudas sobre un correo sospechoso, contacta directamente al remitente por un canal alternativo antes de interactuar con el mensaje.\",\n    \"contactEmail\": \"seguridad@empresa.com\"\n}\n\nAhora genera el contenido para el tema: {{topic_title}}\n\nSector al que va dirigido: {{sector}}\n\nPerfil de audiencia: {{audience}}\n{{intro_context}}\n\nRespondes EXCLUSIVAMENTE en JSON, sin markdown, sin texto antes del JSON."
+    },
+    "brands": [
+      {
+        "label": "Microsoft",
+        "circl_vendor": "microsoft",
+        "circl_product": "windows",
+        "aliases": []
+      },
+      {
+        "label": "Cisco",
+        "circl_vendor": "cisco",
+        "circl_product": "ios",
+        "aliases": []
+      },
+      {
+        "label": "Apple",
+        "circl_vendor": "apple",
+        "circl_product": "macos",
+        "aliases": []
+      },
+      {
+        "label": "Google",
+        "circl_vendor": "google",
+        "circl_product": "chrome",
+        "aliases": []
+      },
+      {
+        "label": "Adobe",
+        "circl_vendor": "adobe",
+        "circl_product": "acrobat",
+        "aliases": []
+      },
+      {
+        "label": "Android",
+        "circl_vendor": "google",
+        "circl_product": "android",
+        "aliases": []
+      },
+      {
+        "label": "HPE",
+        "circl_vendor": "hpe",
+        "circl_product": "hpe",
+        "aliases": [
+          "hewlett packard enterprise",
+          "hewlett-packard enterprise",
+          "hp enterprise"
+        ]
+      },
+      {
+        "label": "SonicWall",
+        "circl_vendor": "sonicwall",
+        "circl_product": "sonicos",
+        "aliases": []
+      },
+      {
+        "label": "Konica",
+        "circl_vendor": "konicaminolta",
+        "circl_product": "printer",
+        "aliases": [
+          "konica minolta",
+          "konicaminolta"
+        ]
+      },
+      {
+        "label": "Juniper",
+        "circl_vendor": "juniper",
+        "circl_product": "junos",
+        "aliases": []
+      },
+      {
+        "label": "VMware",
+        "circl_vendor": "vmware",
+        "circl_product": "esxi",
+        "aliases": []
+      },
+      {
+        "label": "Palo Alto",
+        "circl_vendor": "paloaltonetworks",
+        "circl_product": "pan-os",
+        "aliases": [
+          "palo alto networks",
+          "paloaltonetworks"
+        ]
+      },
+      {
+        "label": "SAP",
+        "circl_vendor": "sap",
+        "circl_product": "netweaver",
+        "aliases": []
+      },
+      {
+        "label": "Oracle",
+        "circl_vendor": "oracle",
+        "circl_product": "database",
+        "aliases": []
+      },
+      {
+        "label": "Mozilla",
+        "circl_vendor": "mozilla",
+        "circl_product": "firefox",
+        "aliases": []
+      },
+      {
+        "label": "Linux",
+        "circl_vendor": "linux",
+        "circl_product": "kernel",
+        "aliases": []
+      },
+      {
+        "label": "Fortinet",
+        "circl_vendor": "fortinet",
+        "circl_product": "fortios",
+        "aliases": []
+      },
+      {
+        "label": "IBM",
+        "circl_vendor": "ibm",
+        "circl_product": "",
+        "aliases": []
+      },
+      {
+        "label": "Chrome",
+        "circl_vendor": "google",
+        "circl_product": "chrome",
+        "aliases": [
+          "google chrome"
+        ]
+      }
+    ]
+  }
+}

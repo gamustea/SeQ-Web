@@ -1,0 +1,130 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "documentId": 6,
+    "topicId": 32,
+    "topicTitle": "Cross-Site Scripting (XSS)",
+    "language": "es",
+    "company": "Por los Pelos",
+    "generatedAt": "2026-04-25T09:08:54.527255+00:00",
+    "checksum": "fc6888b3b9539919"
+  },
+  "pill": {
+    "subtitle": "Detén la infección web: Protege tu navegador contra XSS",
+    "intro": "El Cross-Site Scripting (XSS) es un tipo de ataque cibernético que se ha convertido en una amenaza creciente para las empresas, especialmente aquellas con sitios web interactivos y plataformas digitales. Este tipo de ataque ocurre cuando un malintencionado inserta código malicioso en páginas web o aplicaciones web que otros usuarios visitan, aprovechando vulnerabilidades en el sistema. En un entorno empresarial, esto puede resultar en la pérdida de datos sensibles, compromiso de cuentas y daño reputacional significativo.\n\nPor ejemplo, si tu empresa tiene una plataforma interna para compartir documentos o un foro para discusiones entre empleados, un atacante podría inyectar código malicioso que se ejecuta en el navegador del usuario cuando accede a esa página. Este código puede robar información sensible como contraseñas y cookies de sesión, permitiendo al ciberdelincuente tomar el control de cuentas de correo electrónico o sistemas internos.\n\nLas consecuencias económicas de un ataque XSS pueden ser devastadoras para una empresa. Además del costo directo asociado con la recuperación y mitigación, hay costes indirectos relacionados con la pérdida de confianza entre clientes y empleados, así como posibles multas legales por incumplimiento de regulaciones sobre protección de datos.\n\nEste tipo de amenaza es especialmente relevante para tu empresa porque depende en gran medida del uso de plataformas web internas y externas. Es crucial que todos los empleados comprendan cómo identificar y prevenir estos ataques para proteger no solo sus propias cuentas, sino también los sistemas corporativos más amplios.",
+    "tips": [
+      {
+        "position": 1,
+        "headline": "No hagas clic en enlaces sospechosos o cargues sitios web dudosos",
+        "body": "Los atacantes pueden utilizar enlaces maliciosos para inyectar código en tu navegador. Evita hacer clic en enlaces que recibes por correo electrónico, mensajes de chat o redes sociales a menos que los reconozcas como seguros. Nunca accedas a sitios web desconocidos o dudosos.",
+        "links": []
+      },
+      {
+        "position": 2,
+        "headline": "Utiliza extensiones de navegador para bloquear contenido malicioso",
+        "body": "Existen varias extensiones gratuitas disponibles en la tienda de tu navegador que pueden ayudarte a identificar y bloquear el código malicioso antes de que se ejecute. Estas herramientas son una línea adicional de defensa importante.",
+        "links": []
+      },
+      {
+        "position": 3,
+        "headline": "Mantén actualizado tu navegador web",
+        "body": "Las compañías de navegadores lanzan regularmente parches para cerrar las brechas de seguridad que los atacantes podrían explotar. Asegúrate de mantener tu navegador y todas sus extensiones actualizadas.",
+        "links": []
+      },
+      {
+        "position": 4,
+        "headline": "Desconfía de formularios o campos de entrada sospechosos",
+        "body": "Los ataques XSS a menudo ocurren cuando los usuarios interactúan con formularios web maliciosos. Antes de ingresar información en un formulario, verifica que el sitio sea legítimo y seguro.",
+        "links": []
+      },
+      {
+        "position": 5,
+        "headline": "Activa la autenticación en dos factores (2FA) para tus cuentas",
+        "body": "Aunque no previene directamente los ataques XSS, la autenticación en dos factores dificulta significativamente que un atacante acceda a tu cuenta incluso si consigue robar tus credenciales.",
+        "links": []
+      },
+      {
+        "position": 6,
+        "headline": "Reporta cualquier sospecha de actividad maliciosa",
+        "body": "Si tienes alguna duda sobre el comportamiento de una página web o notificas algo que parece inusual, comunícate con tu equipo de TI para reportar la situación. Esto ayuda a prevenir que otros caigan en las mismas trampas.",
+        "links": []
+      },
+      {
+        "position": 7,
+        "headline": "Educación continua: Mantente al día sobre amenazas emergentes",
+        "body": "Las técnicas de ataque están constantemente evolucionando, por lo que es importante mantenerse informado sobre nuevas amenazas y cómo protegerse contra ellas. Participa en sesiones de formación y consulta fuentes confiables para estar preparado.",
+        "links": []
+      }
+    ],
+    "closing": "La prevención del XSS requiere una actitud proactiva hacia la seguridad web. Mantente alerta, sigue estas pautas y recuerda que tu precaución es la primera línea de defensa contra estos ataques.",
+    "contactEmail": "seguridad@empresa.com"
+  },
+  "alerts": [
+    {
+      "title": "CVE-2026-6921 — Chrome",
+      "description": "Race in GPU in Google Chrome on Windows prior to 147.0.7727.117 allowed a remote attacker to potentially perform a sandbox escape via a crafted video file. (Chromium security severity: Medium)",
+      "url": "https://cve.circl.lu/cve/CVE-2026-6921",
+      "source": "circl",
+      "published": "2026-04-23",
+      "severity": "",
+      "brands": [
+        "Chrome"
+      ]
+    },
+    {
+      "title": "CVE-2026-6920 — Chrome",
+      "description": "Out of bounds read in GPU in Google Chrome on Android prior to 147.0.7727.117 allowed a remote attacker who had compromised the renderer process to potentially perform a sandbox escape via a crafted HTML page. (Chromium security severity: High)",
+      "url": "https://cve.circl.lu/cve/CVE-2026-6920",
+      "source": "circl",
+      "published": "2026-04-23",
+      "severity": "",
+      "brands": [
+        "Chrome"
+      ]
+    },
+    {
+      "title": "CVE-2025-4615 — Cloud NGFW",
+      "description": "An improper input neutralization vulnerability in the management web interface of the Palo Alto Networks PAN-OS® software enables an authenticated administrator to bypass system restrictions and execute arbitrary commands.\n\nThe security risk posed by this issue is significantly minimized when CLI access is restricted to a limited group of administrators.\n\nCloud NGFW and Prisma® Access are not affe…",
+      "url": "https://cve.circl.lu/cve/CVE-2025-4615",
+      "source": "circl",
+      "published": "2025-10-09",
+      "severity": "",
+      "brands": [
+        "Palo Alto"
+      ]
+    },
+    {
+      "title": "CVE-2025-4614 — Cloud NGFW",
+      "description": "An information disclosure vulnerability in Palo Alto Networks PAN-OS® software enables an authenticated administrator to view session tokens of users authenticated to the firewall web UI. This may allow impersonation of users whose session tokens are leaked.  \n\nThe security risk posed by this issue is significantly minimized when CLI access is restricted to a limited group of administrators.\n\nClou…",
+      "url": "https://cve.circl.lu/cve/CVE-2025-4614",
+      "source": "circl",
+      "published": "2025-10-09",
+      "severity": "",
+      "brands": [
+        "Palo Alto"
+      ]
+    },
+    {
+      "title": "CVE-2025-41239 — ESXi",
+      "description": "VMware ESXi, Workstation, Fusion, and VMware Tools contains an information disclosure vulnerability due to the usage of an uninitialised memory in vSockets. A malicious actor with local administrative privileges on a virtual machine may be able to exploit this issue to leak memory from processes communicating with vSockets.",
+      "url": "https://cve.circl.lu/cve/CVE-2025-41239",
+      "source": "circl",
+      "published": "2025-07-15",
+      "severity": "alta",
+      "brands": [
+        "VMware"
+      ]
+    },
+    {
+      "title": "CVE-2025-41238 — ESXi",
+      "description": "VMware ESXi, Workstation, and Fusion contain a heap-overflow vulnerability in the PVSCSI (Paravirtualized SCSI) controller that leads to an out of-bounds write. A malicious actor with local administrative privileges on a virtual machine may exploit this issue to execute code as the virtual machine's VMX process running on the host. On ESXi, the exploitation is contained within the VMX sandbox and …",
+      "url": "https://cve.circl.lu/cve/CVE-2025-41238",
+      "source": "circl",
+      "published": "2025-07-15",
+      "severity": "crítica",
+      "brands": [
+        "VMware"
+      ]
+    }
+  ]
+}
