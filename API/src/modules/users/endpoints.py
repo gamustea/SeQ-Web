@@ -156,7 +156,7 @@ def sign_up_user():
         return jsonify(err), code
 
     try:
-        with user_manager() as manager:
+        with get_user_manager() as manager:
             user = manager.sign_in_user(
                 username = username,
                 email = email,

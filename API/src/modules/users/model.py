@@ -73,14 +73,14 @@ class User(Base):
 
     __tablename__ = "User"
 
-    id              = Column(Integer,     primary_key=True, autoincrement=True)
-    username        = Column(String(64),  unique=True, nullable=False)
-    email           = Column(String(128), unique=True, nullable=False)
-    first_name      = Column(String(64), nullable=False)
-    last_name       = Column(String(64), nullable=False)
-    created_at      = Column(DateTime,   nullable=False, default=datetime.utcnow)
-    password_hash   = Column(String(128), nullable=False)
-    password_salt   = Column(String(128), nullable=False)
+    id              = Column(Integer,       primary_key=True, autoincrement=True)
+    username        = Column(String(64),    unique=True, nullable=False)
+    email           = Column(String(128),   unique=True, nullable=False)
+    first_name      = Column(String(64),    nullable=False)
+    last_name       = Column(String(64),    nullable=False)
+    created_at      = Column(DateTime,      nullable=False, default=datetime.utcnow)
+    password_hash   = Column(String(128),   nullable=False)
+    password_salt   = Column(String(128),   nullable=False)
     
     scans          = relationship("Scan",         back_populates="user", cascade="all, delete-orphan")
     tokens         = relationship("AccessToken",  back_populates="user", cascade="all, delete-orphan")
