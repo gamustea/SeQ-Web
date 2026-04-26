@@ -26,7 +26,7 @@ jobs:
 
       - name: Generate Python documentation
         run: |
-          pdoc --output docs/py --html-first API/src/modules
+          pdoc -o docs/py API/src/modules
 
       - name: Update docs README
         run: |
