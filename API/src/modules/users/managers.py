@@ -70,11 +70,17 @@ class UserManager(BaseManager):
         self._check_session()
 
         try:
-            if self._exists(User, "username", username):
-                raise ExistingUserError(username)
+            username_exists = self._exists(User, "username", username)
+            email_exists    = self._exists(User, "email", email)
+
+            if username_exists or email_exists:
+                raise ExistingUserError(
+                    username if username_exists else None, 
+                    email if email_exists else None
+                )
 
             password_salt = Encoder.generate_salt()
-            hashed_password = Encoder.hash_password_with_salt(password, salt)
+            hashed_password = Encoder.hash_password_with_salt(password, password_salt)
 
             new_user = User(
                 username        = username,
@@ -135,52 +141,6 @@ class UserManager(BaseManager):
 
     def delete_user(self, user: User) -> None:
         self._delete(user, "Usuario")
-
-    def _get_by_field(self, model, field: str, value: Any) -> Optional[Any]:
-        self._check_session()
-
-        try:
-            obj = self.session.query(model).filter(
-                getattr(model, field) == value
-            ).one_or_none()
-            return obj
-
-        except Exception as e:
-            self.logger.error(f"Error obteniendo {model.__name__}: {e}")
-            raise
-
-    def _get_all(self, model) -> List[Any]:
-        self._check_session()
-
-        try:
-            objects = self.session.query(model).all()
-            self.logger.info(f"Se obtuvieron {len(objects)} {model.__name__}s")
-            return objects
-
-        except Exception as e:
-            self.logger.error(f"Error obteniendo {model.__name__}s: {e}")
-            raise
-
-    def _exists(self, model, field: str, value: Any) -> bool:
-        self._check_session()
-
-        return self.session.query(model).filter(
-            getattr(model, field) == value
-        ).count() > 0
-
-    def _delete(self, obj: Any, obj_type: str) -> None:
-        self._check_session()
-
-        try:
-            self.session.delete(obj)
-            self._safe_commit()
-
-            self.logger.info(f"{obj_type} eliminado")
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error eliminando {obj_type}: {e}")
-            raise
 
 
 

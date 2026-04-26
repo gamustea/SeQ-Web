@@ -13,7 +13,7 @@ ni managers concretos. Esas responsabilidades viven en sus módulos respectivos.
 """
 
 from ._model        import Base, Document
-from ._managers     import BaseManager, initialize_engine, warmup_connection
+from ._managers     import BaseManager
 from ._documents    import AIWriter
 from ._endpoints    import _get_limiter, get_current_user_id, get_current_username
 
@@ -25,8 +25,6 @@ __all__ = [
     "Document",
     # Managers
     "BaseManager",
-    "initialize_engine",
-    "warmup_connection",
     # AI
     "AIWriter",
     # Endpoints
