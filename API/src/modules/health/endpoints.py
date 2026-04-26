@@ -133,10 +133,8 @@ def status():
     """
     _logger.info("GET /status")
     
-    # Obtener información de CPU
     cpu_percent = psutil.cpu_percent(interval=1)
     
-    # Obtener información de memoria
     memory = psutil.virtual_memory()
     memory_info = {
         "total": memory.total,

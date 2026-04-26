@@ -52,6 +52,8 @@
     - [Configuración de Ollama](#configuración-de-ollama)
   - [Estructura del proyecto](#estructura-del-proyecto)
   - [Stack tecnológico](#stack-tecnológico)
+  - [Quick Start](#quick-start)
+  - [Notas Importantes](#notas-importantes)
 
 ---
 
@@ -545,7 +547,7 @@ El directorio `API/docker/` contiene los archivos Docker Compose para levantar l
 
 | Servicio | Puerto | Descripción |
 |---|---|---|
-| **PostgreSQL** | 5432 | Base de datos principal |
+| **PostgreSQL** | 15432 | Base de datos principal |
 | **OpenVAS/GVM** | 9390 | Escáner de vulnerabilidades (API Greenbone) |
 | **Ollama** | 11434 | IA local para Sentinel y Aegis |
 

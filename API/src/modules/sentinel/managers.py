@@ -207,7 +207,15 @@ class ScanManager(BaseManager, ABC):
             docs = self.session.query(SentinelDocument).filter(
                 SentinelDocument.scan_id == scan_id
             ).all()
+            
+            import os
             for doc in docs:
+                if doc.filename and os.path.exists(doc.filename):
+                    try:
+                        os.remove(doc.filename)
+                        self.logger.info(f"Archivo eliminado: {doc.filename}")
+                    except Exception as e:
+                        self.logger.warning(f"No se pudo eliminar archivo {doc.filename}: {e}")
                 self.session.delete(doc)
             
             self.session.delete(scan)

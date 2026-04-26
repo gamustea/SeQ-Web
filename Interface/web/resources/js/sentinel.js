@@ -213,36 +213,12 @@ function renderTable(type, rows, wrap) {
 function actionBtns(id, status, scanType = 'nmap', scan = null) {
   const st         = (status ?? '').toLowerCase();
   const isActive   = st === 'running' || st === 'pending';
-  const isFinished = st === 'done'    || st === 'finished';
-
-  const docId = scan?.documentId || null;
-  const docStatus = scan?.documentStatus || null;
-  const canDownload = docId && docStatus === 'done';
 
   const viewBtn = `
-    <button class="action-btn" title="Ver detalles" onclick="viewScanDetails(${id}, '${scanType}')">
+    <button class="action-btn" title="Vista previa" onclick="viewScanPreview(${id}, '${scanType}')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
         <circle cx="12" cy="12" r="3"/>
-      </svg>
-    </button>`;
-
-  const generateBtn = `
-    <button class="action-btn" title="Generar PDF" onclick="generatePDF(${id}, '${scanType}')" ${isActive ? 'disabled style="opacity:0.35;cursor:not-allowed"' : ''}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-        <line x1="12" y1="18" x2="12" y2="12"/>
-        <line x1="9" y1="15" x2="15" y2="15"/>
-      </svg>
-    </button>`;
-
-  const downloadBtn = `
-    <button class="action-btn" title="Descargar PDF" id="download-btn-${id}" data-doc-id="${docId || ''}" onclick="downloadDocument()" ${!canDownload ? 'disabled style="opacity:0.35;cursor:not-allowed"' : ''}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="7 10 12 15 17 10"/>
-        <line x1="12" y1="15" x2="12" y2="3"/>
       </svg>
     </button>`;
 
@@ -263,7 +239,7 @@ function actionBtns(id, status, scanType = 'nmap', scan = null) {
       </svg>
     </button>`;
 
-  return viewBtn + generateBtn + downloadBtn + cancelBtn + deleteBtn;
+  return viewBtn + cancelBtn + deleteBtn;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -361,6 +337,406 @@ async function cancelScan(id) {
   } else {
     const data = await res?.json().catch(() => ({}));
     SeqToast.show(data.message || 'No se pudo cancelar el escaneo.', 'error');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+    VISTA PREVIA DEL ESCANEO
+    ══════════════════════════════════════════════════════════════ */
+let previewScanId = null;
+let previewScanType = null;
+let previewCurrentScan = null;
+
+async function viewScanPreview(scanId, scanType) {
+  previewScanId = scanId;
+  previewScanType = scanType;
+  previewCurrentScan = null;
+  const modal = document.getElementById('scan-preview-modal');
+  const body = document.getElementById('scan-preview-body');
+  
+  body.innerHTML = `
+    <div class="empty-state">
+      <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:24px;height:24px">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+      <span>Cargando...</span>
+    </div>`;
+  
+  modal.classList.add('visible');
+  
+  try {
+    const [scanRes, docsRes] = await Promise.all([
+      apiFetch(`/sentinel/results/${scanId}`),
+      apiFetch(`/sentinel/scan/${scanId}/documents`)
+    ]);
+    if (!scanRes?.ok) { body.innerHTML = '<div class="empty-state">Error al cargar.</div>'; return; }
+    
+    const scanData = await scanRes.json();
+    const documents = docsRes?.ok ? (await docsRes.json()).documents || [] : [];
+    previewCurrentScan = scanData.result || scanData;
+    
+    renderScanPreview(previewCurrentScan, scanType, documents);
+  } catch (e) {
+    body.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
+  }
+}
+
+function renderScanPreview(scan, type, documents = []) {
+  const body = document.getElementById('scan-preview-body');
+  const started = scan.startedAt ? new Date(scan.startedAt).toLocaleString() : 'N/A';
+  const finished = scan.finishedAt && scan.finishedAt !== 'null' ? new Date(scan.finishedAt).toLocaleString() : 'En curso';
+  
+  const typeLabels = { nmap: 'Nmap', nikto: 'Nikto', openvas: 'OpenVAS' };
+  const typeLabel = typeLabels[type] || type.toUpperCase();
+  
+  const doneDocs = documents.filter(d => d.status === 'done');
+  const latestDoc = doneDocs.length > 0 ? doneDocs[doneDocs.length - 1] : null;
+  
+  let summary = '';
+  if (type === 'nmap') {
+    summary = `<div class="preview-stat"><span class="preview-stat-value">${scan.totalOpenPorts ?? 0}</span><span class="preview-stat-label">Puertos Abiertos</span></div>`;
+  } else if (type === 'nikto') {
+    summary = `<div class="preview-stat"><span class="preview-stat-value">${scan.totalIncidents ?? 0}</span><span class="preview-stat-label">Incidencias</span></div>`;
+  } else if (type === 'openvas') {
+    summary = `
+      <div class="preview-stat"><span class="preview-stat-value">${scan.totalVulnerabilities ?? 0}</span><span class="preview-stat-label">Vulnerabilidades</span></div>
+      <div class="preview-stat critical"><span class="preview-stat-value">${scan.criticalCount ?? 0}</span><span class="preview-stat-label">Criticas</span></div>
+      <div class="preview-stat high"><span class="preview-stat-value">${scan.highCount ?? 0}</span><span class="preview-stat-label">Altas</span></div>`;
+  }
+  
+  let docsListHtml = '';
+  if (documents.length > 0) {
+    docsListHtml = documents.map(doc => {
+      const aiBadge = doc.isAiGenerated ? '<span class="doc-badge-ai">IA</span>' : '';
+      let actionsHtml = '';
+      if (doc.status === 'done') {
+        actionsHtml = `
+          <button class="preview-doc-download" onclick="downloadPreviewDocument(${doc.documentId}, ${scan.id})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Descargar
+          </button>
+          <button class="preview-doc-delete" onclick="deletePreviewDocument(${doc.documentId}, ${scan.id}, this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+          </button>`;
+      } else if (doc.status === 'running') {
+        actionsHtml = `<span class="doc-status generating">Generando...</span>`;
+      } else if (doc.status === 'pending') {
+        actionsHtml = `<span class="doc-status pending">Pendiente</span>`;
+      } else if (doc.status === 'error') {
+        actionsHtml = `<span class="doc-status error">Error</span>`;
+      }
+      return `<div class="preview-doc-item">
+        <div class="preview-doc-info">
+          <span class="preview-doc-name">PDF ${doc.scanType?.toUpperCase()}${aiBadge}</span>
+          ${doc.createdAt ? `<span class="preview-doc-date">${new Date(doc.createdAt).toLocaleDateString()}</span>` : ''}
+        </div>
+        <div class="preview-doc-actions">${actionsHtml}</div>
+      </div>`;
+    }).join('');
+  } else {
+    docsListHtml = '<div class="preview-docs-empty">No hay documentos generados</div>';
+  }
+  
+  const html = `
+    <div class="preview-header">
+      <span class="preview-header-type">${typeLabel}</span>
+      <div class="preview-header-id">Escaneo #${scan.id}</div>
+    </div>
+    <div class="preview-content">
+      <div class="preview-meta">
+        <div class="preview-meta-item"><span class="preview-label">Target</span><span class="preview-value">${scan.target}</span></div>
+        <div class="preview-meta-item"><span class="preview-label">Estado</span><span class="preview-value">${SeqUI.statusBadge(scan.status)}</span></div>
+        <div class="preview-meta-item"><span class="preview-label">Iniciado</span><span class="preview-value">${started}</span></div>
+        <div class="preview-meta-item"><span class="preview-label">Finalizado</span><span class="preview-value">${finished}</span></div>
+      </div>
+      <div class="preview-summary">${summary}</div>
+      <div class="preview-actions-row">
+        <button class="preview-details-btn" onclick="viewFullDetails(${scan.id}, '${type}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12" y2="8"/>
+          </svg>
+          Ver detalles
+        </button>
+      </div>
+      <div class="preview-options">
+        <div class="preview-options-header">
+          <h4>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:6px">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            Documentos
+          </h4>
+          <button class="preview-refresh-btn" onclick="refreshPreviewDocuments(${scan.id}, '${type}')" title="Actualizar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+        </div>
+        <div class="preview-docs-list">${docsListHtml}</div>
+        <div class="preview-docs-actions">
+          <label class="doc-checkbox">
+            <input type="checkbox" id="ai-report-check-preview" />
+            <span class="doc-checkmark"></span>
+            <span class="doc-checklabel">Análisis IA con Ollama</span>
+          </label>
+          <button class="preview-btn" onclick="generatePdfFromPreview(${scan.id}, '${type}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="12" y1="18" x2="12" y2="12"/>
+              <line x1="9" y1="15" x2="15" y2="15"/>
+            </svg>
+            Generar PDF
+          </button>
+        </div>
+      </div>
+    </div>`;
+  
+  body.innerHTML = html;
+}
+
+function closeScanPreviewModal() {
+  document.getElementById('scan-preview-modal').classList.remove('visible');
+  stopPreviewPolling();
+  previewScanId = null;
+  previewScanType = null;
+  previewCurrentScan = null;
+}
+
+async function viewFullDetails(scanId, scanType) {
+  const modal = document.getElementById('scan-details-modal');
+  const body = document.getElementById('scan-details-body');
+  
+  body.innerHTML = `
+    <div class="empty-state">
+      <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:24px;height:24px">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+      <span>Cargando detalles...</span>
+    </div>`;
+  
+  modal.classList.add('visible');
+  
+  try {
+    const scanRes = await apiFetch(`/sentinel/results/${scanId}`);
+    if (!scanRes?.ok) { body.innerHTML = '<div class="empty-state">Error al cargar los detalles.</div>'; return; }
+    
+    const scanData = await scanRes.json();
+    const result = scanData.result || scanData;
+    
+    renderFullDetails(result, scanType);
+  } catch (e) {
+    body.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
+  }
+}
+
+function renderFullDetails(scan, type) {
+  const body = document.getElementById('scan-details-body');
+  
+  let detailsHtml = '';
+  
+  if (type === 'nmap' && scan.openPorts?.length) {
+    detailsHtml += `
+      <div class="vulns-scroll">
+        <table class="ports-table">
+          <thead><tr><th>Puerto</th><th>Protocolo</th><th>Servicio</th><th>Versión</th></tr></thead>
+          <tbody>
+            ${scan.openPorts.map(p => `
+              <tr>
+                <td>${p.port || '-'}</td>
+                <td>${p.port?.split('/')[1] || '-'}</td>
+                <td>${p.product || '-'}</td>
+                <td>${p.product || '-'}${p.version ? ' ' + p.version : ''}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } else if (type === 'nikto' && scan.incidents?.length) {
+    detailsHtml += `
+      <div class="vulns-scroll">
+        ${scan.incidents.map(inc => `
+          <div class="incident-card">
+            <div class="incident-header">
+              <span class="incident-title">${inc.method || 'GET'} ${inc.url || ''}</span>
+              <span class="severity-badge ${(inc.severity || 'medium').toLowerCase()}">${inc.severity || 'MEDIUM'}</span>
+            </div>
+            <div class="incident-desc">${inc.description || ''}</div>
+          </div>
+        `).join('')}
+      </div>`;
+  } else if (type === 'openvas' && scan.vulnerabilities?.length) {
+    detailsHtml += `
+      <div class="vulns-scroll">
+        ${scan.vulnerabilities.map(v => `
+          <div class="incident-card">
+            <div class="incident-header">
+              <span class="incident-title">${v.name}</span>
+              <span class="severity-badge ${getSeverityClass(v.severityClass)}">${v.severityClass || 'Unknown'}</span>
+            </div>
+            <div class="incident-desc">${v.description || ''}</div>
+          </div>
+        `).join('')}
+      </div>`;
+  } else {
+    detailsHtml = '<div class="empty-state">No hay datos disponibles.</div>';
+  }
+  
+body.innerHTML = detailsHtml;
+}
+
+async function refreshPreviewDocuments(scanId, scanType) {
+  const btn = document.querySelector('.preview-refresh-btn');
+  if (btn) {
+    btn.classList.add('loading');
+  }
+  
+  try {
+    const [docsRes, scanRes] = await Promise.all([
+      apiFetch(`/sentinel/scan/${scanId}/documents`),
+      apiFetch(`/sentinel/results/${scanId}`)
+    ]);
+    
+    const documents = docsRes?.ok ? (await docsRes.json()).documents || [] : [];
+    const scanData = scanRes?.ok ? await scanRes.json() : {};
+    
+    renderScanPreview(scanData.result || previewCurrentScan || {id: scanId}, scanType, documents);
+SeqToast.show('Documentos actualizados', 'success');
+  } catch (e) {
+    SeqToast.show('Error al actualizar documentos', 'error');
+  } finally {
+    if (btn) {
+      btn.classList.remove('loading');
+    }
+  }
+}
+
+async function generatePdfFromPreview(scanId, scanType) {
+  const useAi = document.getElementById('ai-report-check-preview')?.checked ?? false;
+  const body = document.getElementById('scan-preview-body');
+  
+  const btn = document.querySelector('.preview-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
+      <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg> Generando...`;
+  }
+  
+  try {
+    const url = `/sentinel/generate-pdf?id=${scanId}${useAi ? '&aiReport=true' : ''}`;
+    const res = await apiFetch(url);
+    
+    if (!res.ok) {
+      const data = await res.json();
+      SeqToast.show(data.message || 'Error al generar documento', 'error');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    
+SeqToast.show('Documento en generación...', 'success');
+    startPreviewPolling(scanId, scanType);
+  } catch (e) {
+    SeqToast.show('Error al generar documento', 'error');
+    if (btn) btn.disabled = false;
+    if (btn) btn.innerHTML = `Generar PDF`;
+  }
+}
+
+async function downloadPreviewDocument(docId, scanId) {
+  try {
+    const res = await apiFetch(`/sentinel/document/${docId}/download`);
+    if (!res?.ok) { SeqToast.show('No se pudo descargar el documento.', 'error'); return; }
+    const blob = await res.blob();
+    const cd = res.headers.get('Content-Disposition') || '';
+    const name = cd.match(/filename="?([^";\n]+)"?/i)?.[1] ?? `scan_${docId}.pdf`;
+    _triggerDownload(blob, name);
+    SeqToast.show('Documento descargado correctamente', 'success');
+  } catch (e) {
+    SeqToast.show('Error al descargar: ' + e.message, 'error');
+  }
+}
+
+async function deletePreviewDocument(docId, scanId, btnElement) {
+  if (!confirm('¿Eliminar este documento?')) return;
+  
+  const item = btnElement?.closest('.preview-doc-item');
+  const originalText = btnElement?.innerHTML;
+  
+  try {
+    if (btnElement) btnElement.disabled = true;
+    
+    const res = await apiFetch(`/sentinel/document/${docId}`, { method: 'DELETE' });
+    if (!res?.ok) {
+      const err = await res.json().catch(() => ({}));
+      SeqToast.show(err.error || 'No se pudo eliminar el documento.', 'error');
+      return;
+    }
+    
+    if (item) {
+      item.style.transition = 'opacity 0.3s, transform 0.3s';
+      item.style.opacity = '0';
+      item.style.transform = 'translateX(20px)';
+      setTimeout(() => item.remove(), 300);
+    }
+    
+    SeqToast.show('Documento eliminado', 'success');
+  } catch (e) {
+    SeqToast.show('Error al eliminar: ' + e.message, 'error');
+  } finally {
+    if (btnElement) {
+      btnElement.disabled = false;
+      btnElement.innerHTML = originalText;
+    }
+  }
+}
+
+let previewPollingTimer = null;
+
+function startPreviewPolling(scanId, scanType) {
+  stopPreviewPolling();
+  previewPollingTimer = setInterval(async () => {
+    try {
+      const [docsRes, scanRes] = await Promise.all([
+        apiFetch(`/sentinel/scan/${scanId}/documents`),
+        apiFetch(`/sentinel/results/${scanId}`)
+      ]);
+      
+      if (!docsRes.ok) { stopPreviewPolling(); return; }
+      
+      const docsData = await docsRes.json();
+      const documents = docsData.documents || [];
+      const hasRunning = documents.some(d => d.status === 'running' || d.status === 'pending');
+      
+      if (!hasRunning) {
+        stopPreviewPolling();
+        const scanData = scanRes.ok ? await scanRes.json() : {};
+        renderScanPreview(scanData.result || previewCurrentScan || {id: scanId}, scanType, documents);
+        return;
+      }
+      
+      const scanData = scanRes.ok ? await scanRes.json() : {};
+      renderScanPreview(scanData.result || previewCurrentScan || {id: scanId}, scanType, documents);
+    } catch (e) {
+      stopPreviewPolling();
+    }
+  }, 3000);
+}
+
+function stopPreviewPolling() {
+  if (previewPollingTimer) {
+    clearInterval(previewPollingTimer);
+    previewPollingTimer = null;
   }
 }
 
@@ -700,8 +1076,8 @@ async function refreshDocumentsInModal(scanId, scanType) {
   }
 }
 
-async function generatePDF(scanId, scanType) {
-  const aiReport = document.getElementById('ai-report-check')?.checked || false;
+async function generatePDF(scanId, scanType, useAi = null) {
+  const aiReport = useAi !== null ? useAi : (document.getElementById('ai-report-check')?.checked || false);
   
   const btn = document.querySelector('.doc-gen-btn');
   if (btn) {
@@ -852,6 +1228,27 @@ async function checkDocumentStatus(scanId, docId = null) {
 }
 
 let currentDocumentId = null;
+
+async function downloadLatestDocument(scanId, scanType) {
+  try {
+    const res = await apiFetch(`/sentinel/scan/${scanId}/documents`);
+    if (!res?.ok) { SeqToast.show('No se pudieron obtener los documentos.', 'error'); return; }
+    
+    const data = await res.json();
+    const documents = data.documents || [];
+    const doneDocs = documents.filter(d => d.status === 'done');
+    
+    if (doneDocs.length === 0) {
+      SeqToast.show('No hay documentos disponibles para este escaneo.', 'error');
+      return;
+    }
+    
+    const latestDoc = doneDocs[doneDocs.length - 1];
+    await downloadDocumentFile(latestDoc.documentId, scanId);
+  } catch (e) {
+    SeqToast.show('Error al descargar: ' + e.message, 'error');
+  }
+}
 
 async function downloadDocument(docId = null) {
   const documentId = docId || currentDocumentId;

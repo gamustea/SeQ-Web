@@ -256,9 +256,9 @@ def retry_on_failure(max_retries: int = MAX_RETRIES, exceptions: tuple = (Except
 
 def circuit_breaker(threshold: int = 5, timeout: int = 60):
     """Circuit breaker simple para llamadas a servicios externos."""
-    failures         = 0
-    last_failure_time = None
-    lock             = threading.Lock()
+    failures            = 0
+    last_failure_time   = None
+    lock                = threading.Lock()
 
     def decorator(func):
         @wraps(func)
@@ -789,7 +789,6 @@ class AegisAIWriter(AIWriter):
                     },
                 )
 
-                # Resolución de tool calls
                 if getattr(resp.message, "tool_calls", None):
                     self.logger.info(f"Tool calls: {len(resp.message.tool_calls)}")
                     messages.append({
@@ -820,9 +819,7 @@ class AegisAIWriter(AIWriter):
                 time.sleep(RETRY_DELAY_BASE ** attempt)
 
         data = self._parse_response(raw_response)
-
         tips_amount = ConfigReader.get_aegis_tips_amount()
-
         raw_subtitle = str(data.get("subtitle", "")).strip()
         
         if not raw_subtitle or raw_subtitle.lower() == topic_title.lower():

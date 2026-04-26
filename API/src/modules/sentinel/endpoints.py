@@ -1114,6 +1114,7 @@ def _format_nmap_scans(scans: list, manager=None) -> list:
             "target":         s.target,
             "status":         getattr(s, "status", "unknown"),
             "startedAt":      _ts(s.started_at),
+            "finishedAt":    _ts(s.finished_at),
             "openPorts":      [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason} for p in s.open_ports_relation],
             "totalOpenPorts": len(s.open_ports_relation),
         }
@@ -1168,6 +1169,7 @@ def _format_nikto_scans(scans: list, manager=None) -> list:
             "target":         s.target,
             "status":         getattr(s, "status", "unknown"),
             "startedAt":      _ts(s.started_at),
+            "finishedAt":    _ts(s.finished_at),
             "incidents":      [
                 {
                     "osvdbId":     i.osvdb_id,
@@ -1229,6 +1231,7 @@ def _format_openvas_scans(scans: list, manager=None) -> list:
             "reportId":             s.report_id,
             "status":               getattr(s, "status", "unknown"),
             "startedAt":            _ts(s.started_at),
+            "finishedAt":          _ts(s.finished_at),
             "vulnerabilities":      [
                 {
                     "nvtOid":        r.vulnerability.nvt_oid,
