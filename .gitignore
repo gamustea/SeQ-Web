@@ -47,5 +47,6 @@ Thumbs.db
 local.properties
 
 API/src/data/*
+docs/
 
 *.prof
