@@ -1,16 +1,15 @@
 """
 run.py — Punto de entrada de la API SeQ
-════════════════════════════════════════
-Responsabilidades de este fichero:
+═══════════════════════════════════════
+Responsabilidades de este fiche:
     1. Crear la aplicación Flask.
-    2. Configurar CORS y rate limiting (via init_app del limiter de _shared).
-    3. Registrar los blueprints (via endpoints.register_blueprints).
+    2. Configurar CORS y rate limiting.
+    3. Registrar los blueprints.
     4. Instalar manejadores de error globales.
-    5. Servir la interfaz web estática (Interface/web/) bajo la ruta raíz.
-    6. Gestionar el apagado graceful (SIGTERM / SIGINT).
+    5. Servir la interfaz web estática.
+    6. Gestionar el apagado graceful.
     7. Arrancar el servidor de desarrollo si se ejecuta directamente.
 
-Toda la lógica de rutas vive en el paquete `endpoints/`.
 La ruta comodín de la UI se registra DESPUÉS de los blueprints para que
 los endpoints de la API siempre tengan prioridad.
 """
@@ -18,35 +17,53 @@ los endpoints de la API siempre tengan prioridad.
 import os
 import signal
 import sys
-import time
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from sqlalchemy import text
 from sqlalchemy import create_engine, text
-from src.core.model import Base
 from urllib.parse import quote_plus
 
-from src.endpoints import register_blueprints
-from src.endpoints._shared import limiter
-from src.misc import SecOpsLogger, ConfigReader, ConfigReader
-from src.logic.managers import initialize_engine, warmup_connection
+from src.modules.shared import BaseManager, Base, Document, limiter
+from src.modules.misc import SecOpsLogger, ConfigReader
+from src.modules.users import (
+    AccessToken, 
+    User, 
+    RefreshToken, 
+    oauth_bp, 
+    users_bp
+)
+from src.modules.sentinel import sentinel_bp
+from src.modules.acheron import acheron_bp
+from src.modules.aegis import aegis_bp
+from src.modules.health import health_bp
+from src.modules.pages import pages_bp
 
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
 SHUTDOWN_TIMEOUT = 30
 
-# Ruta absoluta al directorio de la interfaz web estática
 _UI_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
 )
+
+
+def register_blueprints(app: Flask) -> None:
+    """Registra todos los blueprints en la aplicación Flask."""
+    app.register_blueprint(health_bp)
+    app.register_blueprint(oauth_bp, url_prefix="/oauth")
+    app.register_blueprint(users_bp, url_prefix="/users")
+    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
+    app.register_blueprint(acheron_bp, url_prefix="/acheron")
+    app.register_blueprint(aegis_bp, url_prefix="/aegis")
+    app.register_blueprint(pages_bp, url_prefix="/pages")
+
 
 def _graceful_shutdown(signum, frame) -> None:
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
     try:
-        from src.logic.managers import ScanManager
+        from src.modules.sentinel import ScanManager
         _logger.info(
             f"[Shutdown] Cancelando {len(ScanManager._running_tasks)} tarea(s) activa(s)..."
         )
@@ -79,12 +96,10 @@ def create_app(fresh_db_init = False) -> Flask:
     _register_error_handlers(app)
 
     if fresh_db_init:
-        _init_db(app)
-        _init_db(app)
+        _init_db()
 
     _logger.info("Inicializando base de datos...")
-    engine = initialize_engine()
-    warmup_connection()
+    BaseManager.warmup_connection()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
@@ -165,8 +180,8 @@ def _register_error_handlers(app: Flask) -> None:
             "message": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
 
-def _init_db(app: Flask) -> None:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'API'))
+def _init_db() -> None:
+    """Inicializa la base de datos y tabla"""
     db_creds = ConfigReader.get_db_credentials()
 
     username = db_creds["username"]
@@ -216,31 +231,18 @@ def _init_db(app: Flask) -> None:
     print("[+] ¡Tablas creadas correctamente!")
 
     # 3. Inserción de los datos iniciales
-    print("[*] Insertando datos de prueba (Person y User)...")
-    with engine.connect() as conn:
-        # 1. Insertamos el Rol primero para satisfacer la clave foránea
-        # IMPORTANTE: Si tu modelo Rol usa otra columna en lugar de 'name' (ej. 'nombre' o 'descripcion'), cámbialo aquí.
+    print("[*] Insertando datos de prueba (User)...")
+    with engine.connect() as conn:        
         conn.execute(text("""
-            INSERT INTO "Rol" (id, name, description, hierarchy_level)
-            VALUES (1, 'Admin', '', 0);
-        """))
-
-        # 2. Insertamos la Persona
-        conn.execute(text("""
-            INSERT INTO "Person" (first_name, last_name, alias, created_at)
-            VALUES ('Gabriel', 'Musteata', 'artexian', CURRENT_DATE);
-        """))
-        
-        # 3. Finalmente insertamos el Usuario (ahora el rol_id 1 y person_id 1 ya existen)
-        conn.execute(text("""
-            INSERT INTO "User" (username, password_hash, password_salt, email, person_id, rol_id)
+            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at)
             VALUES (
             'root',
+            'Gabriel', 
+            'Musteata',
             '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
             'c167837c1c2a860031d861164d69bd79',
             'gmiganescu@gmail.com',
-            1,
-            1
+            CURRENT_DATE
             );
         """))
 
@@ -340,7 +342,7 @@ def _init_db(app: Flask) -> None:
 
     print("[+] ¡Datos iniciales insertados con éxito!")
 
-app = create_app(False)
 
 if __name__ == "__main__":
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app = create_app(False)
+    app.run(debug=True, host='0.0.0.0', port=5000)

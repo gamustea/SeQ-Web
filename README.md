@@ -47,6 +47,9 @@
       - [Ejemplo: añadir una tarjeta de crédito](#ejemplo-añadir-una-tarjeta-de-crédito)
     - [Componentes](#componentes)
   - [Infraestructura Docker](#infraestructura-docker)
+    - [Servicios principales](#servicios-principales)
+    - [Levantamiento de servicios](#levantamiento-de-servicios)
+    - [Configuración de Ollama](#configuración-de-ollama)
   - [Estructura del proyecto](#estructura-del-proyecto)
   - [Stack tecnológico](#stack-tecnológico)
 
@@ -144,7 +147,6 @@ Content-Type: application/json
 | Método | Endpoint | Descripción |
 |---|---|---|
 | `POST` | `/users/sign-up` | Registro de nuevo usuario (username, password, email, alias) |
-| `POST` | `/users/sign-up-person` | Registro de persona sin credenciales (firstName, lastName, alias) |
 | `PUT` | `/users/change-password` | Cambio de contraseña (invalida todos los tokens activos) |
 
 ---
