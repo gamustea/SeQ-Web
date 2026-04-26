@@ -10,7 +10,7 @@ from src.modules.misc import ConfigReader
 from src.modules.shared import BaseManager
 
 from .secrets import Encoder
-from .model import User, Person, AccessToken, RefreshToken
+from .model import User, AccessToken, RefreshToken
 
 (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -59,53 +59,30 @@ class UserManager(BaseManager):
         is_valid, _ = self.verify_credentials(username, password)
         return is_valid
 
-    def create_user(self, user: User) -> None:
-        self._check_session()
-
-        try:
-            if self._exists(User, "username", user.username):
-                raise ExistingUserError(username=user.username)
-
-            if user.person_id:
-                if not self._exists(Person, "id", user.person_id):
-                    if user.person:
-                        self._create_person(user.person)
-            elif user.person:
-                self._create_person(user.person)
-
-            self.session.add(user)
-            self._safe_commit()
-
-            self.logger.info(f"Usuario '{user.username}' creado con ID {user.id}")
-
-        except ExistingUserError:
-            raise
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error creando usuario: {e}")
-            raise
-
-    def sign_in_user(self, username: str, password: str, email: str, alias: str) -> User:
+    def sign_in_user(
+        self, 
+        username: str,
+        email: str,
+        first_name: str,
+        last_name: str,
+        password: str       
+    ) -> User:
         self._check_session()
 
         try:
             if self._exists(User, "username", username):
                 raise ExistingUserError(username)
 
-            person = self._get_by_field(Person, "alias", alias)
-
-            if not person:
-                raise UserBindingError(username=username, alias=alias)
-
-            salt = Encoder.generate_salt()
+            password_salt = Encoder.generate_salt()
             hashed_password = Encoder.hash_password_with_salt(password, salt)
 
             new_user = User(
-                username=username,
-                password_hash=hashed_password,
-                password_salt=salt,
-                email=email,
-                person_id=person.id
+                username        = username,
+                email           = email,
+                first_name      = first_name,
+                last_name       = last_name,
+                password_hash   = hashed_password,
+                password_salt   = password_salt,
             )
 
             self.session.add(new_user)
@@ -132,15 +109,12 @@ class UserManager(BaseManager):
     def get_all_users(self) -> List[User]:
         return self._get_all(User)
 
-    def update_user_password(self, user_or_id, new_password: str) -> None:
+    def update_user_password(self, user_id: int, new_password: str) -> None:
         self._check_session()
 
-        if isinstance(user_or_id, int):
-            user = self.get_user_by_id(user_or_id)
-            if not user:
-                raise UserBindingError(username=str(user_or_id), alias="unknown")
-        else:
-            user = user_or_id
+        user = self.get_user_by_id(user_or_id)
+        if not user:
+            raise UserBindingError(username=str(user_or_id))
 
         try:
             new_salt = Encoder.generate_salt()
@@ -159,77 +133,8 @@ class UserManager(BaseManager):
             self.logger.error(f"Error actualizando contraseña: {e}")
             raise
 
-    def update_user_password_by_id(self, user_id: int, new_password: str) -> None:
-        user = self.get_user_by_id(user_id)
-
-        if not user:
-            raise UserBindingError(username=str(user_id), alias="unknown")
-
-        self.update_user_password(user, new_password)
-
     def delete_user(self, user: User) -> None:
         self._delete(user, "Usuario")
-
-    def sign_in_person(self, first_name: str, last_name: str, alias: str) -> Person:
-        self._check_session()
-
-        try:
-            if self._exists(Person, "alias", alias):
-                raise ExistingUserError(f"El alias {alias} ya está en uso")
-
-            person = Person(
-                first_name=first_name,
-                last_name=last_name,
-                alias=alias
-            )
-
-            self._create_person(person)
-
-            self.logger.info(f"Persona registrada: {first_name} {last_name}")
-            return person
-
-        except ExistingUserError:
-            raise
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error registrando persona: {e}")
-            raise
-
-    def get_person_by_alias(self, alias: str) -> Optional[Person]:
-        return self._get_by_field(Person, "alias", alias)
-
-    def get_person_by_email(self, email: str) -> Optional[Person]:
-        return self._get_by_field(Person, "email", email)
-
-    def get_person_by_id(self, person_id: int) -> Optional[Person]:
-        return self._get_by_field(Person, "id", person_id)
-
-    def get_all_people(self) -> List[Person]:
-        return self._get_all(Person)
-
-    def update_person(self, person: Person) -> None:
-        self._check_session()
-
-        try:
-            existing = self.get_person_by_id(person.id)
-
-            if existing:
-                existing.first_name = person.first_name
-                existing.last_name = person.last_name
-                existing.email = person.email
-
-                self._safe_commit()
-                self.logger.info(f"Persona {person.id} actualizada")
-            else:
-                self.logger.warning(f"Persona {person.id} no encontrada")
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error actualizando persona: {e}")
-            raise
-
-    def delete_person(self, person: Person) -> None:
-        self._delete(person, "Persona")
 
     def _get_by_field(self, model, field: str, value: Any) -> Optional[Any]:
         self._check_session()
@@ -277,20 +182,6 @@ class UserManager(BaseManager):
             self.logger.error(f"Error eliminando {obj_type}: {e}")
             raise
 
-    def _create_person(self, person: Person) -> None:
-        self._check_session()
-
-        try:
-            self.session.add(person)
-            self.session.flush()
-            self.logger.info(
-                f"Persona creada: {person.first_name} {person.last_name} (ID: {person.id})"
-            )
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error creando persona: {e}")
-            raise
 
 
 class OAuthTokenManager(BaseManager):

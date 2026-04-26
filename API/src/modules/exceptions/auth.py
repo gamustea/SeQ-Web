@@ -47,11 +47,11 @@ class UserNotFoundError(AuthenticationError):
 class UserBindingError(AuthenticationError):
     default_code = ErrorCode.UNBINDABLE_USER
 
-    def __init__(self, username: str, alias: str):
+    def __init__(self, username: str):
         super().__init__(
             message=f"No se pudo vincular el usuario '{username}' con una persona existente",
             details={"username": username},
-            user_message=f"Error al crear el usuario debido a datos incompletos; no se tiene constancia de una persona con alias '{alias}'"
+            user_message=f"Error al crear el usuario debido a datos incompletos"
         )
 
 

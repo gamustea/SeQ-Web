@@ -27,8 +27,7 @@ from src.modules.shared import Base, Document, limiter, initialize_engine, warmu
 from src.modules.misc import SecOpsLogger, ConfigReader
 from src.modules.users import (
     AccessToken, 
-    Person, 
-    Rol, 
+    Person,
     User, 
     RefreshToken, 
     oauth_bp, 
@@ -235,25 +234,15 @@ def _init_db() -> None:
 
     # 3. Inserción de los datos iniciales
     print("[*] Insertando datos de prueba (Person y User)...")
-    with engine.connect() as conn:
-        # 1. Insertamos el Rol primero para satisfacer la clave foránea
-        # IMPORTANTE: Si tu modelo Rol usa otra columna en lugar de 'name' (ej. 'nombre' o 'descripcion'), cámbialo aquí.
-        conn.execute(text("""
-            INSERT INTO "Rol" (id, name, description, hierarchy_level)
-            VALUES (1, 'Admin', '', 0);
-        """))
-
-        # 2. Insertamos la Persona
-        conn.execute(text("""
-            INSERT INTO "Person" (first_name, last_name, alias, created_at)
-            VALUES ('Gabriel', 'Musteata', 'artexian', CURRENT_DATE);
-        """))
-        
-        # 3. Finalmente insertamos el Usuario (ahora el rol_id 1 y person_id 1 ya existen)
+    with engine.connect() as conn:        
         conn.execute(text("""
             INSERT INTO "User" (username, password_hash, password_salt, email, person_id, rol_id)
             VALUES (
             'root',
+            'Gabriel', 
+            'Musteata', 
+            'artexian', 
+            CURRENT_DATE
             '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
             'c167837c1c2a860031d861164d69bd79',
             'gmiganescu@gmail.com',

@@ -4,15 +4,13 @@ src.modules.users - Módulo de gestión de usuarios y autenticación
 Exponente:
     - UserManager: Gestión de usuarios
     - OAuthTokenManager: Gestión de tokens
-    - Modelos: User, Person, AccessToken, RefreshToken
+    - Modelos: User, AccessToken, RefreshToken
     - Endpoints: users_bp, oauth_bp
 """
 
 from contextlib import contextmanager
 
 from .model import (
-    Person,
-    Rol,
     User,
     AccessToken,
     RefreshToken,
@@ -74,9 +72,6 @@ def __getattr__(name):
 
 
 __all__ = [
-    # Models
-    "Person",
-    "Rol",
     "User",
     "AccessToken",
     "RefreshToken",
