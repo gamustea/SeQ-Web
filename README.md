@@ -4,7 +4,7 @@
 
 - **Sentinel** — API REST de escaneo de vulnerabilidades con análisis de IA (operativo).
 - **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (operativo, en expansión).
-- **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades,potenciado por IA local (operativo).
+- **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades, potenciado por IA local (operativo).
 
 ---
 
@@ -429,7 +429,7 @@ GET /aegis/download_as_md?id=42
 Authorization: Bearer <token>
 ```
 
-Devuelve el fichero `.md` como descarga (`Content-Type: text/markdown`). El cuerpo incluye:
+Devuelve el ficheгro `.md` como descarga (`Content-Type: text/markdown`). El cuerpo incluye:
 
 - La píldora principal redactada por el modelo de IA.
 - Una sección adicional con **vulnerabilidades y avisos de seguridad** formateados en Markdown.
@@ -594,38 +594,35 @@ OLLAMA_MODEL=llama3.1
 
 ```
 SeQ/
-├── API/                        # API REST Flask (Sentinel + Aegis + Acheron)
-│   ├── run.py                  # Punto de entrada de la aplicación
-│   ├── init_db.py              # Inicialización del esquema de base de datos
+├── API/                          # API REST Flask
+│   ├── run.py                    # Punto de entrada
+│   ├── requirements.txt          # Dependencias Python
+│   ├── SecOpsConfig.json        # Prompts de IA
+│   ├── .env                   # Configuración (no hacer commit)
 │   ├── docker/
-│   │   ├── openvas/            # Docker Compose para OpenVAS/GVM
-│   │   ├── postgres/           # Docker Compose para PostgreSQL
-│   │   └── ollama/             # Docker Compose para Ollama (IA local)
+│   │   ├── Dockerfile          # Imagen Docker de la API
+│   │   ├── entrypoint.sh       # Script de entrada
+│   │   └── .env             # Variables para contenedor
+│   ├── data/                  # Datos de salida (ignorado en git)
+│   │   ├── aegis/output/
+│   │   └── sentinel/output/
 │   └── src/
-│       ├── core/               # Modelos ORM y excepciones
-│       │   └── model/          # acheron.py, sentinel.py, aegis_model.py, general.py
-│       ├── endpoints/          # Blueprints Flask por módulo
-│       │   ├── sentinel.py     # Endpoints de escaneo
-│       │   ├── aegis_endpoints.py
-│       │   ├── acheron.py      # Endpoints del vault (operativo)
-│       │   ├── oauth.py
-│       │   ├── users.py
-│       │   └── health.py       # Health check
-│       ├── logic/              # Managers y lógica de negocio
-│       │   ├── managers/       # sentinel.py, acheron.py, aegis_managers.py, general.py
-│       │   ├── tasks.py        # Tareas asíncronas (escaneos, generación Aegis)
-│       │   ├── processors.py   # Procesadores de resultados (patrón Strategy)
-│       │   └── secrets.py      # Gestión de secretos de aplicación
-│       └── misc/               # Logging y utilidades
-├── Interface/
-│   ├── AcheronMobile/          # App Android (Kotlin) — Vault
-│   │   └── AcheronCore/        # Lógica de dominio del vault (Java)
-│   ├── AcheronWeb/             # Interfaz web del vault
-│   └── index.html              # Portal de entrada
-├── seq-landing/                # Landing page del proyecto
-├── shared/
-│   └── resources/              # Recursos compartidos
-└── REQUIREMENTS.txt
+│       ├── __init__.py
+│       └── modules/
+│           ├── users/            # Usuarios, auth, permisos
+│           ├── shared/           # Componentes compartidos
+│           ├── sentinel        # Escaneo: Nmap, Nikto, OpenVAS
+│           ├── aegis          # Píldoras de concienciación
+│           ├── acheron        # Vault de secretos
+│           ├── pages          # UI estática
+│           ├── health        # Health checks
+│           ├── exceptions    # Excepciones personalizadas
+│           └── misc         # Utilidades
+├── docker-compose.yml            # Orquestación de servicios
+├── Interface/                  # Frontends (en desarrollo)
+├── docs/                      # Documentación (auto-generada)
+└── .github/workflows/          # CI/CD
+    └── sync-docs.yml          # Generación de docs
 ```
 
 ---
@@ -647,3 +644,26 @@ SeQ/
 | Lógica de vault | Java + Lombok |
 | Rate limiting | Flask-Limiter |
 | Infraestructura | Docker + Docker Compose |
+
+---
+
+## Quick Start
+
+```bash
+# Levantar infraestructura (BD, Ollama, OpenVAS)
+docker compose --profile dev up -d
+
+# Arrancar API
+cd API && python run.py
+# → http://0.0.0.0:5000
+```
+
+---
+
+## Notas Importantes
+
+- `.env` contiene credenciales — **NO hacer commit**
+- `API/src/data/` está en `.gitignore` (outputs de escaneos)
+- OpenVAS tarda ~15min en iniciar la primera vez (descarga NVT feed)
+- PostgreSQL usa el puerto **15432** (no el estándar 5432) en desarrollo local
+- La documentación se genera automáticamente en la rama `docs` y se despliega a GitHub Pages
