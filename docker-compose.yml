@@ -82,6 +82,8 @@ services:
     image: immauss/openvas:latest
     container_name: openvas
     restart: unless-stopped
+    env_file:
+      - API/docker/.env
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -89,9 +91,9 @@ services:
       - "127.0.0.1:9392:9392"
       - "127.0.0.1:9390:9390"
     environment:
-      - USERNAME=SecOps
-      - PASSWORD=djn38qudOdu89ADUSAHDd9831ydhg219hde19
-      - FEED_SYNC=false
+      USERNAME: ${OPENVAS_USERNAME}
+      PASSWORD: ${OPENVAS_PASSWORD}
+      FEED_SYNC: "false"
     volumes:
       - openvas_data:/data
     shm_size: "1gb"
