@@ -18,7 +18,7 @@ from gvm.transforms import EtreeTransform
 from gvm.protocols.gmp.requests.v226 import AliveTest
 
 from src.modules.misc import (
-    ConfigReader,
+    CR,
     DirectoryType,
     SecOpsLogger,
     DirectoryChecker,
@@ -240,7 +240,7 @@ class NmapScanTask(_Task):
 
     def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300):
         super().__init__(target_host, timeout)
-        TEMP_DIR = ConfigReader.get_directory_of(DirectoryType.TEMP)
+        TEMP_DIR = CR.get_directory_of(DirectoryType.TEMP)
 
         timestamp = int(time.time() * 1000)
         safe_target = target_host.replace("/", "_").replace(":", "_")

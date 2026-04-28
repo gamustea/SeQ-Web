@@ -10,7 +10,7 @@ Permite que los imports antiguos funcionen:
 # Re-exportar desde las nuevas ubicaciones
 from src.modules.shared import Base, Document, BaseManager, AIWriter
 from src.modules.misc import (
-    ConfigReader,
+    CR,
     SecOpsLogger,
     IPValidator,
     PortValidator,
@@ -42,7 +42,7 @@ __all__ = [
     'Document', 
     'BaseManager',
     'AIWriter',
-    'ConfigReader',
+    'CR',
     'SecOpsLogger',
     'IPValidator',
     'PortValidator',

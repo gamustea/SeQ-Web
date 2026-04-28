@@ -120,14 +120,14 @@ class DirectoryChecker:
         pass
 
     def verify_directory(self, directory: DirectoryType) -> Path:
-        dir_name = ConfigReader.get_directory_of(directory)
+        dir_name = CR.get_directory_of(directory)
         dir_path = Path(dir_name).resolve()
         dir_path.mkdir(parents=True, exist_ok=True)
 
         return dir_path
 
 
-class ConfigReader:
+class CR:
     """
     Singleton para gestión de configuración.
     
@@ -231,7 +231,7 @@ class ConfigReader:
                 "dbname": database
             }
 
-        configs = ConfigReader._load_configs()
+        configs = CR._load_configs()
         dbconfig = configs["dbconfig"]
 
         return {
@@ -277,7 +277,7 @@ class ConfigReader:
             if env_value:
                 return env_value
         
-        configs = ConfigReader._load_configs()
+        configs = CR._load_configs()
         
         if "." in dir_key:
             parts = dir_key.split(".")
@@ -353,7 +353,7 @@ class ConfigReader:
         Usa get_aegis_prompts() y get_directory_of() para acceder
         a las subsecciones específicas de forma tipada.
         """
-        return ConfigReader._load_configs().get("aegis", {})
+        return CR._load_configs().get("aegis", {})
 
     @staticmethod
     def get_aegis_tips_amount() -> int:
@@ -363,7 +363,7 @@ class ConfigReader:
         Clave JSON: aegis.tipsAmount
         Default: 7
         """
-        cfg = ConfigReader._load_configs().get("aegis", {})
+        cfg = CR._load_configs().get("aegis", {})
         return int(cfg.get("tipsAmount", 7))
 
     @staticmethod
@@ -374,7 +374,7 @@ class ConfigReader:
         Clave JSON: aegis.vulnerabilitiesAntiquity
         Default: 5
         """
-        cfg = ConfigReader._load_configs().get("aegis", {})
+        cfg = CR._load_configs().get("aegis", {})
         return int(cfg.get("vulnerabilitiesAntiquity", 5))
 
     @staticmethod
@@ -391,7 +391,7 @@ class ConfigReader:
         Clave JSON: aegis.brands
         Default: []
         """
-        cfg = ConfigReader._load_configs().get("aegis", {})
+        cfg = CR._load_configs().get("aegis", {})
         return list(cfg.get("brands", []))
 
     @staticmethod
@@ -402,7 +402,7 @@ class ConfigReader:
         Returns:
             dict: Diccionario con 'system' key.
         """
-        configs = ConfigReader._load_configs()
+        configs = CR._load_configs()
         aegis = configs.get("aegis", {})
         return aegis.get("prompts", {})
 
@@ -414,7 +414,7 @@ class ConfigReader:
         Returns:
             dict: Configuración completa de sentinel.
         """
-        configs = ConfigReader._load_configs()
+        configs = CR._load_configs()
         return configs.get("sentinel", {})
 
     @staticmethod
@@ -426,7 +426,7 @@ class ConfigReader:
             dict: Dictionary containing prompts for different scanners.
                     Each scanner has 'system' and 'userTemplate' keys.
         """
-        configs = ConfigReader._load_configs()
+        configs = CR._load_configs()
         sentinel = configs.get("sentinel", {})
         
         return {
@@ -446,7 +446,7 @@ class ConfigReader:
         Returns:
             dict: Diccionario con 'system' y 'userTemplate' keys.
         """
-        prompts = ConfigReader.get_prompts_config()
+        prompts = CR.get_prompts_config()
         return prompts.get(tool.value, {})
 
     @staticmethod
@@ -460,7 +460,7 @@ class ConfigReader:
         Returns:
             dict: Diccionario con las couleurs (black, dark, main, secondary, light, white).
         """
-        configs = ConfigReader._load_configs()
+        configs = CR._load_configs()
         sentinel = configs.get("sentinel", {})
         
         tool_key = tool.value
@@ -489,7 +489,7 @@ class SecOpsLogger:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
-            path = Path(ConfigReader.get_directory_of(DirectoryType.LOG)).resolve()
+            path = Path(CR.get_directory_of(DirectoryType.LOG)).resolve()
             path.mkdir(parents=True, exist_ok=True)
             log_file = path / "secops.log"
 

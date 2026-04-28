@@ -47,7 +47,8 @@ from reportlab.platypus import (
     CondPageBreak,
 )
 
-from src.modules.misc import ConfigReader, DirectoryType, SentinelTool, SecOpsLogger
+import src.modules.system.config_reading as CR 
+from src.modules.misc import DirectoryType, SentinelTool, SecOpsLogger
 from src.modules.exceptions import PDFGenerationError
 
 from .model import NmapScan, NiktoScan, OpenVASScan, Scan, Host, NiktoIncident
@@ -468,13 +469,39 @@ class _PrintingStrategy(ABC):
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
     def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:
-        """Append AI-generated security analysis to the report.
+        """Append AI-generated security analysis to the report."""
+        scan_type = type(self.scan).__name__
+        self.logger.info(f"[IA] Iniciando para scan {self.scan.id} ({scan_type})")
         
-        Args:
-            elements: List of flowable elements to append to.
-            theme: Report theme for styling.
-        """
-        ai_analysis = self.writer.generate(self.scan)
+        prompts = CR.get_prompts_config()
+        tool_key = {'NmapScan': 'nmap', 'NiktoScan': 'nikto', 'OpenVASScan': 'openvas'}.get(scan_type, 'nmap')
+        tool_prompts = prompts.get(tool_key, {})
+        
+        if not tool_prompts.get('system'):
+            self.logger.error(f"[IA] Prompt 'system' no encontrado para {tool_key}")
+            elements.append(PageBreak())
+            elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
+            elements.append(Paragraph("Error: Configuración IA no encontrada", theme.body))
+            return
+        
+        if not tool_prompts.get('userTemplate'):
+            self.logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
+        
+        try:
+            ai_analysis = self.writer.generate(self.scan)
+        except Exception as e:
+            self.logger.error(f"[IA] Excepción: {e}", exc_info=True)
+            ai_analysis = {}
+        
+        if not ai_analysis:
+            self.logger.warning(f"[IA] Respuesta vacía para scan {self.scan.id}")
+            elements.append(PageBreak())
+            elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
+            elements.append(Paragraph("No se pudo generar análisis IA", theme.body))
+            return
+        
+        self.logger.info(f"[IA] OK - keys: {list(ai_analysis.keys())}")
+        
         elements.append(PageBreak())
         
         elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
@@ -644,7 +671,7 @@ class PDFCreator:
     """
 
     def __init__(self, printing_strategy: _PrintingStrategy) -> None:
-        self.directory = ConfigReader.get_directory_of(DirectoryType.OUTPUT_SENTINEL)
+        self.directory = CR.get_directory_of(DirectoryType.OUTPUT_SENTINEL)
         self.printing_strategy = printing_strategy
         self.scan = printing_strategy.scan
         self.logger = SecOpsLogger().get_logger()
@@ -808,7 +835,7 @@ class PDFCreator:
             elements: List of flowable elements.
             is_cover: Whether this is for the cover page (larger logo).
         """
-        resource_directory = ConfigReader.get_directory_of(DirectoryType.RESOURCE)
+        resource_directory = CR.get_directory_of(DirectoryType.RESOURCE)
         picture_name = self.printing_strategy.get_picture_name()
         image_filename = os.path.join(resource_directory, picture_name)
 
@@ -977,7 +1004,7 @@ class NmapPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = NmapAIWriter()
         
-        palette_config = ConfigReader.get_tool_color_palette(SentinelTool.NMAP)
+        palette_config = CR.get_tool_color_palette(SentinelTool.NMAP)
         
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#121212"),
@@ -1137,7 +1164,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = OpenVASAIWriter()
         
-        palette_config = ConfigReader.get_tool_color_palette(SentinelTool.OPENVAS)
+        palette_config = CR.get_tool_color_palette(SentinelTool.OPENVAS)
         
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#0D2818"),
@@ -1494,7 +1521,7 @@ class NiktoPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = NiktoAIWriter()
         
-        palette_config = ConfigReader.get_tool_color_palette(SentinelTool.NIKTO)
+        palette_config = CR.get_tool_color_palette(SentinelTool.NIKTO)
         
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#4B2500"),

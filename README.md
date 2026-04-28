@@ -312,7 +312,7 @@ El parámetro `aiReport=true` activa la generación del análisis IA. El proceso
 
 #### Prompts especializados
 
-Los prompts están centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`:
+Los prompts están centralizados en `SecOpsConfig.json` y se accede a través de `CR`:
 
 | Escáner | Sistema de prompts |
 |---|---|
@@ -449,7 +449,7 @@ Devuelve el ficheгro `.md` como descarga (`Content-Type: text/markdown`). El cu
 
 #### Arquitectura de IA en Aegis
 
-Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`. El sistema prompt incluye generación exclusiva en JSON válido, intro extensiva (mínimo 1500 caracteres), subtítulo creativo y original, y tips accionables con enlaces verificados.
+Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se accede a través de `CR`. El sistema prompt incluye generación exclusiva en JSON válido, intro extensiva (mínimo 1500 caracteres), subtítulo creativo y original, y tips accionables con enlaces verificados.
 
 ---
 

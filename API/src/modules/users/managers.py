@@ -5,8 +5,8 @@ from typing import Any, List, Optional, Tuple
 import jwt
 from sqlalchemy.orm import Session
 
+import src.modules.system.config_reading as CR
 from src.modules.exceptions import DatabaseError, ExistingUserError, UserBindingError, ProfileUpdateError
-from src.modules.misc import ConfigReader
 from src.modules.shared import BaseManager
 
 from .secrets import Encoder
@@ -17,7 +17,7 @@ from .model import User, AccessToken, RefreshToken
     REFRESH_TOKEN_EXPIRE_DAYS,
     JWT_SECRET_KEY,
     JWT_ALGORITHM
-) = ConfigReader.get_oauth_config()
+) = CR.get_oauth_config()
 
 
 class UserManager(BaseManager):

@@ -24,7 +24,7 @@ from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
 
 from src.modules.shared import BaseManager, Base, Document, limiter
-from src.modules.misc import SecOpsLogger, ConfigReader
+from src.modules.misc import SecOpsLogger, CR
 from src.modules.users import (
     AccessToken, 
     User, 
@@ -182,7 +182,7 @@ def _register_error_handlers(app: Flask) -> None:
 
 def _init_db() -> None:
     """Inicializa la base de datos y tabla"""
-    db_creds = ConfigReader.get_db_credentials()
+    db_creds = CR.get_db_credentials()
 
     username = db_creds["username"]
     password = db_creds["password"]
