@@ -1,5 +1,5 @@
 """
-config/managers.py
+system/managers.py
 Gestor de configuración de SecOps.
 Lee y escribe el archivo SecOpsConfig.json.
 """

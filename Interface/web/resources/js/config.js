@@ -5,7 +5,7 @@ Carga y guardado de la configuración
 
 const API_BASE = '';
 const API_URL = {
-config: `${API_BASE}/config`
+config: `${API_BASE}/system`
 };
 
 /* ─── SESSION GUARD ─── */

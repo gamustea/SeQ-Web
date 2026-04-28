@@ -1,5 +1,5 @@
 """
-config/endpoints.py
+system/endpoints.py
 Endpoints API para gestión de configuración de SecOps.
 Registrado en /config.
 
@@ -23,8 +23,99 @@ from src.modules.shared import limiter
 from .managers import ConfigManager
 
 
-config_bp = Blueprint("config", __name__)
-_logger = SecOpsLogger("config").get_logger()
+system_bp = Blueprint("system", __name__)
+_logger = SecOpsLogger("system").get_logger()
+
+
+@system_bp.get("/say-hello")
+@limiter.limit("60 per minute")
+def hello():
+    """Probe de liveness para verificar disponibilidad del servicio.
+
+    Este endpoint no requiere autenticación y es útil para:
+    - Health checks en contenedores
+    - Probe de liveness en Kubernetes
+    - Verificar que la API está respondiendo
+
+    Returns:
+        200 — Servicio disponible.
+            {
+                "message": "You did it! You reached an endpoint!",
+                "status": "ok",
+                "version": "3.2"
+            }
+
+    Example:
+        curl https://api.example.com/say-hello
+    """
+    _logger.info("GET /say-hello")
+    return jsonify({
+        "message": "You did it! You reached an endpoint!",
+        "status":  "ok",
+        "version": "3.2",
+    }), 200
+
+
+@system_bp.get("/status")
+def status():
+    """Obtiene información de estado del sistema: CPU, memoria y disco.
+
+    Este endpoint no requiere autenticación y proporciona métricas del
+    servidor donde se ejecuta la API.
+
+    Returns:
+        200 — Métricas del sistema.
+            {
+                "cpu": {"percent": 25.5},
+                "memory": {
+                    "total": 17179869184,
+                    "available": 8589934592,
+                    "percent": 50.0,
+                    "used": 8589934592,
+                    "free": 8589934592
+                },
+                "disk": {
+                    "total": 500000000000,
+                    "used": 250000000000,
+                    "free": 250000000000,
+                    "percent": 50.0
+                },
+                "status": "ok"
+            }
+
+    Example:
+        curl https://api.example.com/status
+    """
+    _logger.info("GET /status")
+    
+    cpu_percent = psutil.cpu_percent(interval=1)
+    
+    memory = psutil.virtual_memory()
+    memory_info = {
+        "total": memory.total,
+        "available": memory.available,
+        "percent": memory.percent,
+        "used": memory.used,
+        "free": memory.free
+    }
+    
+    # Obtener información de disco
+    disk = psutil.disk_usage('/')
+    disk_info = {
+        "total": disk.total,
+        "used": disk.used,
+        "free": disk.free,
+        "percent": disk.percent
+    }
+    
+    return jsonify({
+        "cpu": {
+            "percent": cpu_percent
+        },
+        "memory": memory_info,
+        "disk": disk_info,
+        "status": "ok"
+    }), 200
 
 
 @contextmanager
@@ -37,7 +128,7 @@ def get_config_manager():
         cm.close_session()
 
 
-@config_bp.get("")
+@system_bp.get("")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
 def get_config():
@@ -69,7 +160,7 @@ def get_config():
         return jsonify(err), code
 
 
-@config_bp.put("")
+@system_bp.put("")
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
 def update_config():

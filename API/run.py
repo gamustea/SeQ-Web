@@ -35,9 +35,8 @@ from src.modules.users import (
 from src.modules.sentinel import sentinel_bp
 from src.modules.acheron import acheron_bp
 from src.modules.aegis import aegis_bp
-from src.modules.health import health_bp
+from src.modules.system import system_bp
 from src.modules.pages import pages_bp
-from src.modules.config import config_bp
 
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
@@ -51,14 +50,13 @@ _UI_DIR = os.path.abspath(
 
 def register_blueprints(app: Flask) -> None:
     """Registra todos los blueprints en la aplicación Flask."""
-    app.register_blueprint(health_bp)
+    app.register_blueprint(system_bp, url_prefix="/system")
     app.register_blueprint(oauth_bp, url_prefix="/oauth")
     app.register_blueprint(users_bp, url_prefix="/users")
     app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
     app.register_blueprint(acheron_bp, url_prefix="/acheron")
     app.register_blueprint(aegis_bp, url_prefix="/aegis")
     app.register_blueprint(pages_bp, url_prefix="/pages")
-    app.register_blueprint(config_bp, url_prefix="/config")
 
 
 def _graceful_shutdown(signum, frame) -> None:
