@@ -24,6 +24,7 @@ from typing import Any, Optional
 import ollama
 from ollama import ChatResponse
 
+from src.modules.system.logging import SecOpsLogger
 
 class AIWriter(ABC):
     """
@@ -74,12 +75,13 @@ class AIWriter(ABC):
 
         Args:
             host: Optional Ollama server URL. If not provided, reads from
-                   environment or ConfigReader defaults.
+                   environment or CR defaults.
             model: Optional Ollama model name. If not provided, reads from
-                   environment or ConfigReader defaults.
+                   environment or CR defaults.
         """
-        from src.modules.misc import ConfigReader, SecOpsLogger
-        env_host, env_model = ConfigReader.get_ollama_config()
+        
+        from src.modules.system import config_reading as CR
+        env_host, env_model = CR.get_ollama_config()
         
         if host is None or model is None:
             self.host = host or env_host

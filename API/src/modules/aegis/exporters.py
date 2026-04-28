@@ -25,7 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 from src.modules.exceptions import (
     ExporterError,
     ExporterFormatError,

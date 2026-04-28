@@ -78,7 +78,7 @@ from src.modules.exceptions import (
     ValidationError,
     create_error_response,
 )
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
 from src.modules.shared import (
     limiter,

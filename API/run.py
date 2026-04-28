@@ -24,7 +24,7 @@ from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
 
 from src.modules.shared import BaseManager, Base, Document, limiter
-from src.modules.misc import SecOpsLogger, ConfigReader
+from src.modules.system.logging import SecOpsLogger
 from src.modules.users import (
     AccessToken, 
     User, 
@@ -35,9 +35,10 @@ from src.modules.users import (
 from src.modules.sentinel import sentinel_bp
 from src.modules.acheron import acheron_bp
 from src.modules.aegis import aegis_bp
-from src.modules.health import health_bp
+from src.modules.system.endpoints import system_bp
 from src.modules.pages import pages_bp
 
+import src.modules.system.config_reading as CR
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
@@ -50,7 +51,7 @@ _UI_DIR = os.path.abspath(
 
 def register_blueprints(app: Flask) -> None:
     """Registra todos los blueprints en la aplicación Flask."""
-    app.register_blueprint(health_bp)
+    app.register_blueprint(system_bp, url_prefix="/system")
     app.register_blueprint(oauth_bp, url_prefix="/oauth")
     app.register_blueprint(users_bp, url_prefix="/users")
     app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
@@ -182,7 +183,7 @@ def _register_error_handlers(app: Flask) -> None:
 
 def _init_db() -> None:
     """Inicializa la base de datos y tabla"""
-    db_creds = ConfigReader.get_db_credentials()
+    db_creds = CR.get_db_credentials()
 
     username = db_creds["username"]
     password = db_creds["password"]

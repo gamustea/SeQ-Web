@@ -19,6 +19,7 @@ import os
 from contextlib import contextmanager
 from functools import wraps
 from typing import Optional, Tuple, Any
+from urllib.parse import urlparse
 
 from flask import request, jsonify
 
@@ -29,9 +30,75 @@ from src.modules.exceptions import (
     create_error_response,
 )
 
-
 limiter = None
+_DNS_TIMEOUT = 3.0
 
+
+def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optional[str]:
+    """
+    Wrapper de socket.gethostbyaddr con timeout explícito.
+    Devuelve el hostname o None si falla o supera el tiempo límite.
+    """
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(socket.gethostbyaddr, ip)
+        try:
+            return future.result(timeout=timeout)[0]
+        except TimeoutError:
+            return None
+        except (socket.herror, socket.gaierror):
+            return None
+
+def normalize_target(
+    user_input: str,
+    resolve_hostname: bool = False,
+    dns_timeout: float = _DNS_TIMEOUT,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Normaliza el target del usuario a IP + hostname.
+    Acepta IPs, dominios o URLs completas (http://, https://).
+
+    Args:
+        user_input:        IP, dominio o URL completa.
+        resolve_hostname:  Si es True y el input es una IP, intenta resolver
+                           el hostname vía reverse DNS (con timeout acotado).
+                           Si es False, el hostname se omite (se devuelve la IP
+                           también en esa posición). Por defecto False.
+        dns_timeout:       Segundos máximos para la resolución DNS inversa.
+
+    Returns:
+        (ip, hostname): hostname == ip cuando no se resuelve o resolve_hostname=False.
+    """
+    cleaned_input = user_input.strip()
+
+    if "://" in cleaned_input:
+        parsed = urlparse(cleaned_input)
+        if not parsed.netloc and parsed.path:
+            cleaned_input = parsed.path.split('/')[0]
+        else:
+            cleaned_input = parsed.netloc.split(':')[0]
+    else:
+        cleaned_input = cleaned_input.split(':')[0].split('/')[0]
+
+    ip: Optional[str] = None
+    hostname: Optional[str] = None
+
+    try:
+        ip_obj = ipaddress.ip_address(cleaned_input)
+        ip = str(ip_obj)
+
+        if resolve_hostname:
+            hostname = _gethostbyaddr_with_timeout(ip, dns_timeout) or ip
+        else:
+            hostname = ip
+
+    except ValueError:
+        hostname = cleaned_input
+        try:
+            ip = socket.gethostbyname(hostname)
+        except socket.gaierror as e:
+            raise ValueError(f"No se pudo resolver '{user_input}': {e}")
+
+    return ip, hostname
 
 # =========================================================================
 # RATE LIMITING

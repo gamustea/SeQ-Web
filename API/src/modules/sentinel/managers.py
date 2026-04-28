@@ -20,6 +20,8 @@ Usage:
 
 import threading
 import uuid
+import src.modules.system.config_reading as CR
+
 from enum import Enum
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -28,8 +30,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session, joinedload
 
 from src.modules.users import User
-from src.modules.misc import ConfigReader, normalize_target
-from src.modules.shared import BaseManager
+from src.modules.shared import BaseManager, normalize_target
 
 from .model import (
     NiktoScan,
@@ -40,6 +41,7 @@ from .model import (
     Scan,
     ScanStatus,
     SentinelDocument,
+    Host
 )
 from .processors import (
     NiktoResultProcessor,
@@ -506,10 +508,7 @@ class ScanManager(BaseManager, ABC):
     
     def _get_or_create_host(self, hostname: str, ip_address: str):
         """Versión simplificada para Nikto."""
-        from src.modules.sentinel import Host
-        from src.modules.misc import normalize_target
         
-        # Normalizar si es necesario
         ip, host = normalize_target(hostname, resolve_hostname=True)
         final_hostname = host or ip or hostname
         final_ip = ip or ip_address
@@ -1145,7 +1144,7 @@ class OpenVASScanManager(ScanManager):
         """
         super().__init__(user, session)
 
-        config = ConfigReader.get_openvas_config()
+        config = CR.get_openvas_config()
         self.hostname = config["hostname"]  # type: ignore
         self.port = config["port"]          # type: ignore
         self.username = config["username"]  # type: ignore

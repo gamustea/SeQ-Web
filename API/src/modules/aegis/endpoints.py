@@ -81,6 +81,7 @@ curl "https://api.example.com/aegis/export/42/download?format=md" \
 from contextlib import contextmanager
 from flask import Blueprint, jsonify, request, send_file, Response
 
+import src.modules.system.config_reading as CR
 from src.modules.exceptions import (
     AegisValidationError,
     AegisInsufficientContentError,
@@ -93,7 +94,7 @@ from src.modules.exceptions import (
     create_error_response,
 )
 from src.modules.shared import limiter, get_current_user_id, get_current_username
-from src.modules.misc import ConfigReader, SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, get_user_manager
 
 from .managers import AegisManager
@@ -544,7 +545,7 @@ def aegis_get_brands():
              -H "Authorization: Bearer <token>"
     """
     try:
-        brands = ConfigReader.get_aegis_brands()
+        brands = CR.get_aegis_brands()
         return jsonify({"count": len(brands), "brands": brands}), 200
     except Exception as exc:
         _logger.error(f"Error en /aegis/brands: {exc}", exc_info=True)
