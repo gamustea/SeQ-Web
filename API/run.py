@@ -37,6 +37,7 @@ from src.modules.acheron import acheron_bp
 from src.modules.aegis import aegis_bp
 from src.modules.health import health_bp
 from src.modules.pages import pages_bp
+from src.modules.config import config_bp
 
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
@@ -57,6 +58,7 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(acheron_bp, url_prefix="/acheron")
     app.register_blueprint(aegis_bp, url_prefix="/aegis")
     app.register_blueprint(pages_bp, url_prefix="/pages")
+    app.register_blueprint(config_bp, url_prefix="/config")
 
 
 def _graceful_shutdown(signum, frame) -> None:

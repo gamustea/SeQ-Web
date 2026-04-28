@@ -120,7 +120,8 @@ class DirectoryChecker:
         pass
 
     def verify_directory(self, directory: DirectoryType) -> Path:
-        dir_path = Path(ConfigReader.get_directory_of(directory)).resolve()
+        dir_name = ConfigReader.get_directory_of(directory)
+        dir_path = Path(dir_name).resolve()
         dir_path.mkdir(parents=True, exist_ok=True)
 
         return dir_path

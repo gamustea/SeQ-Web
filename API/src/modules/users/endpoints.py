@@ -56,17 +56,19 @@ from contextlib import contextmanager
 from werkzeug.exceptions import BadRequest
 
 from src.modules.exceptions import (
-    DatabaseError,
-    ExistingUserError,
-    InvalidCredentialsError,
-    MissingParameterError,
-    UserBindingError,
-    ExceptionHandler,
-    create_error_response,
+DatabaseError,
+ExistingUserError,
+InvalidCredentialsError,
+MissingParameterError,
+UserBindingError,
+ProfileUpdateError,
+ExceptionHandler,
+create_error_response,
 )
 from src.modules.misc import SecOpsLogger
 from src.modules.users import require_oauth_token
 from src.modules.shared import limiter
+from src.modules.shared._endpoints import get_current_user_id, get_current_username
 
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
 
@@ -443,18 +445,131 @@ def oauth_revoke_all():
     para obtener nuevos tokens.
 
     Returns:
-        200 — Todos los tokens revocados.
-            {"message": "All tokens revoked successfully"}
+    200 — Todos los tokens revocados.
+    {"message": "All tokens revoked successfully"}
 
     Warning:
-        Esta acción invalida TODOS los tokens activos del usuario.
+    Esta acción invalida TODOS los tokens activos del usuario.
 
     Example:
-        curl -X POST https://api.example.com/oauth/revoke-all \\
-             -H "Authorization: Bearer <token>"
+    curl -X POST https://api.example.com/oauth/revoke-all \\
+    -H "Authorization: Bearer <token>"
     """
     uid = get_current_user_id()
     with get_oauth_manager() as om:
         om.revoke_all_user_tokens(uid)
     _logger.info(f"Todos los tokens revocados para usuario ID: {uid}")
     return jsonify({"message": "All tokens revoked successfully"}), 200
+
+
+@users_bp.get("/me")
+@require_oauth_token
+@limiter.limit("30 per hour; 100 per day")
+def get_current_profile():
+    """Obtiene el perfil del usuario autenticado.
+
+    Returns:
+    200 — Perfil del usuario.
+    {
+    "id": 1,
+    "username": "admin",
+    "email": "admin@secops.local",
+    "first_name": "Admin",
+    "last_name": "User",
+    "created_at": "2024-01-01T00:00:00Z"
+    }
+
+    Example:
+    curl -X GET https://api.example.com/users/me \\
+    -H "Authorization: Bearer <token>"
+    """
+    try:
+        user_id = get_current_user_id()
+        username = get_current_username()
+
+        with get_user_manager() as user_mgr:
+            user = user_mgr.get_user_by_id(user_id)
+
+        if not user:
+            return jsonify({"error": "user_not_found", "error_description": "Usuario no encontrado"}), 404
+
+        return jsonify({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "created_at": user.created_at.isoformat() if user.created_at else None
+        }), 200
+
+    except Exception as exc:
+        _logger.error(f"Error obteniendo perfil: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@users_bp.put("/me")
+@require_oauth_token
+@limiter.limit("10 per hour; 20 per day")
+def update_current_profile():
+    """Actualiza el perfil del usuario autenticado (nombre y apellidos).
+
+    El username y email NO se pueden modificar (solo lectura).
+
+    Args (JSON body):
+    first_name (str): Nombre del usuario.
+    last_name (str): Apellidos del usuario.
+
+    Returns:
+    200 — Perfil actualizado.
+    {
+    "id": 1,
+    "username": "admin",
+    "email": "admin@secops.local",
+    "first_name": "NuevoNombre",
+    "last_name": "NuevosApellidos",
+    "created_at": "2024-01-01T00:00:00Z"
+    }
+
+    Example:
+    curl -X PUT https://api.example.com/users/me \\
+    -H "Authorization: Bearer <token>" \\
+    -H "Content-Type: application/json" \\
+    -d '{"first_name": "NuevoNombre", "last_name": "NuevosApellidos"}'
+    """
+    data = _require_json()
+    if isinstance(data, tuple):
+        return data
+
+    try:
+        first_name = _require_field(data, "first_name")
+        last_name = _require_field(data, "last_name")
+    except MissingParameterError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+
+    try:
+        user_id = get_current_user_id()
+        username = get_current_username()
+
+        with get_user_manager() as user_mgr:
+            user = user_mgr.update_user_profile(user_id, first_name, last_name)
+
+        return jsonify({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "created_at": user.created_at.isoformat() if user.created_at else None
+        }), 200
+
+    except ProfileUpdateError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+    except Exception as exc:
+        _logger.error(f"Error actualizando perfil: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
