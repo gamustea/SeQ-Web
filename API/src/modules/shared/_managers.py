@@ -65,7 +65,7 @@ class BaseManager:
             self.session = SESSION_FACTORY()
             self._owns_session = True
 
-        from src.modules.misc import SecOpsLogger
+        from src.modules.system.logging import SecOpsLogger
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
 
@@ -130,7 +130,7 @@ class BaseManager:
 
         Args:
             database_url:   Optional database URL. If not provided, credentials
-                            are read from ConfigReader.
+                            are read from CR.
 
         Returns:
             The created SQLAlchemy engine instance.
@@ -138,10 +138,10 @@ class BaseManager:
         global ENGINE, SESSION_FACTORY
 
         if ENGINE is None:
-            from src.modules.misc import ConfigReader
             t0 = time.perf_counter()
             if database_url is None:
-                db_creds = ConfigReader.get_db_credentials()
+                from src.modules.system import config_reading as CR
+                db_creds = CR.get_db_credentials()
                 database_url = (
                     f"{db_creds['dialect']}://{db_creds['username']}:{urllib.parse.quote(db_creds['password'])}@{db_creds['host']}:{db_creds['port']}/{db_creds['dbname']}"
                 )

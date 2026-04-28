@@ -35,6 +35,7 @@ from .auth import (
     UserBindingError,
     DuplicatedUserCredentials,
     ExistingUserError,
+    ProfileUpdateError,
 )
 from .parsing import ParsingError, XMLParsingError, JSONParsingError
 from .handler import ExceptionHandler, handle_exceptions, create_error_response
@@ -87,6 +88,7 @@ __all__ = [
     'UserBindingError',
     'DuplicatedUserCredentials',
     'ExistingUserError',
+    'ProfileUpdateError',
     'ParsingError',
     'XMLParsingError',
     'JSONParsingError',

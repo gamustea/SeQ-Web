@@ -3,7 +3,7 @@
 from functools import wraps
 from flask import request, jsonify
 
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 
 from .managers import OAuthTokenManager
 

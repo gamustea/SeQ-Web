@@ -18,7 +18,7 @@ import ollama
 
 from typing import Optional, Dict, Any
 
-from src.modules.misc import ConfigReader
+import src.modules.system.config_reading as CR
 from src.modules.shared import AIWriter
 from src.modules.exceptions import (
     AIConnectionError,
@@ -59,7 +59,7 @@ class NmapAIWriter(AIWriter):
             model: Ollama model name (optional, from env var if not provided).
         """
         super().__init__()
-        self._prompts = ConfigReader().get_prompts_config()
+        self._prompts = CR.get_prompts_config()
 
     def _classify_network_context(self, target: str) -> dict:
         """Classify target as private LAN or public network deterministically.
@@ -105,7 +105,7 @@ class NmapAIWriter(AIWriter):
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt defining analyst persona and principles."""
-        prompts_config = ConfigReader().get_prompts_config()
+        prompts_config = CR.get_prompts_config()
         return prompts_config.get("nmap", {}).get("system", "")
 
     def _build_user_prompt(self, scan_data: dict, open_ports: list, network_ctx: dict) -> str:
@@ -133,7 +133,7 @@ class NmapAIWriter(AIWriter):
                 "categoria_funcional": self._infer_functional_category(service, port_num)
             })
 
-        prompts_config = ConfigReader().get_prompts_config()
+        prompts_config = CR.get_prompts_config()
         template = prompts_config.get("nmap", {}).get("userTemplate", "")
 
         context_header = (
@@ -367,7 +367,7 @@ class NiktoAIWriter(AIWriter):
     ) -> None:
         """Initialize Nikto AI writer."""
         super().__init__()
-        self._prompts = ConfigReader().get_prompts_config()
+        self._prompts = CR.get_prompts_config()
 
     def _preprocess_incidents(self, incidents: list) -> dict:
         """Preprocess incidents by grouping them into security controls."""
@@ -425,7 +425,7 @@ class NiktoAIWriter(AIWriter):
         }
 
     def _build_system_prompt(self) -> str:
-        prompts_config = ConfigReader().get_prompts_config()
+        prompts_config = CR.get_prompts_config()
         return prompts_config.get("nikto", {}).get("system", "")
 
     def _build_user_prompt(self, scan_data: dict, processed: dict) -> str:
@@ -450,7 +450,7 @@ class NiktoAIWriter(AIWriter):
                 "techo_teorico": self._assess_control_severity(control_name, findings)
             }
 
-        prompts_config = ConfigReader().get_prompts_config()
+        prompts_config = CR.get_prompts_config()
         template = prompts_config.get("nikto", {}).get("userTemplate", "")
 
         return template.replace("{{target}}", str(target)) \
@@ -619,7 +619,7 @@ class OpenVASAIWriter(AIWriter):
     ) -> None:
         """Initialize OpenVAS AI writer."""
         super().__init__()
-        self._prompts = ConfigReader().get_prompts_config()
+        self._prompts = CR.get_prompts_config()
 
     def _preprocess_vulnerabilities(self, vulnerabilities: list) -> dict:
         """Preprocess vulnerabilities by grouping them into security controls."""
@@ -675,7 +675,7 @@ class OpenVASAIWriter(AIWriter):
         return counts
 
     def _build_system_prompt(self) -> str:
-        prompts_config = ConfigReader().get_prompts_config()
+        prompts_config = CR.get_prompts_config()
         return prompts_config.get("openvas", {}).get("system", "")
 
     def _build_user_prompt(self, scan_data: dict, processed: dict) -> str:
@@ -702,7 +702,7 @@ class OpenVASAIWriter(AIWriter):
                     "description": f.get("description", "")[:200]
                 })
 
-        prompts_config = ConfigReader().get_prompts_config()
+        prompts_config = CR.get_prompts_config()
         template = prompts_config.get("openvas", {}).get("userTemplate", "")
 
         return template.replace("{{target}}", str(target)) \

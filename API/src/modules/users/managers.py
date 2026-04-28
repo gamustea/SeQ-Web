@@ -5,8 +5,8 @@ from typing import Any, List, Optional, Tuple
 import jwt
 from sqlalchemy.orm import Session
 
-from src.modules.exceptions import DatabaseError, ExistingUserError, UserBindingError
-from src.modules.misc import ConfigReader
+import src.modules.system.config_reading as CR
+from src.modules.exceptions import DatabaseError, ExistingUserError, UserBindingError, ProfileUpdateError
 from src.modules.shared import BaseManager
 
 from .secrets import Encoder
@@ -17,7 +17,7 @@ from .model import User, AccessToken, RefreshToken
     REFRESH_TOKEN_EXPIRE_DAYS,
     JWT_SECRET_KEY,
     JWT_ALGORITHM
-) = ConfigReader.get_oauth_config()
+) = CR.get_oauth_config()
 
 
 class UserManager(BaseManager):
@@ -118,9 +118,9 @@ class UserManager(BaseManager):
     def update_user_password(self, user_id: int, new_password: str) -> None:
         self._check_session()
 
-        user = self.get_user_by_id(user_or_id)
+        user = self.get_user_by_id(user_id)
         if not user:
-            raise UserBindingError(username=str(user_or_id))
+            raise UserBindingError(username=str(user_id))
 
         try:
             new_salt = Encoder.generate_salt()
@@ -135,12 +135,48 @@ class UserManager(BaseManager):
             self.logger.info(f"Contraseña actualizada para usuario {user.id}")
 
         except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error actualizando contraseña: {e}")
-            raise
+                    self._safe_rollback()
+                    self.logger.error(f"Error actualizando contraseña: {e}")
+                    raise
 
     def delete_user(self, user: User) -> None:
         self._delete(user, "Usuario")
+
+    def update_user_profile(self, user_id: int, first_name: str, last_name: str) -> User:
+        """
+        Actualiza el nombre y apellidos de un usuario existente.
+
+        Args:
+            user_id: ID del usuario a actualizar.
+            first_name: Nuevo nombre del usuario.
+            last_name: Nuevos apellidos del usuario.
+
+        Returns:
+            El usuario actualizado.
+
+        Raises:
+            ProfileUpdateError: Si no se encuentra el usuario o hay error en la actualización.
+        """
+        self._check_session()
+
+        user = self.get_user_by_id(user_id)
+        if not user:
+            raise ProfileUpdateError("Usuario no encontrado")
+
+        try:
+            user.first_name = first_name
+            user.last_name = last_name
+
+            self.session.add(user)
+            self._safe_commit()
+
+            self.logger.info(f"Perfil actualizado para usuario {user.id} ({user.username})")
+            return user
+
+        except Exception as e:
+            self._safe_rollback()
+            self.logger.error(f"Error actualizando perfil: {e}")
+            raise ProfileUpdateError(f"Error al actualizar el perfil: {str(e)}")
 
 
 

@@ -52,6 +52,8 @@
     - [Configuración de Ollama](#configuración-de-ollama)
   - [Estructura del proyecto](#estructura-del-proyecto)
   - [Stack tecnológico](#stack-tecnológico)
+  - [Quick Start](#quick-start)
+  - [Notas Importantes](#notas-importantes)
 
 ---
 
@@ -310,7 +312,7 @@ El parámetro `aiReport=true` activa la generación del análisis IA. El proceso
 
 #### Prompts especializados
 
-Los prompts están centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`:
+Los prompts están centralizados en `SecOpsConfig.json` y se accede a través de `CR`:
 
 | Escáner | Sistema de prompts |
 |---|---|
@@ -447,7 +449,7 @@ Devuelve el ficheгro `.md` como descarga (`Content-Type: text/markdown`). El cu
 
 #### Arquitectura de IA en Aegis
 
-Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`. El sistema prompt incluye generación exclusiva en JSON válido, intro extensiva (mínimo 1500 caracteres), subtítulo creativo y original, y tips accionables con enlaces verificados.
+Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se accede a través de `CR`. El sistema prompt incluye generación exclusiva en JSON válido, intro extensiva (mínimo 1500 caracteres), subtítulo creativo y original, y tips accionables con enlaces verificados.
 
 ---
 
@@ -545,7 +547,7 @@ El directorio `API/docker/` contiene los archivos Docker Compose para levantar l
 
 | Servicio | Puerto | Descripción |
 |---|---|---|
-| **PostgreSQL** | 5432 | Base de datos principal |
+| **PostgreSQL** | 15432 | Base de datos principal |
 | **OpenVAS/GVM** | 9390 | Escáner de vulnerabilidades (API Greenbone) |
 | **Ollama** | 11434 | IA local para Sentinel y Aegis |
 

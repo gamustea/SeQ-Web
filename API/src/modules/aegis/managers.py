@@ -21,8 +21,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import src.modules.system.config_reading as CR
 from src.modules.users import User
-from src.modules.misc import ConfigReader, SecOpsLogger, DirectoryType
+from src.modules.system.logging import SecOpsLogger
 from src.modules.shared import BaseManager
 from sqlalchemy.orm import Session
 
@@ -329,12 +330,12 @@ class AegisManager(BaseManager):
             raise RuntimeError(f"Error persistiendo alertas: {exc}")
 
     def _read_cfg(self) -> dict:
-        stack_dir = Path(ConfigReader.get_directory_of(DirectoryType.STACK_AEGIS))
-        output_dir = Path(ConfigReader.get_directory_of(DirectoryType.OUTPUT_AEGIS))
+        stack_dir = Path(CR.get_directory_of(CR.DirectoryType.STACK_AEGIS))
+        output_dir = Path(CR.get_directory_of(CR.DirectoryType.OUTPUT_AEGIS))
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        ollama_host, ollama_model = ConfigReader.get_ollama_config()
-        aegis = ConfigReader.get_aegis_config() or {}
+        ollama_host, ollama_model = CR.get_ollama_config()
+        aegis = CR.get_aegis_config() or {}
 
         return {
             "enabled":          bool(aegis.get("enabled", True)),

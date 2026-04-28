@@ -32,7 +32,8 @@ from urllib.parse import urlparse
 import ollama
 from ddgs import DDGS
 
-from src.modules.misc import ConfigReader, SecOpsLogger
+import src.modules.system.config_reading as CR
+from src.modules.system.logging import SecOpsLogger
 from src.modules.shared import AIWriter
 from src.modules.exceptions import (
     CircuitBreakerOpenError,
@@ -256,9 +257,9 @@ def retry_on_failure(max_retries: int = MAX_RETRIES, exceptions: tuple = (Except
 
 def circuit_breaker(threshold: int = 5, timeout: int = 60):
     """Circuit breaker simple para llamadas a servicios externos."""
-    failures         = 0
-    last_failure_time = None
-    lock             = threading.Lock()
+    failures            = 0
+    last_failure_time   = None
+    lock                = threading.Lock()
 
     def decorator(func):
         @wraps(func)
@@ -335,9 +336,9 @@ class AegisAlertFetcher:
 
     def __init__(self, logger: SecOpsLogger, fallback_brands: list[str] | None = None) -> None:
         self.logger               = logger
-        self._max_alert_age_years = ConfigReader.get_aegis_vulnerabilities_antiquity()
+        self._max_alert_age_years = CR.get_aegis_vulnerabilities_antiquity()
 
-        brand_catalogue           = ConfigReader.get_aegis_brands()
+        brand_catalogue           = CR.get_aegis_brands()
         self._brand_slugs: dict[str, tuple[str, str]] = {
             b["label"]: (b["circl_vendor"], b["circl_product"])
             for b in brand_catalogue
@@ -666,7 +667,7 @@ class AegisAIWriter(AIWriter):
     # ── Prompts ───────────────────────────────────────────────────────────────
 
     def _build_system_prompt(self) -> str:
-        prompts = ConfigReader.get_aegis_prompts()
+        prompts = CR.get_aegis_prompts()
         return prompts.get("system", "")
 
     def _build_user_prompt(
@@ -677,7 +678,7 @@ class AegisAIWriter(AIWriter):
         tweaks:             dict[str, Any],
         verified_resources: str,
     ) -> str:
-        prompts = ConfigReader.get_aegis_prompts()
+        prompts = CR.get_aegis_prompts()
         user_template = prompts.get("userTemplate", "")
         
         company  = tweaks.get("company", "la empresa")
@@ -711,7 +712,7 @@ class AegisAIWriter(AIWriter):
             "topic_id": str(topic.id) if topic else str(topic_id),
             "focus": focus,
             "verified_resources": verified_resources[:2000],
-            "tips_amount": str(ConfigReader.get_aegis_tips_amount()),
+            "tips_amount": str(CR.get_aegis_tips_amount()),
         }
         
         result = user_template
@@ -789,7 +790,6 @@ class AegisAIWriter(AIWriter):
                     },
                 )
 
-                # Resolución de tool calls
                 if getattr(resp.message, "tool_calls", None):
                     self.logger.info(f"Tool calls: {len(resp.message.tool_calls)}")
                     messages.append({
@@ -820,9 +820,7 @@ class AegisAIWriter(AIWriter):
                 time.sleep(RETRY_DELAY_BASE ** attempt)
 
         data = self._parse_response(raw_response)
-
-        tips_amount = ConfigReader.get_aegis_tips_amount()
-
+        tips_amount = CR.get_aegis_tips_amount()
         raw_subtitle = str(data.get("subtitle", "")).strip()
         
         if not raw_subtitle or raw_subtitle.lower() == topic_title.lower():

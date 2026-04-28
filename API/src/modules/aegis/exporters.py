@@ -25,7 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 from src.modules.exceptions import (
     ExporterError,
     ExporterFormatError,
@@ -33,6 +33,23 @@ from src.modules.exceptions import (
 )
 
 _logger = SecOpsLogger(name="AegisExporters").get_logger()
+
+def get_exporter_for_format(format_type: ExportFormat | str) -> AegisExporter:
+    """Devuelve el exportador adecuado para el formato solicitado."""
+    if isinstance(format_type, str):
+        format_type = ExportFormat(format_type.lower())
+
+    exporters: dict[ExportFormat, type[AegisExporter]] = {
+        ExportFormat.MARKDOWN: MarkdownExporter,
+        ExportFormat.JSON:     JsonExporter,
+        ExportFormat.HTML:     HTMLExporter,
+    }
+
+    exporter_class = exporters.get(format_type)
+    if not exporter_class:
+        raise ExporterFormatError(format_type.value if hasattr(format_type, 'value') else format_type)
+
+    return exporter_class()
 
 
 class ExportFormat(str, Enum):
@@ -549,20 +566,3 @@ class JsonExporter(AegisExporter):
             "alerts":       data.alerts,
         }
 
-
-def get_exporter_for_format(format_type: ExportFormat | str) -> AegisExporter:
-    """Devuelve el exportador adecuado para el formato solicitado."""
-    if isinstance(format_type, str):
-        format_type = ExportFormat(format_type.lower())
-
-    exporters: dict[ExportFormat, type[AegisExporter]] = {
-        ExportFormat.MARKDOWN: MarkdownExporter,
-        ExportFormat.JSON:     JsonExporter,
-        ExportFormat.HTML:     HTMLExporter,
-    }
-
-    exporter_class = exporters.get(format_type)
-    if not exporter_class:
-        raise ExporterFormatError(format_type.value if hasattr(format_type, 'value') else format_type)
-
-    return exporter_class()

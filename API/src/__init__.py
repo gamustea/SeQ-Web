@@ -1,23 +1,9 @@
 """
 src - Aliases para backwards compatibility
-
-Permite que los imports antiguos funcionen:
-- from src.core.model import X  -> from src.modules.shared import X (partial)
-- from src.misc import X     -> from src.modules.misc import X
-- from src.logic.managers import X -> from src.modules.shared import X
 """
 
 # Re-exportar desde las nuevas ubicaciones
 from src.modules.shared import Base, Document, BaseManager, AIWriter
-from src.modules.misc import (
-    ConfigReader,
-    SecOpsLogger,
-    IPValidator,
-    PortValidator,
-    normalize_target,
-    DirectoryType,
-    SentinelTool,
-)
 from src.modules.sentinel import NmapScanManager, NiktoScanManager, OpenVASScanManager
 
 # Lazy imports for user managers to avoid circular import
@@ -42,13 +28,9 @@ __all__ = [
     'Document', 
     'BaseManager',
     'AIWriter',
-    'ConfigReader',
+    'CR',
     'SecOpsLogger',
-    'IPValidator',
-    'PortValidator',
     'normalize_target',
-    'DirectoryType',
-    'SentinelTool',
     'UserManager',
     'OAuthTokenManager',
     'NmapScanManager',

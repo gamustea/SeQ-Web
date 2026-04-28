@@ -97,9 +97,10 @@ from src.modules.exceptions import (
     ValidationError,
     create_error_response,
 )
-from src.modules.misc import IPValidator, PortValidator, SecOpsLogger
+
 from src.modules.sentinel import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
-from src.modules.shared import limiter, get_current_user_id, get_current_username
+from src.modules.shared import limiter, get_current_user_id, get_current_username, normalize_target
+from src.modules.system import SecOpsLogger
 
 from .managers import NmapScanManager, NiktoScanManager, OpenVASScanManager
 
@@ -107,10 +108,14 @@ from .managers import NmapScanManager, NiktoScanManager, OpenVASScanManager
 sentinel_bp = Blueprint("sentinel", __name__)
 _logger     = SecOpsLogger("sentinel").get_logger()
 
+
 CANCELLABLE_STATES    = frozenset({"pending", "running"})
 VALID_SCAN_TYPES      = frozenset({"nmap", "nikto", "openvas", "all"})
 VALID_OPENVAS_CONFIGS = frozenset({"full_fast", "full_deep", "full_ultimate"})
 MAX_PDF_SIZE_BYTES    = 50 * 1024 * 1024
+MAX_HOSTS_TO_EXPAND = 256
+
+
 
 def resolve_manager(
     scan_type: str,
@@ -125,6 +130,7 @@ def resolve_manager(
     if scan_type == "nikto":
         return nikto_manager
     return openvas_manager
+
 
 def verify_scan_ownership(
     scan: Scan, 
@@ -141,6 +147,7 @@ def verify_scan_ownership(
             f"(propietario: {scan.user_id})"
         )
         raise ScanNotFoundError(scan_id)
+
 
 def get_scan_by_id_for_user(
     scan_id: int,
@@ -160,6 +167,7 @@ def get_scan_by_id_for_user(
     verify_scan_ownership(scan, uid, scan_id)
     return scan, scan.scan_type
 
+
 def build_pdf_creator(scan: Scan) -> PDFCreator:
     """Construye el PDFCreator con la estrategia correcta según el tipo de escaneo."""
     scan_type = getattr(scan, "scan_type", "").lower()
@@ -178,6 +186,552 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
         )
 
     return PDFCreator(strategy)
+
+
+def _require_json() -> dict:
+    """Extrae y valida el cuerpo de la petición como JSON.
+
+    Returns:
+        dict: Datos JSON parseados.
+
+    Raises:
+        400: Si el Content-Type no es application/json o el JSON es inválido.
+    """
+    if not request.is_json:
+        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
+    return data
+
+
+def _require_str(data: dict, field: str) -> str:
+    """Extrae un campo obligatorio del JSON y lo valida como string no vacío.
+
+    Args:
+        data: Diccionario con los datos del request.
+        field: Nombre del campo a extraer.
+
+    Returns:
+        str: El valor del campo, triminado de espacios.
+
+    Raises:
+        MissingParameterError: Si el campo falta o está vacío.
+    """
+    value = data.get(field)
+    if not value or not str(value).strip():
+        raise MissingParameterError(field)
+    return str(value).strip()
+
+
+def _parse_scan_id_from_args() -> int:
+    """Extrae el parámetro 'id' de la query string como entero.
+
+    Returns:
+        int: El ID del escaneo.
+
+    Raises:
+        MissingParameterError: Si el parámetro 'id' no existe.
+        ValidationError: Si el valor no es un entero válido.
+    """
+    raw = request.args.get("id")
+    if not raw:
+        raise MissingParameterError("id")
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValidationError(field="id", message="El ID debe ser un número entero", value=raw)
+
+
+def _ts(dt) -> str:
+    """Convierte un objeto datetime a string ISO 8601.
+
+    Args:
+        dt: Objeto datetime o string.
+
+    Returns:
+        str: Representación ISO del datetime.
+    """
+    return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
+
+
+def _format_nmap_scans(scans: list, manager=None) -> list:
+    """Formatea una lista de escaneos Nmap para la respuesta JSON.
+
+    Args:
+        scans: Lista de objetos NmapScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
+
+    Returns:
+        list: Lista de diccionarios con los datos del escaneo en formato JSON.
+
+    Estructura del resultado:
+        {
+            "id": int,
+            "scanType": "nmap",
+            "target": str,
+            "status": str,
+            "startedAt": str (ISO 8601),
+            "openPorts": [
+                {"port": "80/tcp", "reason": "syn-ack", "product": "Apache", "version": "2.4"}
+            ],
+            "totalOpenPorts": int,
+            "documentId": int (optional)
+        }
+    """
+    results = []
+    for s in scans:
+        entry = {
+            "id":             s.id,
+            "scanType":       "nmap",
+            "target":         s.target,
+            "status":         getattr(s, "status", "unknown"),
+            "startedAt":      _ts(s.started_at),
+            "finishedAt":    _ts(s.finished_at),
+            "openPorts":      [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason} for p in s.open_ports_relation],
+            "totalOpenPorts": len(s.open_ports_relation),
+        }
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results
+
+
+def _format_nikto_scans(scans: list, manager=None) -> list:
+    """Formatea una lista de escaneos Nikto para la respuesta JSON.
+
+    Args:
+        scans: Lista de objetos NiktoScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
+
+    Returns:
+        list: Lista de diccionarios con los datos del escaneo en formato JSON.
+
+    Estructura del resultado:
+        {
+            "id": int,
+            "scanType": "nikto",
+            "target": str,
+            "status": str,
+            "startedAt": str (ISO 8601),
+            "incidents": [
+                {
+                    "osvdbId": int,
+                    "method": "GET",
+                    "url": "/admin",
+                    "description": str,
+                    "severity": "MEDIUM",
+                    "discoveredAt": str (ISO 8601)
+                }
+            ],
+            "totalIncidents": int,
+            "documentId": int (optional)
+        }
+    """
+    results = []
+    for s in scans:
+        entry = {
+            "id":             s.id,
+            "scanType":       "nikto",
+            "target":         s.target,
+            "status":         getattr(s, "status", "unknown"),
+            "startedAt":      _ts(s.started_at),
+            "finishedAt":    _ts(s.finished_at),
+            "incidents":      [
+                {
+                    "osvdbId":     i.osvdb_id,
+                    "method":      i.method,
+                    "url":         i.url,
+                    "description": i.description,
+                    "severity":    getattr(i, "severity", "UNKNOWN"),
+                    "discoveredAt": _ts(i.discovered_at),
+                }
+                for i in s.incidents
+            ],
+            "totalIncidents": len(s.incidents),
+        }
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results
+
+
+def _format_openvas_scans(scans: list, manager=None) -> list:
+    """Formatea una lista de escaneos OpenVAS para la respuesta JSON.
+
+    Args:
+        scans: Lista de objetos OpenVASScan de la base de datos.
+        manager: (opcional) Manager para obtener documentos.
+
+    Returns:
+        list: Lista de diccionarios con los datos del escaneo en formato JSON.
+
+    Estructura del resultado:
+        {
+            "id": int,
+            "scanType": "openvas",
+            "target": str,
+            "taskId": str,
+            "reportId": str,
+            "status": str,
+            "startedAt": str (ISO 8601),
+            "vulnerabilities": [...],
+            "totalVulnerabilities": int,
+            "criticalCount": int,
+            "highCount": int,
+            "documentId": int (optional)
+        }
+    """
+    results = []
+    for s in scans:
+        entry = {
+            "id":                   s.id,
+            "scanType":             "openvas",
+            "target":               s.target,
+            "taskId":               s.task_id,
+            "reportId":             s.report_id,
+            "status":               getattr(s, "status", "unknown"),
+            "startedAt":            _ts(s.started_at),
+            "finishedAt":          _ts(s.finished_at),
+            "vulnerabilities":      [
+                {
+                    "nvtOid":        r.vulnerability.nvt_oid,
+                    "name":          r.vulnerability.name,
+                    "severityScore": r.vulnerability.severity_score,
+                    "severityClass": r.vulnerability.severity_class,
+                    "cvssBaseScore": r.vulnerability.cvss_base_score,
+                    "cvssVector":    r.vulnerability.cvss_vector,
+                    "cveIds":        r.vulnerability.cve_ids,
+                    "description":   r.vulnerability.description,
+                    "solution":      r.vulnerability.solution,
+                    "solutionType":  r.vulnerability.solution_type,
+                    "affectedSoftware": r.vulnerability.affected_software,
+                    "hostIp":        r.host.ip_address if r.host else None,
+                    "hostName":      r.host.hostname   if r.host else None,
+                }
+                for r in s.results
+            ],
+            "totalVulnerabilities": len(s.results),
+            "criticalCount":        sum(1 for r in s.results if r.vulnerability.severity_class == "Critical"),
+            "highCount":            sum(1 for r in s.results if r.vulnerability.severity_class == "High"),
+        }
+
+        if manager:
+            doc = manager.get_latest_document_by_scan_id(s.id)
+            if doc:
+                entry["documentId"] = doc.id
+                entry["documentStatus"] = doc.status
+
+        results.append(entry)
+
+    return results
+
+
+def _expand_octal(rango_str):
+    """
+    Expande un rango de octetos al estilo Nmap.
+    Ejemplos:
+    - "192.168.1.1-10" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.1.10"]
+    - "192.168.1-2.1-5" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.2.5"]
+    - "192.168.1.*" -> ["192.168.1.0", "192.168.1.1", ..., "192.168.1.255"]
+    """
+
+    # Reemplazar wildcards por rangos completos
+    rango_str = rango_str.replace("*", "0-255")
+
+    # Dividir por puntos
+    octetos = rango_str.split(".")
+
+    if len(octetos) != 4:
+        return None
+
+    # Procesar cada octeto
+    rangos_octetos = []
+
+    for octeto in octetos:
+        if "-" in octeto:
+            # Es un rango: "1-10"
+            partes = octeto.split("-")
+            if len(partes) != 2:
+                return None
+
+            try:
+                inicio = int(partes[0])
+                fin = int(partes[1])
+            except ValueError:
+                return None
+
+            # Validar rango de octeto (0-255)
+            if inicio < 0 or inicio > 255 or fin < 0 or fin > 255:
+                return None
+
+            if inicio > fin:
+                return None
+
+            rangos_octetos.append(range(inicio, fin + 1))
+        else:
+            # Es un nÃºmero fijo
+            try:
+                valor = int(octeto)
+            except ValueError:
+                return None
+
+            if valor < 0 or valor > 255:
+                return None
+
+            rangos_octetos.append([valor])
+
+    # Generar todas las combinaciones
+    lista_ips = []
+    for combinacion in itertools.product(*rangos_octetos):
+        ip_str = ".".join(map(str, combinacion))
+        # Validar que sea una IP vÃ¡lida
+        try:
+            ipaddress.ip_address(ip_str)
+            lista_ips.append(ip_str)
+        except ValueError:
+            continue
+
+    return lista_ips if lista_ips else None
+
+
+def validate_ip(ips_str: str) -> tuple[bool, List[str], str]:
+        """
+        Valida que una cadena de IPs sea válida para Nmap y devuelve la lista expandida.
+
+        Formatos soportados:
+        - IP individual: "192.168.1.1"
+        - CIDR: "192.168.1.0/24"
+        - Rangos por octeto: "192.168.1.1-10" o "192.168.1-2.1-10"
+        - Lista separada por comas: "192.168.1.1,192.168.1.5"
+        - Wildcards: "192.168.1.*" (equivalente a 192.168.1.0-255)
+
+        Args:
+            ips_str (str): String con especificación de IPs
+
+        Returns:
+            tuple: (bool, list, str) - (es_válido, lista_ips, mensaje)
+        """
+
+        if not ips_str or not isinstance(ips_str, str):
+            return False, [], "El parámetro debe ser una cadena no vacía"
+
+        ips_str = ips_str.strip()
+
+        if not ips_str:
+            return False, [], "La cadena de IPs está vacía"
+
+        segmentos = [s.strip() for s in ips_str.split(",")]
+        lista_ips = []
+        for segmento in segmentos:
+            if not segmento:
+                return False, [], "Segmento vacío encontrado"
+
+            if "/" in segmento:
+                try:
+                    red = ipaddress.ip_network(segmento, strict=False)
+                    num_hosts = red.num_addresses - 2 if red.num_addresses > 2 else red.num_addresses
+                    
+                    if num_hosts > MAX_HOSTS_TO_EXPAND:
+                        lista_ips.append(segmento)
+                    else:
+                        lista_ips.extend([str(ip) for ip in red.hosts()])
+                        if not lista_ips or red.prefixlen >= 31:
+                            lista_ips.extend([str(ip) for ip in red])
+                except ValueError as e:
+                    return False, [], f"Notación CIDR inválida '{segmento}': {str(e)}"
+
+            elif "-" in segmento:
+                try:
+                    ips_expandidas = _expand_octal(segmento)
+                    if ips_expandidas is None:
+                        return False, [], f"Formato de rango inválido: '{segmento}'"
+                    if len(ips_expandidas) > MAX_HOSTS_TO_EXPAND:
+                        lista_ips.append(segmento)
+                    else:
+                        lista_ips.extend(ips_expandidas)
+                except Exception as e:
+                    return False, [], f"Error al procesar rango '{segmento}': {str(e)}"
+
+            else:
+                try:
+                    ip = ipaddress.ip_address(segmento)
+                    lista_ips.append(str(ip))
+                except ValueError:
+                    return False, [], f"Dirección IP inválida: '{segmento}'"
+
+        if not lista_ips:
+            return False, [], "No se generaron IPs válidas"
+
+        lista_ips_unicas = list(dict.fromkeys(lista_ips))
+
+        return (
+            True,
+            lista_ips_unicas,
+            f"Especificación válida con {len(lista_ips_unicas)} IPs",
+        )
+
+
+def validate_port(ports_str: str):
+        """
+        Valida que una cadena de puertos sea válida para Nmap y devuelve la lista expandida.
+
+        Reglas de validación:
+        - Puertos en rango 1-65535
+        - Puertos y rangos en orden ascendente
+        - Rangos válidos (inicio < fin)
+        - No solapamiento de rangos
+        - Formato: "80", "80,443", "1-1000", "80,443-8080,9000"
+
+        Args:
+            ports_str (str): String con especificación de puertos
+
+        Returns:
+            tuple: (bool, list, str) - (es_válido, lista_puertos, mensaje)
+        """
+        if not ports_str or not isinstance(ports_str, str):
+            return False, [], "El parÃ¡metro debe ser una cadena no vacÃ­a"
+
+        ports_str = ports_str.strip()
+
+        if not ports_str:
+            return False, [], "La cadena de puertos está vací­a"
+
+        segmentos = ports_str.split(",")
+        ultimo_puerto = 0
+        lista_puertos = []  # Lista expandida de todos los puertos
+
+        for i, segmento in enumerate(segmentos):
+            segmento = segmento.strip()
+
+            if not segmento:
+                return False, [], f"Segmento vací­o encontrado en la posición {i+1}"
+
+            if "-" in segmento:
+                partes = segmento.split("-")
+
+                # Rango desde 1: "-1000"
+                if segmento.startswith("-"):
+                    if len(partes) != 2 or partes[0] != "":
+                        return False, [], f"Formato de rango incorrecto: '{segmento}'"
+
+                    try:
+                        fin = int(partes[1])
+                    except ValueError:
+                        return False, [], f"Puerto de fin no vÃ¡lido en rango: '{segmento}'"
+
+                    if fin < 1 or fin > 65535:
+                        return False, [], f"Puerto de fin fuera de rango (1-65535): {fin}"
+
+                    inicio = 1
+
+                # Rango hasta 65535: "1000-"
+                elif segmento.endswith("-"):
+                    if len(partes) != 2 or partes[1] != "":
+                        return False, [], f"Formato de rango incorrecto: '{segmento}'"
+
+                    try:
+                        inicio = int(partes[0])
+                    except ValueError:
+                        return (
+                            False,
+                            [],
+                            f"Puerto de inicio no vÃ¡lido en rango: '{segmento}'",
+                        )
+
+                    if inicio < 1 or inicio > 65535:
+                        return (
+                            False,
+                            [],
+                            f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                        )
+
+                    fin = 65535
+
+                # Rango normal: "80-443"
+                else:
+                    if len(partes) != 2:
+                        return (
+                            False,
+                            [],
+                            f"Formato de rango incorrecto (demasiados guiones): '{segmento}'",
+                        )
+
+                    try:
+                        inicio = int(partes[0])
+                        fin = int(partes[1])
+                    except ValueError:
+                        return False, [], f"Puertos no numÃ©ricos en rango: '{segmento}'"
+
+                    if inicio < 1 or inicio > 65535:
+                        return (
+                            False,
+                            [],
+                            f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                        )
+
+                    if fin < 1 or fin > 65535:
+                        return False, [], f"Puerto de fin fuera de rango (1-65535): {fin}"
+
+                    if inicio >= fin:
+                        return (
+                            False,
+                            [],
+                            f"Rango invÃ¡lido: el inicio ({inicio}) debe ser menor que el fin ({fin})",
+                        )
+
+                if inicio <= ultimo_puerto:
+                    return (
+                        False,
+                        [],
+                        f"Los puertos no estÃ¡n en orden ascendente: {inicio} aparece despuÃ©s de {ultimo_puerto}",
+                    )
+
+                # Expandir el rango y aÃ±adir a la lista
+                lista_puertos.extend(range(inicio, fin + 1))
+                ultimo_puerto = fin
+
+            else:
+                # Puerto individual
+                try:
+                    puerto = int(segmento)
+                except ValueError:
+                    return False, [], f"Puerto no numÃ©rico: '{segmento}'"
+
+                if puerto < 1 or puerto > 65535:
+                    return False, [], f"Puerto fuera de rango (1-65535): {puerto}"
+
+                if puerto <= ultimo_puerto:
+                    return (
+                        False,
+                        [],
+                        f"Los puertos no estÃ¡n en orden ascendente: {puerto} aparece despuÃ©s de {ultimo_puerto}",
+                    )
+
+                # AÃ±adir puerto individual a la lista
+                lista_puertos.append(puerto)
+                ultimo_puerto = puerto
+
+        return (
+            True,
+            lista_puertos,
+            f"EspecificaciÃ³n vÃ¡lida con {len(lista_puertos)} puertos",
+        )
+
+
+
 
 @contextmanager
 def get_user_managers(user_id: int):
@@ -298,11 +852,11 @@ def start_nmap_scan():
     try:
         uid = get_current_user_id()
         with get_user_managers(uid) as (nmap_manager, _, _):
-            valid, hosts, msg = IPValidator.validate(host)
+            valid, hosts, msg = validate_ip(host)
             if not valid:
                 raise ValidationError(field="target", message=msg, value=host)
 
-            valid, _, msg = PortValidator.validate(ports)
+            valid, _, msg = validate_port(ports)
             if not valid:
                 raise ValidationError(field="ports", message=msg, value=ports)
 
@@ -328,6 +882,7 @@ def start_nmap_scan():
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
+
 
 @sentinel_bp.post("/nikto")
 @require_oauth_token
@@ -388,7 +943,7 @@ def start_openvas_scan():
         if scan_config not in VALID_OPENVAS_CONFIGS:
             raise ValidationError(field="scanConfig", message="Configuración inválida", value=scan_config, expected=", ".join(sorted(VALID_OPENVAS_CONFIGS)))
 
-        valid, hosts, msg = IPValidator.validate(target)
+        valid, hosts, msg = validate_ip(target)
         if not valid:
             raise ValidationError(field="target", message=msg, value=target)
         if len(hosts) > 1:
@@ -400,7 +955,6 @@ def start_openvas_scan():
             try:
                 ipaddress.ip_address(target_ip)
             except ValueError:
-                from src.modules.misc import normalize_target
                 _, target_ip = normalize_target(target_ip)
             
             scan_id = openvas_manager.run_scan(target_ip, scan_config=scan_config, skip_normalize=True)
@@ -1010,254 +1564,3 @@ def delete_scan(scan_id: int):
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
 
-
-
-
-
-
-def _require_json() -> dict:
-    """Extrae y valida el cuerpo de la petición como JSON.
-
-    Returns:
-        dict: Datos JSON parseados.
-
-    Raises:
-        400: Si el Content-Type no es application/json o el JSON es inválido.
-    """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
-
-
-def _require_str(data: dict, field: str) -> str:
-    """Extrae un campo obligatorio del JSON y lo valida como string no vacío.
-
-    Args:
-        data: Diccionario con los datos del request.
-        field: Nombre del campo a extraer.
-
-    Returns:
-        str: El valor del campo, triminado de espacios.
-
-    Raises:
-        MissingParameterError: Si el campo falta o está vacío.
-    """
-    value = data.get(field)
-    if not value or not str(value).strip():
-        raise MissingParameterError(field)
-    return str(value).strip()
-
-
-def _parse_scan_id_from_args() -> int:
-    """Extrae el parámetro 'id' de la query string como entero.
-
-    Returns:
-        int: El ID del escaneo.
-
-    Raises:
-        MissingParameterError: Si el parámetro 'id' no existe.
-        ValidationError: Si el valor no es un entero válido.
-    """
-    raw = request.args.get("id")
-    if not raw:
-        raise MissingParameterError("id")
-    try:
-        return int(raw)
-    except ValueError:
-        raise ValidationError(field="id", message="El ID debe ser un número entero", value=raw)
-
-
-def _ts(dt) -> str:
-    """Convierte un objeto datetime a string ISO 8601.
-
-    Args:
-        dt: Objeto datetime o string.
-
-    Returns:
-        str: Representación ISO del datetime.
-    """
-    return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
-
-
-def _format_nmap_scans(scans: list, manager=None) -> list:
-    """Formatea una lista de escaneos Nmap para la respuesta JSON.
-
-    Args:
-        scans: Lista de objetos NmapScan de la base de datos.
-        manager: (opcional) Manager para obtener documentos.
-
-    Returns:
-        list: Lista de diccionarios con los datos del escaneo en formato JSON.
-
-    Estructura del resultado:
-        {
-            "id": int,
-            "scanType": "nmap",
-            "target": str,
-            "status": str,
-            "startedAt": str (ISO 8601),
-            "openPorts": [
-                {"port": "80/tcp", "reason": "syn-ack", "product": "Apache", "version": "2.4"}
-            ],
-            "totalOpenPorts": int,
-            "documentId": int (optional)
-        }
-    """
-    results = []
-    for s in scans:
-        entry = {
-            "id":             s.id,
-            "scanType":       "nmap",
-            "target":         s.target,
-            "status":         getattr(s, "status", "unknown"),
-            "startedAt":      _ts(s.started_at),
-            "openPorts":      [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason} for p in s.open_ports_relation],
-            "totalOpenPorts": len(s.open_ports_relation),
-        }
-
-        if manager:
-            doc = manager.get_latest_document_by_scan_id(s.id)
-            if doc:
-                entry["documentId"] = doc.id
-                entry["documentStatus"] = doc.status
-
-        results.append(entry)
-
-    return results
-
-
-def _format_nikto_scans(scans: list, manager=None) -> list:
-    """Formatea una lista de escaneos Nikto para la respuesta JSON.
-
-    Args:
-        scans: Lista de objetos NiktoScan de la base de datos.
-        manager: (opcional) Manager para obtener documentos.
-
-    Returns:
-        list: Lista de diccionarios con los datos del escaneo en formato JSON.
-
-    Estructura del resultado:
-        {
-            "id": int,
-            "scanType": "nikto",
-            "target": str,
-            "status": str,
-            "startedAt": str (ISO 8601),
-            "incidents": [
-                {
-                    "osvdbId": int,
-                    "method": "GET",
-                    "url": "/admin",
-                    "description": str,
-                    "severity": "MEDIUM",
-                    "discoveredAt": str (ISO 8601)
-                }
-            ],
-            "totalIncidents": int,
-            "documentId": int (optional)
-        }
-    """
-    results = []
-    for s in scans:
-        entry = {
-            "id":             s.id,
-            "scanType":       "nikto",
-            "target":         s.target,
-            "status":         getattr(s, "status", "unknown"),
-            "startedAt":      _ts(s.started_at),
-            "incidents":      [
-                {
-                    "osvdbId":     i.osvdb_id,
-                    "method":      i.method,
-                    "url":         i.url,
-                    "description": i.description,
-                    "severity":    getattr(i, "severity", "UNKNOWN"),
-                    "discoveredAt": _ts(i.discovered_at),
-                }
-                for i in s.incidents
-            ],
-            "totalIncidents": len(s.incidents),
-        }
-
-        if manager:
-            doc = manager.get_latest_document_by_scan_id(s.id)
-            if doc:
-                entry["documentId"] = doc.id
-                entry["documentStatus"] = doc.status
-
-        results.append(entry)
-
-    return results
-
-
-def _format_openvas_scans(scans: list, manager=None) -> list:
-    """Formatea una lista de escaneos OpenVAS para la respuesta JSON.
-
-    Args:
-        scans: Lista de objetos OpenVASScan de la base de datos.
-        manager: (opcional) Manager para obtener documentos.
-
-    Returns:
-        list: Lista de diccionarios con los datos del escaneo en formato JSON.
-
-    Estructura del resultado:
-        {
-            "id": int,
-            "scanType": "openvas",
-            "target": str,
-            "taskId": str,
-            "reportId": str,
-            "status": str,
-            "startedAt": str (ISO 8601),
-            "vulnerabilities": [...],
-            "totalVulnerabilities": int,
-            "criticalCount": int,
-            "highCount": int,
-            "documentId": int (optional)
-        }
-    """
-    results = []
-    for s in scans:
-        entry = {
-            "id":                   s.id,
-            "scanType":             "openvas",
-            "target":               s.target,
-            "taskId":               s.task_id,
-            "reportId":             s.report_id,
-            "status":               getattr(s, "status", "unknown"),
-            "startedAt":            _ts(s.started_at),
-            "vulnerabilities":      [
-                {
-                    "nvtOid":        r.vulnerability.nvt_oid,
-                    "name":          r.vulnerability.name,
-                    "severityScore": r.vulnerability.severity_score,
-                    "severityClass": r.vulnerability.severity_class,
-                    "cvssBaseScore": r.vulnerability.cvss_base_score,
-                    "cvssVector":    r.vulnerability.cvss_vector,
-                    "cveIds":        r.vulnerability.cve_ids,
-                    "description":   r.vulnerability.description,
-                    "solution":      r.vulnerability.solution,
-                    "solutionType":  r.vulnerability.solution_type,
-                    "affectedSoftware": r.vulnerability.affected_software,
-                    "hostIp":        r.host.ip_address if r.host else None,
-                    "hostName":      r.host.hostname   if r.host else None,
-                }
-                for r in s.results
-            ],
-            "totalVulnerabilities": len(s.results),
-            "criticalCount":        sum(1 for r in s.results if r.vulnerability.severity_class == "Critical"),
-            "highCount":            sum(1 for r in s.results if r.vulnerability.severity_class == "High"),
-        }
-
-        if manager:
-            doc = manager.get_latest_document_by_scan_id(s.id)
-            if doc:
-                entry["documentId"] = doc.id
-                entry["documentStatus"] = doc.status
-
-        results.append(entry)
-
-    return results
