@@ -24,7 +24,7 @@ from typing import Any, Optional
 import ollama
 from ollama import ChatResponse
 
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 
 class AIWriter(ABC):
     """

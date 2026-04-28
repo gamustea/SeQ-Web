@@ -4,10 +4,10 @@ Módulo de gestión de configuración de SecOps.
 Proporciona endpoints para leer y escribir SecOpsConfig.json.
 """
 
-from .endpoints import system_bp
-from .managers import ConfigManager
+from .logging import SecOpsLogger
+from .platform import PlatformDetector
 
 __all__ = [
-    "system_bp",
-    "ConfigManager",
+    "SecOpsLogger",
+    "PlatformDetector"
 ]

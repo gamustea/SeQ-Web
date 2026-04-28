@@ -33,7 +33,7 @@ import ollama
 from ddgs import DDGS
 
 import src.modules.system.config_reading as CR
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 from src.modules.shared import AIWriter
 from src.modules.exceptions import (
     CircuitBreakerOpenError,

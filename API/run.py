@@ -24,7 +24,7 @@ from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
 
 from src.modules.shared import BaseManager, Base, Document, limiter
-from src.modules.misc import SecOpsLogger, CR
+from src.modules.system.logging import SecOpsLogger
 from src.modules.users import (
     AccessToken, 
     User, 
@@ -35,9 +35,10 @@ from src.modules.users import (
 from src.modules.sentinel import sentinel_bp
 from src.modules.acheron import acheron_bp
 from src.modules.aegis import aegis_bp
-from src.modules.system import system_bp
+from src.modules.system.endpoints import system_bp
 from src.modules.pages import pages_bp
 
+import src.modules.system.config_reading as CR
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 

@@ -65,7 +65,7 @@ class BaseManager:
             self.session = SESSION_FACTORY()
             self._owns_session = True
 
-        from src.modules.misc import SecOpsLogger
+        from src.modules.system.logging import SecOpsLogger
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
 

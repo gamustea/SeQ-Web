@@ -94,7 +94,7 @@ from src.modules.exceptions import (
     create_error_response,
 )
 from src.modules.shared import limiter, get_current_user_id, get_current_username
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, get_user_manager
 
 from .managers import AegisManager

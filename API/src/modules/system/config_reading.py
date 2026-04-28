@@ -6,9 +6,13 @@ Carga lazy (solo al primer acceso) desde SecOpsConfig.json o variables de entorn
 
 import json
 import os
+
+from enum import Enum
 from functools import wraps
 from pathlib import Path
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # =============================================================================
 # ESTADO DEL MÓDULO
@@ -17,6 +21,20 @@ from pathlib import Path
 _configs: dict | None = None
 _configs_path: Path | None = None
 
+# =============================================================================
+# ENUMERACIONES ÚTILES
+# =============================================================================
+
+class DirectoryType(Enum):
+    """Enumeración de tipos de directorios disponibles"""
+    TEMP            = "tempdir"
+    LOG             = "logdir"
+    RESOURCE        = "resourcedir"
+    
+    STACK_AEGIS     = "aegis.stack"
+    OUTPUT_AEGIS    = "aegis.output"
+    
+    OUTPUT_SENTINEL = "sentinel.output"
 
 # =============================================================================
 # DECORADOR LAZY LOAD
@@ -147,6 +165,13 @@ def get_db_credentials() -> dict:
 # CONFIGURACIÓN DE DIRECTORIOS
 # =============================================================================
 
+def verify_directory(directory: DirectoryType) -> Path:
+    dir_name = get_directory_of(directory)
+    dir_path = Path(dir_name).resolve()
+    dir_path.mkdir(parents=True, exist_ok=True)
+
+    return dir_path
+
 @_lazy_load
 def get_directory_of(directory_type) -> str:
     dir_key = directory_type.value if hasattr(directory_type, 'value') else directory_type
@@ -261,3 +286,24 @@ def get_tool_color_palette(tool: str) -> dict:
     
     tool_config = sentinel[tool_key]
     return tool_config.get("colorPalette", {})
+
+
+# =============================================================================
+# CONFIGURACIÓN COMPLETA (GET/SET)
+# =============================================================================
+
+@_lazy_load
+def get_full_config() -> dict:
+    """Devuelve toda la configuración."""
+    return _configs.copy()
+
+
+def save_full_config(new_config: dict) -> dict:
+    """Guarda la configuración completa."""
+    global _configs
+    if _configs_path is None:
+        raise FileNotFoundError("No se encontró ningún archivo de configuración.")
+    with open(_configs_path, "w", encoding="utf-8") as f:
+        json.dump(new_config, f, indent=2, ensure_ascii=False)
+    _configs = new_config
+    return new_config

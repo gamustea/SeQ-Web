@@ -10,17 +10,16 @@ Autenticación: Bearer token requerido.
 """
 
 from flask import Blueprint, jsonify, request
-from contextlib import contextmanager
 
 from src.modules.exceptions import (
     ExceptionHandler,
     create_error_response,
 )
-from src.modules.misc import SecOpsLogger
+from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
 from src.modules.shared import limiter
 
-from .managers import ConfigManager
+import src.modules.system.config_reading as CR
 
 
 system_bp = Blueprint("system", __name__)
@@ -118,16 +117,6 @@ def status():
     }), 200
 
 
-@contextmanager
-def get_config_manager():
-    """Context manager para ConfigManager."""
-    cm = ConfigManager()
-    try:
-        yield cm
-    finally:
-        cm.close_session()
-
-
 @system_bp.get("")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
@@ -147,8 +136,7 @@ def get_config():
         -H "Authorization: Bearer <token>"
     """
     try:
-        with get_config_manager() as cm:
-            config = cm.get_config()
+        config = CR.get_full_config()
         return jsonify(config), 200
 
     except FileNotFoundError as exc:
@@ -167,7 +155,7 @@ def update_config():
     """Actualiza la configuración de SecOpsConfig.json.
 
     Args (JSON body):
-        Objeto JSON completo con la nuova configuración.
+        Objeto JSON completo con la nueva configuración.
 
     Returns:
         200 — Configuración actualizada.
@@ -187,8 +175,7 @@ def update_config():
         return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
 
     try:
-        with get_config_manager() as cm:
-            config = cm.update_config(new_config)
+        config = CR.save_full_config(new_config)
         _logger.info("Configuración actualizada correctamente")
         return jsonify(config), 200
 

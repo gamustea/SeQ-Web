@@ -47,12 +47,20 @@ from reportlab.platypus import (
     CondPageBreak,
 )
 
-import src.modules.system.config_reading as CR 
-from src.modules.misc import DirectoryType, SentinelTool, SecOpsLogger
+import src.modules.system.config_reading as CR
+from src.modules.system.logging import SecOpsLogger
 from src.modules.exceptions import PDFGenerationError
 
 from .model import NmapScan, NiktoScan, OpenVASScan, Scan, Host, NiktoIncident
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
+
+
+
+class SentinelTool(Enum):
+    """Enumeración de herramientas disponibles en Sentinel"""
+    NMAP    = "nmap"
+    NIKTO   = "nikto"
+    OPENVAS = "openvas"
 
 
 class ColorType(Enum):
@@ -671,7 +679,7 @@ class PDFCreator:
     """
 
     def __init__(self, printing_strategy: _PrintingStrategy) -> None:
-        self.directory = CR.get_directory_of(DirectoryType.OUTPUT_SENTINEL)
+        self.directory = CR.get_directory_of(CR.DirectoryType.OUTPUT_SENTINEL)
         self.printing_strategy = printing_strategy
         self.scan = printing_strategy.scan
         self.logger = SecOpsLogger().get_logger()
@@ -835,7 +843,10 @@ class PDFCreator:
             elements: List of flowable elements.
             is_cover: Whether this is for the cover page (larger logo).
         """
-        resource_directory = CR.get_directory_of(DirectoryType.RESOURCE)
+
+        
+        directory_type = CR.DirectoryType.RESOURCE
+        resource_directory = CR.get_directory_of(directory_type)
         picture_name = self.printing_strategy.get_picture_name()
         image_filename = os.path.join(resource_directory, picture_name)
 
@@ -1164,7 +1175,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = OpenVASAIWriter()
         
-        palette_config = CR.get_tool_color_palette(SentinelTool.OPENVAS)
+        palette_config = CR_UTILS.get_tool_color_palette(SentinelTool.OPENVAS)
         
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#0D2818"),

@@ -159,30 +159,48 @@ throw error;
 }
 }
 
-/* ─── EXTRACT FORM DATA ─── */
-function extractFormData() {
-const form = document.getElementById('config-form');
-if (!form) return {};
-
-const config = {};
-const inputs = form.querySelectorAll('input, textarea');
-inputs.forEach(input => {
-const name = input.name;
-if (!name) return;
-
-let value;
-if (input.type === 'checkbox') {
-value = input.checked;
-} else if (input.type === 'color' || input.type === 'text') {
-value = input.value;
-} else {
-value = input.value;
+/* ─── DEEP MERGE ─── */
+function deepMerge(target, source) {
+  const result = JSON.parse(JSON.stringify(target));
+  for (const key in source) {
+    if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      result[key] = deepMerge(result[key] || {}, source[key]);
+    } else if (source[key] !== '') {
+      result[key] = source[key];
+    }
+  }
+  return result;
 }
 
-setNestedValue(config, name, value);
-});
+/* ─── EXTRACT FORM DATA ─── */
+function extractFormData() {
+  const form = document.getElementById('config-form');
+  if (!form || !originalConfig) {
+    showToast('La configuración no ha cargado aún. Intenta de nuevo.', 'error');
+    return null;
+  }
 
-return config;
+  const formDelta = {};
+  const inputs = form.querySelectorAll('input, textarea');
+  inputs.forEach(input => {
+    const name = input.name;
+    if (!name) return;
+
+    let value;
+    if (input.type === 'checkbox') {
+      value = input.checked;
+    } else if (input.type === 'color' || input.type === 'text') {
+      value = input.value;
+    } else {
+      value = input.value;
+    }
+
+    if (value !== '') {
+      setNestedValue(formDelta, name, value);
+    }
+  });
+
+  return deepMerge(originalConfig, formDelta);
 }
 
 /* ─── INITIALIZATION ─── */
@@ -202,15 +220,16 @@ loadConfig();
 });
 
 configForm?.addEventListener('submit', async (e) => {
-e.preventDefault();
+  e.preventDefault();
 
-const formData = extractFormData();
+  const formData = extractFormData();
+  if (!formData) return;
 
-try {
-await saveConfig(formData);
-showToast('Configuración guardada correctamente', 'success');
-} catch (error) {
-showToast('Error al guardar la configuración', 'error');
-}
+  try {
+    await saveConfig(formData);
+    showToast('Configuración guardada correctamente', 'success');
+  } catch (error) {
+    showToast('Error al guardar la configuración', 'error');
+  }
 });
 });
