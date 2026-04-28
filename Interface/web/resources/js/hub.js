@@ -5,17 +5,42 @@
 
 /* ─── SESSION GUARD ─── */
 (function () {
-  const raw = sessionStorage.getItem('seq_session');
-  if (!raw) { window.location.href = '/pages/login.html'; return; }
-  try {
-    const s = JSON.parse(raw);
-    if (!s.accessToken || Date.now() > s.expiresAt) {
-      sessionStorage.removeItem('seq_session');
-      window.location.href = '/pages/login.html';
-    }
-  } catch {
-    window.location.href = '/pages/login.html';
-  }
+const raw = sessionStorage.getItem('seq_session');
+if (!raw) { window.location.href = '/pages/login.html'; return; }
+try {
+const s = JSON.parse(raw);
+if (!s.accessToken || Date.now() > s.expiresAt) {
+sessionStorage.removeItem('seq_session');
+window.location.href = '/pages/login.html';
+}
+} catch {
+window.location.href = '/pages/login.html';
+}
+})();
+
+/* ─── PROFILE SIDEBAR ─── */
+(function () {
+const toggleBtn = document.getElementById('sidebar-toggle');
+const sidebar = document.getElementById('profile-sidebar');
+const logoutBtn = document.getElementById('logout-btn');
+
+if (!toggleBtn || !sidebar) return;
+
+toggleBtn.addEventListener('click', (e) => {
+e.stopPropagation();
+sidebar.classList.toggle('open');
+});
+
+document.addEventListener('click', (e) => {
+if (!sidebar.contains(e.target) && !toggleBtn.contains(e.target)) {
+sidebar.classList.remove('open');
+}
+});
+
+logoutBtn?.addEventListener('click', () => {
+sessionStorage.removeItem('seq_session');
+window.location.href = '/pages/login.html';
+});
 })();
 
 /* ─── STARFIELD ─── */
