@@ -345,5 +345,5 @@ def _init_db() -> None:
 
 
 if __name__ == "__main__":
-    app = create_app(False)
+    app = create_app(True)
     app.run(debug=True, host='0.0.0.0', port=5000)

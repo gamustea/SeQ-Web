@@ -99,23 +99,37 @@ from src.modules.exceptions import (
 )
 
 from src.modules.sentinel import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
-from src.modules.shared import limiter, get_current_user_id, get_current_username, normalize_target
+from src.modules.shared import (
+    limiter, 
+    get_current_user_id, 
+    get_current_username, 
+    normalize_target,
+    require_json,
+    require_str,
+    require_arg
+)
 from src.modules.system import SecOpsLogger
 
 from .managers import NmapScanManager, NiktoScanManager, OpenVASScanManager
 
 
+# =========================================================================
+# CONSTANTS
+# =========================================================================
+
 sentinel_bp = Blueprint("sentinel", __name__)
 _logger     = SecOpsLogger("sentinel").get_logger()
 
+CANCELLABLE_STATES      = frozenset({"pending", "running"})
+VALID_SCAN_TYPES        = frozenset({"nmap", "nikto", "openvas", "all"})
+VALID_OPENVAS_CONFIGS   = frozenset({"full_fast", "full_deep", "full_ultimate"})
+MAX_PDF_SIZE_BYTES      = 50 * 1024 * 1024
+MAX_HOSTS_TO_EXPAND     = 256
 
-CANCELLABLE_STATES    = frozenset({"pending", "running"})
-VALID_SCAN_TYPES      = frozenset({"nmap", "nikto", "openvas", "all"})
-VALID_OPENVAS_CONFIGS = frozenset({"full_fast", "full_deep", "full_ultimate"})
-MAX_PDF_SIZE_BYTES    = 50 * 1024 * 1024
-MAX_HOSTS_TO_EXPAND = 256
 
-
+# =========================================================================
+# HELPERS
+# =========================================================================
 
 def resolve_manager(
     scan_type: str,
@@ -186,61 +200,6 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
         )
 
     return PDFCreator(strategy)
-
-
-def _require_json() -> dict:
-    """Extrae y valida el cuerpo de la petición como JSON.
-
-    Returns:
-        dict: Datos JSON parseados.
-
-    Raises:
-        400: Si el Content-Type no es application/json o el JSON es inválido.
-    """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
-
-
-def _require_str(data: dict, field: str) -> str:
-    """Extrae un campo obligatorio del JSON y lo valida como string no vacío.
-
-    Args:
-        data: Diccionario con los datos del request.
-        field: Nombre del campo a extraer.
-
-    Returns:
-        str: El valor del campo, triminado de espacios.
-
-    Raises:
-        MissingParameterError: Si el campo falta o está vacío.
-    """
-    value = data.get(field)
-    if not value or not str(value).strip():
-        raise MissingParameterError(field)
-    return str(value).strip()
-
-
-def _parse_scan_id_from_args() -> int:
-    """Extrae el parámetro 'id' de la query string como entero.
-
-    Returns:
-        int: El ID del escaneo.
-
-    Raises:
-        MissingParameterError: Si el parámetro 'id' no existe.
-        ValidationError: Si el valor no es un entero válido.
-    """
-    raw = request.args.get("id")
-    if not raw:
-        raise MissingParameterError("id")
-    try:
-        return int(raw)
-    except ValueError:
-        raise ValidationError(field="id", message="El ID debe ser un número entero", value=raw)
 
 
 def _ts(dt) -> str:
@@ -439,74 +398,6 @@ def _format_openvas_scans(scans: list, manager=None) -> list:
     return results
 
 
-def _expand_octal(rango_str):
-    """
-    Expande un rango de octetos al estilo Nmap.
-    Ejemplos:
-    - "192.168.1.1-10" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.1.10"]
-    - "192.168.1-2.1-5" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.2.5"]
-    - "192.168.1.*" -> ["192.168.1.0", "192.168.1.1", ..., "192.168.1.255"]
-    """
-
-    # Reemplazar wildcards por rangos completos
-    rango_str = rango_str.replace("*", "0-255")
-
-    # Dividir por puntos
-    octetos = rango_str.split(".")
-
-    if len(octetos) != 4:
-        return None
-
-    # Procesar cada octeto
-    rangos_octetos = []
-
-    for octeto in octetos:
-        if "-" in octeto:
-            # Es un rango: "1-10"
-            partes = octeto.split("-")
-            if len(partes) != 2:
-                return None
-
-            try:
-                inicio = int(partes[0])
-                fin = int(partes[1])
-            except ValueError:
-                return None
-
-            # Validar rango de octeto (0-255)
-            if inicio < 0 or inicio > 255 or fin < 0 or fin > 255:
-                return None
-
-            if inicio > fin:
-                return None
-
-            rangos_octetos.append(range(inicio, fin + 1))
-        else:
-            # Es un nÃºmero fijo
-            try:
-                valor = int(octeto)
-            except ValueError:
-                return None
-
-            if valor < 0 or valor > 255:
-                return None
-
-            rangos_octetos.append([valor])
-
-    # Generar todas las combinaciones
-    lista_ips = []
-    for combinacion in itertools.product(*rangos_octetos):
-        ip_str = ".".join(map(str, combinacion))
-        # Validar que sea una IP vÃ¡lida
-        try:
-            ipaddress.ip_address(ip_str)
-            lista_ips.append(ip_str)
-        except ValueError:
-            continue
-
-    return lista_ips if lista_ips else None
-
-
 def validate_ip(ips_str: str) -> tuple[bool, List[str], str]:
         """
         Valida que una cadena de IPs sea válida para Nmap y devuelve la lista expandida.
@@ -524,6 +415,73 @@ def validate_ip(ips_str: str) -> tuple[bool, List[str], str]:
         Returns:
             tuple: (bool, list, str) - (es_válido, lista_ips, mensaje)
         """
+
+        def _expand_octal(rango_str):
+            """
+            Expande un rango de octetos al estilo Nmap.
+            Ejemplos:
+            - "192.168.1.1-10" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.1.10"]
+            - "192.168.1-2.1-5" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.2.5"]
+            - "192.168.1.*" -> ["192.168.1.0", "192.168.1.1", ..., "192.168.1.255"]
+            """
+
+            # Reemplazar wildcards por rangos completos
+            rango_str = rango_str.replace("*", "0-255")
+
+            # Dividir por puntos
+            octetos = rango_str.split(".")
+
+            if len(octetos) != 4:
+                return None
+
+            # Procesar cada octeto
+            rangos_octetos = []
+
+            for octeto in octetos:
+                if "-" in octeto:
+                    # Es un rango: "1-10"
+                    partes = octeto.split("-")
+                    if len(partes) != 2:
+                        return None
+
+                    try:
+                        inicio = int(partes[0])
+                        fin = int(partes[1])
+                    except ValueError:
+                        return None
+
+                    # Validar rango de octeto (0-255)
+                    if inicio < 0 or inicio > 255 or fin < 0 or fin > 255:
+                        return None
+
+                    if inicio > fin:
+                        return None
+
+                    rangos_octetos.append(range(inicio, fin + 1))
+                else:
+                    # Es un nÃºmero fijo
+                    try:
+                        valor = int(octeto)
+                    except ValueError:
+                        return None
+
+                    if valor < 0 or valor > 255:
+                        return None
+
+                    rangos_octetos.append([valor])
+
+            # Generar todas las combinaciones
+            lista_ips = []
+            for combinacion in itertools.product(*rangos_octetos):
+                ip_str = ".".join(map(str, combinacion))
+                # Validar que sea una IP vÃ¡lida
+                try:
+                    ipaddress.ip_address(ip_str)
+                    lista_ips.append(ip_str)
+                except ValueError:
+                    continue
+
+            return lista_ips if lista_ips else None
 
         if not ips_str or not isinstance(ips_str, str):
             return False, [], "El parámetro debe ser una cadena no vacía"
@@ -731,7 +689,9 @@ def validate_port(ports_str: str):
         )
 
 
-
+# =========================================================================
+# ENDPOINTS
+# =========================================================================
 
 @contextmanager
 def get_user_managers(user_id: int):
@@ -753,7 +713,7 @@ def get_user_managers(user_id: int):
 def get_scan_status():
     """Estado y progreso de un escaneo."""
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         uid     = get_current_user_id()
         
         with get_user_managers(uid) as (nmap, nikto, openvas):
@@ -831,13 +791,14 @@ def cancel_scan(scan_id: int):
 @limiter.limit("20 per hour; 100 per day")
 def start_nmap_scan():
     """Lanza uno o más escaneos Nmap."""
-    data = _require_json()
+    
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
     try:
-        host  = _require_str(data, "target")
-        ports = _require_str(data, "ports")
+        host  = require_str(data, "target")
+        ports = require_str(data, "ports")
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
@@ -889,12 +850,12 @@ def start_nmap_scan():
 @limiter.limit("20 per hour; 100 per day")
 def start_nikto_scan():
     """Lanza un escaneo Nikto."""
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
     try:
-        target = _require_str(data, "target")
+        target = require_str(data, "target")
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
@@ -928,12 +889,12 @@ def start_nikto_scan():
 @limiter.limit("10 per hour; 50 per day")
 def start_openvas_scan():
     """Lanza un escaneo OpenVAS para un único host."""
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
     try:
-        target      = _require_str(data, "target")
+        target      = require_str(data, "target")
         scan_config = data.get("scanConfig", "full_fast")
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
@@ -1081,7 +1042,7 @@ def retrieve_scan_by_id(scan_id: int):
 def generate_pdf():
     """Solicita la generación asíncrona de un PDF."""
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         ai_report_str = request.args.get("aiReport", "false").lower()
         ai_report = ai_report_str == "true"
         
@@ -1312,7 +1273,7 @@ def is_scan_finished():
              -H "Authorization: Bearer <token>"
     """
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         uid     = get_current_user_id()
         with get_user_managers(uid) as (nmap, nikto, openvas):
             scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
@@ -1466,7 +1427,7 @@ def generate_pdf_base64():
              -H "Authorization: Bearer <token>"
     """
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         uid     = get_current_user_id()
         with get_user_managers(uid) as (nmap, nikto, openvas):
             scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
