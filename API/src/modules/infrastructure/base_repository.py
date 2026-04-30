@@ -1,0 +1,242 @@
+"""
+Generic repository base class for SQLAlchemy models.
+
+Provides type-safe CRUD and query operations through Python Generics,
+eliminating boilerplate in concrete repositories.
+
+Classes:
+    BaseRepository: Generic repository parameterised on a SQLAlchemy model type.
+
+Usage:
+    class ScanRepository(BaseRepository[Scan]):
+        def __init__(self, uow: UnitOfWork) -> None:
+            super().__init__(Scan, uow)
+
+        def get_by_target(self, target: str) -> list[Scan]:
+            return self.get_all_by_field("target", target)
+"""
+
+from __future__ import annotations
+
+from typing import Any, Generic, List, Optional, Type, TypeVar
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from src.modules.infrastructure.unit_of_work import UnitOfWork
+
+
+T = TypeVar("T")
+
+
+class BaseRepository(Generic[T]):
+    """
+    Generic repository providing type-safe CRUD operations.
+
+    Concrete repositories inherit from this class, specifying the model
+    type via the Generic parameter. All database access goes through the
+    UnitOfWork's session, keeping transaction control in the caller.
+
+    Attributes:
+        _model:  The SQLAlchemy model class this repository manages.
+        _uow:    The Unit of Work providing the active session.
+
+    Type Parameters:
+        T: SQLAlchemy declarative model class.
+
+    Example:
+        >>> class UserRepository(BaseRepository[User]):
+        ...     def __init__(self, uow: UnitOfWork) -> None:
+        ...         super().__init__(User, uow)
+        ...
+        >>> with UnitOfWork() as uow:
+        ...     repo = UserRepository(uow)
+        ...     user = repo.get_by_id(42)
+    """
+
+    def __init__(self, model: Type[T], uow: UnitOfWork) -> None:
+        """
+        Initialize the repository.
+
+        Args:
+            model:  SQLAlchemy model class to manage.
+            uow:    Active Unit of Work providing the session.
+        """
+        self._model = model
+        self._uow   = uow
+
+    # =========================================================================
+    # INTERNAL HELPERS
+    # =========================================================================
+
+    @property
+    def _session(self):
+        """Return the current session from the Unit of Work."""
+        if self._uow.session is None:
+            raise RuntimeError(
+                f"{self.__class__.__name__}: No active session in UnitOfWork."
+            )
+        return self._uow.session
+
+    # =========================================================================
+    # QUERY METHODS
+    # =========================================================================
+
+    def get_by_id(self, pk: Any) -> Optional[T]:
+        """
+        Retrieve a single record by primary key.
+
+        Args:
+            pk: Primary key value.
+
+        Returns:
+            Model instance, or None if not found.
+        """
+        return self._session.get(self._model, pk)
+
+    def get_by_field(self, field: str, value: Any) -> Optional[T]:
+        """
+        Retrieve the first record matching a field/value pair.
+
+        Args:
+            field:  Attribute name on the model.
+            value:  Value to match.
+
+        Returns:
+            Model instance, or None if not found.
+
+        Raises:
+            AttributeError: If the field does not exist on the model.
+        """
+        return (
+            self._session.query(self._model)
+            .filter(getattr(self._model, field) == value)
+            .one_or_none()
+        )
+
+    def get_all_by_field(self, field: str, value: Any) -> List[T]:
+        """
+        Retrieve all records matching a field/value pair.
+
+        Args:
+            field:  Attribute name on the model.
+            value:  Value to match.
+
+        Returns:
+            List of matching model instances (may be empty).
+        """
+        return (
+            self._session.query(self._model)
+            .filter(getattr(self._model, field) == value)
+            .all()
+        )
+
+    def get_all(self) -> List[T]:
+        """
+        Retrieve all records for this model.
+
+        Returns:
+            List of all model instances (may be empty).
+        """
+        return self._session.query(self._model).all()
+
+    def exists(self, field: str, value: Any) -> bool:
+        """
+        Check whether any record matches a field/value pair.
+
+        Args:
+            field:  Attribute name on the model.
+            value:  Value to match.
+
+        Returns:
+            True if at least one matching record exists.
+        """
+        return (
+            self._session.query(self._model)
+            .filter(getattr(self._model, field) == value)
+            .count()
+        ) > 0
+
+    def get_children(self, foreign_key: str, parent_id: Any) -> List[T]:
+        """
+        Retrieve all child records linked to a parent via a foreign key.
+
+        Args:
+            foreign_key:    Foreign key attribute name on this model.
+            parent_id:      Parent's primary key value.
+
+        Returns:
+            List of matching child model instances.
+        """
+        return (
+            self._session.query(self._model)
+            .filter(getattr(self._model, foreign_key) == parent_id)
+            .all()
+        )
+
+    # =========================================================================
+    # CRUD METHODS
+    # =========================================================================
+
+    def save(self, obj: T) -> T:
+        """
+        Persist a new object and refresh it to populate generated fields.
+
+        Flush is used instead of commit so that transaction control remains
+        with the Unit of Work / caller.
+
+        Args:
+            obj: Model instance to persist.
+
+        Returns:
+            The same instance, refreshed with any server-generated values.
+
+        Raises:
+            SQLAlchemyError: If the flush fails.
+        """
+        try:
+            self._session.add(obj)
+            self._session.flush()
+            self._session.refresh(obj)
+            return obj
+        except SQLAlchemyError as e:
+            raise SQLAlchemyError(f"Error saving {self._model.__name__}: {e}") from e
+
+    def delete(self, obj: T) -> None:
+        """
+        Remove an object from the database.
+
+        Flush is used instead of commit so that transaction control remains
+        with the Unit of Work / caller.
+
+        Args:
+            obj: Model instance to delete.
+
+        Raises:
+            SQLAlchemyError: If the flush fails.
+        """
+        try:
+            self._session.delete(obj)
+            self._session.flush()
+        except SQLAlchemyError as e:
+            raise SQLAlchemyError(f"Error deleting {self._model.__name__}: {e}") from e
+
+    def update(self, obj: T) -> T:
+        """
+        Flush pending changes to an existing object.
+
+        Transaction control (commit/rollback) remains with the caller.
+
+        Args:
+            obj: Modified model instance.
+
+        Returns:
+            The same instance after flush.
+
+        Raises:
+            SQLAlchemyError: If the flush fails.
+        """
+        try:
+            self._session.flush()
+            return obj
+        except SQLAlchemyError as e:
+            raise SQLAlchemyError(f"Error updating {self._model.__name__}: {e}") from e
