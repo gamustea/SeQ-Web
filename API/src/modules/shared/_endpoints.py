@@ -30,9 +30,15 @@ from src.modules.exceptions import (
     create_error_response,
 )
 
+
 limiter = None
 _DNS_TIMEOUT = 3.0
 
+
+
+# =========================================================================
+# HELPERS
+# =========================================================================
 
 def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optional[str]:
     """
@@ -100,6 +106,8 @@ def normalize_target(
 
     return ip, hostname
 
+
+
 # =========================================================================
 # RATE LIMITING
 # =========================================================================
@@ -124,6 +132,7 @@ def _get_limiter():
             storage_uri="memory://",
         )
     return limiter
+
 
 
 # =========================================================================
@@ -153,3 +162,59 @@ def get_current_username() -> str:
         AttributeError: If no user is authenticated (token not parsed).
     """
     return request.current_username
+
+
+
+# =========================================================================
+# DATA PARSING
+# =========================================================================
+
+def require_json() -> dict:
+    """Extrae y valida el cuerpo de la petición como JSON.
+
+    Returns:
+        dict: Datos JSON parseados.
+
+    Raises:
+        400: Si el Content-Type no es application/json o el JSON es inválido.
+    """
+    if not request.is_json:
+        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
+    return data
+
+def require_str(data: dict, field: str) -> str:
+    """Extrae un campo obligatorio del JSON y lo valida como string no vacío.
+
+    Args:
+        data: Diccionario con los datos del request.
+        field: Nombre del campo a extraer.
+
+    Returns:
+        str: El valor del campo, triminado de espacios.
+
+    Raises:
+        MissingParameterError: Si el campo falta o está vacío.
+    """
+    value = data.get(field)
+    if not value or not str(value).strip():
+        raise MissingParameterError(field)
+    return str(value).strip()
+
+def require_arg(arg: str) -> str:
+    """Extrae el parámetro 'arg' de la query string como entero.
+
+    Returns:
+        str: Valor del argumento pedido
+
+    Raises:
+        MissingParameterError: Si el parámetro no existe.
+    
+    """
+    value = request.args.get(arg)
+    if not value:
+        raise MissingParameterError(arg)
+    
+    return value

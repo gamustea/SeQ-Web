@@ -79,7 +79,7 @@ _logger  = SecOpsLogger("oauth").get_logger()
 
 
 
-def _require_json():
+def require_json():
     """
     Devuelve el body JSON o una respuesta de error 400 si el Content-Type
     no es application/json o el body está vacío.
@@ -143,7 +143,7 @@ def sign_up_user():
             -H "Content-Type: application/json" \\
             -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd"}'
     """
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
@@ -212,7 +212,7 @@ def check_credentials():
                 -H "Content-Type: application/json" \\
                 -d '{"username": "johnd", "password": "password123"}'
     """
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
@@ -270,7 +270,7 @@ def change_password():
              -H "Content-Type: application/json" \\
              -d '{"newPassword": "newpassword123"}'
     """
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
@@ -538,7 +538,7 @@ def update_current_profile():
     -H "Content-Type: application/json" \\
     -d '{"first_name": "NuevoNombre", "last_name": "NuevosApellidos"}'
     """
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
