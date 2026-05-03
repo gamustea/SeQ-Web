@@ -27,9 +27,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from src.modules.infrastructure.base_repository import BaseRepository
-from src.modules.infrastructure.unit_of_work import UnitOfWork
 from .model import AccessToken, RefreshToken, User
+
+from src.modules.infrastructure.base_repository import BaseRepository, UnitOfWork
+
 
 
 class UserRepository(BaseRepository[User]):

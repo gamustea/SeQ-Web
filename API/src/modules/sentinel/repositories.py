@@ -39,8 +39,7 @@ from src.modules.sentinel.model import (
     ScanStatus,
     SentinelDocument,
 )
-from src.modules.infrastructure.base_repository import BaseRepository
-from src.modules.infrastructure.unit_of_work import UnitOfWork
+from src.modules.infrastructure import BaseRepository, UnitOfWork
 
 
 class ScanRepository(BaseRepository[Scan]):

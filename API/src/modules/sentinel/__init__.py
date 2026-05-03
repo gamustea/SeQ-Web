@@ -38,7 +38,7 @@ from .repositories import (
     SentinelDocumentRepository,
 )
 
-from .reports import (
+from .services import (
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy,

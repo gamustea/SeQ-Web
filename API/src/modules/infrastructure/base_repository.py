@@ -22,7 +22,7 @@ from typing import Any, Generic, List, Optional, Type, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.modules.infrastructure.unit_of_work import UnitOfWork
+from .unit_of_work import UnitOfWork
 
 
 T = TypeVar("T")

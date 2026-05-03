@@ -21,8 +21,7 @@ from typing import List, Optional
 from sqlalchemy.orm import joinedload
 
 from src.modules.aegis.model import AegisDocument, AegisDocumentAlert, AegisTip, Topic
-from src.modules.infrastructure.base_repository import BaseRepository
-from src.modules.infrastructure.unit_of_work import UnitOfWork
+from src.modules.infrastructure import BaseRepository, UnitOfWork
 
 
 class AegisDocumentRepository(BaseRepository[AegisDocument]):

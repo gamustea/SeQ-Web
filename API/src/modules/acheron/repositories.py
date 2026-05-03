@@ -25,8 +25,7 @@ from typing import List, Optional
 from sqlalchemy.orm import joinedload
 
 from src.modules.acheron.model import Account, CreditCard, Storable, Vault
-from src.modules.infrastructure.base_repository import BaseRepository
-from src.modules.infrastructure.unit_of_work import UnitOfWork
+from src.modules.infrastructure import BaseRepository, UnitOfWork
 
 
 class VaultRepository(BaseRepository[Vault]):

@@ -51,14 +51,21 @@ from .model import (
     ScanStatus,
     SentinelDocument,
 )
-from .processors import (
+from .services import (
     NiktoResultProcessor,
     NmapResultProcessor,
     OpenVASResultProcessor,
     ScanResultProcessor,
+    NiktoPrintingStrategy,
+    NmapPrintingStrategy,
+    OpenVASPrintingStrategy,
+    PDFCreator, 
+    NiktoScanTask, 
+    NmapScanTask, 
+    OpenVASTask, 
+    TaskStatus, 
+    _Task
 )
-from .reports import NiktoPrintingStrategy, NmapPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
-from .tasks import NiktoScanTask, NmapScanTask, OpenVASTask, TaskStatus, _Task
 
 
 class ScanManager(ABC):

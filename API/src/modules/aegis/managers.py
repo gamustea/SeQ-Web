@@ -23,11 +23,11 @@ from typing import Any
 
 import src.modules.system.config_reading as CR
 from src.modules.users import User
-from src.modules.system.logging import SecOpsLogger
-from src.modules.infrastructure.unit_of_work import UnitOfWork
+from src.modules.system import SecOpsLogger
+from src.modules.infrastructure import UnitOfWork
 
 from .model import AegisDocument, AegisDocumentAlert, AegisTip, Topic
-from .pills import AegisAIWriter, AegisAlertFetcher, AlertSource
+from .services import AegisAIWriter, AegisAlertFetcher, AlertSource
 from .repositories import AegisDocumentRepository
 from src.modules.shared._documents import validate_document_ownership
 
