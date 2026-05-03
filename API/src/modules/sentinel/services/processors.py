@@ -7,7 +7,8 @@ import xmltodict
 from pathlib import Path
 
 from lxml import etree as lxml_etree
-from .model import (
+
+from ..model import (
     NiktoIncident,
     OpenVASVulnerability,
     OpenVASScanResult

@@ -51,7 +51,7 @@ import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
 from src.modules.exceptions import PDFGenerationError
 
-from .model import NmapScan, NiktoScan, OpenVASScan, Scan, Host, NiktoIncident
+from ..model import NmapScan, NiktoScan, OpenVASScan, Scan, Host, NiktoIncident
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
 
 

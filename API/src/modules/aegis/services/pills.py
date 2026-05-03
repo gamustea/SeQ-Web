@@ -44,7 +44,7 @@ from src.modules.exceptions import (
     AIFallbackExhaustedError,
 )
 
-from .model import Topic
+from ..model import Topic
 
 
 # ============================================================================
@@ -235,7 +235,6 @@ class AegisAlert:
 
         if not self.url.startswith(("http://", "https://")):
             raise AegisValidationError(f"URL inválida: {self.url}", field="url", value=self.url)
-
 
 
 def retry_on_failure(max_retries: int = MAX_RETRIES, exceptions: tuple = (Exception,)):

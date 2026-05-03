@@ -26,7 +26,7 @@ from src.modules.exceptions import (
     AIFallbackExhaustedError,
 )
 
-from .model import NmapScan, NiktoScan, OpenVASScan
+from ..model import NmapScan, NiktoScan, OpenVASScan
 
 
 class NmapAIWriter(AIWriter):
