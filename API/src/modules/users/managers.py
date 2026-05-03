@@ -6,7 +6,7 @@ to UserRepository and TokenRepository via explicit UnitOfWork scopes.
 
 Security invariants enforced here:
   - password_hash and password_salt never leave this module.
-  - Credential verification uses constant-time comparison (via Encoder).
+  - Credential verification uses constant-time comparison.
   - Token verification validates both JWT signature and database record state.
   - Password changes atomically revoke all existing tokens in one transaction.
   - Returned User objects are always expunged from the session before leaving
@@ -35,8 +35,13 @@ from src.modules.infrastructure import UnitOfWork
 from src.modules.system.logging import SecOpsLogger
 
 from .model import AccessToken, RefreshToken, User
-from .secrets import Encoder
 from .repositories import TokenRepository, UserRepository
+from .services import (
+    encode_sha256,
+    generate_salt,
+    hash_password_with_salt,
+    verify_password
+)
 
 (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -89,11 +94,11 @@ class UserManager:
                 if user is None:
                     # Perform a dummy comparison to prevent username enumeration
                     # via timing differences.
-                    Encoder.verify_password("dummy", password, "dummy_salt")
+                    verify_password("dummy", password, "dummy_salt")
                     self.logger.info(f"Usuario '{username}' no encontrado")
                     return False, None
 
-                is_valid = Encoder.verify_password(
+                is_valid = verify_password(
                     stored_hash = user.password_hash,
                     password    = password,
                     salt        = user.password_salt,
@@ -111,19 +116,6 @@ class UserManager:
             self.logger.error(f"Error verificando credenciales: {e}")
             raise
 
-    def validate_credentials_simple(self, username: str, password: str) -> bool:
-        """
-        Simplified credential check returning only a boolean.
-
-        Args:
-            username: Username to authenticate.
-            password: Plaintext password to verify.
-
-        Returns:
-            True if credentials are valid.
-        """
-        is_valid, _ = self.verify_credentials(username, password)
-        return is_valid
 
     # =========================================================================
     # USER REGISTRATION
@@ -167,8 +159,8 @@ class UserManager:
                 if repo.email_exists(email):
                     raise ExistingUserError(None, email)
 
-                salt            = Encoder.generate_salt()
-                hashed_password = Encoder.hash_password_with_salt(password, salt)
+                salt            = generate_salt()
+                hashed_password = hash_password_with_salt(password, salt)
 
                 new_user = User(
                     username      = username,
@@ -221,15 +213,6 @@ class UserManager:
         with UnitOfWork() as uow:
             return UserRepository(uow).get_by_username(username)
 
-    def get_all_users(self) -> List[User]:
-        """
-        Retrieve all registered users.
-
-        Returns:
-            List of User instances.
-        """
-        with UnitOfWork() as uow:
-            return UserRepository(uow).get_all()
 
     # =========================================================================
     # PROFILE & PASSWORD UPDATES
@@ -256,8 +239,8 @@ class UserManager:
             if user is None:
                 raise UserBindingError(username=str(user_id))
 
-            new_salt = Encoder.generate_salt()
-            user.password_hash = Encoder.hash_password_with_salt(new_password, new_salt)
+            new_salt = generate_salt()
+            user.password_hash = hash_password_with_salt(new_password, new_salt)
             user.password_salt = new_salt
             # UoW flushes and commits on __exit__
 
@@ -335,9 +318,9 @@ class OAuthTokenManager:
         in a single transaction, used for password-change and logout-everywhere.
 
     Example:
-        >>> manager = OAuthTokenManager()
-        >>> access_token = manager.create_access_token(user_id=1, username="johnd")
-        >>> payload = manager.verify_access_token(access_token)
+    >>> manager = OAuthTokenManager()
+    >>> access_token = manager.create_access_token(user_id=1, username="johnd")
+    >>> payload = manager.verify_access_token(access_token)
     """
 
     def __init__(self) -> None:

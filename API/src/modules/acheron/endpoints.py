@@ -82,6 +82,7 @@ from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
 from src.modules.shared import (
     limiter,
+    get_current_user,
 )
 
 acheron_bp = Blueprint("acheron", __name__)
@@ -128,7 +129,7 @@ def get_vault():
              -H "Authorization: Bearer <token>"
     """
     try:
-        uid         = get_current_user_id()
+        uid         = get_current_user().id
         is_recovery = _parse_is_recovery()
         with get_vault_manager(uid) as mgr:
             vault = mgr.get_vault_for_user(is_recovery=is_recovery)
@@ -137,7 +138,7 @@ def get_vault():
                 return jsonify({"error": "not_found", "error_description": "Vault not found for current user", "isRecovery": is_recovery}), 404
 
             payload = mgr.export_vault_to_json(vault.id)
-        _logger.info(f"Vault {vault.id} devuelto — user={get_current_username()}")
+        _logger.info(f"Vault {vault.id} devuelto — user={get_current_user().username}")
         return jsonify(payload), 200
 
     except UserNotFoundError as exc:
@@ -183,12 +184,12 @@ def upsert_vault():
         return data
 
     try:
-        uid         = get_current_user_id()
+        uid         = get_current_user().id
         is_recovery = _parse_is_recovery()
         with get_vault_manager(uid) as mgr:
             vault, created = mgr.upsert_vault_from_json(data, is_recovery=is_recovery)
 
-            _logger.info(f"Vault {'creado' if created else 'actualizado'} (ID={vault.id}) — user={get_current_username()}")
+            _logger.info(f"Vault {'creado' if created else 'actualizado'} (ID={vault.id}) — user={get_current_user().username}")
         return jsonify({"message": "Vault created" if created else "Vault updated", "vaultId": vault.id, "isRecovery": is_recovery}), 201 if created else 200
 
     except UserNotFoundError as exc:
@@ -241,10 +242,10 @@ def patch_vault_storables():
         return jsonify(err), code
 
     try:
-        uid     = get_current_user_id()
+        uid     = get_current_user().id
         with get_vault_manager(uid) as mgr:
             results = mgr.bulk_update_storables(operations=data)
-            _logger.info(f"Bulk update: {len(data)} operaciones — user={get_current_username()}")
+            _logger.info(f"Bulk update: {len(data)} operaciones — user={get_current_user().username}")
         return jsonify({"message": "Bulk storable update completed", "results": results}), 200
 
     except UserNotFoundError as exc:
@@ -315,7 +316,7 @@ def add_vault_storable():
         if kind not in ("account", "creditcard"):
             raise ValidationError(field="kind", message="kind must be 'account' or 'creditcard'", value=kind)
 
-        uid         = get_current_user_id()
+        uid         = get_current_user().id
         is_recovery = bool(data.get("isRecovery", False))
         internal_id = data.get("internalId")
         title       = data.get("title")
@@ -337,7 +338,7 @@ def add_vault_storable():
                 return jsonify({"error": "conflict", "error_description": f"Storable with internalId={internal_id} already exists", "internalId": internal_id, "vaultId": vault.id}), 409
 
             st = mgr.add_storable_to_vault(vault_id=vault.id, kind=kind, internal_id=internal_id, title=title, created_at=created_at, updated_at=updated_at, **payload)
-        _logger.info(f"Storable {st.id} añadido al vault {vault.id} — user={get_current_username()}")
+        _logger.info(f"Storable {st.id} añadido al vault {vault.id} — user={get_current_user().username}")
         return jsonify({"message": "Storable created", "storableId": st.id, "internalId": st.internal_id, "vaultId": st.vault_id, "isRecovery": is_recovery, "kind": kind}), 201
 
     except (UserNotFoundError, ValidationError) as exc:
@@ -384,7 +385,7 @@ def delete_vault_storable():
         if not internal_id:
             raise ValidationError(field="internalId", message="internalId is required", value=internal_id)
 
-        uid         = get_current_user_id()
+        uid         = get_current_user().id
         is_recovery = bool(data.get("isRecovery", False))
         with get_vault_manager(uid) as mgr:
             vault = mgr.get_vault_for_user(is_recovery=is_recovery)
@@ -399,7 +400,7 @@ def delete_vault_storable():
             if not mgr.delete_storable(st.id):
                 return jsonify({"error": "deletion_failed", "error_description": "Could not delete storable", "internalId": internal_id}), 500
 
-            _logger.info(f"Storable {st.id} (internalId={internal_id}) eliminado — user={get_current_username()}")
+            _logger.info(f"Storable {st.id} (internalId={internal_id}) eliminado — user={get_current_user().username}")
         return jsonify({"message": "Storable deleted", "storableId": st.id, "internalId": internal_id, "vaultId": vault.id, "isRecovery": is_recovery}), 200
 
     except (UserNotFoundError, ValidationError) as exc:

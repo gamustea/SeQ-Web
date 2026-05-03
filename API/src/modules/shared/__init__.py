@@ -16,8 +16,7 @@ from ._managers     import BaseManager
 from ._documents    import AIWriter
 from ._endpoints    import (
     _get_limiter,
-    get_current_user_id,
-    get_current_username,
+    get_current_user,
     normalize_target,
     require_json,
     require_str,
@@ -35,8 +34,7 @@ __all__ = [
     "DocumentRepository",
     "AIWriter",
     "limiter",
-    "get_current_user_id",
-    "get_current_username",
+    "get_current_user",
     "normalize_target",
     "require_json",
     "require_str",

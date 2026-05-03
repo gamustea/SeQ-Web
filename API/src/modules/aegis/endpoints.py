@@ -95,7 +95,7 @@ from src.modules.aegis.exceptions import (
     AegisInsufficientContentError,
 )
 from src.modules.users.exceptions import UserNotFoundError
-from src.modules.shared import limiter, get_current_user_id, get_current_username
+from src.modules.shared import limiter, get_current_user
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, UserManager, OAuthTokenManager
 
@@ -155,7 +155,7 @@ def _get_document_checked(manager, doc_id: int, user_id: int) -> dict:
     """
     doc = manager.get_document(doc_id)
     if not doc or doc.get("userId") != user_id:
-        _logger.warning(f"Documento {doc_id} no encontrado o acceso denegado para user {get_current_username()} (userId={user_id})")
+        _logger.warning(f"Documento {doc_id} no encontrado o acceso denegado para user {get_current_user().username} (userId={user_id})")
         raise ValueError(f"Documento {doc_id} no encontrado")
     if doc["status"] != "done":
         raise PermissionError(f"Documento no listo. Estado: {doc['status']}")
@@ -235,11 +235,11 @@ def aegis_generate():
         return jsonify(err), code
 
     try:
-        uid         = get_current_user_id()
+        uid         = get_current_user().id
         mgr = get_aegis_manager(uid)
         document_id = mgr.generate(topic_id=topic_id, tweaks=tweaks)
 
-        _logger.info(f"Aegis generate lanzado — topicId={topic_id} documentId={document_id} user={get_current_username()}")
+        _logger.info(f"Aegis generate lanzado — topicId={topic_id} documentId={document_id} user={get_current_user().username}")
         return jsonify({"message": "Generación Aegis iniciada", "documentId": document_id, "status": "pending"}), 202
 
     except (MissingParameterError, ValidationError, UserNotFoundError) as exc:
@@ -279,7 +279,7 @@ def aegis_status():
     """
     try:
         doc_id   = _parse_doc_id()
-        uid      = get_current_user_id()
+        uid      = get_current_user().id
         mgr = get_aegis_manager(uid)
         doc_info = mgr.get_document(doc_id)
 
@@ -325,7 +325,7 @@ def aegis_get_document():
     """
     try:
         doc_id   = _parse_doc_id()
-        uid      = get_current_user_id()
+        uid      = get_current_user().id
         mgr = get_aegis_manager(uid)
         doc_info = mgr.get_document(doc_id)
 
@@ -371,7 +371,7 @@ def aegis_download():
     """
     try:
         doc_id   = _parse_doc_id()
-        uid      = get_current_user_id()
+        uid      = get_current_user().id
         mgr = get_aegis_manager(uid)
         doc_info = mgr.get_document(doc_id)
 
@@ -390,7 +390,7 @@ def aegis_download():
         doc_format = doc_info.get("format", "json")
         mimetype   = "application/json" if doc_format == "json" else "text/markdown; charset=utf-8"
 
-        _logger.info(f"Descargando Aegis doc {doc_id} ({doc_format}) " + chr(0xe2) + " user={get_current_username()}")
+        _logger.info(f"Descargando Aegis doc {doc_id} ({doc_format}) " + chr(0xe2) + " user={get_current_user().username}")
         return send_file(path, as_attachment=True, download_name=path.name, mimetype=mimetype)
 
     except (MissingParameterError, ValidationError) as exc:
@@ -427,7 +427,7 @@ def aegis_delete_document():
     """
     try:
         doc_id   = _parse_doc_id()
-        uid      = get_current_user_id()
+        uid      = get_current_user().id
         mgr = get_aegis_manager(uid)
         doc_info = mgr.get_document(doc_id)
 
@@ -436,7 +436,7 @@ def aegis_delete_document():
 
         mgr.delete_document(doc_id)
 
-        _logger.info(f"Aegis doc {doc_id} eliminado para usuario {get_current_username()}")
+        _logger.info(f"Aegis doc {doc_id} eliminado para usuario {get_current_user().username}")
         return jsonify({"message": "Documento eliminado correctamente", "documentId": doc_id}), 200
 
     except (MissingParameterError, ValidationError) as exc:
@@ -471,7 +471,7 @@ def aegis_list_documents():
                 -H "Authorization: Bearer <token>"
     """
     try:
-        uid  = get_current_user_id()
+        uid  = get_current_user().id
         mgr = get_aegis_manager(uid)
         docs = mgr.list_documents()
 
@@ -503,7 +503,7 @@ def aegis_get_topics():
              -H "Authorization: Bearer <token>"
     """
     try:
-        uid     = get_current_user_id()
+        uid     = get_current_user().id
         mgr = get_aegis_manager(uid)
         topics  = mgr.get_topics()
 
@@ -666,7 +666,7 @@ def export_document(doc_id: int):
         except ValueError:
             return jsonify({"error": "unsupported_format", "message": f"Formato '{format_str}' no soportado", "supported": ["md", "json", "html"]}), 400
 
-        uid = get_current_user_id()
+        uid = get_current_user().id
 
         mgr = get_aegis_manager(uid)
         try:
@@ -690,7 +690,7 @@ def export_document(doc_id: int):
 
         result = exporter.export(export_data)
 
-        _logger.info(f"Exportación {export_format.value} generada para doc {doc_id} — user={get_current_username()}, size={result.size_bytes}b")
+        _logger.info(f"Exportación {export_format.value} generada para doc {doc_id} — user={get_current_user().username}, size={result.size_bytes}b")
         return jsonify({
             "success":     True,
             "export":      result.to_response_dict(),
@@ -741,7 +741,7 @@ def download_export(doc_id: int):
         except ValueError:
             return jsonify({"error": "unsupported_format", "message": f"Formato '{format_str}' no soportado"}), 400
 
-        uid = get_current_user_id()
+        uid = get_current_user().id
 
         mgr = get_aegis_manager(uid)
         try:
@@ -756,7 +756,7 @@ def download_export(doc_id: int):
         result      = exporter.export(export_data)
 
         disposition = "inline" if inline else "attachment"
-        _logger.info(f"Descarga {export_format.value} doc {doc_id} — user={get_current_username()}, inline={inline}")
+        _logger.info(f"Descarga {export_format.value} doc {doc_id} — user={get_current_user().username}, inline={inline}")
 
         return Response(
             result.content,
@@ -809,7 +809,7 @@ def quick_export_markdown(doc_id: int):
         inline         = request.args.get("inline",   "false").lower() == "true"
         include_alerts = request.args.get("noAlerts", "false").lower() != "true"
 
-        uid = get_current_user_id()
+        uid = get_current_user().id
 
         mgr = get_aegis_manager(uid)
         try:
@@ -831,7 +831,7 @@ def quick_export_markdown(doc_id: int):
         result = exporter.export(export_data)
 
         disposition = "inline" if inline else "attachment"
-        _logger.info(f"Quick MD export doc {doc_id} — user={get_current_username()}, inline={inline}, alerts={include_alerts}")
+        _logger.info(f"Quick MD export doc {doc_id} — user={get_current_user().username}, inline={inline}, alerts={include_alerts}")
 
         return Response(
             result.content,

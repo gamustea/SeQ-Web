@@ -70,7 +70,7 @@ from src.modules.users.exceptions import (
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
 from src.modules.shared import limiter
-from src.modules.shared._endpoints import get_current_user_id, get_current_username
+from src.modules.shared._endpoints import get_current_user
 
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
 
@@ -269,8 +269,8 @@ def change_password():
         return jsonify(err), code
 
     try:
-        user_id  = get_current_user_id()
-        username = get_current_username()
+        user_id  = get_current_user().id
+        username = get_current_user().username
 
         USER_MANAGER.update_user_password(user_id, new_password)
         OAUTH_MANAGER.revoke_all_user_tokens(user_id)
@@ -410,7 +410,7 @@ def oauth_revoke():
     """
     token = request.headers["Authorization"].split()[1]
     OAUTH_MANAGER.revoke_access_token(token)
-    _logger.info(f"Token revocado para: {get_current_username()}")
+    _logger.info(f"Token revocado para: {get_current_user().username}")
     return jsonify({"message": "Token revoked successfully"}), 200
 
 
@@ -433,9 +433,8 @@ def oauth_revoke_all():
     curl -X POST https://api.example.com/oauth/revoke-all \\
     -H "Authorization: Bearer <token>"
     """
-    uid = get_current_user_id()
+    uid = get_current_user().id
     OAUTH_MANAGER.revoke_all_user_tokens(uid)
-    _logger.info(f"Todos los tokens revocados para usuario ID: {uid}")
     return jsonify({"message": "All tokens revoked successfully"}), 200
 
 
@@ -461,8 +460,8 @@ def get_current_profile():
     -H "Authorization: Bearer <token>"
     """
     try:
-        user_id = get_current_user_id()
-        username = get_current_username()
+        user_id = get_current_user().id
+        username = get_current_user().username
 
         user = USER_MANAGER.get_user_by_id(user_id)
 
@@ -526,8 +525,8 @@ def update_current_profile():
         return jsonify(err), code
 
     try:
-        user_id = get_current_user_id()
-        username = get_current_username()
+        user_id = get_current_user().id
+        username = get_current_user().username
 
         user = USER_MANAGER.update_user_profile(user_id, first_name, last_name)
 

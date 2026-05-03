@@ -25,6 +25,8 @@ from urllib.parse import urlparse
 
 from flask import request, jsonify
 
+from ._exceptions import MissingParameterError
+
 
 limiter = None
 _DNS_TIMEOUT = 3.0
@@ -35,19 +37,7 @@ _DNS_TIMEOUT = 3.0
 # HELPERS
 # =========================================================================
 
-def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optional[str]:
-    """
-    Wrapper de socket.gethostbyaddr con timeout explícito.
-    Devuelve el hostname o None si falla o supera el tiempo límite.
-    """
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(socket.gethostbyaddr, ip)
-        try:
-            return future.result(timeout=timeout)[0]
-        except TimeoutError:
-            return None
-        except (socket.herror, socket.gaierror):
-            return None
+
 
 def normalize_target(
     user_input: str,
@@ -69,6 +59,21 @@ def normalize_target(
     Returns:
         (ip, hostname): hostname == ip cuando no se resuelve o resolve_hostname=False.
     """
+
+    def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optional[str]:
+        """
+        Wrapper de socket.gethostbyaddr con timeout explícito.
+        Devuelve el hostname o None si falla o supera el tiempo límite.
+        """
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(socket.gethostbyaddr, ip)
+            try:
+                return future.result(timeout=timeout)[0]
+            except TimeoutError:
+                return None
+            except (socket.herror, socket.gaierror):
+                return None
+                
     cleaned_input = user_input.strip()
 
     if "://" in cleaned_input:
@@ -134,29 +139,24 @@ def _get_limiter():
 # USER CONTEXT
 # =========================================================================
 
-def get_current_user_id() -> int:
+def get_current_user():
     """
-    Get the current authenticated user's ID from the request context.
+    Get the current authenticated user object from the database.
+
+    Uses request-level caching to avoid repeated database queries.
 
     Returns:
-        int: ID of the currently authenticated user.
+        User: The fully-loaded User object with all attributes.
 
     Raises:
         AttributeError: If no user is authenticated (token not parsed).
     """
-    return request.current_user_id
+    from src.modules.users.managers import UserManager
 
-def get_current_username() -> str:
-    """
-    Get the current authenticated username from the request context.
-
-    Returns:
-        str: Username of the currently authenticated user.
-
-    Raises:
-        AttributeError: If no user is authenticated (token not parsed).
-    """
-    return request.current_username
+    if not hasattr(request, '_current_user'):
+        user_id = request.current_user_id
+        request._current_user = UserManager().get_user_by_id(user_id)
+    return request._current_user
 
 
 
@@ -206,10 +206,10 @@ def require_arg(arg: str) -> str:
 
     Raises:
         MissingParameterError: Si el parámetro no existe.
-    
+
     """
     value = request.args.get(arg)
     if not value:
         raise MissingParameterError(arg)
-    
+
     return value

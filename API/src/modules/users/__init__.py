@@ -15,7 +15,7 @@ from .model import (
     AccessToken,
     RefreshToken,
 )
-from .permissions import require_oauth_token
+from .services import require_oauth_token
 from .endpoints import oauth_bp, users_bp
 from .managers import UserManager, OAuthTokenManager
 

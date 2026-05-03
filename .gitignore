@@ -63,3 +63,5 @@ Thumbs.db
 # Otros
 # ============================================
 *.pdf
+API/.mypy_cache/
+API/.pytest_cache/
