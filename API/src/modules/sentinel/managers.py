@@ -32,6 +32,7 @@ from typing import Dict, List, Optional
 
 from src.modules.users import User
 from src.modules.shared import normalize_target
+from src.modules.shared._documents import validate_document_ownership
 from src.modules.system.logging import SecOpsLogger
 from src.modules.exceptions.documents import DocumentError
 
@@ -341,6 +342,25 @@ class ScanManager(ABC):
             if not doc:
                 raise DocumentError(f"Documento {document_id} no encontrado")
             return doc.user_id == user_id
+
+    def validate_document_ownership(self, document_id: int, user_id: int) -> None:
+        """
+        Valida la propiedad del documento y lanza excepción si no pertenece.
+
+        Args:
+            document_id: ID del documento.
+            user_id: ID del usuario a verificar.
+
+        Raises:
+            DocumentError: Si el documento no existe.
+            ValueError: Si el documento no pertenece al usuario.
+        """
+        with UnitOfWork() as uow:
+            doc_repo = SentinelDocumentRepository(uow)
+            doc = doc_repo.get_by_id(document_id)
+            if not doc:
+                raise DocumentError(f"Documento {document_id} no encontrado")
+            validate_document_ownership(doc, user_id)
 
     # =========================================================================
     # LIFECYCLE OPERATIONS

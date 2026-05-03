@@ -9,22 +9,28 @@ Classes:
     AIWriter: Abstract base class for domain-specific AI writers.
 
 Example:
-    >>> class MyWriter(AIWriter):
-    ...     def _build_system_prompt(self) -> str:
-    ...         return "You are a helpful assistant."
-    ...     def _build_user_prompt(self, data) -> str:
-    ...         return f"Analyze: {data}"
-    ...     def generate(self, data):
-    ...         return self._call_model([{"role": "user", "content": self._build_user_prompt(data)}])
+>>> class MyWriter(AIWriter):
+...     def _build_system_prompt(self) -> str:
+...         return "You are a helpful assistant."
+...     def _build_user_prompt(self, data) -> str:
+...         return f"Analyze: {data}"
+...     def generate(self, data):
+...         return self._call_model([{"role": "user", "content": self._build_user_prompt(data)}])
 """
-
-from abc import ABC, abstractmethod
-from typing import Any, Optional
 
 import ollama
 from ollama import ChatResponse
 
-from src.modules.system.logging import SecOpsLogger
+from abc import ABC, abstractmethod
+from typing import Any, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Type, TypeVar, Optional, List, Any
+
+from src.modules.system import SecOpsLogger
+from src.modules.shared import Document
+
+T = TypeVar("T", bound=Document)
 
 class AIWriter(ABC):
     """
@@ -250,3 +256,167 @@ class AIWriter(ABC):
             )
         
         return resp
+
+
+# =========================================================================
+# DOCUMENT UTILITIES
+# =========================================================================
+# Funciones puras para gestión de documentos. NO gestionan sesiones.
+# Los repositorios usan UnitOfWork para la persistencia.
+
+
+def update_document_status(
+    doc: Document,
+    status: str,
+    title: str | None = None,
+    filename: str | None = None,
+    error: str | None = None,
+    set_generated_at: bool = False,
+) -> Document:
+    """
+    Actualiza el estado de un documento con campos opcionales.
+
+    Args:
+        doc: Instancia del documento a actualizar.
+        status: Nuevo estado ('pending', 'running', 'done', 'error').
+        title: Nuevo título (truncado a 64 caracteres).
+        filename: Nuevo nombre de archivo (truncado a 128).
+        error: Mensaje de error para estado 'error' (truncado a 50).
+        set_generated_at: Si True, asigna datetime.utcnow() (para estado 'done').
+
+    Returns:
+        El documento con los campos actualizados (no hace flush/commit).
+    """
+    doc.status = status
+    if title:
+        doc.title = title[:64]
+    if filename:
+        doc.filename = filename[:128]
+    if set_generated_at and status == "done":
+        doc.generated_at = datetime.utcnow()
+    if error and status == "error":
+        doc.title = f"[ERR{doc.id}] {error[:50]}"[:64]
+    return doc
+
+
+def get_document_path(doc: Document, output_dir: Path) -> Path:
+    """
+    Calcula la ruta absoluta al archivo del documento.
+
+    Args:
+        doc: Instancia del documento.
+        output_dir: Directorio base de salida.
+
+    Returns:
+        Ruta absoluta al archivo.
+
+    Raises:
+        ValueError: Si el documento no tiene filename.
+    """
+    if not doc.filename:
+        raise ValueError(f"Documento {doc.id} no tiene filename")
+    return output_dir / doc.filename
+
+
+def check_ownership(doc: Document, user_id: int, owner_field: str = "user_id") -> bool:
+    """
+    Verifica que el documento pertenece al usuario.
+
+    Args:
+        doc: Instancia del documento.
+        user_id: ID del usuario a verificar.
+        owner_field: Nombre del campo que contiene el owner (default: 'user_id').
+
+    Returns:
+        True si el documento pertenece al usuario, False en caso contrario.
+    """
+    return getattr(doc, owner_field, None) == user_id
+
+
+def serialize_document_list(
+    documents: List[Document],
+    fields_map: dict[str, str] | None = None,
+) -> List[dict]:
+    """
+    Serializa una lista de documentos a diccionarios.
+
+    Args:
+        documents: Lista de instancias de documentos.
+        fields_map: Mapeo opcional de campos del modelo a nombres de salida.
+                    Si None, usa los campos por defecto: id, title, filename,
+                    format, status, generatedAt (como isoformat).
+
+    Returns:
+        Lista de diccionarios con los datos serializados.
+    """
+    default_fields = {
+        "id": "id",
+        "title": "title",
+        "filename": "filename",
+        "format": "format",
+        "status": "status",
+        "generated_at": "generatedAt",
+    }
+    mapping = fields_map or default_fields
+
+    result = []
+    for doc in documents:
+        item = {}
+        for model_field, output_name in mapping.items():
+            value = getattr(doc, model_field, None)
+            if value is None:
+                item[output_name] = None
+            elif isinstance(value, datetime):
+                item[output_name] = value.isoformat()
+            else:
+                item[output_name] = value
+        result.append(item)
+    return result
+
+
+def validate_document_ownership(
+    doc: Document,
+    user_id: int,
+    owner_field: str = "user_id",
+) -> None:
+    """
+    Valida la propiedad del documento y lanza excepción si no pertenece.
+
+    Args:
+        doc: Instancia del documento.
+        user_id: ID del usuario a verificar.
+        owner_field: Nombre del campo que contiene el owner.
+
+    Raises:
+        ValueError: Si el documento no pertenece al usuario.
+    """
+    if not check_ownership(doc, user_id, owner_field):
+        raise ValueError(f"Documento {doc.id} no pertenece al usuario {user_id}")
+
+
+def safe_delete_file(filename: str, logger: Any = None) -> bool:
+    """
+    Elimina un archivo del sistema de archivos de forma segura.
+
+    Args:
+        filename: Ruta al archivo a eliminar.
+        logger: Opcional. Instancia de logger para registrar advertencias.
+
+    Returns:
+        True si el archivo fue eliminado o no existía, False si hubo error.
+    """
+    import os
+
+    if not filename:
+        return False
+
+    if not os.path.exists(filename):
+        return True
+
+    try:
+        os.remove(filename)
+        return True
+    except Exception as exc:
+        if logger:
+            logger.warning(f"No se pudo eliminar el archivo {filename}: {exc}")
+        return False

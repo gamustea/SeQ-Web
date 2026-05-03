@@ -51,14 +51,11 @@ class Topic(Base):
     Attributes:
         id: Primary key, auto-incrementing integer.
         title: Topic name (max 64 characters).
-
-    Relationships:
-        documents: List of AegisDocument objects in this topic.
     """
     __tablename__ = "Topic"
 
     id    = Column(Integer,     primary_key=True, autoincrement=True)
-    title = Column(String(64),  nullable=False)
+    title = Column(String(128),  nullable=False)
 
     documents = relationship("AegisDocument", back_populates="topic")
 
@@ -104,10 +101,10 @@ class AegisDocument(Document):
     id            = Column(Integer,     ForeignKey("Document.id"), primary_key=True)
 
     # Identificación interna
-    title         = Column(String(64), nullable=False)
+    title         = Column(String(128), nullable=False)
 
     # Contenido de la píldora
-    subtitle      = Column(String(128), nullable=True)
+    subtitle      = Column(String(256), nullable=True)
     intro         = Column(Text,        nullable=True)
     closing       = Column(Text,        nullable=True)
     contact_email = Column(String(128), nullable=True)

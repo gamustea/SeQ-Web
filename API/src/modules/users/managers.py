@@ -31,7 +31,7 @@ from src.modules.exceptions import (
     ProfileUpdateError,
     UserBindingError,
 )
-from src.modules.infrastructure.unit_of_work import UnitOfWork
+from src.modules.infrastructure import UnitOfWork
 from src.modules.system.logging import SecOpsLogger
 
 from .model import AccessToken, RefreshToken, User
@@ -44,7 +44,6 @@ from .repositories import TokenRepository, UserRepository
     JWT_SECRET_KEY,
     JWT_ALGORITHM,
 ) = CR.get_oauth_config()
-
 
 class UserManager:
     """

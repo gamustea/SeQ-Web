@@ -404,7 +404,7 @@ def oauth_revoke():
 
     Example:
         curl -X POST https://api.example.com/oauth/revoke \\
-             -H "Authorization: Bearer <token>"
+                -H "Authorization: Bearer <token>"
     """
     token = request.headers["Authorization"].split()[1]
     OAUTH_MANAGER.revoke_access_token(token)

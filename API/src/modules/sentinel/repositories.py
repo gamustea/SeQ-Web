@@ -259,6 +259,28 @@ class SentinelDocumentRepository(BaseRepository[SentinelDocument]):
             .all()
         )
 
+    def get_by_id_with_details(self, doc_id: int) -> Optional[SentinelDocument]:
+        """
+        Retrieve a document with all its relationships eager-loaded.
+
+        Loads: user, scan.
+
+        Args:
+            doc_id: Primary key of the document.
+
+        Returns:
+            SentinelDocument with relationships loaded, or None if not found.
+        """
+        return (
+            self._session.query(SentinelDocument)
+            .filter(SentinelDocument.id == doc_id)
+            .options(
+                joinedload(SentinelDocument.user),
+                joinedload(SentinelDocument.scan),
+            )
+            .one_or_none()
+        )
+
     def update_status(self, document_id: int, status: str, filename: Optional[str] = None) -> Optional[SentinelDocument]:
         doc = self._session.get(SentinelDocument, document_id)
         if doc is None:

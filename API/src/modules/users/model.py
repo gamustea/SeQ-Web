@@ -69,7 +69,7 @@ class AccessToken(Base):
         Returns:
             True if token is not revoked and has not expired.
         """
-        return not self.revoked and datetime.utcnow() < self.expires_at  # type: ignore
+        return not self.revoked and datetime.utcnow() < self.expires_at
 
     def __str__(self):
         return f"AccessToken(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})"

@@ -24,24 +24,28 @@ from typing import Any
 import src.modules.system.config_reading as CR
 from src.modules.users import User
 from src.modules.system.logging import SecOpsLogger
-from src.modules.shared import BaseManager
-from sqlalchemy.orm import Session
+from src.modules.infrastructure.unit_of_work import UnitOfWork
 
 from .model import AegisDocument, AegisDocumentAlert, AegisTip, Topic
 from .pills import AegisAIWriter, AegisAlertFetcher, AlertSource
+from .repositories import AegisDocumentRepository
+from src.modules.shared._documents import validate_document_ownership
 
-class AegisManager(BaseManager):
+
+class AegisManager:
     """
     Gestiona el ciclo de vida completo de los documentos Aegis:
     creación, generación asíncrona, consulta, exportación y eliminación.
+
+    Toda la persistencia se realiza a través de AegisDocumentRepository
+    usando UnitOfWork. El manager no gestiona sesiones directamente.
     """
 
     _lock = threading.Lock()
 
-    def __init__(self, user: User, session: Session = None) -> None:
-        super().__init__(session)
+    def __init__(self, user: User) -> None:
         self.user = user
-        self.logger       = SecOpsLogger(f"AegisManager[{user.id}]").get_logger()
+        self.logger = SecOpsLogger(f"AegisManager[{user.id}]").get_logger()
         self.alert_fetcher = AegisAlertFetcher(logger=self.logger)
 
     # =========================================================================
@@ -68,102 +72,105 @@ class AegisManager(BaseManager):
         return document_id
 
     def get_document(self, doc_id: int) -> dict | None:
-        doc = self.session.query(AegisDocument).filter(AegisDocument.id == doc_id).first()
-        if not doc:
-            return None
-        
-        result = {
-            "id": doc.id,
-            "internalName": doc.title,
-            "title": doc.subtitle or "Sin título",
-            "userId": doc.user.id,
-            "topicId": doc.topic_id,
-            "topicTitle": doc.topic.title if doc.topic else "Tema desconocido",
-            "status": doc.status,
-            "pill": {
-                "subtitle": doc.subtitle,
-                "intro": doc.intro,
-                "closing": doc.closing,
-                "company": doc.company,
-                "contactEmail": doc.contact_email,
-                "tips": [t.to_dict() for t in doc.tips],
-            },
-            "alerts": [a.to_dict() for a in doc.alerts],
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
-        }
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            doc = repo.get_by_id_with_details(doc_id)
+            if not doc:
+                return None
 
-        if doc.status == "done":
-            result["pill"]   = doc.pill_to_dict()
-            result["alerts"] = [a.to_dict() for a in sorted(doc.alerts, key=lambda a: a.position)]
+            validate_document_ownership(doc, self.user.id)
+
+            result = {
+                "id": doc.id,
+                "internalName": doc.title,
+                "title": doc.subtitle or "Sin título",
+                "userId": doc.user.id,
+                "topicId": doc.topic_id,
+                "topicTitle": doc.topic.title if doc.topic else "Tema desconocido",
+                "status": doc.status,
+                "pill": {
+                    "subtitle": doc.subtitle,
+                    "intro": doc.intro,
+                    "closing": doc.closing,
+                    "company": doc.company,
+                    "contactEmail": doc.contact_email,
+                    "tips": [t.to_dict() for t in doc.tips],
+                },
+                "alerts": [a.to_dict() for a in doc.alerts],
+                "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+            }
+
+            if doc.status == "done":
+                result["pill"] = doc.pill_to_dict()
+                result["alerts"] = [a.to_dict() for a in sorted(doc.alerts, key=lambda a: a.position)]
 
         return result
 
     def get_document_path(self, document_id: int) -> Path:
         """Devuelve la ruta al archivo generado, validando propiedad y existencia."""
-        doc = (
-            self.session.query(AegisDocument)
-            .filter(AegisDocument.id == document_id, AegisDocument.user_id == self.user.id)
-            .first()
-        )
-        if not doc:
-            raise ValueError(f"Documento {document_id} no existe o no pertenece al usuario")
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            doc = repo.get_by_id(document_id)
+            if not doc:
+                raise ValueError(f"Documento {document_id} no existe o no pertenece al usuario")
 
-        path = self._read_cfg()["output_dir"] / doc.filename
-        if not path.exists():
-            raise FileNotFoundError(f"Archivo no encontrado: {doc.filename}")
+            validate_document_ownership(doc, self.user.id)
 
-        return path
+            if not doc.filename:
+                raise ValueError(f"Documento {document_id} no tiene filename")
+
+            cfg = self._read_cfg()
+            path = cfg["output_dir"] / doc.filename
+            if not path.exists():
+                raise FileNotFoundError(f"Archivo no encontrado: {doc.filename}")
+
+            return path
 
     def delete_document(self, document_id: int) -> None:
         """Elimina el documento de BD y el archivo en disco de forma atómica."""
-        doc = (
-            self.session.query(AegisDocument)
-            .filter(AegisDocument.id == document_id, AegisDocument.user_id == self.user.id)
-            .first()
-        )
-        if not doc:
-            raise ValueError(f"Documento {document_id} no existe o no pertenece al usuario")
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            doc = repo.get_by_id(document_id)
+            if not doc:
+                raise ValueError(f"Documento {document_id} no existe o no pertenece al usuario")
 
-        path = self._read_cfg()["output_dir"] / doc.filename
-        try:
-            if path.exists():
-                os.remove(path)
-                self.logger.info(f"Archivo eliminado: {path}")
-            self.session.delete(doc)
-            self.session.commit()
-            self.logger.info(f"Documento {document_id} eliminado de BD")
-        except Exception as exc:
-            self.session.rollback()
-            raise RuntimeError(f"Error eliminando documento: {exc}")
+            validate_document_ownership(doc, self.user.id)
+
+            cfg = self._read_cfg()
+            path = cfg["output_dir"] / doc.filename
+            try:
+                if path.exists():
+                    os.remove(path)
+                    self.logger.info(f"Archivo eliminado: {path}")
+                repo.delete(doc)
+                self.logger.info(f"Documento {document_id} eliminado de BD")
+            except Exception as exc:
+                raise RuntimeError(f"Error eliminando documento: {exc}")
 
     def list_documents(self) -> list[dict]:
         """Lista todos los documentos del usuario, ordenados por fecha descendente."""
-        docs = (
-            self.session.query(AegisDocument)
-            .filter(AegisDocument.user_id == self.user.id)
-            .order_by(AegisDocument.generated_at.desc())
-            .limit(100)
-            .all()
-        )
-        return [
-            {
-                "id":          d.id,
-                "title":       d.title,
-                "filename":    d.filename,
-                "format":      d.format,
-                "status":      d.status,
-                "generatedAt": d.generated_at.isoformat() if d.generated_at else None,
-                "topicId":     d.topic_id,
-            }
-            for d in docs
-        ]
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            docs = repo.get_documents_by_user(self.user.id, limit=100)
+            return [
+                {
+                    "id": d.id,
+                    "title": d.title,
+                    "filename": d.filename,
+                    "format": d.format,
+                    "status": d.status,
+                    "generatedAt": d.generated_at.isoformat() if d.generated_at else None,
+                    "topicId": d.topic_id,
+                }
+                for d in docs
+            ]
 
     def get_topics(self) -> list[dict]:
         """Devuelve todos los temas disponibles ordenados por título."""
-        return [
-            {"id": t.id, "title": t.title}
-            for t in self.session.query(Topic).order_by(Topic.title).all()
-        ]
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            topics = repo.get_topics()
+            return [{"id": t.id, "title": t.title} for t in topics]
 
     # =========================================================================
     # WORKFLOW DE GENERACIÓN (privado)
@@ -245,89 +252,73 @@ class AegisManager(BaseManager):
         except Exception as exc:
             self.logger.error(f"Error en workflow {document_id}: {exc}", exc_info=True)
             self._update_document_status(
-                document_id = document_id,
-                status      = "error",
-                error       = str(exc)[:100],
+                document_id=document_id,
+                status="error",
+                error=str(exc)[:100],
             )
-        finally:
-            self.close_session()
 
-    def _persist_content_atomic(self, document_id: int, content: AegisContent, contact_email_from_tweaks: str | None = None) -> None:
-        """
-        Persiste el contenido de la píldora directamente en AegisDocument
-        y los tips en AegisTip. Elimina tips previos si los hubiera.
-        """
-        try:
-            doc = self.session.get(AegisDocument, document_id)
-            if not doc:
-                raise ValueError(f"Documento {document_id} no encontrado para persistir")
+    def _persist_content_atomic(
+        self, document_id: int, content: AegisContent, contact_email_from_tweaks: str | None = None
+    ) -> None:
+        """Persiste el contenido de la píldora y los tips usando el repositorio."""
+        default_email = "seguridad@empresa.com"
+        contact_email = (
+            contact_email_from_tweaks
+            if contact_email_from_tweaks and contact_email_from_tweaks != default_email
+            else (content.contact_email or None)
+        )
 
-            # Volcado de campos de píldora sobre el documento
-            doc.subtitle      = content.subtitle
-            doc.intro         = content.intro
-            doc.closing       = content.closing
-            default_email = "seguridad@empresa.com"
-            doc.contact_email = contact_email_from_tweaks if contact_email_from_tweaks and contact_email_from_tweaks != default_email else (content.contact_email or None)
-            doc.company       = content.company
+        tips_data = [
+            {
+                "headline": tip.headline,
+                "body": tip.body,
+                "links": (
+                    [{"text": lk["text"], "url": lk["url"]} for lk in tip.links]
+                    if tip.links else None
+                ),
+            }
+            for tip in content.tips
+        ]
 
-            # Eliminación de tips previos
-            self.session.query(AegisTip).filter(AegisTip.document_id == document_id).delete()
-            self.session.flush()
-
-            for i, tip in enumerate(content.tips, 1):
-                links_value = tip.links if tip.links else None
-                if links_value:
-                    links_value = [{"text": lk["text"], "url": lk["url"]} for lk in links_value]
-                self.session.add(AegisTip(
-                    document_id = document_id,
-                    position    = i,
-                    headline    = tip.headline,
-                    body        = tip.body,
-                    links_json  = links_value,
-                ))
-
-            self._safe_commit()
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            repo.update_content_fields(
+                doc_id=document_id,
+                subtitle=content.subtitle,
+                intro=content.intro,
+                closing=content.closing,
+                contact_email=contact_email,
+                company=content.company,
+            )
+            repo.save_tips(document_id, tips_data)
             self.logger.info(f"Contenido persistido para doc {document_id}: {len(content.tips)} tips")
 
-        except Exception as exc:
-            self.session.rollback()
-            raise RuntimeError(f"Error persistiendo contenido: {exc}")
-
     def _persist_alerts_atomic(self, document_id: int, alerts: list[AegisAlert]) -> None:
-        """Persiste alertas con batch insert, eliminando las previas."""
-        try:
-            self.session.query(AegisDocumentAlert).filter(
-                AegisDocumentAlert.document_id == document_id
-            ).delete()
-            self.session.flush()
+        """Persiste alertas usando el repositorio."""
+        alerts_data = []
+        for alert in alerts:
+            pub_date: date | None = None
+            if alert.published:
+                try:
+                    pub_date = date.fromisoformat(alert.published[:10])
+                except ValueError:
+                    pass
 
-            for i, alert in enumerate(alerts, 1):
-                pub_date: date | None = None
-                if alert.published:
-                    try:
-                        pub_date = date.fromisoformat(alert.published[:10])
-                    except ValueError:
-                        pass
+            alerts_data.append({
+                "source": alert.source.value,
+                "source_label": "INCIBE-CERT" if alert.source == AlertSource.INCIBE else "NVD/CVE",
+                "title": alert.title[:256],
+                "published": pub_date,
+                "severity": alert.severity.value if isinstance(alert.severity, Enum) else alert.severity,
+                "affected_brands": alert.brands or None,
+                "description": alert.description[:500] if alert.description else None,
+                "url": alert.url[:512],
+            })
 
-                self.session.add(AegisDocumentAlert(
-                    document_id     = document_id,
-                    position        = i,
-                    source          = alert.source.value,
-                    source_label    = "INCIBE-CERT" if alert.source == AlertSource.INCIBE else "NVD/CVE",
-                    title           = alert.title[:256],
-                    published       = pub_date,
-                    severity        = alert.severity.value if isinstance(alert.severity, Enum) else alert.severity,
-                    affected_brands = alert.brands or None,
-                    description     = alert.description[:500] if alert.description else None,
-                    url             = alert.url[:512],
-                ))
-
-            self._safe_commit()
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            repo.save_alerts(document_id, alerts_data)
             self.logger.info(f"Alertas persistidas para doc {document_id}: {len(alerts)}")
-
-        except Exception as exc:
-            self.session.rollback()
-            raise RuntimeError(f"Error persistiendo alertas: {exc}")
 
     def _read_cfg(self) -> dict:
         stack_dir = Path(CR.get_directory_of(CR.DirectoryType.STACK_AEGIS))
@@ -348,17 +339,19 @@ class AegisManager(BaseManager):
 
     def _get_topic_from_db(self, topic_id: int | None) -> tuple[Topic | None, bool]:
         """Devuelve (topic, was_random). Si topic_id no existe, elige uno aleatorio."""
-        if topic_id is not None:
-            topic = self.session.query(Topic).filter(Topic.id == topic_id).first()
-            if topic:
-                return topic, False
-            self.logger.warning(f"Topic {topic_id} no encontrado, usando aleatorio")
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            if topic_id is not None:
+                topic = repo.get_topic_by_id(topic_id)
+                if topic:
+                    return topic, False
+                self.logger.warning(f"Topic {topic_id} no encontrado, usando aleatorio")
 
-        all_topics = self.session.query(Topic).all()
-        if not all_topics:
-            return None, False
+            all_topics = repo.get_topics()
+            if not all_topics:
+                return None, False
 
-        return random.choice(all_topics), True
+            return random.choice(all_topics), True
 
     def _load_reference_stack(self, stack_dir: Path) -> str:
         """Carga los 3 archivos .md más recientes del directorio de referencias."""
@@ -380,48 +373,41 @@ class AegisManager(BaseManager):
 
     def _create_pending_document(self, topic_id: int) -> int:
         """Crea un registro AegisDocument en estado 'pending' y devuelve su ID."""
-        ts          = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         placeholder = f"pending_{ts}_{self.user.id}_{topic_id}"
 
         doc = AegisDocument(
-            title          = placeholder[:64],
-            filename       = f"{placeholder}.json"[:128],
-            status         = "pending",
-            format         = "json",
-            topic_id      = topic_id,
-            user_id       = self.user.id,
-            is_ai_generated = 1,
+            title=placeholder[:64],
+            filename=f"{placeholder}.json"[:128],
+            status="pending",
+            format="json",
+            topic_id=topic_id,
+            user_id=self.user.id,
+            is_ai_generated=1,
         )
-        self.session.add(doc)
-        self._safe_commit()
-        return doc.id
+
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            saved_doc = repo.save(doc)
+            return saved_doc.id
 
     def _update_document_status(
         self,
         document_id: int,
-        status:      str,
-        title:       str | None = None,
-        filename:    str | None = None,
-        error:       str | None = None,
+        status: str,
+        title: str | None = None,
+        filename: str | None = None,
+        error: str | None = None,
     ) -> None:
-        """Actualiza el estado del documento, con manejo explícito de errores de BD."""
-        try:
-            doc = self.session.get(AegisDocument, document_id)
+        """Actualiza el estado del documento usando el repositorio."""
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            doc = repo.update_status(
+                doc_id=document_id,
+                status=status,
+                title=title,
+                filename=filename,
+                error=error,
+            )
             if not doc:
                 self.logger.error(f"Documento {document_id} no encontrado para actualizar estado")
-                return
-
-            doc.status = status
-            if title:
-                doc.title = title[:64]
-            if filename:
-                doc.filename = filename[:128]
-            if status == "done":
-                doc.generated_at = datetime.utcnow()
-            if error and status == "error":
-                doc.title = f"[ERR{document_id}] {error[:50]}"[:64]
-
-            self._safe_commit()
-        except Exception as exc:
-            self.logger.error(f"Error actualizando estado de doc {document_id}: {exc}")
-            self.session.rollback()
