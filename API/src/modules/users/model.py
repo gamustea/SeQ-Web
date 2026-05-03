@@ -188,6 +188,12 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
+    attributes = relationship(
+        "UserAttribute",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
     def __str__(self):
         """
         Return a string representation of the User instance.
@@ -205,3 +211,41 @@ class User(Base):
             String with id and username.
         """
         return f"<User(id={self.id}, username='{self.username}')>"
+
+
+# =========================================================================
+# USER ATTRIBUTE MODEL
+# =========================================================================
+
+
+class UserAttribute(Base):
+    """
+    Many-to-many relationship between users and attributes.
+
+    Links users to the attributes they possess. Each user can have multiple
+    attributes, stored as strings matching AttributeType enum values.
+
+    Attributes:
+        user_id: Foreign key to User.id (part of composite PK).
+        attribute_name: Attribute identifier (e.g., "sentinel_read", "role_admin").
+
+    Relationships:
+        user: User that owns this attribute assignment.
+
+    Example:
+        >>> ua = UserAttribute(user_id=1, attribute_name="sentinel_read")
+        >>> print(ua)
+        'UserAttribute(user_id=1, attribute_name='sentinel_read')'
+    """
+    __tablename__ = "UserAttribute"
+
+    user_id = Column(Integer, ForeignKey("User.id"), primary_key=True)
+    attribute_name = Column(String(64), primary_key=True)
+
+    user = relationship("User", back_populates="attributes")
+
+    def __str__(self):
+        return f"UserAttribute(user_id={self.user_id}, attribute_name='{self.attribute_name}')"
+
+    def __repr__(self):
+        return f"<UserAttribute(user_id={self.user_id}, attribute_name='{self.attribute_name}')>"

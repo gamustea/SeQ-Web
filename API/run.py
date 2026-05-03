@@ -47,17 +47,7 @@ SHUTDOWN_TIMEOUT = 30
 _UI_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
 )
-
-
-def register_blueprints(app: Flask) -> None:
-    """Registra todos los blueprints en la aplicación Flask."""
-    app.register_blueprint(system_bp, url_prefix="/system")
-    app.register_blueprint(oauth_bp, url_prefix="/oauth")
-    app.register_blueprint(users_bp, url_prefix="/users")
-    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
-    app.register_blueprint(acheron_bp, url_prefix="/acheron")
-    app.register_blueprint(aegis_bp, url_prefix="/aegis")
-    app.register_blueprint(pages_bp, url_prefix="/pages")
+   
 
 
 def _graceful_shutdown(signum, frame) -> None:
@@ -84,13 +74,22 @@ def create_app(fresh_db_init = False) -> Flask:
 
     _logger.info("Inicializando la aplicación SeQ...")
     _logger.info("Inicializando CORS...")
-    _configure_cors(app)
+    raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    origins.append("http://127.0.0.1:3000")
+    CORS(app, origins=origins, supports_credentials=True)
 
     _logger.info("Inicializando rate limiting...")
-    _configure_rate_limiting(app)
+    limiter.init_app(app)
 
     _logger.info("Añadiendo endpoints...")
-    register_blueprints(app)
+    app.register_blueprint(system_bp,   url_prefix="/system")
+    app.register_blueprint(oauth_bp,    url_prefix="/oauth")
+    app.register_blueprint(users_bp,    url_prefix="/users")
+    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
+    app.register_blueprint(acheron_bp,  url_prefix="/acheron")
+    app.register_blueprint(aegis_bp,    url_prefix="/aegis")
+    app.register_blueprint(pages_bp,    url_prefix="/pages")
     _register_ui_route(app)
 
     _logger.info("Registrando manejadores de error globales...")
@@ -105,18 +104,6 @@ def create_app(fresh_db_init = False) -> Flask:
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
 
-def _configure_cors(app: Flask) -> None:
-    raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
-    origins = [o.strip() for o in raw.split(",") if o.strip()]
-    origins.append("http://127.0.0.1:3000")
-    CORS(app, origins=origins, supports_credentials=True)
-
-def _configure_rate_limiting(app: Flask) -> None:
-    """
-    Asocia el único Limiter de la aplicación (definido en _shared.py)
-    a esta instancia de Flask.
-    """ 
-    limiter.init_app(app)
 
 def _register_ui_route(app: Flask) -> None:
     """
@@ -345,5 +332,5 @@ def _init_db() -> None:
 
 
 if __name__ == "__main__":
-    app = create_app(False)
+    app = create_app(True)
     app.run(debug=True, host='0.0.0.0', port=5000)

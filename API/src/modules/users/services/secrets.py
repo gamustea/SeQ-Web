@@ -35,17 +35,17 @@ def hash_password_with_salt(password: str, salt: str) -> str:
     return encode_sha256(salted_password)
 
 def verify_password(stored_hash: str, password: str, salt: str) -> bool:
-        """Verifies if a password matches the stored hash.
-        
-        Args:
-            stored_hash (str): The hash stored in the database.
-            password (str): The password to verify.
-            salt (str): The salt used for the stored hash.
-        
-        Returns:
-            bool: True if password is correct, False otherwise.
-        """
-        return hash_password_with_salt(password, salt) == stored_hash
+    """Verifies if a password matches the stored hash.
+    
+    Args:
+        stored_hash (str): The hash stored in the database.
+        password (str): The password to verify.
+        salt (str): The salt used for the stored hash.
+    
+    Returns:
+        bool: True if password is correct, False otherwise.
+    """
+    return hash_password_with_salt(password, salt) == stored_hash
 
 
 

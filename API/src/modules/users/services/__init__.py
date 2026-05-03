@@ -5,7 +5,12 @@ from .secrets import (
     verify_password
 )
 
-from .permissions import require_oauth_token
+from .permissions import (
+    require_oauth_token,
+    require_attributes,
+    require_auth,
+    AttributeType,
+)
 
 __all__ = [
     'encode_sha256',
@@ -13,5 +18,8 @@ __all__ = [
     'hash_password_with_salt',
     'verify_password',
 
-    'require_oauth_token'
+    'require_oauth_token',
+    'require_attributes',
+    'require_auth',
+    'AttributeType',
 ]

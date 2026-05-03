@@ -34,7 +34,7 @@ from src.modules.users.exceptions import (
 from src.modules.infrastructure import UnitOfWork
 from src.modules.system.logging import SecOpsLogger
 
-from .model import AccessToken, RefreshToken, User
+from .model import AccessToken, RefreshToken, User, UserAttribute
 from .repositories import TokenRepository, UserRepository
 from .services import (
     encode_sha256,
@@ -171,6 +171,12 @@ class UserManager:
                     password_salt = salt,
                 )
                 repo.save(new_user)
+
+                new_user_attr = UserAttribute(
+                    user_id=new_user.id,
+                    attribute_name="role_user"
+                )
+                uow.session.add(new_user_attr)
                 # UoW commits and expunges on __exit__
 
             self.logger.info(f"Usuario '{username}' registrado exitosamente (ID: {new_user.id})")
