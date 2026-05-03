@@ -25,13 +25,6 @@ from urllib.parse import urlparse
 
 from flask import request, jsonify
 
-from src.modules.exceptions import (
-    ScanNotFoundError,
-    UserNotFoundError,
-    ValidationError,
-    create_error_response,
-)
-
 
 limiter = None
 _DNS_TIMEOUT = 3.0

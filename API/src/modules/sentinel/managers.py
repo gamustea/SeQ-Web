@@ -34,7 +34,7 @@ from src.modules.users import User
 from src.modules.shared import normalize_target
 from src.modules.shared._documents import validate_document_ownership
 from src.modules.system.logging import SecOpsLogger
-from src.modules.exceptions.documents import DocumentError
+from src.modules.aegis.exceptions import DocumentError
 
 from src.modules.infrastructure.unit_of_work import UnitOfWork
 from .repositories import ScanRepository, SentinelDocumentRepository

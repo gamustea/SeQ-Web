@@ -25,7 +25,7 @@ from typing import List, Optional, Tuple
 import jwt
 
 import src.modules.system.config_reading as CR
-from src.modules.exceptions import (
+from src.modules.users.exceptions import (
     DatabaseError,
     ExistingUserError,
     ProfileUpdateError,

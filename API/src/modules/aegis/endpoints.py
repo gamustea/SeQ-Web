@@ -82,17 +82,19 @@ from contextlib import contextmanager
 from flask import Blueprint, jsonify, request, send_file, Response
 
 import src.modules.system.config_reading as CR
-from src.modules.exceptions import (
-    AegisValidationError,
-    AegisInsufficientContentError,
-    DatabaseError,
-    EntityAlreadyExistsError,
+from src.modules.shared._exceptions import (
     ExceptionHandler,
     MissingParameterError,
-    UserNotFoundError,
     ValidationError,
+    DatabaseError,
+    EntityAlreadyExistsError,
     create_error_response,
 )
+from src.modules.aegis.exceptions import (
+    AegisValidationError,
+    AegisInsufficientContentError,
+)
+from src.modules.users.exceptions import UserNotFoundError
 from src.modules.shared import limiter, get_current_user_id, get_current_username
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, UserManager, OAuthTokenManager

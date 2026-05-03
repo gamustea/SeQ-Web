@@ -55,15 +55,17 @@ from flask import Blueprint, jsonify, request
 from contextlib import contextmanager
 from werkzeug.exceptions import BadRequest
 
-from src.modules.exceptions import (
-DatabaseError,
-ExistingUserError,
-InvalidCredentialsError,
-MissingParameterError,
-UserBindingError,
-ProfileUpdateError,
-ExceptionHandler,
-create_error_response,
+from src.modules.shared._exceptions import (
+    DatabaseError,
+    MissingParameterError,
+    ExceptionHandler,
+    create_error_response,
+)
+from src.modules.users.exceptions import (
+    ExistingUserError,
+    InvalidCredentialsError,
+    UserBindingError,
+    ProfileUpdateError,
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
