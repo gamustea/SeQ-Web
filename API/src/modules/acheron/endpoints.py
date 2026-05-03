@@ -72,12 +72,12 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 from contextlib import contextmanager
 
-from src.modules.exceptions import (
+from src.modules.shared._exceptions import (
     ExceptionHandler,
-    UserNotFoundError,
     ValidationError,
     create_error_response,
 )
+from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
 from src.modules.shared import (

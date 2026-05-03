@@ -88,16 +88,18 @@ from flask import Blueprint, jsonify, request, send_file
 
 from src.modules.sentinel import SentinelDocument
 from src.modules.users import OAuthTokenManager, UserManager, require_oauth_token
-from src.modules.exceptions import (
+from src.modules.shared._exceptions import (
     ExceptionHandler,
     MissingParameterError,
+    ValidationError,
+    create_error_response,
+)
+from src.modules.sentinel.exceptions import (
     ReportGenerationError,
     ScanExecutionError,
     ScanNotFoundError,
-    ValidationError,
-    create_error_response,
-    DocumentError
 )
+from src.modules.aegis.exceptions import DocumentError
 
 from src.modules.sentinel import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
 from src.modules.shared import (

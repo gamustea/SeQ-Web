@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from src.modules.system.logging import SecOpsLogger
-from src.modules.exceptions import (
+from src.modules.aegis.exceptions import (
     ExporterError,
     ExporterFormatError,
     ExporterConfigurationError,
