@@ -33,7 +33,12 @@ from .managers import (
     ScanManager,
 )
 
-from .reports import (
+from .repositories import (
+    ScanRepository,
+    SentinelDocumentRepository,
+)
+
+from .services import (
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy,
@@ -63,6 +68,9 @@ __all__ = [
     "NiktoScanManager",
     "OpenVASScanManager",
     "ScanManager",
+    # Repositories
+    "ScanRepository",
+    "SentinelDocumentRepository",
     # Endpoints
     "sentinel_bp",
     # Reports

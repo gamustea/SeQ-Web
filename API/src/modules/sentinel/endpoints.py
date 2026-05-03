@@ -87,35 +87,52 @@ from contextlib import contextmanager
 from flask import Blueprint, jsonify, request, send_file
 
 from src.modules.sentinel import SentinelDocument
-from src.modules.users import require_oauth_token, get_user_manager
-from src.modules.exceptions import (
+from src.modules.users import OAuthTokenManager, UserManager, require_oauth_token
+from src.modules.shared._exceptions import (
     ExceptionHandler,
     MissingParameterError,
-    ReportGenerationError,
-    ScanExecutionError,
-    ScanNotFoundError,
     ValidationError,
     create_error_response,
 )
+from src.modules.sentinel.exceptions import (
+    ReportGenerationError,
+    ScanExecutionError,
+    ScanNotFoundError,
+)
+from src.modules.aegis.exceptions import DocumentError
 
 from src.modules.sentinel import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
-from src.modules.shared import limiter, get_current_user_id, get_current_username, normalize_target
+from src.modules.shared import (
+    limiter, 
+    get_current_user_id, 
+    get_current_username, 
+    normalize_target,
+    require_json,
+    require_str,
+    require_arg
+)
 from src.modules.system import SecOpsLogger
 
 from .managers import NmapScanManager, NiktoScanManager, OpenVASScanManager
 
 
+# =========================================================================
+# CONSTANTS
+# =========================================================================
+
 sentinel_bp = Blueprint("sentinel", __name__)
 _logger     = SecOpsLogger("sentinel").get_logger()
 
+CANCELLABLE_STATES      = frozenset({"pending", "running"})
+VALID_SCAN_TYPES        = frozenset({"nmap", "nikto", "openvas", "all"})
+VALID_OPENVAS_CONFIGS   = frozenset({"full_fast", "full_deep", "full_ultimate"})
+MAX_PDF_SIZE_BYTES      = 50 * 1024 * 1024
+MAX_HOSTS_TO_EXPAND     = 256
 
-CANCELLABLE_STATES    = frozenset({"pending", "running"})
-VALID_SCAN_TYPES      = frozenset({"nmap", "nikto", "openvas", "all"})
-VALID_OPENVAS_CONFIGS = frozenset({"full_fast", "full_deep", "full_ultimate"})
-MAX_PDF_SIZE_BYTES    = 50 * 1024 * 1024
-MAX_HOSTS_TO_EXPAND = 256
 
-
+# =========================================================================
+# HELPERS
+# =========================================================================
 
 def resolve_manager(
     scan_type: str,
@@ -159,13 +176,21 @@ def get_scan_by_id_for_user(
     Busca un escaneo entre los tres tipos. Devuelve (scan, tipo) o (None, '').
     El tipo es 'nmap', 'nikto' u 'openvas'.
     """
-    scan = nmap_manager.get_scan_by_id(scan_id)
-    if not scan:
+    nmap_scan = nmap_manager.get_scan_by_id(scan_id)
+    nikto_scan = nikto_manager.get_scan_by_id(scan_id)
+    openvas_scan = openvas_manager.get_scan_by_id(scan_id)
+    if not nmap_scan and not nikto_scan and not openvas_scan:
         raise ScanNotFoundError(scan_id)
 
     uid = get_current_user_id()
-    verify_scan_ownership(scan, uid, scan_id)
-    return scan, scan.scan_type
+    if nmap_scan:
+        verify_scan_ownership(nmap_scan, uid, scan_id)
+        return nmap_scan, "nmap"
+    if nikto_scan:
+        verify_scan_ownership(nikto_scan, uid, scan_id)
+        return nikto_scan, "nikto"
+    verify_scan_ownership(openvas_scan, uid, scan_id)
+    return openvas_scan, "openvas"
 
 
 def build_pdf_creator(scan: Scan) -> PDFCreator:
@@ -186,61 +211,6 @@ def build_pdf_creator(scan: Scan) -> PDFCreator:
         )
 
     return PDFCreator(strategy)
-
-
-def _require_json() -> dict:
-    """Extrae y valida el cuerpo de la petición como JSON.
-
-    Returns:
-        dict: Datos JSON parseados.
-
-    Raises:
-        400: Si el Content-Type no es application/json o el JSON es inválido.
-    """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
-
-
-def _require_str(data: dict, field: str) -> str:
-    """Extrae un campo obligatorio del JSON y lo valida como string no vacío.
-
-    Args:
-        data: Diccionario con los datos del request.
-        field: Nombre del campo a extraer.
-
-    Returns:
-        str: El valor del campo, triminado de espacios.
-
-    Raises:
-        MissingParameterError: Si el campo falta o está vacío.
-    """
-    value = data.get(field)
-    if not value or not str(value).strip():
-        raise MissingParameterError(field)
-    return str(value).strip()
-
-
-def _parse_scan_id_from_args() -> int:
-    """Extrae el parámetro 'id' de la query string como entero.
-
-    Returns:
-        int: El ID del escaneo.
-
-    Raises:
-        MissingParameterError: Si el parámetro 'id' no existe.
-        ValidationError: Si el valor no es un entero válido.
-    """
-    raw = request.args.get("id")
-    if not raw:
-        raise MissingParameterError("id")
-    try:
-        return int(raw)
-    except ValueError:
-        raise ValidationError(field="id", message="El ID debe ser un número entero", value=raw)
 
 
 def _ts(dt) -> str:
@@ -439,74 +409,6 @@ def _format_openvas_scans(scans: list, manager=None) -> list:
     return results
 
 
-def _expand_octal(rango_str):
-    """
-    Expande un rango de octetos al estilo Nmap.
-    Ejemplos:
-    - "192.168.1.1-10" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.1.10"]
-    - "192.168.1-2.1-5" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.2.5"]
-    - "192.168.1.*" -> ["192.168.1.0", "192.168.1.1", ..., "192.168.1.255"]
-    """
-
-    # Reemplazar wildcards por rangos completos
-    rango_str = rango_str.replace("*", "0-255")
-
-    # Dividir por puntos
-    octetos = rango_str.split(".")
-
-    if len(octetos) != 4:
-        return None
-
-    # Procesar cada octeto
-    rangos_octetos = []
-
-    for octeto in octetos:
-        if "-" in octeto:
-            # Es un rango: "1-10"
-            partes = octeto.split("-")
-            if len(partes) != 2:
-                return None
-
-            try:
-                inicio = int(partes[0])
-                fin = int(partes[1])
-            except ValueError:
-                return None
-
-            # Validar rango de octeto (0-255)
-            if inicio < 0 or inicio > 255 or fin < 0 or fin > 255:
-                return None
-
-            if inicio > fin:
-                return None
-
-            rangos_octetos.append(range(inicio, fin + 1))
-        else:
-            # Es un nÃºmero fijo
-            try:
-                valor = int(octeto)
-            except ValueError:
-                return None
-
-            if valor < 0 or valor > 255:
-                return None
-
-            rangos_octetos.append([valor])
-
-    # Generar todas las combinaciones
-    lista_ips = []
-    for combinacion in itertools.product(*rangos_octetos):
-        ip_str = ".".join(map(str, combinacion))
-        # Validar que sea una IP vÃ¡lida
-        try:
-            ipaddress.ip_address(ip_str)
-            lista_ips.append(ip_str)
-        except ValueError:
-            continue
-
-    return lista_ips if lista_ips else None
-
-
 def validate_ip(ips_str: str) -> tuple[bool, List[str], str]:
         """
         Valida que una cadena de IPs sea válida para Nmap y devuelve la lista expandida.
@@ -524,6 +426,73 @@ def validate_ip(ips_str: str) -> tuple[bool, List[str], str]:
         Returns:
             tuple: (bool, list, str) - (es_válido, lista_ips, mensaje)
         """
+
+        def _expand_octal(rango_str):
+            """
+            Expande un rango de octetos al estilo Nmap.
+            Ejemplos:
+            - "192.168.1.1-10" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.1.10"]
+            - "192.168.1-2.1-5" -> ["192.168.1.1", "192.168.1.2", ..., "192.168.2.5"]
+            - "192.168.1.*" -> ["192.168.1.0", "192.168.1.1", ..., "192.168.1.255"]
+            """
+
+            # Reemplazar wildcards por rangos completos
+            rango_str = rango_str.replace("*", "0-255")
+
+            # Dividir por puntos
+            octetos = rango_str.split(".")
+
+            if len(octetos) != 4:
+                return None
+
+            # Procesar cada octeto
+            rangos_octetos = []
+
+            for octeto in octetos:
+                if "-" in octeto:
+                    # Es un rango: "1-10"
+                    partes = octeto.split("-")
+                    if len(partes) != 2:
+                        return None
+
+                    try:
+                        inicio = int(partes[0])
+                        fin = int(partes[1])
+                    except ValueError:
+                        return None
+
+                    # Validar rango de octeto (0-255)
+                    if inicio < 0 or inicio > 255 or fin < 0 or fin > 255:
+                        return None
+
+                    if inicio > fin:
+                        return None
+
+                    rangos_octetos.append(range(inicio, fin + 1))
+                else:
+                    # Es un nÃºmero fijo
+                    try:
+                        valor = int(octeto)
+                    except ValueError:
+                        return None
+
+                    if valor < 0 or valor > 255:
+                        return None
+
+                    rangos_octetos.append([valor])
+
+            # Generar todas las combinaciones
+            lista_ips = []
+            for combinacion in itertools.product(*rangos_octetos):
+                ip_str = ".".join(map(str, combinacion))
+                # Validar que sea una IP vÃ¡lida
+                try:
+                    ipaddress.ip_address(ip_str)
+                    lista_ips.append(ip_str)
+                except ValueError:
+                    continue
+
+            return lista_ips if lista_ips else None
 
         if not ips_str or not isinstance(ips_str, str):
             return False, [], "El parámetro debe ser una cadena no vacía"
@@ -730,22 +699,18 @@ def validate_port(ports_str: str):
             f"EspecificaciÃ³n vÃ¡lida con {len(lista_puertos)} puertos",
         )
 
-
-
-
 @contextmanager
 def get_user_managers(user_id: int):
-    with get_user_manager() as um:
-        user = um.get_user_by_id(user_id)
-        nmap    = NmapScanManager(user)
-        nikto   = NiktoScanManager(user)
-        openvas = OpenVASScanManager(user)
-        try:
-            yield nmap, nikto, openvas
-        finally:
-            nmap.close_session()
-            nikto.close_session()
-            openvas.close_session()
+    user = UserManager().get_user_by_id(user_id)
+
+    nmap    = NmapScanManager(user)
+    nikto   = NiktoScanManager(user)
+    openvas = OpenVASScanManager(user)
+    yield nmap, nikto, openvas
+
+# =========================================================================
+# ENDPOINTS
+# =========================================================================
 
 @sentinel_bp.get("/scan-status")
 @require_oauth_token
@@ -753,7 +718,7 @@ def get_user_managers(user_id: int):
 def get_scan_status():
     """Estado y progreso de un escaneo."""
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         uid     = get_current_user_id()
         
         with get_user_managers(uid) as (nmap, nikto, openvas):
@@ -831,13 +796,14 @@ def cancel_scan(scan_id: int):
 @limiter.limit("20 per hour; 100 per day")
 def start_nmap_scan():
     """Lanza uno o más escaneos Nmap."""
-    data = _require_json()
+    
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
     try:
-        host  = _require_str(data, "target")
-        ports = _require_str(data, "ports")
+        host  = require_str(data, "target")
+        ports = require_str(data, "ports")
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
@@ -889,12 +855,12 @@ def start_nmap_scan():
 @limiter.limit("20 per hour; 100 per day")
 def start_nikto_scan():
     """Lanza un escaneo Nikto."""
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
     try:
-        target = _require_str(data, "target")
+        target = require_str(data, "target")
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
@@ -928,12 +894,12 @@ def start_nikto_scan():
 @limiter.limit("10 per hour; 50 per day")
 def start_openvas_scan():
     """Lanza un escaneo OpenVAS para un único host."""
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
     try:
-        target      = _require_str(data, "target")
+        target      = require_str(data, "target")
         scan_config = data.get("scanConfig", "full_fast")
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
@@ -1048,6 +1014,7 @@ def retrieve_scan_by_id(scan_id: int):
                 raise ScanNotFoundError(scan_id)
             verify_scan_ownership(scan, uid, scan_id)
 
+            _logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan_type} por usuario {get_current_username()}")
             if scan_type == "nmap":
                 result = _format_nmap_scans([scan], nmap)[0]
                 result["openPorts"] = [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason, "product": p.product, "version": p.version} for p in scan.open_ports_relation]
@@ -1081,7 +1048,7 @@ def retrieve_scan_by_id(scan_id: int):
 def generate_pdf():
     """Solicita la generación asíncrona de un PDF."""
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         ai_report_str = request.args.get("aiReport", "false").lower()
         ai_report = ai_report_str == "true"
         
@@ -1242,8 +1209,8 @@ def get_documents_by_scan(scan_id: int):
     try:
         uid = get_current_user_id()
         
-        with get_user_managers(uid) as (nmap_mgr, _, _):
-            scan = nmap_mgr.get_scan_by_id(scan_id)
+        with get_user_managers(uid) as (nmap_mgr, nikto_mgr, openvas_mgr):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_mgr, nikto_mgr, openvas_mgr)
             if not scan:
                 return jsonify({"error": "Escaneo no encontrado"}), 404
             
@@ -1251,10 +1218,7 @@ def get_documents_by_scan(scan_id: int):
                 return jsonify({"error": "No tienes permisos para acceder a este escaneo"}), 403
             
             from src.modules.sentinel import SentinelDocument
-            documents = nmap_mgr.session.query(SentinelDocument).filter(
-                SentinelDocument.scan_id == scan_id,
-                SentinelDocument.user_id == uid
-            ).order_by(SentinelDocument.created_at.desc()).all()
+            documents = nmap_mgr.get_documents_by_scan_id(scan_id)
             
             docs_list = []
             for doc in documents:
@@ -1312,7 +1276,7 @@ def is_scan_finished():
              -H "Authorization: Bearer <token>"
     """
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         uid     = get_current_user_id()
         with get_user_managers(uid) as (nmap, nikto, openvas):
             scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
@@ -1406,32 +1370,20 @@ def delete_document(document_id: int):
         404 — Documento no encontrado.
         403 — Sin permisos.
     """
-    try:
-        uid = get_current_user_id()
-        with get_user_managers(uid) as (nmap_mgr, _, _):
-            doc = nmap_mgr.get_document_by_id(document_id)
-            if not doc or doc.user_id != uid:
+    uid = get_current_user_id()
+    with get_user_managers(uid) as (nmap_mgr, _, _):
+        try:
+            owned = nmap_mgr.check_ownership(document_id, uid)
+
+            if not owned:
                 return jsonify({"error": "Documento no encontrado o acceso denegado"}), 404
-            
-            scan_id = doc.scan_id
-            
-            if doc.filename and os.path.exists(doc.filename):
-                try:
-                    os.remove(doc.filename)
-                except Exception as e:
-                    _logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}")
-            
-            nmap_mgr.session.delete(doc)
-            nmap_mgr._safe_commit()
-            
-            _logger.info(f"Documento {document_id} eliminado por {get_current_username()}")
-            return jsonify({"message": "Documento eliminado", "documentId": document_id, "scanId": scan_id}), 200
-        
-    except Exception as exc:
-        _logger.error(f"Error eliminando documento {document_id}: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+
+            nmap_mgr.delete_document(document_id)
+            _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
+            return jsonify({"message": "Documento eliminado correctamente", "documentId": document_id}), 200
+        except DocumentError as exc:
+            _logger.error(f"Error eliminando documento {document_id} por usuario {uid}: {exc}", exc_info=True)
+            return jsonify({"error": "No se pudo eliminar el documento"}), 500
 
 
 @sentinel_bp.get("/generate-pdf-base64")
@@ -1466,7 +1418,7 @@ def generate_pdf_base64():
              -H "Authorization: Bearer <token>"
     """
     try:
-        scan_id = _parse_scan_id_from_args()
+        scan_id = int(require_arg("id"))
         uid     = get_current_user_id()
         with get_user_managers(uid) as (nmap, nikto, openvas):
             scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)

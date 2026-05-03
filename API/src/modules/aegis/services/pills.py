@@ -35,7 +35,7 @@ from ddgs import DDGS
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
 from src.modules.shared import AIWriter
-from src.modules.exceptions import (
+from src.modules.aegis.exceptions import (
     CircuitBreakerOpenError,
     AegisValidationError,
     AegisInsufficientContentError,
@@ -44,7 +44,7 @@ from src.modules.exceptions import (
     AIFallbackExhaustedError,
 )
 
-from .model import Topic
+from ..model import Topic
 
 
 # ============================================================================
@@ -237,7 +237,6 @@ class AegisAlert:
             raise AegisValidationError(f"URL inválida: {self.url}", field="url", value=self.url)
 
 
-
 def retry_on_failure(max_retries: int = MAX_RETRIES, exceptions: tuple = (Exception,)):
     """Reintentos con backoff exponencial y jitter."""
     def decorator(func):
@@ -359,7 +358,6 @@ class AegisAlertFetcher:
             if entry:
                 alerts, timestamp = entry
                 if datetime.now() - timestamp < self._cache_ttl:
-                    self.logger.debug(f"Cache hit para '{key}'")
                     return alerts
                 del self._cache[key]
         return None
@@ -533,7 +531,6 @@ class AegisAlertFetcher:
                     break
 
                 try:
-                    # FIX: entry es una tupla [cve_id, metadata_dict]
                     if not isinstance(entry, (list, tuple)) or len(entry) < 2:
                         continue
                         
@@ -550,7 +547,6 @@ class AegisAlertFetcher:
                     if not self._is_recent(pub_raw):
                         continue
 
-                    # Extraer descripción desde containers.cna
                     containers = meta.get("containers", {})
                     cna = containers.get("cna", {})
                     descriptions = cna.get("descriptions", [])
@@ -560,7 +556,6 @@ class AegisAlertFetcher:
                         next((d["value"] for d in descriptions if d.get("lang", "").startswith("en")), "")
                     ) if descriptions else ""
 
-                    # Extraer severidad desde metrics
                     severity = ""
                     metrics = cna.get("metrics", [])
                     for metric in metrics:
@@ -576,7 +571,6 @@ class AegisAlertFetcher:
                         if severity:
                             break
 
-                    # Extraer producto afectado
                     affected = cna.get("affected", [])
                     product_name = affected[0].get("product", "") if affected else ""
                     title = f"{cve_id}" + (f" — {product_name}" if product_name else "")

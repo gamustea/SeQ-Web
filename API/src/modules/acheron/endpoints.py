@@ -72,12 +72,12 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 from contextlib import contextmanager
 
-from src.modules.exceptions import (
+from src.modules.shared._exceptions import (
     ExceptionHandler,
-    UserNotFoundError,
     ValidationError,
     create_error_response,
 )
+from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
 from src.modules.shared import (
@@ -178,7 +178,7 @@ def upsert_vault():
              -H "Content-Type: application/json" \\
              -d '{...vault_json...}'
     """
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
@@ -306,7 +306,7 @@ def add_vault_storable():
                  "password": "mypassword"
                }'
     """
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
@@ -375,7 +375,7 @@ def delete_vault_storable():
              -H "Content-Type: application/json" \\
              -d '{"internalId": "abc123"}'
     """
-    data = _require_json()
+    data = require_json()
     if isinstance(data, tuple):
         return data
 
@@ -414,7 +414,7 @@ def delete_vault_storable():
 
 # ── Helpers privados ──────────────────────────────────────────────────────────
 
-def _require_json():
+def require_json():
     """Extrae y valida el body JSON de la petición."""
     if not request.is_json:
         return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400

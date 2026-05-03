@@ -20,13 +20,13 @@ from typing import Optional, Dict, Any
 
 import src.modules.system.config_reading as CR
 from src.modules.shared import AIWriter
-from src.modules.exceptions import (
+from src.modules.aegis.exceptions import (
     AIConnectionError,
     AIResponseError,
     AIFallbackExhaustedError,
 )
 
-from .model import NmapScan, NiktoScan, OpenVASScan
+from ..model import NmapScan, NiktoScan, OpenVASScan
 
 
 class NmapAIWriter(AIWriter):

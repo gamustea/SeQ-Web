@@ -17,31 +17,9 @@ from .model import (
 )
 from .permissions import require_oauth_token
 from .endpoints import oauth_bp, users_bp
+from .managers import UserManager, OAuthTokenManager
 
 
-def get_user_manager():
-    from .managers import UserManager
-    @contextmanager
-    def _um():
-        um = UserManager()
-        try:
-            yield um
-        finally:
-            um.close_session()
-    return _um()
-
-def get_oauth_manager():
-    from .managers import OAuthTokenManager
-    @contextmanager
-    def _om():
-        om = OAuthTokenManager()
-        try:
-            yield om
-        finally:
-            om.close_session()
-    return _om()
-
-# For backwards compatibility - lazily loaded at first access
 class _LazyLoader:
     _users_bp = None
     _oauth_bp = None
@@ -62,7 +40,6 @@ class _LazyLoader:
 
 _loader = _LazyLoader()
 
-# For backwards compatibility - these load lazily on first access
 def __getattr__(name):
     if name == "users_bp":
         return _loader.users_bp
@@ -75,12 +52,9 @@ __all__ = [
     "User",
     "AccessToken",
     "RefreshToken",
-    
-    "get_user_manager",
-    "get_oauth_manager",
-    "get_user_endpoints",
-    "get_oauth_endpoints",
-    
+    "UserManager",
+    "OAuthTokenManager",
     "users_bp",
     "oauth_bp",
+    "require_oauth_token",
 ]

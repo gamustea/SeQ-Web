@@ -38,9 +38,8 @@ def require_oauth_token(f):
                 }), 401
 
             token = parts[1]
-            from .endpoints import get_oauth_manager
-            with get_oauth_manager() as oauth_mg:
-                payload = oauth_mg.verify_access_token(token)
+
+            payload = OAuthTokenManager().verify_access_token(token)
 
             if not payload:
                 return jsonify({

@@ -11,7 +11,7 @@ Autenticación: Bearer token requerido.
 
 from flask import Blueprint, jsonify, request
 
-from src.modules.exceptions import (
+from src.modules.shared._exceptions import (
     ExceptionHandler,
     create_error_response,
 )

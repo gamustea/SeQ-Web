@@ -1,4 +1,9 @@
-from ._base import SecOpsException, ErrorCode, ErrorSeverity
+from src.modules.shared._exceptions import (
+    SecOpsException,
+    ErrorCode,
+    ErrorSeverity,
+    DatabaseError,
+)
 
 
 class AuthenticationError(SecOpsException):

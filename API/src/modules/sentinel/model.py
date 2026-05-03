@@ -172,7 +172,6 @@ class Scan(Base):
     user = relationship("User", back_populates="scans")
     host = relationship("Host", back_populates="scans")
 
-    # Un escaneo puede tener como mucho un SentinelDocument asociado
     sentinel_document = relationship(
         "SentinelDocument",
         back_populates="scan",

@@ -4,6 +4,7 @@ src.modules.acheron - Módulo de gestión de secretos/vault
 Exponente:
     - VaultManager: Gestión de bóvedas
     - Modelos: Vault, Storable, Account, CreditCard
+    - Repositorios: VaultRepository, StorableRepository
     - Endpoints: acheron_bp
 """
 
@@ -14,6 +15,10 @@ from .model import (
     Vault,
 )
 from .managers import VaultManager
+from .repositories import (
+    VaultRepository,
+    StorableRepository
+)
 from .endpoints import acheron_bp
 
 __all__ = [
@@ -24,6 +29,9 @@ __all__ = [
     "Vault",
     # Managers
     "VaultManager",
+    # Repositories
+    "VaultRepository",
+    "StorableRepository",
     # Endpoints
     "acheron_bp",
 ]
