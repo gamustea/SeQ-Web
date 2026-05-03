@@ -69,6 +69,9 @@ from src.modules.users.exceptions import (
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
+from src.modules.users.services.permissions import AttributeType, require_attributes
+from src.modules.users.model import UserAttribute
+from src.modules.infrastructure import UnitOfWork
 from src.modules.shared import limiter
 from src.modules.shared._endpoints import get_current_user
 
@@ -547,3 +550,142 @@ def update_current_profile():
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
+
+
+@users_bp.get("/<int:target_user_id>/attributes")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
+def list_user_attributes(target_user_id):
+    """Lista los atributos de un usuario específico.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Returns:
+        200 — Lista de atributos.
+            {"attributes": ["role_user", "aegis_read"]}
+        403 — Sin permisos.
+
+    Example:
+        curl -X GET https://api.example.com/users/5/attributes \\
+        -H "Authorization: Bearer <token>"
+    """
+    try:
+        with UnitOfWork() as uow:
+            user_attrs = (
+                uow.session.query(UserAttribute.attribute_name)
+                .filter(UserAttribute.user_id == target_user_id)
+                .all()
+            )
+            attribute_names = [ua.attribute_name for ua in user_attrs]
+
+        return jsonify({"user_id": target_user_id, "attributes": attribute_names}), 200
+
+    except Exception as exc:
+        _logger.error(f"Error listando atributos: {exc}", exc_info=True)
+        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+
+
+@users_bp.post("/<int:target_user_id>/attributes")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
+def add_user_attribute(target_user_id):
+    """Añade uno o más atributos a un usuario.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Args (JSON body):
+        attributes (list): Lista de nombres de atributos.
+            ["sentinel_read", "aegis_create"]
+
+    Returns:
+        200 — Atributos añadidos.
+            {"message": "Attributes added", "attributes": ["sentinel_read"]}
+        400 — Error de validación.
+        403 — Sin permisos.
+
+    Example:
+        curl -X POST https://api.example.com/users/5/attributes \\
+        -H "Authorization: Bearer <token>" \\
+        -H "Content-Type: application/json" \\
+        -d '{"attributes": ["sentinel_read"]}'
+    """
+    data = require_json()
+    if isinstance(data, tuple):
+        return data
+
+    attrs_to_add = data.get("attributes")
+    if not attrs_to_add or not isinstance(attrs_to_add, list):
+        return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
+
+    try:
+        with UnitOfWork() as uow:
+            for attr_name in attrs_to_add:
+                existing = (
+                    uow.session.query(UserAttribute)
+                    .filter(
+                        UserAttribute.user_id == target_user_id,
+                        UserAttribute.attribute_name == attr_name
+                    )
+                    .first()
+                )
+                if not existing:
+                    new_attr = UserAttribute(
+                        user_id=target_user_id,
+                        attribute_name=attr_name
+                    )
+                    uow.session.add(new_attr)
+
+        _logger.info(f"Atributos {attrs_to_add} añadidos al usuario {target_user_id}")
+        return jsonify({"message": "Attributes added", "attributes": attrs_to_add}), 200
+
+    except Exception as exc:
+        _logger.error(f"Error añadiendo atributos: {exc}", exc_info=True)
+        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+
+
+@users_bp.delete("/<int:target_user_id>/attributes")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
+def remove_user_attribute(target_user_id):
+    """Elimina uno o más atributos de un usuario.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Args (JSON body):
+        attributes (list): Lista de nombres de atributos a eliminar.
+            ["sentinel_read", "aegis_create"]
+
+    Returns:
+        200 — Atributos eliminados.
+            {"message": "Attributes removed", "attributes": ["sentinel_read"]}
+        400 — Error de validación.
+        403 — Sin permisos.
+
+    Example:
+        curl -X DELETE https://api.example.com/users/5/attributes \\
+        -H "Authorization: Bearer <token>" \\
+        -H "Content-Type: application/json" \\
+        -d '{"attributes": ["sentinel_read"]}'
+    """
+    data = require_json()
+    if isinstance(data, tuple):
+        return data
+
+    attrs_to_remove = data.get("attributes")
+    if not attrs_to_remove or not isinstance(attrs_to_remove, list):
+        return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
+
+    try:
+        with UnitOfWork() as uow:
+            for attr_name in attrs_to_remove:
+                uow.session.query(UserAttribute).filter(
+                    UserAttribute.user_id == target_user_id,
+                    UserAttribute.attribute_name == attr_name
+                ).delete()
+
+        _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
+        return jsonify({"message": "Attributes removed", "attributes": attrs_to_remove}), 200
+
+    except Exception as exc:
+        _logger.error(f"Error eliminando atributos: {exc}", exc_info=True)
+        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
