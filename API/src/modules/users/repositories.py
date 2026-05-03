@@ -27,6 +27,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
+from sqlalchemy.orm import joinedload
+
 from .model import AccessToken, RefreshToken, User, UserAttribute
 
 from src.modules.infrastructure.base_repository import BaseRepository, UnitOfWork
@@ -42,9 +44,9 @@ class UserRepository(BaseRepository[User]):
     logged, serialised, or exposed beyond it.
 
     Example:
-        >>> with UnitOfWork() as uow:
-        ...     repo = UserRepository(uow)
-        ...     user = repo.get_by_username("johnd")
+    >>> with UnitOfWork() as uow:
+    ...     repo = UserRepository(uow)
+    ...     user = repo.get_by_username("johnd")
     """
 
     def __init__(self, uow: UnitOfWork) -> None:
@@ -121,7 +123,12 @@ class UserRepository(BaseRepository[User]):
         Returns:
             List of all User instances.
         """
-        return self._session.query(User).all()
+        return (
+            self._session.query(User)
+            .options(joinedload(User.attributes))
+            .distinct()
+            .all()
+        )
 
 
 class TokenRepository(BaseRepository[AccessToken]):

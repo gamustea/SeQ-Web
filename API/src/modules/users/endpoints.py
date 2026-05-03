@@ -72,6 +72,7 @@ from .exceptions import (
     InvalidCredentialsError,
     UserBindingError,
     ProfileUpdateError,
+    AuthorizationError,
 )
 
 
@@ -106,9 +107,13 @@ def _require_field(data: dict, field: str) -> str:
 
 
 @users_bp.post("/sign-up")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
 @limiter.limit("10 per hour; 20 per day")
 def sign_up_user():
-    """Registra un nuevo Usuario vinculándolo a una Persona existente.
+    """Registra un nuevo usuario.
+
+    Solo usuarios con role_root o role_admin pueden crear nuevos usuarios.
 
     Args (JSON body):
         username    (str): Nombre de usuario único.
@@ -147,22 +152,31 @@ def sign_up_user():
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
 
+    requested_role = data.get("role", "role_user")
+    current_user_id = getattr(request, "current_user_id", None)
+
     try:
         user = USER_MANAGER.sign_in_user(
             username = username,
             email = email,
             first_name = first_name,
             last_name = last_name,
-            password = password
+            password = password,
+            role = requested_role,
+            actor_id = current_user_id
         )
-        _logger.info(f"Usuario registrado: {username} (ID: {user.id})")
+        _logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
         return jsonify({
             "message":  "Usuario registrado exitosamente",
             "userId":   user.id,
             "username": user.username,
             "email":    email,
+            "role":     requested_role,
         }), 201
 
+    except AuthorizationError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
     except DatabaseError as exc:
         return jsonify({"code": exc.status_code, "message": "Revisa tus credenciales e inténtalo de nuevo."}), exc.status_code
     except (MissingParameterError, ExistingUserError, UserBindingError) as exc:
@@ -356,13 +370,16 @@ def oauth_token():
 
         access_token  = OAUTH_MANAGER.create_access_token(uid, username)   # type: ignore[arg-type]
         refresh_token = OAUTH_MANAGER.create_refresh_token(uid)            # type: ignore[arg-type]
+        user_attrs = USER_MANAGER.get_user_attributes(uid)
 
+        _logger.info(f"Usuario {uid} atributos: {user_attrs}")
         _logger.info(f"Tokens emitidos para: {username}")
         return jsonify({
             "access_token":  access_token,
             "token_type":    "Bearer",
             "expires_in":    ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             "refresh_token": refresh_token,
+            "attributes":   user_attrs,
         }), 200
 
     if grant_type == "refresh_token":
@@ -382,12 +399,14 @@ def oauth_token():
             return jsonify({"error": "invalid_grant", "error_description": "User not found"}), 401
 
         access_token = OAUTH_MANAGER.create_access_token(uid, user.username)  # type: ignore[arg-type]
+        user_attrs = USER_MANAGER.get_user_attributes(uid)
 
         _logger.info(f"Access token renovado para usuario ID: {uid}")
         return jsonify({
             "access_token": access_token,
             "token_type":   "Bearer",
             "expires_in":   ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "attributes":  user_attrs,
         }), 200
 
     return jsonify({"error": "unsupported_grant_type", "error_description": "Supported: password, refresh_token"}), 400
@@ -551,10 +570,11 @@ def update_current_profile():
 
 @users_bp.get("")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
 def list_all_users():
     """Lista todos los usuarios del sistema.
 
-    Requiere autenticación. Retorna una lista de todos los usuarios.
+    Solo usuarios con role_root o role_admin pueden acceder.
 
     Returns:
         200 — Lista de usuarios.
@@ -562,10 +582,48 @@ def list_all_users():
     """
     try:
         users = USER_MANAGER.get_all_users()
-        return jsonify(users), 200
+        result = []
+        for user in users:
+            result.append({
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "created_at": user.created_at.isoformat() if user.created_at else None
+            })
+        return jsonify(result), 200
 
     except Exception as exc:
         _logger.error(f"Error listando usuarios: {exc}", exc_info=True)
+        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+
+
+@users_bp.get("/attributes")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
+def list_all_user_attributes():
+    """Lista los atributos de todos los usuarios.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Returns:
+        200 — Lista de usuarios con sus atributos.
+            [{"user_id": 1, "username": "root", "attributes": ["role_root", "role_admin"]}]
+    """
+    try:
+        users = USER_MANAGER.get_all_users()
+        result = []
+        for user in users:
+            result.append({
+                "user_id": user.id,
+                "username": user.username,
+                "attributes": [a.attribute_name for a in user.attributes]
+            })
+        return jsonify(result), 200
+
+    except Exception as exc:
+        _logger.error(f"Error listando atributos: {exc}", exc_info=True)
         return jsonify({"error": "server_error", "error_description": str(exc)}), 500
 
 
@@ -586,6 +644,12 @@ def list_user_attributes(target_user_id):
         curl -X GET https://api.example.com/users/5/attributes \\
         -H "Authorization: Bearer <token>"
     """
+    current_user_id = get_current_user().id
+
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
+        _logger.warning(f"Usuario {current_user_id} intentó ver atributos de {target_user_id} sin permiso")
+        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para ver atributos de este usuario"}), 403
+
     try:
         attribute_names = USER_MANAGER.get_user_attributes(target_user_id)
         return jsonify({"user_id": target_user_id, "attributes": attribute_names}), 200
@@ -619,6 +683,12 @@ def add_user_attribute(target_user_id):
         -H "Content-Type: application/json" \\
         -d '{"attributes": ["sentinel_read"]}'
     """
+    current_user_id = get_current_user().id
+
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
+        _logger.warning(f"Usuario {current_user_id} intentó añadir atributos a {target_user_id} sin permiso")
+        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
+
     data = require_json()
     if isinstance(data, tuple):
         return data
@@ -664,6 +734,12 @@ def remove_user_attribute(target_user_id):
         -H "Content-Type: application/json" \\
         -d '{"attributes": ["sentinel_read"]}'
     """
+    current_user_id = get_current_user().id
+
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
+        _logger.warning(f"Usuario {current_user_id} intentó eliminar atributos de {target_user_id} sin permiso")
+        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
+
     data = require_json()
     if isinstance(data, tuple):
         return data

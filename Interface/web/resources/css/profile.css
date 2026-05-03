@@ -231,6 +231,9 @@ USERS TABLE
 #users-table-container {
 overflow-x: auto;
 margin-top: 16px;
+background: var(--surface);
+border: 1px solid var(--border);
+border-radius: var(--radius);
 }
 
 .users-table {
@@ -241,27 +244,79 @@ font-size: 0.875rem;
 
 .users-table th,
 .users-table td {
-padding: 12px 16px;
+padding: 14px 16px;
 text-align: left;
 border-bottom: 1px solid var(--border);
 }
 
 .users-table th {
-color: var(--text-muted);
+color: var(--accent);
 font-weight: 600;
-font-size: 0.75rem;
+font-size: 0.7rem;
 text-transform: uppercase;
-letter-spacing: 0.05em;
+letter-spacing: 0.08em;
 background: var(--surface-2);
+position: sticky;
+top: 0;
+z-index: 1;
+}
+
+.users-table th:first-child {
+border-radius: var(--radius) 0 0 0;
+}
+
+.users-table th:last-child {
+border-radius: 0 var(--radius) 0 0;
+}
+
+.users-table tbody tr {
+transition: background 0.15s ease;
 }
 
 .users-table tbody tr:hover {
-background: var(--surface-2);
+background: rgba(0, 255, 136, 0.04);
+}
+
+.users-table tbody tr:last-child td {
+border-bottom: none;
+}
+
+.users-table td {
+font-family: var(--font-mono);
+font-size: 0.825rem;
+color: var(--text);
+}
+
+.users-table td:first-child {
+color: var(--text-muted);
+font-weight: 500;
+}
+
+.users-table td:nth-child(2) {
+color: var(--accent);
+}
 }
 
 .loading-cell {
 text-align: center;
 color: var(--text-muted);
 padding: 32px;
+}
+
+/* Responsive table */
+@media (max-width: 768px) {
+.users-table {
+font-size: 0.8rem;
+}
+
+.users-table th,
+.users-table td {
+padding: 10px 12px;
+}
+
+.users-table th:first-child,
+.users-table td:first-child {
+padding-left: 12px;
+}
 }
 }

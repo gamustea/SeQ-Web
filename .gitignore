@@ -63,5 +63,6 @@ Thumbs.db
 # Otros
 # ============================================
 *.pdf
+.pritierrc.json
 API/.mypy_cache/
 API/.pytest_cache/

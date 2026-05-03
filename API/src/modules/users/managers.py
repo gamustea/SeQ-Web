@@ -117,76 +117,97 @@ class UserManager:
             raise
 
 
-    # =========================================================================
+# =========================================================================
     # USER REGISTRATION
     # =========================================================================
 
     def sign_in_user(
-        self,
-        username:   str,
-        email:      str,
-        first_name: str,
-        last_name:  str,
-        password:   str,
-    ) -> User:
-        """
-        Register a new user.
+            self,
+            username:    str,
+            email:       str,
+            first_name:  str,
+            last_name:   str,
+            password:   str,
+            role:        Optional[str] = None,
+            actor_id:   Optional[int] = None,
+        ) -> User:
+            """
+            Register a new user.
 
-        Validates uniqueness of username and email, hashes the password
-        with a fresh random salt, and persists the new user record.
+            Validates uniqueness of username and email, hashes the password
+            with a fresh random salt, and persists the new user record.
 
-        Args:
-            username:   Unique username (max 64 chars).
-            email:      Unique email address (max 128 chars).
-            first_name: User's first name.
-            last_name:  User's last name.
-            password:   Plaintext password (hashed before storage).
+            Args:
+                username:   Unique username (max 64 chars).
+                email:      Unique email address (max 128 chars).
+                first_name: User's first name.
+                last_name:  User's last name.
+                password:   Plaintext password (hashed before storage).
+                role:       Optional role to assign: "role_user" (default), "role_admin".
+                           Requires actor_id with appropriate permissions.
+                actor_id:   ID of user creating this account. Required if role is specified.
 
-        Returns:
-            The newly created User instance (credential fields excluded
-            from the returned object via session expunge).
+            Returns:
+                The newly created User instance (credential fields excluded
+                from the returned object via session expunge).
 
-        Raises:
-            ExistingUserError: If username or email is already registered.
-            DatabaseError:     On unexpected persistence failures.
-        """
-        try:
-            with UnitOfWork() as uow:
-                repo = UserRepository(uow)
+            Raises:
+                ExistingUserError: If username or email is already registered.
+                PermissionError:  If actor_id lacks permissions to assign the requested role.
+                DatabaseError:    On unexpected persistence failures.
+            """
+            valid_roles = {"role_user", "role_admin"}
+            default_role = "role_user"
 
-                if repo.username_exists(username):
-                    raise ExistingUserError(username, None)
-                if repo.email_exists(email):
-                    raise ExistingUserError(None, email)
+            if role is not None and role not in valid_roles:
+                raise PermissionError(f"Invalid role: {role}. Valid roles: {valid_roles}")
 
-                salt            = generate_salt()
-                hashed_password = hash_password_with_salt(password, salt)
+            if role and not actor_id:
+                raise PermissionError("actor_id required when specifying a role")
 
-                new_user = User(
-                    username      = username,
-                    email         = email,
-                    first_name    = first_name,
-                    last_name     = last_name,
-                    password_hash = hashed_password,
-                    password_salt = salt,
-                )
-                repo.save(new_user)
+            if role == "role_admin" and actor_id:
+                if not self.can_create_admin(actor_id):
+                    raise PermissionError("No tienes permisos para crear administradores")
 
-                new_user_attr = UserAttribute(
-                    user_id=new_user.id,
-                    attribute_name="role_user"
-                )
-                uow.session.add(new_user_attr)
-                # UoW commits and expunges on __exit__
+            assigned_role = role if role else default_role
 
-            self.logger.info(f"Usuario '{username}' registrado exitosamente (ID: {new_user.id})")
-            return new_user
+            try:
+                with UnitOfWork() as uow:
+                    repo = UserRepository(uow)
 
-        except ExistingUserError:
-            raise
-        except Exception as e:
-            self.logger.error(f"Error registrando usuario '{username}': {e}")
-            raise DatabaseError("Error con credenciales. Revísalas e inténtalo de nuevo.")
+                    if repo.username_exists(username):
+                        raise ExistingUserError(username, None)
+                    if repo.email_exists(email):
+                        raise ExistingUserError(None, email)
+
+                    salt            = generate_salt()
+                    hashed_password = hash_password_with_salt(password, salt)
+
+                    new_user = User(
+                        username      = username,
+                        email         = email,
+                        first_name    = first_name,
+                        last_name     = last_name,
+                        password_hash = hashed_password,
+                        password_salt = salt,
+                    )
+                    repo.save(new_user)
+
+                    new_user_attr = UserAttribute(
+                        user_id=new_user.id,
+                        attribute_name=assigned_role
+                    )
+                    uow.session.add(new_user_attr)
+                    # UoW commits and expunges on __exit__
+
+                self.logger.info(f"Usuario '{username}' registrado con rol '{assigned_role}' (ID: {new_user.id})")
+                return new_user
+
+            except ExistingUserError:
+                raise
+            except Exception as e:
+                self.logger.error(f"Error registrando usuario '{username}': {e}")
+                raise DatabaseError("Error con credenciales. Revísalas e inténtalo de nuevo.")
 
     # =========================================================================
     # QUERIES
@@ -206,7 +227,7 @@ class UserManager:
         with UnitOfWork() as uow:
             return UserRepository(uow).get_by_id(user_id)
 
-    def get_all_users(self) -> List[dict]:
+    def get_all_users(self) -> List[User]:
         """
         Retrieve all registered users.
 
@@ -215,17 +236,7 @@ class UserManager:
         """
         with UnitOfWork() as uow:
             users = UserRepository(uow).get_all()
-            return [
-                {
-                    "id": u.id,
-                    "username": u.username,
-                    "email": u.email,
-                    "first_name": u.first_name,
-                    "last_name": u.last_name,
-                    "created_at": u.created_at.isoformat() if u.created_at else None,
-                }
-                for u in users
-            ]
+            return users
 
     def get_user_by_username(self, username: str) -> Optional[User]:
         """
@@ -328,9 +339,57 @@ class UserManager:
 
         self.logger.info(f"Usuario {user_id} eliminado")
 
-    # =========================================================================
-    # ATTRIBUTE MANAGEMENT
-    # =========================================================================
+# =========================================================================
+# ATTRIBUTE MANAGEMENT
+# =========================================================================
+
+    def can_manage_user(self, actor_id: int, target_id: int) -> bool:
+        """
+        Verifica si el actor puede gestionar al usuario objetivo.
+
+        Jerarquía:
+        - role_root: puede gestionar TODO (root, admin, users)
+        - role_admin: solo puede gestionar role_user
+        - role_user: NO puede gestionar nadie
+
+        Args:
+            actor_id: ID del usuario que hace la acción.
+            target_id: ID del usuario objetivo.
+
+        Returns:
+            True si tiene permiso, False en caso contrario.
+        """
+        actor_attrs = self.get_user_attributes(actor_id)
+        target_attrs = self.get_user_attributes(target_id)
+
+        is_actor_root = "role_root" in actor_attrs
+        is_actor_admin = "role_admin" in actor_attrs
+        is_target_root = "role_root" in target_attrs
+        is_target_admin = "role_admin" in target_attrs
+
+        if is_actor_root:
+            return True
+
+        if is_actor_admin:
+            return not is_target_root and not is_target_admin
+
+        return False
+
+    def can_create_admin(self, actor_id: int) -> bool:
+        """
+        Verifica si el actor puede crear usuarios con rol admin.
+
+        Solo role_root puede crear administradores.
+        Los admin no pueden crear otros admin.
+
+        Args:
+            actor_id: ID del usuario que hace la acción.
+
+        Returns:
+            True si tiene permiso, False en caso contrario.
+        """
+        actor_attrs = self.get_user_attributes(actor_id)
+        return "role_root" in actor_attrs
 
     def get_user_attributes(self, user_id: int) -> List[str]:
         """
