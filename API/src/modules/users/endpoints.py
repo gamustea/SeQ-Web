@@ -61,21 +61,18 @@ from src.modules.shared._exceptions import (
     ExceptionHandler,
     create_error_response,
 )
-from src.modules.users.exceptions import (
+from src.modules.system.logging import SecOpsLogger
+from src.modules.shared import limiter
+from src.modules.shared._endpoints import get_current_user
+
+from .services import AttributeType, require_attributes, require_oauth_token
+from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
+from .exceptions import (
     ExistingUserError,
     InvalidCredentialsError,
     UserBindingError,
     ProfileUpdateError,
 )
-from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token
-from src.modules.users.services.permissions import AttributeType, require_attributes
-from src.modules.users.model import UserAttribute
-from src.modules.infrastructure import UnitOfWork
-from src.modules.shared import limiter
-from src.modules.shared._endpoints import get_current_user
-
-from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
 
 
 oauth_bp = Blueprint("oauth", __name__)
@@ -570,14 +567,7 @@ def list_user_attributes(target_user_id):
         -H "Authorization: Bearer <token>"
     """
     try:
-        with UnitOfWork() as uow:
-            user_attrs = (
-                uow.session.query(UserAttribute.attribute_name)
-                .filter(UserAttribute.user_id == target_user_id)
-                .all()
-            )
-            attribute_names = [ua.attribute_name for ua in user_attrs]
-
+        attribute_names = USER_MANAGER.get_user_attributes(target_user_id)
         return jsonify({"user_id": target_user_id, "attributes": attribute_names}), 200
 
     except Exception as exc:
@@ -618,25 +608,12 @@ def add_user_attribute(target_user_id):
         return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
 
     try:
-        with UnitOfWork() as uow:
-            for attr_name in attrs_to_add:
-                existing = (
-                    uow.session.query(UserAttribute)
-                    .filter(
-                        UserAttribute.user_id == target_user_id,
-                        UserAttribute.attribute_name == attr_name
-                    )
-                    .first()
-                )
-                if not existing:
-                    new_attr = UserAttribute(
-                        user_id=target_user_id,
-                        attribute_name=attr_name
-                    )
-                    uow.session.add(new_attr)
+        added_attrs = USER_MANAGER.add_user_attributes(
+            target_user_id, attrs_to_add
+        )
 
-        _logger.info(f"Atributos {attrs_to_add} añadidos al usuario {target_user_id}")
-        return jsonify({"message": "Attributes added", "attributes": attrs_to_add}), 200
+        _logger.info(f"Atributos {added_attrs} añadidos al usuario {target_user_id}")
+        return jsonify({"message": "Attributes added", "attributes": added_attrs}), 200
 
     except Exception as exc:
         _logger.error(f"Error añadiendo atributos: {exc}", exc_info=True)
@@ -676,12 +653,9 @@ def remove_user_attribute(target_user_id):
         return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
 
     try:
-        with UnitOfWork() as uow:
-            for attr_name in attrs_to_remove:
-                uow.session.query(UserAttribute).filter(
-                    UserAttribute.user_id == target_user_id,
-                    UserAttribute.attribute_name == attr_name
-                ).delete()
+        deleted_count = USER_MANAGER.remove_user_attributes(
+            target_user_id, attrs_to_remove
+        )
 
         _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
         return jsonify({"message": "Attributes removed", "attributes": attrs_to_remove}), 200

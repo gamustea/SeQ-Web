@@ -35,7 +35,7 @@ from src.modules.infrastructure import UnitOfWork
 from src.modules.system.logging import SecOpsLogger
 
 from .model import AccessToken, RefreshToken, User, UserAttribute
-from .repositories import TokenRepository, UserRepository
+from .repositories import TokenRepository, UserRepository, AttributeRepository
 from .services import (
     encode_sha256,
     generate_salt,
@@ -506,3 +506,63 @@ class OAuthTokenManager:
             f"Tokens expirados eliminados: "
             f"{access_deleted} access, {refresh_deleted} refresh"
         )
+
+    # =========================================================================
+    # ATTRIBUTE MANAGEMENT
+    # =========================================================================
+
+    def get_user_attributes(self, user_id: int) -> List[str]:
+        """
+        Retrieve all attribute names assigned to a user.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of attribute name strings.
+        """
+        with UnitOfWork() as uow:
+            attrs = AttributeRepository(uow).get_by_user(user_id)
+            return [a.attribute_name for a in attrs]
+
+    def add_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> List[str]:
+        """
+        Add one or more attributes to a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to add.
+
+        Returns:
+            List of added attribute names.
+        """
+        with UnitOfWork() as uow:
+            created = AttributeRepository(uow).add_attributes(
+                user_id, attribute_names
+            )
+            return [c.attribute_name for c in created]
+
+    def remove_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> int:
+        """
+        Remove one or more attributes from a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to remove.
+
+        Returns:
+            Number of attributes removed.
+        """
+        with UnitOfWork() as uow:
+            deleted = AttributeRepository(uow).remove_attributes(
+                user_id, attribute_names
+            )
+            return deleted
