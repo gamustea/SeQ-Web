@@ -549,6 +549,26 @@ def update_current_profile():
         return jsonify(err), code
 
 
+@users_bp.get("")
+@require_oauth_token
+def list_all_users():
+    """Lista todos los usuarios del sistema.
+
+    Requiere autenticación. Retorna una lista de todos los usuarios.
+
+    Returns:
+        200 — Lista de usuarios.
+            [{"id": 1, "username": "admin", "email": "admin@secops.local", ...}]
+    """
+    try:
+        users = USER_MANAGER.get_all_users()
+        return jsonify(users), 200
+
+    except Exception as exc:
+        _logger.error(f"Error listando usuarios: {exc}", exc_info=True)
+        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+
+
 @users_bp.get("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])

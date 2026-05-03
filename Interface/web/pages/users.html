@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Usuarios — SeQ</title>
+<link rel="stylesheet" href="/resources/css/shared.css" />
+<link rel="stylesheet" href="/resources/css/profile.css" />
+<link rel="icon" type="image/png" href="/resources/images/favicon.ico" />
+</head>
+<body>
+
+<div class="stars" id="stars"></div>
+
+<header class="topbar">
+<div class="topbar-left">
+<a href="/pages/hub.html" class="back-link">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+<path d="M19 12H5M12 19l-7-7 7-7"/>
+</svg>
+Volver al Hub
+</a>
+<span class="topbar-sep">/</span>
+<span class="topbar-title">Gestión de Usuarios</span>
+</div>
+</header>
+
+<main class="profile-container">
+<section class="profile-header">
+<h1 class="profile-name">Usuarios del Sistema</h1>
+<p class="profile-username">Lista de usuarios registrados</p>
+</section>
+
+<section class="profile-section">
+<h2>Usuarios Registrados</h2>
+<div id="users-table-container">
+<table class="users-table" id="users-table">
+<thead>
+<tr>
+<th>ID</th>
+<th>Usuario</th>
+<th>Correo</th>
+<th>Nombre</th>
+<th>Apellidos</th>
+<th>Creado</th>
+</tr>
+</thead>
+<tbody id="users-tbody">
+<tr>
+<td colspan="6" class="loading-cell">Cargando usuarios...</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="/resources/js/users.js"></script>
+</body>
+</html>

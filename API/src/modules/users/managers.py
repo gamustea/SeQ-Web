@@ -206,6 +206,27 @@ class UserManager:
         with UnitOfWork() as uow:
             return UserRepository(uow).get_by_id(user_id)
 
+    def get_all_users(self) -> List[dict]:
+        """
+        Retrieve all registered users.
+
+        Returns:
+            List of user dictionaries (public info only).
+        """
+        with UnitOfWork() as uow:
+            users = UserRepository(uow).get_all()
+            return [
+                {
+                    "id": u.id,
+                    "username": u.username,
+                    "email": u.email,
+                    "first_name": u.first_name,
+                    "last_name": u.last_name,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                }
+                for u in users
+            ]
+
     def get_user_by_username(self, username: str) -> Optional[User]:
         """
         Retrieve a user by username.
@@ -306,6 +327,66 @@ class UserManager:
             repo.delete(user)
 
         self.logger.info(f"Usuario {user_id} eliminado")
+
+    # =========================================================================
+    # ATTRIBUTE MANAGEMENT
+    # =========================================================================
+
+    def get_user_attributes(self, user_id: int) -> List[str]:
+        """
+        Retrieve all attribute names assigned to a user.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of attribute name strings.
+        """
+        with UnitOfWork() as uow:
+            attrs = AttributeRepository(uow).get_by_user(user_id)
+            return [a.attribute_name for a in attrs]
+
+    def add_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> List[str]:
+        """
+        Add one or more attributes to a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to add.
+
+        Returns:
+            List of added attribute names.
+        """
+        with UnitOfWork() as uow:
+            created = AttributeRepository(uow).add_attributes(
+                user_id, attribute_names
+            )
+            return [c.attribute_name for c in created]
+
+    def remove_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> int:
+        """
+        Remove one or more attributes from a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to remove.
+
+        Returns:
+            Number of attributes removed.
+        """
+        with UnitOfWork() as uow:
+            deleted = AttributeRepository(uow).remove_attributes(
+                user_id, attribute_names
+            )
+            return deleted
 
 
 class OAuthTokenManager:
@@ -506,63 +587,3 @@ class OAuthTokenManager:
             f"Tokens expirados eliminados: "
             f"{access_deleted} access, {refresh_deleted} refresh"
         )
-
-    # =========================================================================
-    # ATTRIBUTE MANAGEMENT
-    # =========================================================================
-
-    def get_user_attributes(self, user_id: int) -> List[str]:
-        """
-        Retrieve all attribute names assigned to a user.
-
-        Args:
-            user_id: User primary key.
-
-        Returns:
-            List of attribute name strings.
-        """
-        with UnitOfWork() as uow:
-            attrs = AttributeRepository(uow).get_by_user(user_id)
-            return [a.attribute_name for a in attrs]
-
-    def add_user_attributes(
-        self,
-        user_id: int,
-        attribute_names: List[str],
-    ) -> List[str]:
-        """
-        Add one or more attributes to a user.
-
-        Args:
-            user_id: User primary key.
-            attribute_names: List of attribute names to add.
-
-        Returns:
-            List of added attribute names.
-        """
-        with UnitOfWork() as uow:
-            created = AttributeRepository(uow).add_attributes(
-                user_id, attribute_names
-            )
-            return [c.attribute_name for c in created]
-
-    def remove_user_attributes(
-        self,
-        user_id: int,
-        attribute_names: List[str],
-    ) -> int:
-        """
-        Remove one or more attributes from a user.
-
-        Args:
-            user_id: User primary key.
-            attribute_names: List of attribute names to remove.
-
-        Returns:
-            Number of attributes removed.
-        """
-        with UnitOfWork() as uow:
-            deleted = AttributeRepository(uow).remove_attributes(
-                user_id, attribute_names
-            )
-            return deleted
