@@ -78,6 +78,9 @@ users_bp = Blueprint("users", __name__)
 _logger  = SecOpsLogger("oauth").get_logger()
 
 
+USER_MANAGER = UserManager()
+OAUTH_MANAGER = OAuthTokenManager()
+
 
 def require_json():
     """
@@ -98,21 +101,6 @@ def _require_field(data: dict, field: str) -> str:
         raise MissingParameterError(field)
     return value
 
-@contextmanager
-def get_user_manager():
-    um = UserManager()
-    try:
-        yield um
-    finally:
-        um.close_session()
-
-@contextmanager
-def get_oauth_manager():
-    om = OAuthTokenManager()
-    try:
-        yield om
-    finally:
-        om.close_session()
 
 
 @users_bp.post("/sign-up")
@@ -158,14 +146,13 @@ def sign_up_user():
         return jsonify(err), code
 
     try:
-        with get_user_manager() as manager:
-            user = manager.sign_in_user(
-                username = username,
-                email = email,
-                first_name = first_name,
-                last_name = last_name,
-                password = password
-            )
+        user = USER_MANAGER.sign_in_user(
+            username = username,
+            email = email,
+            first_name = first_name,
+            last_name = last_name,
+            password = password
+        )
         _logger.info(f"Usuario registrado: {username} (ID: {user.id})")
         return jsonify({
             "message":  "Usuario registrado exitosamente",
@@ -224,8 +211,7 @@ def check_credentials():
         return jsonify(err), code
 
     try:
-        with user_manager() as user_mgr:
-            is_valid, user_id = user_mgr.verify_credentials(username, password)
+        is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
         if not is_valid:
             raise InvalidCredentialsError()
 
@@ -284,10 +270,8 @@ def change_password():
         user_id  = get_current_user_id()
         username = get_current_username()
 
-        with get_user_manager() as user_mgr:
-            user_mgr.update_user_password(user_id, new_password)
-        with get_oauth_manager() as oauth_mgr:
-            oauth_mgr.revoke_all_user_tokens(user_id)
+        USER_MANAGER.update_user_password(user_id, new_password)
+        OAUTH_MANAGER.revoke_all_user_tokens(user_id)
 
         _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
         return jsonify({
@@ -355,7 +339,6 @@ def oauth_token():
     data = request.get_json(silent=True) or {}
     grant_type = data.get("grantType")
 
-    # ── password grant ────────────────────────────────────────────────────────
     if grant_type == "password":
         username = data.get("username")
         password = data.get("password")
@@ -363,16 +346,14 @@ def oauth_token():
         if not username or not password:
             return jsonify({"error": "invalid_request", "error_description": "username and password are required"}), 400
 
-        with get_user_manager() as um:
-            is_valid, uid = um.verify_credentials(username, password)
+        is_valid, uid = UserManager().verify_credentials(username, password)
 
         if not is_valid:
             _logger.warning(f"Login fallido para: {username}")
             return jsonify({"error": "invalid_grant", "error_description": "Invalid username or password"}), 401
 
-        with get_oauth_manager() as om:
-            access_token  = om.create_access_token(uid, username)   # type: ignore[arg-type]
-            refresh_token = om.create_refresh_token(uid)            # type: ignore[arg-type]
+        access_token  = OAUTH_MANAGER.create_access_token(uid, username)   # type: ignore[arg-type]
+        refresh_token = OAUTH_MANAGER.create_refresh_token(uid)            # type: ignore[arg-type]
 
         _logger.info(f"Tokens emitidos para: {username}")
         return jsonify({
@@ -382,27 +363,23 @@ def oauth_token():
             "refresh_token": refresh_token,
         }), 200
 
-    # ── refresh_token grant ────────────────────────────────────────────────────
     if grant_type == "refresh_token":
         refresh_token = data.get("refresh_token")
 
         if not refresh_token:
             return jsonify({"error": "invalid_request", "error_description": "refresh_token is required"}), 400
 
-        with get_oauth_manager() as om:
-            uid = om.verify_refresh_token(refresh_token)
+        uid = OAUTH_MANAGER.verify_refresh_token(refresh_token)
 
         if not uid:
             return jsonify({"error": "invalid_grant", "error_description": "Invalid or expired refresh token"}), 401
 
-        with get_user_manager() as um:
-            user = um.get_user_by_id(uid)
+        user = USER_MANAGER.get_user_by_id(uid)
 
         if not user:
             return jsonify({"error": "invalid_grant", "error_description": "User not found"}), 401
 
-        with get_oauth_manager() as om2:
-            access_token = om2.create_access_token(uid, user.username)  # type: ignore[arg-type]
+        access_token = OAUTH_MANAGER.create_access_token(uid, user.username)  # type: ignore[arg-type]
 
         _logger.info(f"Access token renovado para usuario ID: {uid}")
         return jsonify({
@@ -427,11 +404,10 @@ def oauth_revoke():
 
     Example:
         curl -X POST https://api.example.com/oauth/revoke \\
-             -H "Authorization: Bearer <token>"
+                -H "Authorization: Bearer <token>"
     """
     token = request.headers["Authorization"].split()[1]
-    with get_oauth_manager() as om:
-        om.revoke_access_token(token)
+    OAUTH_MANAGER.revoke_access_token(token)
     _logger.info(f"Token revocado para: {get_current_username()}")
     return jsonify({"message": "Token revoked successfully"}), 200
 
@@ -456,8 +432,7 @@ def oauth_revoke_all():
     -H "Authorization: Bearer <token>"
     """
     uid = get_current_user_id()
-    with get_oauth_manager() as om:
-        om.revoke_all_user_tokens(uid)
+    OAUTH_MANAGER.revoke_all_user_tokens(uid)
     _logger.info(f"Todos los tokens revocados para usuario ID: {uid}")
     return jsonify({"message": "All tokens revoked successfully"}), 200
 
@@ -487,8 +462,7 @@ def get_current_profile():
         user_id = get_current_user_id()
         username = get_current_username()
 
-        with get_user_manager() as user_mgr:
-            user = user_mgr.get_user_by_id(user_id)
+        user = USER_MANAGER.get_user_by_id(user_id)
 
         if not user:
             return jsonify({"error": "user_not_found", "error_description": "Usuario no encontrado"}), 404
@@ -553,8 +527,7 @@ def update_current_profile():
         user_id = get_current_user_id()
         username = get_current_username()
 
-        with get_user_manager() as user_mgr:
-            user = user_mgr.update_user_profile(user_id, first_name, last_name)
+        user = USER_MANAGER.update_user_profile(user_id, first_name, last_name)
 
         return jsonify({
             "id": user.id,

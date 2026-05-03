@@ -87,7 +87,7 @@ from contextlib import contextmanager
 from flask import Blueprint, jsonify, request, send_file
 
 from src.modules.sentinel import SentinelDocument
-from src.modules.users import require_oauth_token, get_user_manager
+from src.modules.users import OAuthTokenManager, UserManager, require_oauth_token
 from src.modules.exceptions import (
     ExceptionHandler,
     MissingParameterError,
@@ -96,6 +96,7 @@ from src.modules.exceptions import (
     ScanNotFoundError,
     ValidationError,
     create_error_response,
+    DocumentError
 )
 
 from src.modules.sentinel import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
@@ -173,13 +174,21 @@ def get_scan_by_id_for_user(
     Busca un escaneo entre los tres tipos. Devuelve (scan, tipo) o (None, '').
     El tipo es 'nmap', 'nikto' u 'openvas'.
     """
-    scan = nmap_manager.get_scan_by_id(scan_id)
-    if not scan:
+    nmap_scan = nmap_manager.get_scan_by_id(scan_id)
+    nikto_scan = nikto_manager.get_scan_by_id(scan_id)
+    openvas_scan = openvas_manager.get_scan_by_id(scan_id)
+    if not nmap_scan and not nikto_scan and not openvas_scan:
         raise ScanNotFoundError(scan_id)
 
     uid = get_current_user_id()
-    verify_scan_ownership(scan, uid, scan_id)
-    return scan, scan.scan_type
+    if nmap_scan:
+        verify_scan_ownership(nmap_scan, uid, scan_id)
+        return nmap_scan, "nmap"
+    if nikto_scan:
+        verify_scan_ownership(nikto_scan, uid, scan_id)
+        return nikto_scan, "nikto"
+    verify_scan_ownership(openvas_scan, uid, scan_id)
+    return openvas_scan, "openvas"
 
 
 def build_pdf_creator(scan: Scan) -> PDFCreator:
@@ -688,24 +697,18 @@ def validate_port(ports_str: str):
             f"EspecificaciÃ³n vÃ¡lida con {len(lista_puertos)} puertos",
         )
 
+@contextmanager
+def get_user_managers(user_id: int):
+    user = UserManager().get_user_by_id(user_id)
+
+    nmap    = NmapScanManager(user)
+    nikto   = NiktoScanManager(user)
+    openvas = OpenVASScanManager(user)
+    yield nmap, nikto, openvas
 
 # =========================================================================
 # ENDPOINTS
 # =========================================================================
-
-@contextmanager
-def get_user_managers(user_id: int):
-    with get_user_manager() as um:
-        user = um.get_user_by_id(user_id)
-        nmap    = NmapScanManager(user)
-        nikto   = NiktoScanManager(user)
-        openvas = OpenVASScanManager(user)
-        try:
-            yield nmap, nikto, openvas
-        finally:
-            nmap.close_session()
-            nikto.close_session()
-            openvas.close_session()
 
 @sentinel_bp.get("/scan-status")
 @require_oauth_token
@@ -1009,6 +1012,7 @@ def retrieve_scan_by_id(scan_id: int):
                 raise ScanNotFoundError(scan_id)
             verify_scan_ownership(scan, uid, scan_id)
 
+            _logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan_type} por usuario {get_current_username()}")
             if scan_type == "nmap":
                 result = _format_nmap_scans([scan], nmap)[0]
                 result["openPorts"] = [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason, "product": p.product, "version": p.version} for p in scan.open_ports_relation]
@@ -1203,8 +1207,8 @@ def get_documents_by_scan(scan_id: int):
     try:
         uid = get_current_user_id()
         
-        with get_user_managers(uid) as (nmap_mgr, _, _):
-            scan = nmap_mgr.get_scan_by_id(scan_id)
+        with get_user_managers(uid) as (nmap_mgr, nikto_mgr, openvas_mgr):
+            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_mgr, nikto_mgr, openvas_mgr)
             if not scan:
                 return jsonify({"error": "Escaneo no encontrado"}), 404
             
@@ -1212,10 +1216,7 @@ def get_documents_by_scan(scan_id: int):
                 return jsonify({"error": "No tienes permisos para acceder a este escaneo"}), 403
             
             from src.modules.sentinel import SentinelDocument
-            documents = nmap_mgr.session.query(SentinelDocument).filter(
-                SentinelDocument.scan_id == scan_id,
-                SentinelDocument.user_id == uid
-            ).order_by(SentinelDocument.created_at.desc()).all()
+            documents = nmap_mgr.get_documents_by_scan_id(scan_id)
             
             docs_list = []
             for doc in documents:
@@ -1367,32 +1368,20 @@ def delete_document(document_id: int):
         404 — Documento no encontrado.
         403 — Sin permisos.
     """
-    try:
-        uid = get_current_user_id()
-        with get_user_managers(uid) as (nmap_mgr, _, _):
-            doc = nmap_mgr.get_document_by_id(document_id)
-            if not doc or doc.user_id != uid:
+    uid = get_current_user_id()
+    with get_user_managers(uid) as (nmap_mgr, _, _):
+        try:
+            owned = nmap_mgr.check_ownership(document_id, uid)
+
+            if not owned:
                 return jsonify({"error": "Documento no encontrado o acceso denegado"}), 404
-            
-            scan_id = doc.scan_id
-            
-            if doc.filename and os.path.exists(doc.filename):
-                try:
-                    os.remove(doc.filename)
-                except Exception as e:
-                    _logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}")
-            
-            nmap_mgr.session.delete(doc)
-            nmap_mgr._safe_commit()
-            
-            _logger.info(f"Documento {document_id} eliminado por {get_current_username()}")
-            return jsonify({"message": "Documento eliminado", "documentId": document_id, "scanId": scan_id}), 200
-        
-    except Exception as exc:
-        _logger.error(f"Error eliminando documento {document_id}: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+
+            nmap_mgr.delete_document(document_id)
+            _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
+            return jsonify({"message": "Documento eliminado correctamente", "documentId": document_id}), 200
+        except DocumentError as exc:
+            _logger.error(f"Error eliminando documento {document_id} por usuario {uid}: {exc}", exc_info=True)
+            return jsonify({"error": "No se pudo eliminar el documento"}), 500
 
 
 @sentinel_bp.get("/generate-pdf-base64")
