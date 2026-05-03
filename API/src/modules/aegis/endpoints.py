@@ -95,7 +95,7 @@ from src.modules.exceptions import (
 )
 from src.modules.shared import limiter, get_current_user_id, get_current_username
 from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token, get_user_manager
+from src.modules.users import require_oauth_token, UserManager, OAuthTokenManager
 
 from .managers import AegisManager
 from .exporters import (
@@ -157,15 +157,15 @@ def _get_document_checked(manager, doc_id: int, user_id: int) -> dict:
 
 @contextmanager
 def get_aegis_manager(user_id: int):
-    with get_user_manager() as um:
-        user = um.get_user_by_id(user_id)
-        if not user:
-            raise UserNotFoundError(user_id=user_id)
-        am = AegisManager(user)
-        try:
-            yield am
-        finally:
-            am.close_session()
+
+    user = UserManager().get_user_by_id(user_id)
+    if not user:
+        raise UserNotFoundError(user_id=user_id)
+    am = AegisManager(user)
+    try:
+        yield am
+    finally:
+        am.close_session()
 
 # ============================================================================
 # ENDPOINTS PRINCIPALES

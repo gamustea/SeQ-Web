@@ -87,7 +87,7 @@ from contextlib import contextmanager
 from flask import Blueprint, jsonify, request, send_file
 
 from src.modules.sentinel import SentinelDocument
-from src.modules.users import require_oauth_token, get_user_manager
+from src.modules.users import OAuthTokenManager, UserManager, require_oauth_token
 from src.modules.exceptions import (
     ExceptionHandler,
     MissingParameterError,
@@ -699,12 +699,12 @@ def validate_port(ports_str: str):
 
 @contextmanager
 def get_user_managers(user_id: int):
-    with get_user_manager() as um:
-        user = um.get_user_by_id(user_id)
-        nmap    = NmapScanManager(user)
-        nikto   = NiktoScanManager(user)
-        openvas = OpenVASScanManager(user)
-        yield nmap, nikto, openvas
+    user = UserManager().get_user_by_id(user_id)
+
+    nmap    = NmapScanManager(user)
+    nikto   = NiktoScanManager(user)
+    openvas = OpenVASScanManager(user)
+    yield nmap, nikto, openvas
 
 # =========================================================================
 # ENDPOINTS

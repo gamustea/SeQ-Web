@@ -44,13 +44,13 @@ class BaseRepository(Generic[T]):
         T: SQLAlchemy declarative model class.
 
     Example:
-        >>> class UserRepository(BaseRepository[User]):
-        ...     def __init__(self, uow: UnitOfWork) -> None:
-        ...         super().__init__(User, uow)
-        ...
-        >>> with UnitOfWork() as uow:
-        ...     repo = UserRepository(uow)
-        ...     user = repo.get_by_id(42)
+    >>> class UserRepository(BaseRepository[User]):
+    ...     def __init__(self, uow: UnitOfWork) -> None:
+    ...         super().__init__(User, uow)
+    ...
+    >>> with UnitOfWork() as uow:
+    ...     repo = UserRepository(uow)
+    ...     user = repo.get_by_id(42)
     """
 
     def __init__(self, model: Type[T], uow: UnitOfWork) -> None:

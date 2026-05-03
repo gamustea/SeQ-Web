@@ -53,9 +53,9 @@ class UnitOfWork:
         _owns_session:  True if this UoW created the session (and must close it).
 
     Example:
-        >>> with UnitOfWork() as uow:
-        ...     scan_repo = ScanRepository(uow)
-        ...     scan_repo.save(NmapScan(target="10.0.0.1", user_id=1))
+    >>> with UnitOfWork() as uow:
+    ...     scan_repo = ScanRepository(uow)
+    ...     scan_repo.save(NmapScan(target="10.0.0.1", user_id=1))
     """
 
     def __init__(self, session: Optional[Session] = None) -> None:
@@ -64,7 +64,7 @@ class UnitOfWork:
 
         Args:
             session: Optional existing SQLAlchemy session. If not provided,
-                     a new session is obtained from the database module.
+                        a new session is obtained from the database module.
         """
         if session is not None:
             self.session = session
