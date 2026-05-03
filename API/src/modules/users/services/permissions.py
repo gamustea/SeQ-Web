@@ -5,7 +5,7 @@ from flask import request, jsonify
 
 from src.modules.system.logging import SecOpsLogger
 
-from .managers import OAuthTokenManager
+from ..managers import OAuthTokenManager
 
 _logger = SecOpsLogger().get_logger()
 
