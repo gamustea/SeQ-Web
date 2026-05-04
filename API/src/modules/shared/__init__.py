@@ -15,15 +15,12 @@ from ._model        import Base, Document
 from ._managers     import BaseManager
 from ._documents    import AIWriter
 from ._endpoints    import (
-    _get_limiter,
     get_current_user,
     normalize_target,
     require_json,
     require_str,
     require_arg
 )
-
-limiter = _get_limiter()
 
 __all__ = [
     "Base",
@@ -33,7 +30,6 @@ __all__ = [
     "UpsertMixin",
     "DocumentRepository",
     "AIWriter",
-    "limiter",
     "get_current_user",
     "normalize_target",
     "require_json",

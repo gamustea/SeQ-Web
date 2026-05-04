@@ -18,36 +18,48 @@ import os
 import signal
 import sys
 
-from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
-from sqlalchemy import create_engine, text
-from urllib.parse import quote_plus
+from flask                  import Flask, jsonify, request, send_from_directory
+from flask_cors             import CORS
+from sqlalchemy             import create_engine, text
+from urllib.parse           import quote_plus
 
-from src.modules.shared import BaseManager, Base, Document, limiter
-from src.modules.system.logging import SecOpsLogger
-from src.modules.users import (
+from src.modules.shared     import BaseManager, Base, Document
+from src.modules.shared._endpoints import _get_limiter
+from src.modules.system     import SecOpsLogger
+from src.modules.users      import (
     AccessToken, 
     User, 
     RefreshToken, 
     oauth_bp, 
-    users_bp
+    users_bp,
+    UserManager
 )
-from src.modules.sentinel import sentinel_bp
-from src.modules.acheron import acheron_bp
-from src.modules.aegis import aegis_bp
-from src.modules.system.endpoints import system_bp
-from src.modules.pages import pages_bp
+from src.modules.sentinel   import sentinel_bp
+from src.modules.acheron    import acheron_bp
+from src.modules.aegis      import aegis_bp
+from src.modules.system     import system_bp
+from src.modules.pages      import pages_bp
 
 import src.modules.system.config_reading as CR
+
+
+
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
 SHUTDOWN_TIMEOUT = 30
+CREATE_DATABASE = False
+DEBUG = True
+HOST = '0.0.0.0'
+PORT = 5000
 
 _UI_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
 )
-   
+
+
+
+
 
 
 def _graceful_shutdown(signum, frame) -> None:
@@ -80,7 +92,7 @@ def create_app(fresh_db_init = False) -> Flask:
     CORS(app, origins=origins, supports_credentials=True)
 
     _logger.info("Inicializando rate limiting...")
-    limiter.init_app(app)
+    _get_limiter().init_app(app)
 
     _logger.info("Añadiendo endpoints...")
     app.register_blueprint(system_bp,   url_prefix="/system")
@@ -222,17 +234,26 @@ def _init_db() -> None:
     print("[*] Insertando datos de prueba (User)...")
     with engine.connect() as conn:        
         conn.execute(text("""
-            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at)
+            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at, role)
             VALUES (
             'root',
-            'Gabriel', 
-            'Musteata',
+            'Gabe', 
+            'Joe',
             '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
             'c167837c1c2a860031d861164d69bd79',
-            'gmiganescu@gmail.com',
-            CURRENT_DATE
+            'gjoe@seq.com',
+            CURRENT_DATE,
+            'role_root'
             );
         """))
+
+        print("[*] Insertando atributos al usuario root...")
+        root_attributes = UserManager.get_all_available_attributes()
+        for attr in root_attributes:
+            conn.execute(text(f'''
+                INSERT INTO "UserAttribute" (user_id, attribute_name)
+                VALUES (1, '{attr}');
+            '''))
 
         conn.execute(text(("""
         INSERT INTO "Topic" (title) VALUES
@@ -331,6 +352,12 @@ def _init_db() -> None:
     print("[+] ¡Datos iniciales insertados con éxito!")
 
 
+
+
 if __name__ == "__main__":
-    app = create_app(False)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app = create_app(CREATE_DATABASE)
+    app.run(
+        debug=DEBUG, 
+        host=HOST, 
+        port=PORT
+    )

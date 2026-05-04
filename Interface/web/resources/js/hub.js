@@ -25,27 +25,23 @@
     var mc = document.getElementById("menu-config");
     if (!tb || !sb) return;
 
-    function ga() {
+    function getRole() {
         try {
-            return (
-                JSON.parse(sessionStorage.getItem("seq_session")).attributes ||
-                []
-            );
+            return JSON.parse(sessionStorage.getItem("seq_session")).role || "role_user";
         } catch (e) {
-            return [];
+            return "role_user";
         }
     }
 
-    function cp() {
-        var a = ga();
-        var isA = a.indexOf("role_admin") > -1;
-        var isR = a.indexOf("role_root") > -1;
-        if (!isA && !isR) {
+    function applyMenuVisibility() {
+        var role = getRole();
+        var isPrivileged = role === "role_admin" || role === "role_root";
+        if (!isPrivileged) {
             if (mu) mu.style.display = "none";
             if (mc) mc.style.display = "none";
         }
     }
-    cp();
+    applyMenuVisibility();
 
     tb.addEventListener("click", function (e) {
         e.stopPropagation();
@@ -70,7 +66,7 @@
         window.location.href = "/pages/login.html";
     });
 
-    function lp() {
+    function loadProfileName() {
         var ss = JSON.parse(sessionStorage.getItem("seq_session"));
         if (!ss || !pe) return;
         fetch("/users/me", {
@@ -79,10 +75,19 @@
             if (r.ok)
                 r.json().then(function (d) {
                     pe.textContent = d.first_name + " " + d.last_name;
+                    // Actualiza el rol en sesión si el endpoint lo devuelve
+                    if (d.role) {
+                        try {
+                            var s = JSON.parse(sessionStorage.getItem("seq_session"));
+                            s.role = d.role;
+                            sessionStorage.setItem("seq_session", JSON.stringify(s));
+                            applyMenuVisibility();
+                        } catch (e) {}
+                    }
                 });
         });
     }
-    lp();
+    loadProfileName();
 })();
 
 (function () {
@@ -197,19 +202,15 @@
     function sh() {
         var jsonStr = JSON.stringify(sel.r, null, 2);
         var highlighted = jsonStr.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-            var cls = 'json-number';
+            var cls = "json-number";
             if (/^"/.test(match)) {
-                if (/:$/.test(match)) {
-                    cls = 'json-key';
-                } else {
-                    cls = 'json-string';
-                }
+                cls = /:$/.test(match) ? "json-key" : "json-string";
             } else if (/true|false/.test(match)) {
-                cls = 'json-boolean';
+                cls = "json-boolean";
             } else if (/null/.test(match)) {
-                cls = 'json-null';
+                cls = "json-null";
             }
-            return '<span class="' + cls + '">' + match + '</span>';
+            return '<span class="' + cls + '">' + match + "</span>";
         });
         to.innerHTML = highlighted;
         to.style.opacity = "0";

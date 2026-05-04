@@ -11,19 +11,22 @@ const TokenStore = (() => {
     let _refresh = null;
     let _exp = null;
     let _attrs = null;
+    let _role = null;
 
     return {
-        save(a, r, expiresIn, attrs) {
+        save(a, r, expiresIn, attrs, role) {
             _access = a;
             _refresh = r;
             _exp = Date.now() + expiresIn * 1000;
             _attrs = attrs || [];
+            _role = role || "role_user";
         },
         clear() {
             _access = null;
             _refresh = null;
             _exp = null;
             _attrs = null;
+            _role = null;
         },
         getAccess() {
             return _access;
@@ -40,11 +43,14 @@ const TokenStore = (() => {
         getAttributes() {
             return _attrs;
         },
+        getRole() {
+            return _role;
+        },
         isAdmin() {
-            return _attrs && _attrs.includes("role_admin");
+            return _role === "role_admin" || _role === "role_root";
         },
         isRoot() {
-            return _attrs && _attrs.includes("role_root");
+            return _role === "role_root";
         },
         persist(redirectUrl) {
             sessionStorage.setItem(
@@ -53,6 +59,7 @@ const TokenStore = (() => {
                     accessToken: _access,
                     refreshToken: _refresh,
                     expiresAt: _exp,
+                    role: _role,
                     attributes: _attrs,
                 }),
             );
@@ -168,6 +175,7 @@ form.addEventListener("submit", async (e) => {
             data.refresh_token,
             data.expires_in,
             data.attributes,
+            data.role,
         );
         showAlert("Sesión iniciada. Redirigiendo…", "success");
         setTimeout(() => TokenStore.persist(HUB_URL), 800);

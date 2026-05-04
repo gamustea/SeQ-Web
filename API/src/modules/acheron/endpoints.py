@@ -80,10 +80,8 @@ from src.modules.shared._exceptions import (
 from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
-from src.modules.shared import (
-    limiter,
-    get_current_user,
-)
+from src.modules.shared._endpoints import get_current_user, _get_limiter
+limiter = _get_limiter()
 
 acheron_bp = Blueprint("acheron", __name__)
 _logger    = SecOpsLogger("acheron").get_logger()

@@ -102,14 +102,8 @@ from src.modules.sentinel.exceptions import (
 from src.modules.aegis.exceptions import DocumentError
 
 from src.modules.sentinel import NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy, PDFCreator
-from src.modules.shared import (
-    limiter, 
-    get_current_user, 
-    normalize_target,
-    require_json,
-    require_str,
-    require_arg
-)
+from src.modules.shared._endpoints import get_current_user, normalize_target, require_json, require_str, require_arg, _get_limiter
+limiter = _get_limiter()
 from src.modules.system import SecOpsLogger
 
 from .managers import NmapScanManager, NiktoScanManager, OpenVASScanManager

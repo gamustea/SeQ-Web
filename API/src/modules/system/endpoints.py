@@ -17,7 +17,8 @@ from src.modules.shared._exceptions import (
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
-from src.modules.shared import limiter
+from src.modules.shared._endpoints import _get_limiter
+limiter = _get_limiter()
 
 import src.modules.system.config_reading as CR
 

@@ -62,10 +62,9 @@ from src.modules.shared._exceptions import (
     create_error_response,
 )
 from src.modules.system.logging import SecOpsLogger
-from src.modules.shared import limiter
-from src.modules.shared._endpoints import get_current_user
-
-from .services import AttributeType, require_attributes, require_oauth_token
+from src.modules.shared._endpoints import get_current_user, _get_limiter, require_json
+limiter = _get_limiter()
+from .services import AttributeType, Role, require_attributes, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
 from .exceptions import (
     ExistingUserError,
@@ -73,6 +72,7 @@ from .exceptions import (
     UserBindingError,
     ProfileUpdateError,
     AuthorizationError,
+    PermissionsError
 )
 
 
@@ -85,18 +85,6 @@ USER_MANAGER = UserManager()
 OAUTH_MANAGER = OAuthTokenManager()
 
 
-def require_json():
-    """
-    Devuelve el body JSON o una respuesta de error 400 si el Content-Type
-    no es application/json o el body está vacío.
-    """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
-
 def _require_field(data: dict, field: str) -> str:
     """Extrae un campo requerido del body o lanza MissingParameterError."""
     value = data.get(field)
@@ -105,88 +93,9 @@ def _require_field(data: dict, field: str) -> str:
     return value
 
 
-
-@users_bp.post("/sign-up")
-@require_oauth_token
-@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
-@limiter.limit("10 per hour; 20 per day")
-def sign_up_user():
-    """Registra un nuevo usuario.
-
-    Solo usuarios con role_root o role_admin pueden crear nuevos usuarios.
-
-    Args (JSON body):
-        username    (str): Nombre de usuario único.
-        first_name  (str): Nombre real del usuario.
-        last_name   (str): Apellido del usuario.
-        password    (str): Contraseña del usuario.
-        email       (str): Correo electrónico válido.
-
-    Returns:
-        201 — Usuario creado exitosamente.
-            {
-                "message": "Usuario registrado exitosamente",
-                "userId": 1,
-                "username": "johnd",
-                "email": "john@example.com"
-            }
-        400 — Error de validación (campos faltantes o inválidos).
-        409 — El username o email ya existe.
-
-    Example:
-        curl -X POST https://api.example.com/users/sign-up \\
-            -H "Content-Type: application/json" \\
-            -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd"}'
-    """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
-    try:
-        username    = _require_field(data, "username")
-        email       = _require_field(data, "email")
-        first_name  = _require_field(data, "first_name")
-        last_name   = _require_field(data, "last_name")
-        password    = _require_field(data, "password")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-
-    requested_role = data.get("role", "role_user")
-    current_user_id = getattr(request, "current_user_id", None)
-
-    try:
-        user = USER_MANAGER.sign_in_user(
-            username = username,
-            email = email,
-            first_name = first_name,
-            last_name = last_name,
-            password = password,
-            role = requested_role,
-            actor_id = current_user_id
-        )
-        _logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
-        return jsonify({
-            "message":  "Usuario registrado exitosamente",
-            "userId":   user.id,
-            "username": user.username,
-            "email":    email,
-            "role":     requested_role,
-        }), 201
-
-    except AuthorizationError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except DatabaseError as exc:
-        return jsonify({"code": exc.status_code, "message": "Revisa tus credenciales e inténtalo de nuevo."}), exc.status_code
-    except (MissingParameterError, ExistingUserError, UserBindingError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en sign-up: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+# =========================================================================
+# SELF-APPLIED ENDPOINTS
+# =========================================================================
 
 
 @users_bp.post("/check-credentials")
@@ -368,7 +277,8 @@ def oauth_token():
             _logger.warning(f"Login fallido para: {username}")
             return jsonify({"error": "invalid_grant", "error_description": "Invalid username or password"}), 401
 
-        access_token  = OAUTH_MANAGER.create_access_token(uid, username)   # type: ignore[arg-type]
+        user = USER_MANAGER.get_user_by_id(uid)
+        access_token  = OAUTH_MANAGER.create_access_token(uid, username, user.role if user else "role_user")   # type: ignore[arg-type]
         refresh_token = OAUTH_MANAGER.create_refresh_token(uid)            # type: ignore[arg-type]
         user_attrs = USER_MANAGER.get_user_attributes(uid)
 
@@ -379,6 +289,7 @@ def oauth_token():
             "token_type":    "Bearer",
             "expires_in":    ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             "refresh_token": refresh_token,
+            "role":         user.role if user else "role_user",
             "attributes":   user_attrs,
         }), 200
 
@@ -398,7 +309,7 @@ def oauth_token():
         if not user:
             return jsonify({"error": "invalid_grant", "error_description": "User not found"}), 401
 
-        access_token = OAUTH_MANAGER.create_access_token(uid, user.username)  # type: ignore[arg-type]
+        access_token = OAUTH_MANAGER.create_access_token(uid, user.username, user.role)  # type: ignore[arg-type]
         user_attrs = USER_MANAGER.get_user_attributes(uid)
 
         _logger.info(f"Access token renovado para usuario ID: {uid}")
@@ -406,6 +317,7 @@ def oauth_token():
             "access_token": access_token,
             "token_type":   "Bearer",
             "expires_in":   ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "role":      user.role,
             "attributes":  user_attrs,
         }), 200
 
@@ -493,6 +405,7 @@ def get_current_profile():
             "email": user.email,
             "first_name": user.first_name,
             "last_name": user.last_name,
+            "role": user.role,
             "created_at": user.created_at.isoformat() if user.created_at else None
         }), 200
 
@@ -501,6 +414,169 @@ def get_current_profile():
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
+
+
+# =========================================================================
+# USER managing ENDPOINTS (require role_admin or role_root)
+# =========================================================================
+
+@users_bp.post("/sign-up")
+@require_oauth_token
+@require_role(Role.ADMIN)
+@limiter.limit("10 per hour; 20 per day")
+def sign_up_user():
+    """Registra un nuevo usuario.
+
+    Solo usuarios con role_root o role_admin pueden crear nuevos usuarios.
+
+    Args (JSON body):
+        username    (str): Nombre de usuario único.
+        first_name  (str): Nombre real del usuario.
+        last_name   (str): Apellido del usuario.
+        password    (str): Contraseña del usuario.
+        email       (str): Correo electrónico válido.
+
+    Returns:
+        201 — Usuario creado exitosamente.
+            {
+                "message": "Usuario registrado exitosamente",
+                "userId": 1,
+                "username": "johnd",
+                "email": "john@example.com"
+            }
+        400 — Error de validación (campos faltantes o inválidos).
+        409 — El username o email ya existe.
+
+    Example:
+        curl -X POST https://api.example.com/users/sign-up \\
+            -H "Content-Type: application/json" \\
+            -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd", "role": "role_user"}'
+    """
+    data = require_json()
+    if isinstance(data, tuple):
+        return data
+
+    try:
+        username        = _require_field(data, "username")
+        email           = _require_field(data, "email")
+        first_name      = _require_field(data, "first_name")
+        last_name       = _require_field(data, "last_name")
+        password        = _require_field(data, "password")
+    except MissingParameterError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        _logger.error(err)
+        return jsonify(err), code
+
+    requested_role = data.get("role") or "role_user"
+    current_user_id = get_current_user().id
+
+    try:
+        user = USER_MANAGER.sign_in_user(
+            username = username,
+            email = email,
+            first_name = first_name,
+            last_name = last_name,
+            password = password,
+            role = requested_role,
+            actor_id = current_user_id
+        )
+        _logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
+        return jsonify({
+            "message":  "Usuario registrado exitosamente",
+            "userId":   user.id,
+            "username": user.username,
+            "email":    email,
+            "role":     requested_role,
+        }), 201
+
+    except DatabaseError as exc:
+        return jsonify({"code": exc.status_code, "message": "Revisa tus credenciales e inténtalo de nuevo."}), exc.status_code
+    except (
+        AuthorizationError, 
+        MissingParameterError, 
+        ExistingUserError, 
+        UserBindingError,
+        PermissionsError
+    ) as exc:
+        _logger.error(f"Error en sign-up: {exc}", exc_info=True)
+        err, code = create_error_response(exc, include_debug_info=False)
+        err["error_description"] = err.get("message", "")
+        return jsonify(err), code
+    except Exception as exc:
+        _logger.error(f"Error en sign-up: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@users_bp.get("")
+@require_oauth_token
+@require_role(Role.ADMIN)
+def list_all_users():
+    """Lista todos los usuarios del sistema con sus atributos.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Returns:
+        200 — Lista de usuarios con atributos.
+            [{"id": 1, "username": "admin", "email": "admin@secops.local",
+              "role": "role_root", "created_at": "...", "attributes": ["role_root"]}]
+    """
+    try:
+        users = USER_MANAGER.get_all_users()
+        result = []
+        for user in users:
+            result.append({
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "role": user.role,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "attributes": [a.attribute_name for a in user.attributes]
+            })
+        return jsonify(result), 200
+
+    except Exception as exc:
+        _logger.error(f"Error listando usuarios: {exc}", exc_info=True)
+        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+
+
+@users_bp.get("/<int:target_user_id>/attributes")
+@require_oauth_token
+@require_role(Role.ADMIN)
+def list_user_attributes(target_user_id: int):
+    """Lista los atributos de un usuario específico.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Returns:
+        200 — Lista de atributos.
+            {"attributes": ["role_user", "aegis_read"]}
+        403 — Sin permisos.
+
+    Example:
+        curl -X GET https://api.example.com/users/5/attributes \\
+        -H "Authorization: Bearer <token>"
+    """
+    current_user_id = get_current_user().id
+
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
+        _logger.warning(f"Usuario {current_user_id} intentó ver atributos de {target_user_id} sin permiso")
+        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para ver atributos de este usuario"}), 403
+
+    try:
+        target_user = USER_MANAGER.get_user_by_id(target_user_id)
+        return jsonify({
+            "user_id": target_user_id, 
+            "attributes": [a.attribute_name for a in target_user.attributes], 
+            "role": target_user.role if target_user else "role_user"
+        }), 200
+
+    except Exception as exc:
+        _logger.error(f"Error listando atributos: {exc}", exc_info=True)
+        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
 
 
 @users_bp.put("/me")
@@ -555,6 +631,7 @@ def update_current_profile():
             "email": user.email,
             "first_name": user.first_name,
             "last_name": user.last_name,
+            "role": user.role,
             "created_at": user.created_at.isoformat() if user.created_at else None
         }), 200
 
@@ -568,101 +645,10 @@ def update_current_profile():
         return jsonify(err), code
 
 
-@users_bp.get("")
+@users_bp.put("/<int:target_user_id>/attributes")
 @require_oauth_token
-@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
-def list_all_users():
-    """Lista todos los usuarios del sistema.
-
-    Solo usuarios con role_root o role_admin pueden acceder.
-
-    Returns:
-        200 — Lista de usuarios.
-            [{"id": 1, "username": "admin", "email": "admin@secops.local", ...}]
-    """
-    try:
-        users = USER_MANAGER.get_all_users()
-        result = []
-        for user in users:
-            result.append({
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "created_at": user.created_at.isoformat() if user.created_at else None
-            })
-        return jsonify(result), 200
-
-    except Exception as exc:
-        _logger.error(f"Error listando usuarios: {exc}", exc_info=True)
-        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
-
-
-@users_bp.get("/attributes")
-@require_oauth_token
-@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
-def list_all_user_attributes():
-    """Lista los atributos de todos los usuarios.
-
-    Solo usuarios con role_root o role_admin pueden acceder.
-
-    Returns:
-        200 — Lista de usuarios con sus atributos.
-            [{"user_id": 1, "username": "root", "attributes": ["role_root", "role_admin"]}]
-    """
-    try:
-        users = USER_MANAGER.get_all_users()
-        result = []
-        for user in users:
-            result.append({
-                "user_id": user.id,
-                "username": user.username,
-                "attributes": [a.attribute_name for a in user.attributes]
-            })
-        return jsonify(result), 200
-
-    except Exception as exc:
-        _logger.error(f"Error listando atributos: {exc}", exc_info=True)
-        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
-
-
-@users_bp.get("/<int:target_user_id>/attributes")
-@require_oauth_token
-@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
-def list_user_attributes(target_user_id):
-    """Lista los atributos de un usuario específico.
-
-    Solo usuarios con role_root o role_admin pueden acceder.
-
-    Returns:
-        200 — Lista de atributos.
-            {"attributes": ["role_user", "aegis_read"]}
-        403 — Sin permisos.
-
-    Example:
-        curl -X GET https://api.example.com/users/5/attributes \\
-        -H "Authorization: Bearer <token>"
-    """
-    current_user_id = get_current_user().id
-
-    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
-        _logger.warning(f"Usuario {current_user_id} intentó ver atributos de {target_user_id} sin permiso")
-        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para ver atributos de este usuario"}), 403
-
-    try:
-        attribute_names = USER_MANAGER.get_user_attributes(target_user_id)
-        return jsonify({"user_id": target_user_id, "attributes": attribute_names}), 200
-
-    except Exception as exc:
-        _logger.error(f"Error listando atributos: {exc}", exc_info=True)
-        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
-
-
-@users_bp.post("/<int:target_user_id>/attributes")
-@require_oauth_token
-@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
-def add_user_attribute(target_user_id):
+@require_role(Role.ADMIN)
+def add_user_attribute(target_user_id: int):
     """Añade uno o más atributos a un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.
@@ -712,8 +698,8 @@ def add_user_attribute(target_user_id):
 
 @users_bp.delete("/<int:target_user_id>/attributes")
 @require_oauth_token
-@require_attributes(at_least_one=[AttributeType.ROLE_ROOT, AttributeType.ROLE_ADMIN])
-def remove_user_attribute(target_user_id):
+@require_role(Role.ADMIN)
+def remove_user_attribute(target_user_id: int):
     """Elimina uno o más atributos de un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.

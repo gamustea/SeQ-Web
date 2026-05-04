@@ -95,7 +95,8 @@ from src.modules.aegis.exceptions import (
     AegisInsufficientContentError,
 )
 from src.modules.users.exceptions import UserNotFoundError
-from src.modules.shared import limiter, get_current_user
+from src.modules.shared._endpoints import get_current_user, _get_limiter
+limiter = _get_limiter()
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, UserManager, OAuthTokenManager
 

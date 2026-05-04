@@ -27,17 +27,24 @@ const API_URL = {
     }
 })();
 
-function getSessionAttributes() {
+function getSession() {
     try {
-        const s = JSON.parse(sessionStorage.getItem("seq_session"));
-        return s.attributes || [];
+        return JSON.parse(sessionStorage.getItem("seq_session")) || {};
     } catch {
-        return [];
+        return {};
     }
 }
 
+function getSessionRole() {
+    return getSession().role || "role_user";
+}
+
 function isRoot() {
-    return getSessionAttributes().includes("role_root");
+    return getSessionRole() === "role_root";
+}
+
+function isAdmin() {
+    return getSessionRole() === "role_admin";
 }
 
 /* STARFIELD */
@@ -70,21 +77,26 @@ function showToast(message, type) {
     }, 3000);
 }
 
-/* LOAD USERS */
+/* LOAD USERS
+   Hace dos llamadas en paralelo:
+   - GET /users          → datos básicos incluido user.role
+   - GET /users/attributes → atributos ABAC de cada usuario
+   Combina ambas respuestas antes de renderizar.
+*/
 async function loadUsers() {
-    const session = JSON.parse(sessionStorage.getItem("seq_session"));
-    if (!session) return;
+    const session = getSession();
+    if (!session.accessToken) return;
+
+    const headers = {
+        Authorization: "Bearer " + session.accessToken,
+        "Content-Type": "application/json",
+    };
 
     try {
-        const response = await fetch(API_URL.users, {
-            headers: {
-                Authorization: "Bearer " + session.accessToken,
-                "Content-Type": "application/json",
-            },
-        });
+        const usersRes = await fetch(API_URL.users, { headers });
 
-        if (!response.ok) {
-            if (response.status === 401) {
+        if (!usersRes.ok) {
+            if (usersRes.status === 401) {
                 sessionStorage.removeItem("seq_session");
                 window.location.href = "/pages/login.html";
                 return;
@@ -92,31 +104,19 @@ async function loadUsers() {
             throw new Error("Error al cargar usuarios");
         }
 
-        const users = await response.json();
-        const attrsResponse = await fetch(API_URL.users + "/attributes", {
-            headers: {
-                Authorization: "Bearer " + session.accessToken,
-                "Content-Type": "application/json",
-            },
-        });
+        const users = await usersRes.json();
 
-        var userAttrsMap = {};
-        if (attrsResponse.ok) {
-            var allAttrs = await attrsResponse.json();
-            for (var i = 0; i < allAttrs.length; i++) {
-                var entry = allAttrs[i];
-                userAttrsMap[entry.user_id] = entry.attributes || [];
-            }
-        }
-
+        // El endpoint devuelve usuarios con role y attributes en una sola llamada
         for (var j = 0; j < users.length; j++) {
-            users[j]._attributes = userAttrsMap[users[j].id] || [];
+            var u = users[j];
+            u.role = u.role || "role_user";
+            u._attributes = u.attributes || [];
         }
 
         renderUsers(users);
         updateCount(users.length);
-    } catch (error) {
-        console.error("Error loading users:", error);
+    } catch (err) {
+        console.error("Error loading users:", err);
         showToast("Error al cargar usuarios", "error");
     }
 }
@@ -132,103 +132,77 @@ function renderUsers(users) {
         return;
     }
 
-    var rootHtml = "";
+    var rootHtml   = "";
     var adminsHtml = "";
-    var basicHtml = "";
-    var rootCount = 0;
+    var basicHtml  = "";
+    var rootCount  = 0;
     var adminCount = 0;
     var basicCount = 0;
 
     for (var i = 0; i < users.length; i++) {
         var user = users[i];
-        var attrs = user._attributes || [];
-        var isRoot = attrs.includes("role_root");
-        var isAdmin = attrs.includes("role_admin");
 
-        var cardClass = isRoot
+        // El rol viene directamente de user.role — ya no hay que inferirlo de _attributes
+        var userIsRoot  = user.role === "role_root";
+        var userIsAdmin = user.role === "role_admin";
+
+        var cardClass = userIsRoot
             ? "user-card user-card--root"
-            : isAdmin
+            : userIsAdmin
               ? "user-card user-card--admin"
               : "user-card user-card--basic";
-        var roleLabel = isRoot ? "Root" : isAdmin ? "Administrador" : "Usuario";
+
+        var roleLabel = userIsRoot ? "Root" : userIsAdmin ? "Administrador" : "Usuario";
 
         var cardHtml =
-            '<article class="' +
-            cardClass +
-            '">' +
+            '<article class="' + cardClass + '">' +
             '<div class="user-card__header">' +
-            '<div class="user-card__avatar">' +
-            getInitials(user.first_name, user.last_name) +
-            "</div>" +
+            '<div class="user-card__avatar">' + getInitials(user.first_name, user.last_name) + "</div>" +
             '<div class="user-card__info">' +
-            '<div class="user-card__username">@' +
-            user.username +
-            "</div>" +
-            '<div class="user-card__id">ID: ' +
-            user.id +
-            "</div>" +
+            '<div class="user-card__username">@' + user.username + "</div>" +
+            '<div class="user-card__id">ID: ' + user.id + "</div>" +
             "</div>" +
             "</div>" +
             '<div class="user-card__details">' +
-            '<div class="user-card__row"><span class="user-card__label">Nombre</span><span class="user-card__value">' +
-            user.first_name +
-            " " +
-            user.last_name +
-            "</span></div>" +
-            '<div class="user-card__row"><span class="user-card__label">Correo</span><span class="user-card__value user-card__value--email">' +
-            user.email +
-            "</span></div>" +
-            '<div class="user-card__row"><span class="user-card__label">Rol</span><span class="user-card__value">' +
-            roleLabel +
-            "</span></div>" +
+            '<div class="user-card__row"><span class="user-card__label">Nombre</span><span class="user-card__value">' + user.first_name + " " + user.last_name + "</span></div>" +
+            '<div class="user-card__row"><span class="user-card__label">Correo</span><span class="user-card__value user-card__value--email">' + user.email + "</span></div>" +
+            '<div class="user-card__row"><span class="user-card__label">Rol</span><span class="user-card__value">' + roleLabel + "</span></div>" +
             "</div>" +
             '<div class="user-card__footer">' +
-            '<span class="user-card__date">' +
-            formatDate(user.created_at) +
-            "</span>" +
-            '<button class="btn-details" data-user-id="' +
-            user.id +
-            '">Detalles</button>' +
+            '<span class="user-card__date">' + formatDate(user.created_at) + "</span>" +
+            '<button class="btn-details" data-user-id="' + user.id + '">Detalles</button>' +
             "</div>" +
             "</article>";
 
-        if (isRoot) {
+        if (userIsRoot) {
             rootCount++;
             rootHtml += cardHtml;
-        } else if (isAdmin) {
+        } else if (userIsAdmin) {
             adminCount++;
             adminsHtml += cardHtml;
         } else {
-            basicHtml += cardHtml;
             basicCount++;
+            basicHtml += cardHtml;
         }
     }
 
     var sectionsHtml = "";
     if (rootHtml) {
         sectionsHtml +=
-            '<section class="user-section"><h2 class="user-section__title">Root (' +
-            rootCount +
-            ')</h2><div class="user-section__grid">' +
-            rootHtml +
-            "</div></section>";
+            '<section class="user-section"><h2 class="user-section__title">Root (' + rootCount + ')</h2>' +
+            '<div class="user-section__grid">' + rootHtml + "</div></section>";
     }
     if (adminsHtml) {
         sectionsHtml +=
-            '<section class="user-section"><h2 class="user-section__title">Administradores (' +
-            adminCount +
-            ')</h2><div class="user-section__grid">' +
-            adminsHtml +
-            "</div></section>";
+            '<section class="user-section"><h2 class="user-section__title">Administradores (' + adminCount + ')</h2>' +
+            '<div class="user-section__grid">' + adminsHtml + "</div></section>";
     }
     if (basicHtml) {
         sectionsHtml +=
-            '<section class="user-section"><h2 class="user-section__title">Usuarios (' +
-            basicCount +
-            ')</h2><div class="user-section__grid">' +
-            basicHtml +
-            "</div></section>";
+            '<section class="user-section"><h2 class="user-section__title">Usuarios (' + basicCount + ')</h2>' +
+            '<div class="user-section__grid">' + basicHtml + "</div></section>";
     }
+
     grid.innerHTML = sectionsHtml;
 
     grid.querySelectorAll(".btn-details").forEach(function (btn) {
@@ -241,7 +215,7 @@ function renderUsers(users) {
 /* GET INITIALS */
 function getInitials(firstName, lastName) {
     var first = firstName ? firstName.charAt(0).toUpperCase() : "";
-    var last = lastName ? lastName.charAt(0).toUpperCase() : "";
+    var last  = lastName  ? lastName.charAt(0).toUpperCase()  : "";
     return first + last || "??";
 }
 
@@ -250,11 +224,8 @@ function formatDate(dateStr) {
     if (!dateStr) return "-";
     var date = new Date(dateStr);
     return date.toLocaleDateString("es-ES", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
+        year: "numeric", month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit",
     });
 }
 
@@ -268,8 +239,8 @@ function updateCount(count) {
 
 /* CREATE USER */
 async function createUser(userData) {
-    var session = JSON.parse(sessionStorage.getItem("seq_session"));
-    if (!session) return;
+    var session = getSession();
+    if (!session.accessToken) return { success: false };
 
     try {
         var response = await fetch(API_URL.signUp, {
@@ -284,13 +255,11 @@ async function createUser(userData) {
         if (!response.ok) {
             var error = await response.json();
             if (response.status === 403) {
-                showToast("No tienes permisos para crear usuarios", "error");
+                showToast(error.error_description || "No tienes permisos para crear usuarios", "error");
             } else if (response.status === 409) {
-                showToast("El usuario o correo ya existe", "error");
+                showToast(error.error_description || "El usuario o correo ya existe", "error");
             } else {
-                throw new Error(
-                    error.error_description || "Error al crear usuario",
-                );
+                throw new Error(error.error_description || "Error al crear usuario");
             }
             return { success: false };
         }
@@ -300,12 +269,14 @@ async function createUser(userData) {
         return { success: true };
     } catch (error) {
         console.error("Error creating user:", error);
-        showToast("Error al crear usuario", "error");
+        showToast(error.error_description || error.message || "Error al crear usuario", "error");
         return { success: false };
     }
 }
 
-/* SHOW CREATE MODAL */
+/* SHOW CREATE MODAL
+   Solo root puede asignar role_admin al crear un usuario.
+*/
 function showCreateModal() {
     var roleField = "";
     if (isRoot()) {
@@ -343,79 +314,67 @@ function showCreateModal() {
 
     document.body.appendChild(modal);
 
-    modal.querySelector(".modal-close").addEventListener("click", function () {
+    modal.querySelector(".modal-close").addEventListener("click", function () { modal.remove(); });
+    modal.querySelector("#btn-cancel").addEventListener("click", function () { modal.remove(); });
+    modal.addEventListener("click", function (e) { if (e.target === modal) modal.remove(); });
+
+    modal.querySelector("#create-user-form").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var formData = {
+            username:   document.getElementById("new-username").value.trim(),
+            email:      document.getElementById("new-email").value.trim(),
+            first_name: document.getElementById("new-first-name").value.trim(),
+            last_name:  document.getElementById("new-last-name").value.trim(),
+            password:   document.getElementById("new-password").value,
+        };
+        var roleSelect = document.getElementById("new-role");
+        if (roleSelect) formData.role = roleSelect.value;
+        await createUser(formData);
         modal.remove();
-    });
-
-    modal.querySelector("#btn-cancel").addEventListener("click", function () {
-        modal.remove();
-    });
-
-    modal
-        .querySelector("#create-user-form")
-        .addEventListener("submit", async function (e) {
-            e.preventDefault();
-            var formData = {
-                username: document.getElementById("new-username").value.trim(),
-                email: document.getElementById("new-email").value.trim(),
-                first_name: document
-                    .getElementById("new-first-name")
-                    .value.trim(),
-                last_name: document
-                    .getElementById("new-last-name")
-                    .value.trim(),
-                password: document.getElementById("new-password").value,
-            };
-            var roleSelect = document.getElementById("new-role");
-            if (roleSelect) {
-                formData.role = roleSelect.value;
-            }
-            await createUser(formData);
-            modal.remove();
-        });
-
-    modal.addEventListener("click", function (e) {
-        if (e.target === modal) modal.remove();
     });
 }
 
-/* SHOW USER DETAILS */
+/* SHOW USER DETAILS
+   Llama a GET /users/:id/attributes que ahora devuelve { user_id, role, attributes[] }.
+   Para obtener el resto de datos del usuario reutiliza la lista ya cargada en el DOM
+   en lugar de hacer un segundo fetch a /users.
+*/
 async function showUserDetails(userId) {
-    var session = JSON.parse(sessionStorage.getItem("seq_session"));
-    if (!session) return;
+    var session = getSession();
+    if (!session.accessToken) return;
+
+    const headers = {
+        Authorization: "Bearer " + session.accessToken,
+        "Content-Type": "application/json",
+    };
 
     try {
-        var response = await fetch(
-            API_URL.users + "/" + userId + "/attributes",
-            {
-                headers: {
-                    Authorization: "Bearer " + session.accessToken,
-                    "Content-Type": "application/json",
-                },
-            },
-        );
+        var [attrsRes, usersRes] = await Promise.all([
+            fetch(API_URL.users + "/" + userId + "/attributes", { headers }),
+            fetch(API_URL.users, { headers }),
+        ]);
 
-        var attributes = [];
-        if (response.ok) {
-            var data = await response.json();
-            attributes = data.attributes || [];
-        } else if (response.status === 403) {
+        if (attrsRes.status === 403) {
             showToast("No tienes permisos para ver atributos", "error");
             return;
         }
 
-        var userResponse = await fetch(API_URL.users, {
-            headers: {
-                Authorization: "Bearer " + session.accessToken,
-                "Content-Type": "application/json",
-            },
-        });
-        var allUsers = await userResponse.json();
+        var role       = "role_user";
+        var attributes = [];
+        if (attrsRes.ok) {
+            var data   = await attrsRes.json();
+            role       = data.role       || "role_user";   // ← nuevo campo del endpoint
+            attributes = data.attributes || [];
+        }
+
         var user = null;
-        for (var i = 0; i < allUsers.length; i++) {
-            if (allUsers[i].id === userId) {
-                user = allUsers[i];
-                break;
+        if (usersRes.ok) {
+            var allUsers = await usersRes.json();
+            for (var i = 0; i < allUsers.length; i++) {
+                if (allUsers[i].id === userId) {
+                    user = allUsers[i];
+                    break;
+                }
             }
         }
 
@@ -423,6 +382,9 @@ async function showUserDetails(userId) {
             showToast("Usuario no encontrado", "error");
             return;
         }
+
+        // Asegura que el objeto user tiene role actualizado
+        user.role = user.role || role;
 
         showDetailsModal(user, attributes);
     } catch (error) {
@@ -433,17 +395,21 @@ async function showUserDetails(userId) {
 
 /* SHOW DETAILS MODAL */
 function showDetailsModal(user, attributes) {
+    var roleLabel = user.role === "role_root"
+        ? "Root"
+        : user.role === "role_admin"
+          ? "Administrador"
+          : "Usuario";
+
     var attrHtml = "";
     if (attributes.length > 0) {
-        attrHtml =
-            '<div class="user-attributes"><span class="attr-label">Atributos:</span><div class="attr-tags">';
+        attrHtml = '<div class="user-attributes"><span class="attr-label">Atributos:</span><div class="attr-tags">';
         for (var i = 0; i < attributes.length; i++) {
             attrHtml += '<span class="attr-tag">' + attributes[i] + "</span>";
         }
         attrHtml += "</div></div>";
     } else {
-        attrHtml =
-            '<div class="user-attributes"><span class="attr-label">Atributos:</span><span class="no-attrs">Sin atributos</span></div>';
+        attrHtml = '<div class="user-attributes"><span class="attr-label">Atributos:</span><span class="no-attrs">Sin atributos adicionales</span></div>';
     }
 
     var modal = document.createElement("div");
@@ -456,28 +422,15 @@ function showDetailsModal(user, attributes) {
         "</div>" +
         '<div class="modal-body">' +
         '<div class="detail-section">' +
-        '<div class="detail-avatar">' +
-        getInitials(user.first_name, user.last_name) +
-        "</div>" +
-        '<div class="detail-username">@' +
-        user.username +
-        "</div>" +
-        '<div class="detail-id">ID: ' +
-        user.id +
-        "</div>" +
+        '<div class="detail-avatar">' + getInitials(user.first_name, user.last_name) + "</div>" +
+        '<div class="detail-username">@' + user.username + "</div>" +
+        '<div class="detail-id">ID: ' + user.id + "</div>" +
         "</div>" +
         '<div class="detail-grid">' +
-        '<div class="detail-item"><span class="detail-label">Nombre</span><span class="detail-value">' +
-        user.first_name +
-        " " +
-        user.last_name +
-        "</span></div>" +
-        '<div class="detail-item"><span class="detail-label">Correo</span><span class="detail-value">' +
-        user.email +
-        "</span></div>" +
-        '<div class="detail-item"><span class="detail-label">Creado</span><span class="detail-value">' +
-        formatDate(user.created_at) +
-        "</span></div>" +
+        '<div class="detail-item"><span class="detail-label">Nombre</span><span class="detail-value">' + user.first_name + " " + user.last_name + "</span></div>" +
+        '<div class="detail-item"><span class="detail-label">Correo</span><span class="detail-value">' + user.email + "</span></div>" +
+        '<div class="detail-item"><span class="detail-label">Rol</span><span class="detail-value">' + roleLabel + "</span></div>" +
+        '<div class="detail-item"><span class="detail-label">Creado</span><span class="detail-value">' + formatDate(user.created_at) + "</span></div>" +
         "</div>" +
         attrHtml +
         "</div>" +
@@ -485,12 +438,8 @@ function showDetailsModal(user, attributes) {
 
     document.body.appendChild(modal);
 
-    modal.querySelector(".modal-close").addEventListener("click", function () {
-        modal.remove();
-    });
-    modal.addEventListener("click", function (e) {
-        if (e.target === modal) modal.remove();
-    });
+    modal.querySelector(".modal-close").addEventListener("click", function () { modal.remove(); });
+    modal.addEventListener("click", function (e) { if (e.target === modal) modal.remove(); });
 }
 
 /* INITIALIZATION */
