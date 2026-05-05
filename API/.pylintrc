@@ -2,4 +2,4 @@
 extension-pkg-allow-list=lxml,gvm,xml.etree,xml.dom
 
 [MESSAGES CONTROL]
-disable=C0114,C0115,C0116
+disable=C0114,C0115,C0116,arguments-differ
