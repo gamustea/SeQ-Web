@@ -80,6 +80,7 @@ class ScanManager(ABC):
         _running_tasks:       Dictionary mapping scan_id to running _Task.
         _running_threads:     Dictionary mapping scan_id to running Thread.
         _running_tasks_lock:  RLock for thread-safe task management.
+        _scan_timeout_margin: Seconds added to task timeout for wait().
 
     Attributes:
         active_user: User executing the scan operations.
@@ -89,6 +90,7 @@ class ScanManager(ABC):
     _running_tasks: Dict[int, _Task] = {}
     _running_threads: Dict[int, threading.Thread] = {}
     _running_tasks_lock = threading.RLock()
+    _scan_timeout_margin: int = 30
 
     def __init__(self, user: User) -> None:
         """
@@ -497,9 +499,8 @@ class ScanManager(ABC):
 
             thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
 
-            TIME_MARGIN = 30
             task.scan()
-            success = task.wait(timeout=task.timeout + TIME_MARGIN)
+            success = task.wait(timeout=task.timeout + self._scan_timeout_margin)
 
             if not success or task.results is None:
                 thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")

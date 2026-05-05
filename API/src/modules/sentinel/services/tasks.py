@@ -239,7 +239,6 @@ class NmapScanTask(_Task):
 
         self.target_ports = target_ports
         self._output_file = Path(f"{TEMP_DIR}/{FILE_NAME}")
-        self.scanner = None
         self.platform = PlatformDetector()
 
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
