@@ -239,11 +239,11 @@ def oauth_token():
 
     Args (JSON body):
         grantType (str): "password" o "refresh_token"
-        
+
         Para password grant:
             username (str): Nombre de usuario
             password (str): Contraseña
-            
+
         Para refresh_token grant:
             refresh_token (str): Token de renovación
 
@@ -286,20 +286,34 @@ def oauth_token():
         password = data.get("password")
 
         if not username or not password:
-            return jsonify({"error": "invalid_request", "error_description": "username and password are required"}), 400
+            return jsonify(
+                {
+                    "error": "invalid_request",
+                    "error_description": "username and password are required"
+                }
+            ), 400
 
         is_valid, uid = UserManager().verify_credentials(username, password)
 
         if not is_valid:
             _logger.warning(f"Login fallido para: {username}")
-            return jsonify({"error": "invalid_grant", "error_description": "Invalid username or password"}), 401
+            return jsonify(
+                {
+                    "error": "invalid_grant",
+                    "error_description":
+                    "Invalid username or password"
+                }
+            ), 401
 
         user = USER_MANAGER.get_user_by_id(uid)
-        access_token  = OAUTH_MANAGER.create_access_token(uid, username, user.role if user else "role_user")   # type: ignore[arg-type]
+        access_token  = OAUTH_MANAGER.create_access_token(
+            user_id     = uid,
+            username    = username,
+            role        = user.role if user else "role_user"
+        )   # type: ignore[arg-type]
         refresh_token = OAUTH_MANAGER.create_refresh_token(uid)            # type: ignore[arg-type]
         user_attrs = USER_MANAGER.get_user_attributes(uid)
 
-        _logger.info(f"Usuario {uid} atributos: {user_attrs}")
         _logger.info(f"Tokens emitidos para: {username}")
         return jsonify({
             "access_token":  access_token,
@@ -507,9 +521,9 @@ def sign_up_user():
     except DatabaseError as exc:
         return jsonify({"code": exc.status_code, "message": "Revisa tus credenciales e inténtalo de nuevo."}), exc.status_code
     except (
-        AuthorizationError, 
-        MissingParameterError, 
-        ExistingUserError, 
+        AuthorizationError,
+        MissingParameterError,
+        ExistingUserError,
         UserBindingError,
         PermissionsError
     ) as exc:
@@ -584,8 +598,8 @@ def list_user_attributes(target_user_id: int):
     try:
         target_user = USER_MANAGER.get_user_by_id(target_user_id)
         return jsonify({
-            "user_id": target_user_id, 
-            "attributes": [a.attribute_name for a in target_user.attributes], 
+            "user_id": target_user_id,
+            "attributes": [a.attribute_name for a in target_user.attributes],
             "role": target_user.role if target_user else "role_user"
         }), 200
 
@@ -735,21 +749,38 @@ def remove_user_attribute(target_user_id: int):
     current_user_id = get_current_user().id
 
     if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
-        _logger.warning(f"Usuario {current_user_id} intentó eliminar atributos de {target_user_id} sin permiso")
-        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
+        _logger.warning(
+            f"Usuario {current_user_id} intentó eliminar atributos de {target_user_id} sin permiso"
+        )
+        return jsonify(
+            {
+                "error": "forbidden",
+                "error_description": "No tienes permiso para gestionar atributos de este usuario"
+            }
+        ), 403
 
     data = request.json_body
     attrs_to_remove = data.get("attributes")
     if not attrs_to_remove or not isinstance(attrs_to_remove, list):
-        return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
+        return jsonify(
+            {
+                "error": "invalid_request",
+                "error_description": "attributes array required"
+            }
+        ), 400
 
     try:
-        deleted_count = USER_MANAGER.remove_user_attributes(
+        USER_MANAGER.remove_user_attributes(
             target_user_id, attrs_to_remove
         )
 
         _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
-        return jsonify({"message": "Attributes removed", "attributes": attrs_to_remove}), 200
+        return jsonify(
+            {
+                "message": "Attributes removed",
+                "attributes": attrs_to_remove
+            }
+        ), 200
 
     except Exception as exc:
         _logger.error(f"Error eliminando atributos: {exc}", exc_info=True)
