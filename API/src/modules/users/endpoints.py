@@ -62,9 +62,9 @@ from src.modules.shared._exceptions import (
     create_error_response,
 )
 from src.modules.system.logging import SecOpsLogger
-from src.modules.shared._endpoints import get_current_user, _get_limiter, require_json
+from src.modules.shared._endpoints import _get_limiter, require_json
 limiter = _get_limiter()
-from .services import AttributeType, Role, require_attributes, require_oauth_token, require_role
+from .services import Role, require_attributes, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
 from .exceptions import (
     ExistingUserError,
@@ -92,6 +92,27 @@ def _require_field(data: dict, field: str) -> str:
         raise MissingParameterError(field)
     return value
 
+
+# =========================================================================
+# HELPERS
+# =========================================================================
+
+def get_current_user():
+    """
+    Get the current authenticated user object from the database.
+
+    Uses request-level caching to avoid repeated database queries.
+
+    Returns:
+        User: The fully-loaded User object with all attributes.
+
+    Raises:
+        AttributeError: If no user is authenticated (token not parsed).
+    """
+    if not hasattr(request, 'current_user'):
+        user_id = request.current_user_id
+        request.current_user = UserManager().get_user_by_id(user_id)
+    return request.current_user
 
 # =========================================================================
 # SELF-APPLIED ENDPOINTS
