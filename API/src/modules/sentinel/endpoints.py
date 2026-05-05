@@ -787,13 +787,11 @@ def cancel_scan(scan_id: int):
 @sentinel_bp.post("/nmap")
 @require_oauth_token
 @limiter.limit("20 per hour; 100 per day")
+@require_json
 def start_nmap_scan():
     """Lanza uno o más escaneos Nmap."""
     
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         host  = require_str(data, "target")
         ports = require_str(data, "ports")
@@ -846,12 +844,10 @@ def start_nmap_scan():
 @sentinel_bp.post("/nikto")
 @require_oauth_token
 @limiter.limit("20 per hour; 100 per day")
+@require_json
 def start_nikto_scan():
     """Lanza un escaneo Nikto."""
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         target = require_str(data, "target")
     except MissingParameterError as exc:
@@ -885,12 +881,10 @@ def start_nikto_scan():
 @sentinel_bp.post("/openvas")
 @require_oauth_token
 @limiter.limit("10 per hour; 50 per day")
+@require_json
 def start_openvas_scan():
     """Lanza un escaneo OpenVAS para un único host."""
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         target      = require_str(data, "target")
         scan_config = data.get("scanConfig", "full_fast")

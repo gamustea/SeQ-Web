@@ -80,7 +80,7 @@ from src.modules.shared._exceptions import (
 from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
-from src.modules.shared._endpoints import get_current_user, _get_limiter
+from src.modules.shared._endpoints import get_current_user, _get_limiter, require_json
 limiter = _get_limiter()
 
 acheron_bp = Blueprint("acheron", __name__)
@@ -154,9 +154,10 @@ def get_vault():
 @acheron_bp.post("/acheron/vault")
 @require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
+@require_json
 def upsert_vault():
     """Crea o reemplaza completamente el vault del usuario.
-
+ 
     Args (query params):
         recovery (bool, optional): Si true, opera sobre el vault de recuperación.
 
@@ -177,10 +178,7 @@ def upsert_vault():
              -H "Content-Type: application/json" \\
              -d '{...vault_json...}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         uid         = get_current_user().id
         is_recovery = _parse_is_recovery()
@@ -266,6 +264,7 @@ def patch_vault_storables():
 @acheron_bp.post("/vaults/storables")
 @require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
+@require_json
 def add_vault_storable():
     """Añade un nuevo Account o CreditCard al vault del usuario.
 
@@ -288,7 +287,7 @@ def add_vault_storable():
             cvv (str): Código CVV
 
     Returns:
-        201 — Storable creado.
+        201 — Storable criado.
             {"message": "Storable created", "storableId": 1, "internalId": "abc", ...}
         400 — Error de validación.
         409 — El internalId ya existe.
@@ -305,10 +304,7 @@ def add_vault_storable():
                  "password": "mypassword"
                }'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         kind = data.get("kind")
         if kind not in ("account", "creditcard"):

@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from flask import request, jsonify
 
-from ._exceptions import MissingParameterError
+from ._exceptions import MissingParameterError, MissingJsonBodyError
 
 
 limiter = None
@@ -164,7 +164,32 @@ def get_current_user():
 # DATA PARSING
 # =========================================================================
 
-def require_json() -> dict:
+def require_json(f):
+    """Decorador que valida y extrae el cuerpo JSON del request.
+
+    Inyecta los datos validados en request.json_body para que el endpoint los use.
+    Lanza MissingJsonBodyError si el Content-Type no es application/json
+    o el JSON es inválido.
+
+    Usage:
+    >>> @require_json
+    >>> def create_user():
+    ...    data = request.json_body
+    ...    username = require_str(data, "username")
+    """
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not request.is_json:
+            raise MissingJsonBodyError("Content-Type must be application/json")
+        data = request.get_json(silent=True)
+        if not data:
+            raise MissingJsonBodyError("Request body must be JSON")
+        request.json_body = data
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def require_json_legacy() -> dict:
     """Extrae y valida el cuerpo de la petición como JSON.
 
     Returns:

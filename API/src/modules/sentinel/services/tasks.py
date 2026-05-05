@@ -150,8 +150,6 @@ class _Task(ABC):
             if not self._started.wait(timeout=5):
                 raise RuntimeError("Thread de lectura no inició")
 
-            self.logger.info("Escaneo iniciado correctamente (no bloqueante)")
-
         except Exception as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error iniciando escaneo: {e}")

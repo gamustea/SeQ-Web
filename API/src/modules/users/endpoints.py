@@ -100,6 +100,7 @@ def _require_field(data: dict, field: str) -> str:
 
 @users_bp.post("/check-credentials")
 @limiter.limit("10 per minute; 30 per hour")
+@require_json
 def check_credentials():
     """Valida credenciales de usuario (endpoint legacy).
 
@@ -124,10 +125,7 @@ def check_credentials():
                 -H "Content-Type: application/json" \\
                 -d '{"username": "johnd", "password": "password123"}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         username = _require_field(data, "username")
         password = _require_field(data, "password")
@@ -156,6 +154,7 @@ def check_credentials():
 @users_bp.put("/change-password")
 @require_oauth_token
 @limiter.limit("5 per hour; 10 per day")
+@require_json
 def change_password():
     """Cambia la contraseña del usuario autenticado e invalida todos sus tokens.
 
@@ -181,10 +180,7 @@ def change_password():
              -H "Content-Type: application/json" \\
              -d '{"newPassword": "newpassword123"}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         new_password = _require_field(data, "newPassword")
     except MissingParameterError as exc:
@@ -424,6 +420,7 @@ def get_current_profile():
 @require_oauth_token
 @require_role(Role.ADMIN)
 @limiter.limit("10 per hour; 20 per day")
+@require_json
 def sign_up_user():
     """Registra un nuevo usuario.
 
@@ -452,10 +449,7 @@ def sign_up_user():
             -H "Content-Type: application/json" \\
             -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd", "role": "role_user"}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         username        = _require_field(data, "username")
         email           = _require_field(data, "email")
@@ -582,6 +576,7 @@ def list_user_attributes(target_user_id: int):
 @users_bp.put("/me")
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
+@require_json
 def update_current_profile():
     """Actualiza el perfil del usuario autenticado (nombre y apellidos).
 
@@ -608,10 +603,7 @@ def update_current_profile():
     -H "Content-Type: application/json" \\
     -d '{"first_name": "NuevoNombre", "last_name": "NuevosApellidos"}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     try:
         first_name = _require_field(data, "first_name")
         last_name = _require_field(data, "last_name")
@@ -648,6 +640,7 @@ def update_current_profile():
 @users_bp.put("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_role(Role.ADMIN)
+@require_json
 def add_user_attribute(target_user_id: int):
     """Añade uno o más atributos a un usuario.
 
@@ -675,10 +668,7 @@ def add_user_attribute(target_user_id: int):
         _logger.warning(f"Usuario {current_user_id} intentó añadir atributos a {target_user_id} sin permiso")
         return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
 
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     attrs_to_add = data.get("attributes")
     if not attrs_to_add or not isinstance(attrs_to_add, list):
         return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
@@ -699,6 +689,7 @@ def add_user_attribute(target_user_id: int):
 @users_bp.delete("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_role(Role.ADMIN)
+@require_json
 def remove_user_attribute(target_user_id: int):
     """Elimina uno o más atributos de un usuario.
 
@@ -726,10 +717,7 @@ def remove_user_attribute(target_user_id: int):
         _logger.warning(f"Usuario {current_user_id} intentó eliminar atributos de {target_user_id} sin permiso")
         return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
 
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
-
+    data = request.json_body
     attrs_to_remove = data.get("attributes")
     if not attrs_to_remove or not isinstance(attrs_to_remove, list):
         return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400

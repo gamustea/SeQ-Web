@@ -187,6 +187,18 @@ class MissingParameterError(ValidationError):
         )
 
 
+class MissingJsonBodyError(SecOpsException):
+    default_code = ErrorCode.JSON_PARSING_ERROR
+    default_status_code = 400
+    default_severity = ErrorSeverity.LOW
+
+    def __init__(self, message: str = "Request body must be JSON"):
+        super().__init__(
+            message=message,
+            user_message="El cuerpo de la petición debe ser JSON válido."
+        )
+
+
 from typing import Any, Optional
 
 
