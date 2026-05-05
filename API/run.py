@@ -23,16 +23,13 @@ from flask_cors             import CORS
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
-from src.modules.shared     import BaseManager, Base, Document
+from src.modules.shared     import BaseManager, Base
 from src.modules.shared._endpoints import _get_limiter
 from src.modules.system     import SecOpsLogger
 from src.modules.users      import (
-    AccessToken, 
-    User, 
-    RefreshToken, 
-    oauth_bp, 
-    users_bp,
-    UserManager
+    UserManager,
+    oauth_bp,
+    users_bp
 )
 from src.modules.sentinel   import sentinel_bp
 from src.modules.acheron    import acheron_bp
@@ -60,20 +57,34 @@ _UI_DIR = os.path.abspath(
 
 
 
+def _graceful_shutdown(signum) -> None:
+    """
+    Manejador de señales para shutdown graceful de la aplicación.
 
+    Cancela todas las tareas de escaneo en ejecución antes de terminar
+    el proceso, asegurando que los escaneos no queden huérfanos.
 
-def _graceful_shutdown(signum, frame) -> None:
+    Args:
+        signum: Número de señal recibida (SIGTERM o SIGINT).
+
+    Behavior:
+        1. Registra la señal recibida.
+        2. Importa ScanManager y cancela todas las tareas en ejecución.
+        3. Espera hasta SHUTDOWN_TIMEOUT segundos a que terminen.
+        4. Finaliza el proceso con sys.exit(0).
+
+    Note:
+        Este manejador se registra para SIGTERM y SIGINT al inicio del módulo.
+    """
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-    _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
+    _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
     try:
         from src.modules.sentinel import ScanManager
-        _logger.info(
-            f"[Shutdown] Cancelando {len(ScanManager._running_tasks)} tarea(s) activa(s)..."
-        )
+        _logger.info("Cancelando tarea(s) activa(s)...")
         ScanManager.cancel_all_running(timeout=SHUTDOWN_TIMEOUT)
-        _logger.info("[Shutdown] Todas las tareas finalizadas.")
+        _logger.info("Todas las tareas finalizadas.")
     except Exception as e:
-        _logger.error(f"[Shutdown] Error durante el apagado: {e}")
+        _logger.error(f"Error durante el apagado: {e}")
 
     _logger.info("[Shutdown] Proceso terminado.")
     sys.exit(0)
@@ -81,7 +92,28 @@ def _graceful_shutdown(signum, frame) -> None:
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT,  _graceful_shutdown)
 
-def create_app(fresh_db_init = False) -> Flask:
+def create_app(fresh_db_init: bool = False) -> Flask:
+    """
+    Factory de la aplicación Flask SeQ.
+
+    Configura todos los componentes necesarios para servir la API REST
+    y la interfaz web estática:
+
+    Args:
+        fresh_db_init: Si True, reinicializa la base de datos completamente
+                       (destructivo). Por defecto False.
+
+    Returns:
+        Flask: Aplicación completamente configurada y lista para servir.
+
+    Configuration Steps:
+        1. CORS: Configura orígenes permitidos desde变量 de entorno.
+        2. Rate Limiting: Inicializa Flask-Limiter.
+        3. Blueprints: Registra system, oauth, users, sentinel, acheron, aegis, pages.
+        4. UI Route: Configura serve de archivos estáticos.
+        5. Error Handlers: JSON responses para errores 404, 405, 429, 500.
+        6. DB Warmup: Pre-calienta la conexión a la base de datos.
+    """
     app = Flask(__name__)
 
     _logger.info("Inicializando la aplicación SeQ...")
@@ -146,6 +178,21 @@ def _register_ui_route(app: Flask) -> None:
         return send_from_directory(_UI_DIR, "pages/hub.html")
 
 def _register_error_handlers(app: Flask) -> None:
+    """
+    Registra manejadores de errores HTTP globales para la aplicación.
+
+    Configura respuestas JSON consistentes para los códigos de estado
+    más comunes, incluyendo logging de advertencias para debugging.
+
+    Args:
+        app: Instancia de la aplicación Flask.
+
+    Handlers:
+        - 404 Not Found: Rutas que no coinciden con ningún blueprint.
+        - 405 Method Not Allowed: Métodos HTTP no permitidos.
+        - 429 Too Many Requests: Rate limit superado.
+        - 500 Internal Server Error: Errores inesperados.
+    """
     @app.errorhandler(404)
     def not_found(error):
         _logger.warning(f"Ruta no encontrada: {request.method} {request.url}")
@@ -181,7 +228,30 @@ def _register_error_handlers(app: Flask) -> None:
         }), 500
 
 def _init_db() -> None:
-    """Inicializa la base de datos y tabla"""
+    """
+    Inicializa la base de datos completa de SeQ desde cero.
+
+    Este proceso destructivo elimina cualquier base de datos existente
+    y la recrea con la estructura y datos iniciales:
+
+    1. Conexión a PostgreSQL con AUTOCOMMIT.
+    2. Eliminación de conexiones activas a la DB.
+    3. DROP DATABASE IF EXISTS + CREATE DATABASE.
+    4. Conexión a la nueva DB y creación de tablas via SQLAlchemy.
+    5. Inserción de usuario root por defecto.
+    6. Inserción de temas iniciales de concienciación (Topics).
+
+    Warning:
+        Esta función elimina TODOS los datos existentes. Usar solo en
+        desarrollo o cuando se requiera un reset completo.
+
+    Raises:
+        SQLAlchemy Error: Si falla la conexión o ejecución de SQL.
+
+    Example:
+        >>> from run import create_app
+        >>> app = create_app(fresh_db_init=True)  # Crea DB limpia
+    """
     db_creds = CR.get_db_credentials()
 
     username = db_creds["username"]
