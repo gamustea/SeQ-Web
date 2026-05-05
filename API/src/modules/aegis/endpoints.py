@@ -78,7 +78,7 @@ curl "https://api.example.com/aegis/export/42/download?format=md" \
 
 ────────────────────────────────────────────────────────────────────────────────
 """
-from contextlib import contextmanager
+
 from flask import Blueprint, jsonify, request, send_file, Response
 
 import src.modules.system.config_reading as CR
@@ -86,19 +86,13 @@ from src.modules.shared._exceptions import (
     ExceptionHandler,
     MissingParameterError,
     ValidationError,
-    DatabaseError,
-    EntityAlreadyExistsError,
     create_error_response,
 )
-from src.modules.aegis.exceptions import (
-    AegisValidationError,
-    AegisInsufficientContentError,
-)
 from src.modules.users.exceptions import UserNotFoundError
-from src.modules.shared._endpoints import get_current_user, _get_limiter
+from src.modules.shared._endpoints import _get_limiter
 limiter = _get_limiter()
 from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token, UserManager, OAuthTokenManager
+from src.modules.users import require_oauth_token, UserManager, get_current_user
 
 from .managers import AegisManager
 from .services import (
@@ -107,7 +101,6 @@ from .services import (
     MarkdownExporter,
     MarkdownTemplate,
     JsonExporter,
-    HTMLExporter,
     get_exporter_for_format,
 )
 
@@ -135,8 +128,8 @@ def _parse_doc_id(source: str = "args") -> int:
         raise MissingParameterError("id")
     try:
         return int(raw)
-    except (TypeError, ValueError):
-        raise ValidationError(field="id", message="El ID debe ser un número entero", value=raw)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(field="id", message="El ID debe ser un número entero", value=raw) from exc
 
 def _doc_not_found(doc_id: int) -> Response:
     return jsonify({"error": "not_found", "message": f"Documento {doc_id} no encontrado"}), 404
@@ -198,9 +191,9 @@ def aegis_generate():
 
     Example:
         curl -X POST https://api.example.com/aegis/generate \\
-             -H "Authorization: Bearer <token>" \\
-             -H "Content-Type: application/json" \\
-             -d '{"topicId": 1, "tweaks": {}}'
+                -H "Authorization: Bearer <token>" \\
+                -H "Content-Type: application/json" \\
+                -d '{"topicId": 1, "tweaks": {}}'
 
     Note:
         Este endpoint devuelve inmediatamente con un documentId.
@@ -239,7 +232,6 @@ def aegis_generate():
         uid         = get_current_user().id
         mgr = get_aegis_manager(uid)
         document_id = mgr.generate(topic_id=topic_id, tweaks=tweaks)
-
         _logger.info(f"Aegis generate lanzado — topicId={topic_id} documentId={document_id} user={get_current_user().username}")
         return jsonify({"message": "Generación Aegis iniciada", "documentId": document_id, "status": "pending"}), 202
 

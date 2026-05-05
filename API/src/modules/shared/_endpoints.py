@@ -15,15 +15,13 @@ Module Variables:
 
 from __future__ import annotations
 
-import os
 import ipaddress
 import socket
-from contextlib import contextmanager
 from functools import wraps
-from typing import Optional, Tuple, Any
 from urllib.parse import urlparse
+from typing import Tuple, Optional
 
-from flask import request, jsonify
+from flask import request
 
 from ._exceptions import MissingParameterError, MissingJsonBodyError
 
@@ -37,43 +35,35 @@ _DNS_TIMEOUT = 3.0
 # HELPERS
 # =========================================================================
 
-
-
 def normalize_target(
     user_input: str,
-    resolve_hostname: bool = False,
-    dns_timeout: float = _DNS_TIMEOUT,
+    resolve_hostname: bool = False
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Normaliza el target del usuario a IP + hostname.
     Acepta IPs, dominios o URLs completas (http://, https://).
 
     Args:
-        user_input:        IP, dominio o URL completa.
-        resolve_hostname:  Si es True y el input es una IP, intenta resolver
-                           el hostname vía reverse DNS (con timeout acotado).
-                           Si es False, el hostname se omite (se devuelve la IP
-                           también en esa posición). Por defecto False.
-        dns_timeout:       Segundos máximos para la resolución DNS inversa.
+        user_input:         IP, dominio o URL completa.
+        resolve_hostname:   Si es True y el input es una IP, intenta resolver
+                            el hostname vía reverse DNS (con timeout acotado).
+                            Si es False, el hostname se omite (se devuelve la IP
+                            también en esa posición). Por defecto False.
+        dns_timeout:        Segundos máximos para la resolución DNS inversa.
 
     Returns:
         (ip, hostname): hostname == ip cuando no se resuelve o resolve_hostname=False.
     """
 
-    def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optional[str]:
+    def _gethostbyaddr_with_timeout(ip: str) -> Optional[str]:
         """
-        Wrapper de socket.gethostbyaddr con timeout explícito.
-        Devuelve el hostname o None si falla o supera el tiempo límite.
+        Wrapper de socket.gethostbyaddr para resolución DNS inversa.
+        Devuelve el hostname o None si falla.
         """
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(socket.gethostbyaddr, ip)
-            try:
-                return future.result(timeout=timeout)[0]
-            except TimeoutError:
-                return None
-            except (socket.herror, socket.gaierror):
-                return None
-                
+        try:
+            return socket.gethostbyaddr(ip)[0]
+        except (socket.herror, socket.gaierror, OSError):
+            return None
     cleaned_input = user_input.strip()
 
     if "://" in cleaned_input:
@@ -93,7 +83,7 @@ def normalize_target(
         ip = str(ip_obj)
 
         if resolve_hostname:
-            hostname = _gethostbyaddr_with_timeout(ip, dns_timeout) or ip
+            hostname = _gethostbyaddr_with_timeout(ip) or ip
         else:
             hostname = ip
 
@@ -102,7 +92,7 @@ def normalize_target(
         try:
             ip = socket.gethostbyname(hostname)
         except socket.gaierror as e:
-            raise ValueError(f"No se pudo resolver '{user_input}': {e}")
+            raise ValueError(f"No se pudo resolver '{user_input}': {e}") from e
 
     return ip, hostname
 
@@ -134,32 +124,6 @@ def _get_limiter():
     return limiter
 
 
-
-# =========================================================================
-# USER CONTEXT
-# =========================================================================
-
-def get_current_user():
-    """
-    Get the current authenticated user object from the database.
-
-    Uses request-level caching to avoid repeated database queries.
-
-    Returns:
-        User: The fully-loaded User object with all attributes.
-
-    Raises:
-        AttributeError: If no user is authenticated (token not parsed).
-    """
-    from src.modules.users.managers import UserManager
-
-    if not hasattr(request, '_current_user'):
-        user_id = request.current_user_id
-        request._current_user = UserManager().get_user_by_id(user_id)
-    return request._current_user
-
-
-
 # =========================================================================
 # DATA PARSING
 # =========================================================================
@@ -187,23 +151,6 @@ def require_json(f):
         request.json_body = data
         return f(*args, **kwargs)
     return wrapper
-
-
-def require_json_legacy() -> dict:
-    """Extrae y valida el cuerpo de la petición como JSON.
-
-    Returns:
-        dict: Datos JSON parseados.
-
-    Raises:
-        400: Si el Content-Type no es application/json o el JSON es inválido.
-    """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
 
 def require_str(data: dict, field: str) -> str:
     """Extrae un campo obligatorio del JSON y lo valida como string no vacío.

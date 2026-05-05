@@ -15,7 +15,6 @@ from ._model        import Base, Document
 from ._managers     import BaseManager
 from ._documents    import AIWriter
 from ._endpoints    import (
-    get_current_user,
     normalize_target,
     require_json,
     require_str,
@@ -26,11 +25,7 @@ __all__ = [
     "Base",
     "Document",
     "BaseManager",
-    "BaseRepository",
-    "UpsertMixin",
-    "DocumentRepository",
     "AIWriter",
-    "get_current_user",
     "normalize_target",
     "require_json",
     "require_str",

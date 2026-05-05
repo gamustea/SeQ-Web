@@ -79,8 +79,10 @@ from src.modules.shared._exceptions import (
 )
 from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token
-from src.modules.shared._endpoints import get_current_user, _get_limiter, require_json
+from src.modules.users import require_oauth_token, get_current_user
+from src.modules.shared._endpoints import _get_limiter, require_json
+from .managers import VaultManager
+
 limiter = _get_limiter()
 
 acheron_bp = Blueprint("acheron", __name__)
@@ -88,16 +90,12 @@ _logger    = SecOpsLogger("acheron").get_logger()
 
 
 @contextmanager
-def get_vault_manager(user_id: int):
-    with get_user_manager() as um:
-        user = um.get_user_by_id(user_id)
-        if not user:
-            raise UserNotFoundError(user_id=user_id)
-        vm = VaultManager(user)
-        try:
-            yield vm
-        finally:
-            vm.close_session()
+def get_vault_manager():
+    """
+    TODO: REVISAR PARA SUSTITUIR POR UNA IMPLEMENTACIÓN MENOS VERBOSA
+    Crea una instancia de VaultManager
+    """
+    yield VaultManager(get_current_user())
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # VAULT
@@ -120,20 +118,25 @@ def get_vault():
 
     Example:
         curl "https://api.example.com/acheron/vault" \\
-             -H "Authorization: Bearer <token>"
+                -H "Authorization: Bearer <token>"
 
         # Obtener recovery vault
         curl "https://api.example.com/acheron/vault?recovery=true" \\
-             -H "Authorization: Bearer <token>"
+                -H "Authorization: Bearer <token>"
     """
     try:
-        uid         = get_current_user().id
         is_recovery = _parse_is_recovery()
-        with get_vault_manager(uid) as mgr:
+        with get_vault_manager() as mgr:
             vault = mgr.get_vault_for_user(is_recovery=is_recovery)
 
             if not vault:
-                return jsonify({"error": "not_found", "error_description": "Vault not found for current user", "isRecovery": is_recovery}), 404
+                return jsonify(
+                    {
+                        "error": "not_found", 
+                        "error_description": "Vault not found for current user", 
+                        "isRecovery": is_recovery
+                    }
+                ), 404
 
             payload = mgr.export_vault_to_json(vault.id)
         _logger.info(f"Vault {vault.id} devuelto — user={get_current_user().username}")
@@ -182,7 +185,7 @@ def upsert_vault():
     try:
         uid         = get_current_user().id
         is_recovery = _parse_is_recovery()
-        with get_vault_manager(uid) as mgr:
+        with get_vault_manager() as mgr:
             vault, created = mgr.upsert_vault_from_json(data, is_recovery=is_recovery)
 
             _logger.info(f"Vault {'creado' if created else 'actualizado'} (ID={vault.id}) — user={get_current_user().username}")
@@ -239,7 +242,7 @@ def patch_vault_storables():
 
     try:
         uid     = get_current_user().id
-        with get_vault_manager(uid) as mgr:
+        with get_vault_manager() as mgr:
             results = mgr.bulk_update_storables(operations=data)
             _logger.info(f"Bulk update: {len(data)} operaciones — user={get_current_user().username}")
         return jsonify({"message": "Bulk storable update completed", "results": results}), 200
@@ -323,7 +326,7 @@ def add_vault_storable():
         else:
             payload = {"cardholder_name": data.get("cardHolderName", ""), "card_number": data.get("cardNumber", ""), "expiration_date": data.get("expirationDate", ""), "postal_code": data.get("postalCode", ""), "cvv": data.get("cvv", "")}
 
-        with get_vault_manager(uid) as mgr:
+        with get_vault_manager() as mgr:
             vault = mgr.get_vault_for_user(is_recovery=is_recovery)
             if not vault:
                 return jsonify({"error": "not_found", "error_description": "Vault not found for current user", "isRecovery": is_recovery}), 404
@@ -381,7 +384,7 @@ def delete_vault_storable():
 
         uid         = get_current_user().id
         is_recovery = bool(data.get("isRecovery", False))
-        with get_vault_manager(uid) as mgr:
+        with get_vault_manager() as mgr:
             vault = mgr.get_vault_for_user(is_recovery=is_recovery)
 
             if not vault:

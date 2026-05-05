@@ -1,16 +1,16 @@
+
+
 import subprocess
 import threading
 import re
 import time
 
 from urllib.parse import urlparse
-from datetime import datetime
 from pathlib import Path
-from typing import Optional, Any, List, Dict, Tuple
+from typing import Optional, Any, List
 from enum import Enum
 from abc import ABC, abstractmethod
 
-import xml.etree.ElementTree as ET
 from lxml import etree as lxml_etree
 from gvm.connections import TLSConnection
 from gvm.protocols.gmp import Gmp
@@ -59,12 +59,10 @@ class _Task(ABC):
     @abstractmethod
     def _build_command(self) -> List[str]:
         """Construye el comando a ejecutar."""
-        pass
 
     @abstractmethod
     def _process_results(self) -> None:
         """Procesa los resultados del escaneo."""
-        pass
 
     def _parse_progress(self, line: str) -> int:
         """Extrae el porcentaje de progreso de una línea de salida."""
@@ -96,7 +94,7 @@ class _Task(ABC):
                     with self._lock:
                         self.progress = prog
 
-        except Exception as e:
+        except (OSError, IOError) as e:
             self.logger.error(f"Error leyendo salida: {e}")
 
         finally:
@@ -123,9 +121,6 @@ class _Task(ABC):
             cmd = self._build_command()
             self.logger.info(f"Iniciando escaneo con comando: {' '.join(cmd)}")
 
-            if self._output_file and not self._output_file.parent.exists():
-                self._output_file.parent.mkdir(parents=True, exist_ok=True)
-
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -150,7 +145,7 @@ class _Task(ABC):
             if not self._started.wait(timeout=5):
                 raise RuntimeError("Thread de lectura no inició")
 
-        except Exception as e:
+        except (OSError, IOError, RuntimeError) as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error iniciando escaneo: {e}")
             raise
@@ -180,17 +175,6 @@ class _Task(ABC):
                 self.logger.error(f"Proceso terminó con error: código {self._proc.returncode}")
                 return False
 
-            # Verificar archivo de salida una sola vez
-            if self._output_file:
-                if not self._output_file.exists():
-                    self.status = TaskStatus.FAILED
-                    self.logger.error(f"Archivo de salida no existe: {self._output_file}")
-                    return False
-                if self._output_file.stat().st_size == 0:
-                    self.status = TaskStatus.FAILED
-                    self.logger.error(f"Archivo de salida está vacío: {self._output_file}")
-                    return False
-
             self._process_results()
 
             if self.results is None:
@@ -203,7 +187,7 @@ class _Task(ABC):
             self.logger.info("Escaneo completado correctamente")
             return True
 
-        except Exception as e:
+        except (OSError, IOError, ValueError) as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error en wait: {e}", exc_info=True)
             return False
@@ -231,14 +215,14 @@ class NmapScanTask(_Task):
 
     def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300):
         super().__init__(target_host, timeout)
-        TEMP_DIR = CR.get_directory_of(CR.DirectoryType.TEMP)
+        temp_dir = CR.get_directory_of(CR.DirectoryType.TEMP)
 
         timestamp = int(time.time() * 1000)
         safe_target = target_host.replace("/", "_").replace(":", "_")
-        FILE_NAME = f"nmap_scan_{safe_target}_{timestamp}.xml"
+        file_name = f"nmap_scan_{safe_target}_{timestamp}.xml"
 
         self.target_ports = target_ports
-        self._output_file = Path(f"{TEMP_DIR}/{FILE_NAME}")
+        self._output_file = Path(f"{temp_dir}/{file_name}")
         self.platform = PlatformDetector()
 
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -287,7 +271,7 @@ class NmapScanTask(_Task):
             self.results = xml_data
             self.logger.info(f"Resultados procesados: {output_file}")
 
-        except Exception as e:
+        except (OSError, IOError) as e:
             self.logger.error(f"Error procesando resultados: {e}", exc_info=True)
             self.results = None
             raise
@@ -300,24 +284,28 @@ class NiktoScanTask(_Task):
         super().__init__(target_domain, timeout)
 
         timestamp = int(time.time() * 1000)
-        self.temp_path = CR.verify_directory(directory=CR.DirectoryType.TEMP) / f"nikto_scan_{timestamp}.xml"
+        self.temp_path = (
+            CR.verify_directory(directory=CR.DirectoryType.TEMP)
+            /
+            f"nikto_scan_{timestamp}.xml"
+        )
         self._output_file = self.temp_path
-        self.platform = PlatformDetector()  
+        self.platform = PlatformDetector()
 
     def _build_command(self) -> List[str]:
         target = self.target
 
         raw = target if "://" in target else f"http://{target}"
         parsed = urlparse(raw)
-        
+
         host = parsed.hostname or target
         use_ssl = parsed.scheme.lower() == "https"
         port = parsed.port or (443 if use_ssl else 80)
-        
+
         use_wsl = self.platform.is_windows and self.platform.wsl_available
-        
+
         normal_temp_path = str(self.temp_path)
-        wsl_temp_path = self.platform.convert_path_to_wsl(normal_temp_path) 
+        wsl_temp_path = self.platform.convert_path_to_wsl(normal_temp_path)
         output_path = (
             wsl_temp_path
             if use_wsl
@@ -334,7 +322,7 @@ class NiktoScanTask(_Task):
             "-timeout", "10",
             "-nointeractive",
         ]
-        
+
         if use_ssl:
             nikto_cmd.append("-ssl")
 
@@ -355,7 +343,7 @@ class NiktoScanTask(_Task):
             self.results = str(self.temp_path)
             self.logger.info("Resultados Nikto procesados")
 
-        except Exception as e:
+        except (OSError, IOError) as e:
             self.logger.error(f"Error procesando resultados Nikto: {e}", exc_info=True)
             self.results = None
             raise
@@ -408,7 +396,7 @@ class OpenVASTask(_Task):
             self._thread = threading.Thread(target=self._execute_openvas_scan, daemon=True)
             self._thread.start()
             self.logger.info(f"Escaneo OpenVAS iniciado para {self.target}")
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}")
             raise
@@ -417,7 +405,8 @@ class OpenVASTask(_Task):
         """Override: OpenVAS gestiona su propio ciclo interno."""
         try:
             safe_timeout = min(timeout, 28800) if timeout is not None else None
-            finished = self._finished.wait(safe_timeout)    #Bloque el hilo hasta que acaba la ejecucuión del Task, falla o acaba el timeout
+            #Bloque el hilo hasta que acaba la ejecucuión del Task, falla o acaba el timeout
+            finished = self._finished.wait(safe_timeout)
 
             if not finished:
                 self.status = TaskStatus.TIMEOUT
@@ -436,7 +425,7 @@ class OpenVASTask(_Task):
             self.progress = 100
             return True
 
-        except Exception as e:
+        except (OSError, IOError, ValueError) as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error en wait de OpenVAS: {e}", exc_info=True)
             return False
@@ -454,7 +443,7 @@ class OpenVASTask(_Task):
                 target_id = self._get_or_create_target(gmp)
                 scanner_id = self._get_default_scanner(gmp)
                 self._create_and_start_task(gmp, target_id, scanner_id)
-                
+
             self._wait_for_completion()
 
             if self.status == TaskStatus.CANCELLED:
@@ -467,7 +456,7 @@ class OpenVASTask(_Task):
 
             self._finished.set()
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self.status = TaskStatus.FAILED
             self.logger.error(f"Error en escaneo OpenVAS: {e}", exc_info=True)
             self._finished.set()
@@ -661,7 +650,7 @@ class OpenVASTask(_Task):
                         gmp.authenticate(self.username, self.password)
                         gmp.stop_task(self.task_id)
                         self.logger.info(f"Tarea {self.task_id} detenida en OpenVAS")
-                except Exception as e:
+                except (OSError, RuntimeError) as e:
                     self.logger.error(f"Error deteniendo tarea: {e}")
                 self.status = TaskStatus.CANCELLED
                 break
@@ -670,8 +659,10 @@ class OpenVASTask(_Task):
                 with self._create_gmp_connection() as gmp:
                     gmp.authenticate(self.username, self.password)
                     task = gmp.get_task(self.task_id)
-            except Exception as e:
-                self.logger.warning(f"Error consultando tarea, reintentando en {check_interval}s: {e}")
+            except (OSError, RuntimeError) as e:
+                self.logger.warning(
+                    f"Error consultando tarea, reintentando en {check_interval}s: {e}"
+                )
                 time.sleep(check_interval)
                 continue
 
