@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 from datetime import datetime
 from pathlib import Path
-from typing import Type, TypeVar, Optional, List, Any
+from typing import TypeVar, Optional, List, Any
 
 from src.modules.system import SecOpsLogger
 from src.modules.shared import Document
@@ -85,17 +85,17 @@ class AIWriter(ABC):
             model: Optional Ollama model name. If not provided, reads from
                    environment or CR defaults.
         """
-        
+
         from src.modules.system import config_reading as CR
         env_host, env_model = CR.get_ollama_config()
-        
+
         if host is None or model is None:
             self.host = host or env_host
             self.model = model or env_model
         else:
             self.host = host
             self.model = model
-            
+
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
         self.logger.info(f"[Ollama] Inicializando cliente con host={self.host}, model={self.model}")
         self._client = ollama.Client(host=self.host, timeout=300)
@@ -122,7 +122,7 @@ class AIWriter(ABC):
             the search fails or returns no results.
         """
         from ddgs import DDGS
-        
+
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=max_results))
@@ -153,7 +153,6 @@ class AIWriter(ABC):
         Returns:
             System prompt string defining the AI persona and behavior.
         """
-        pass
 
     @abstractmethod
     def _build_user_prompt(self, *args: Any, **kwargs: Any) -> str:
@@ -167,7 +166,6 @@ class AIWriter(ABC):
         Returns:
             User prompt string with formatted data.
         """
-        pass
 
     @abstractmethod
     def generate(self, *args: Any, **kwargs: Any) -> Any:
@@ -181,7 +179,6 @@ class AIWriter(ABC):
         Returns:
             Generated content in the format specific to the subclass.
         """
-        pass
 
 
     # =========================================================================
@@ -220,9 +217,9 @@ class AIWriter(ABC):
             "top_p":          0.9,
             "repeat_penalty": 1.1,
         }
-        
+
         self.logger.info(f"[Ollama] Calling model={self.model} at {self.host}")
-        
+
         try:
             self.logger.info(f"[Ollama] Sending request to {self.host}/api/chat")
             resp = self._client.chat(
@@ -232,29 +229,29 @@ class AIWriter(ABC):
                 format   = "json",
                 options  = options,
             )
-            self.logger.info(f"[Ollama] Response received successfully")
+            self.logger.info("Response received successfully")
         except Exception as e:
-            self.logger.error(f"[Ollama] Error connecting to {self.host}: {e}")
+            self.logger.error("Error connecting to {self.host}: {e}")
             raise
-        
-        if getattr(resp.message, "tool_calls", None):
+
+        if getattr(resp.message, "tool_calls", None):  # pylint: disable=no-member
             messages.append({
                 "role":       "assistant",
-                "content":    resp.message.content or "",
-                "tool_calls": resp.message.tool_calls,
+                "content":    resp.message.content or "", # pylint: disable=no-member
+                "tool_calls": resp.message.tool_calls, # pylint: disable=no-member
             })
-            for tc in resp.message.tool_calls:
+            for tc in resp.message.tool_calls: # pylint: disable=no-member
                 query         = tc.function.arguments.get("query", "")
                 search_result = self._web_search(query)
                 messages.append({"role": "tool", "content": search_result})
-            
+
             resp = self._client.chat(
                 model    = self.model,
                 messages = messages,
                 format   = "json",
                 options  = options,
             )
-        
+
         return resp
 
 

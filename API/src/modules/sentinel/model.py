@@ -191,7 +191,8 @@ class Scan(Base):
             String with id, type, target, and start time.
         """
         started = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
-        return f"Scan(id={self.id}, tipo='{self.scan_type}', target='{self.target}', inicio={started})"
+        return f"Scan(id={self.id}, tipo='{self.scan_type}',\
+            target='{self.target}', inicio={started})"
 
     def __repr__(self):
         """
