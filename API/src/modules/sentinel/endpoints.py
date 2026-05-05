@@ -91,20 +91,11 @@ from src.modules.shared._exceptions import (
     ValidationError,
     create_error_response,
 )
-from src.modules.sentinel.exceptions import (
-    ReportGenerationError,
-    ScanExecutionError,
-    ScanNotFoundError,
-)
+
 from src.modules.aegis.exceptions import DocumentError
-from src.modules.sentinel import (
-    NmapPrintingStrategy,
-    NiktoPrintingStrategy,
-    OpenVASPrintingStrategy,
-    PDFCreator
-)
 from src.modules.shared._endpoints import (
-    normalize_target, require_json,
+    normalize_target,
+    require_json,
     require_str,
     require_arg,
     _get_limiter
@@ -112,8 +103,25 @@ from src.modules.shared._endpoints import (
 limiter = _get_limiter()
 from src.modules.system import SecOpsLogger
 
-from .managers import NmapScanManager, NiktoScanManager, OpenVASScanManager
+
+from .managers import (
+    ScanManager,
+    NmapScanManager,
+    NiktoScanManager,
+    OpenVASScanManager
+)
 from .model import Scan
+from .exceptions import (
+    ReportGenerationError,
+    ScanExecutionError,
+    ScanNotFoundError,
+)
+from .services import (
+    NmapPrintingStrategy,
+    NiktoPrintingStrategy,
+    OpenVASPrintingStrategy,
+    PDFCreator
+)
 
 
 # =========================================================================
@@ -252,13 +260,18 @@ def _format_nmap_scans(scans: list, manager=None) -> list:
     results = []
     for s in scans:
         entry = {
-            "id":             s.id,
-            "scanType":       "nmap",
-            "target":         s.target,
-            "status":         getattr(s, "status", "unknown"),
-            "startedAt":      _ts(s.started_at),
-            "finishedAt":    _ts(s.finished_at),
-            "openPorts":      [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason} for p in s.open_ports_relation],
+            "id":         s.id,
+            "scanType":   "nmap",
+            "target":     s.target,
+            "status":     getattr(s, "status", "unknown"),
+            "startedAt":  _ts(s.started_at),
+            "finishedAt": _ts(s.finished_at),
+            "openPorts": [
+                {
+                    "port": f"{p.port_id}/{p.port.protocol}",
+                    "reason": p.reason
+                } for p in s.open_ports_relation
+            ],
             "totalOpenPorts": len(s.open_ports_relation),
         }
 
@@ -394,8 +407,12 @@ def _format_openvas_scans(scans: list, manager=None) -> list:
                 for r in s.results
             ],
             "totalVulnerabilities": len(s.results),
-            "criticalCount":        sum(1 for r in s.results if r.vulnerability.severity_class == "Critical"),
-            "highCount":            sum(1 for r in s.results if r.vulnerability.severity_class == "High"),
+            "criticalCount": sum(
+                1 for r in s.results if r.vulnerability.severity_class == "Critical"
+            ),
+            "highCount": sum(
+                1 for r in s.results if r.vulnerability.severity_class == "High"
+            ),
         }
 
         if manager:
@@ -512,7 +529,7 @@ def validate_ip(ips_str: str) -> tuple[bool, List[str], str]:
             try:
                 red = ipaddress.ip_network(segmento, strict=False)
                 num_hosts = red.num_addresses - 2 if red.num_addresses > 2 else red.num_addresses
-                
+
                 if num_hosts > MAX_HOSTS_TO_EXPAND:
                     lista_ips.append(segmento)
                 else:
@@ -531,7 +548,7 @@ def validate_ip(ips_str: str) -> tuple[bool, List[str], str]:
                     lista_ips.append(segmento)
                 else:
                     lista_ips.extend(ips_expandidas)
-            except Exception as e:
+            except (ValueError, OSError) as e:
                 return False, [], f"Error al procesar rango '{segmento}': {str(e)}"
 
         else:
@@ -665,7 +682,8 @@ def validate_port(ports_str: str):
                 return (
                     False,
                     [],
-                    f"Los puertos no estÃ¡n en orden ascendente: {inicio} aparece despuÃ©s de {ultimo_puerto}",
+                    f"Los puertos no estÃ¡n en orden ascendente:\
+                    {inicio} aparece despuÃ©s de {ultimo_puerto}",
                 )
 
             # Expandir el rango y aÃ±adir a la lista
@@ -702,6 +720,9 @@ def validate_port(ports_str: str):
 
 @contextmanager
 def get_user_managers(user_id: int):
+    """
+    Easies the building of managers
+    """
     user = UserManager().get_user_by_id(user_id)
 
     nmap    = NmapScanManager(user)
@@ -721,7 +742,7 @@ def get_scan_status():
     try:
         scan_id = int(require_arg("id"))
         uid     = get_current_user().id
-        
+
         with get_user_managers(uid) as (nmap, nikto, openvas):
             scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
             if not scan:
@@ -746,7 +767,7 @@ def get_scan_status():
     except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error en scan-status: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -759,7 +780,7 @@ def cancel_scan(scan_id: int):
     """Cancela un escaneo en curso."""
     try:
         uid = get_current_user().id
-        
+
         with get_user_managers(uid) as (nmap, nikto, openvas):
             scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
             if not scan:
@@ -777,16 +798,30 @@ def cancel_scan(scan_id: int):
 
         manager = resolve_manager(scan_type, nmap, nikto, openvas)
         if not manager.cancel_scan(scan_id):
-            return jsonify({"error": "cancellation_failed", "message": "No se pudo cancelar", "scanId": scan_id}), 500
+            return jsonify(
+                {
+                    "error": "cancellation_failed",
+                    "message": "No se pudo cancelar",
+                    "scanId": scan_id
+                }
+            ), 500
 
         scan = manager.get_scan_by_id(scan_id)
         _logger.info(f"Escaneo {scan_type} {scan_id} cancelado por {get_current_user().username}")
-        return jsonify({"message": "Escaneo cancelado exitosamente", "scanId": scan_id, "scanType": scan_type, "status": scan.status, "user": get_current_user().username}), 200
+        return jsonify(
+            {
+                "message": "Escaneo cancelado exitosamente",
+                "scanId": scan_id,
+                "scanType": scan_type,
+                "status": scan.status,
+                "user": get_current_user().username
+            }
+        ), 200
 
     except ScanNotFoundError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error cancelando escaneo {scan_id}: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -836,12 +871,15 @@ def start_nmap_scan():
             scan_ids = []
             for target_host in hosts:
                 scan_id = nmap_manager.run_scan(
-                    target_host=target_host, 
-                    target_ports=ports, 
+                    target_host=target_host,
+                    target_ports=ports,
                     timeout=timeout
                 )
                 scan_ids.append(scan_id)
-                _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={get_current_user().username}")
+                _logger.info(
+                    f"Nmap lanzado: ID={scan_id} host={target_host}\
+                    ports={ports} user={get_current_user().username}"
+                )
 
         return jsonify({
             "message":    "Escaneo(s) Nmap iniciado(s) correctamente",
@@ -854,7 +892,7 @@ def start_nmap_scan():
     except (MissingParameterError, ValidationError, ScanExecutionError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error lanzando Nmap: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -877,21 +915,40 @@ def start_nikto_scan():
     try:
         timeout = int(data.get("timeout", 900))
         if timeout <= 0:
-            raise ValidationError(field="timeout", message="El timeout debe ser positivo", value=timeout)
-    except (TypeError, ValueError):
-        raise ValidationError(field="timeout", message="El timeout debe ser un entero válido", value=data.get("timeout"))
+            raise ValidationError(
+                field="timeout",
+                message="El timeout debe ser positivo",
+                value=timeout
+            )
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            field="timeout",
+            message="El timeout debe ser un entero válido",
+            value=data.get("timeout")
+        ) from exc
 
     try:
         uid = get_current_user().id
         with get_user_managers(uid) as (_, nikto_manager, _):
             scan_id = nikto_manager.run_scan(target, timeout=timeout)
-            _logger.info(f"Nikto lanzado: ID={scan_id} target={target} timeout={timeout} user={get_current_user().username}")
-        return jsonify({"message": "Escaneo Nikto iniciado correctamente", "scanId": scan_id, "target": target, "timeout": timeout, "user": get_current_user().username}), 201
+            _logger.info(
+                f"Nikto lanzado: ID={scan_id} target={target}\
+                timeout={timeout} user={get_current_user().username}"
+            )
+        return jsonify(
+            {
+                "message": "Escaneo Nikto iniciado correctamente",
+                "scanId": scan_id,
+                "target": target,
+                "timeout": timeout,
+                "user": get_current_user().username
+            }
+        ), 201
 
     except (MissingParameterError, ValidationError, ScanExecutionError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error lanzando Nikto: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -914,13 +971,27 @@ def start_openvas_scan():
 
     try:
         if scan_config not in VALID_OPENVAS_CONFIGS:
-            raise ValidationError(field="scanConfig", message="Configuración inválida", value=scan_config, expected=", ".join(sorted(VALID_OPENVAS_CONFIGS)))
+            raise ValidationError(
+                field="scanConfig",
+                message="Configuración inválida",
+                value=scan_config,
+                expected=", ".join(sorted(VALID_OPENVAS_CONFIGS))
+            )
 
         valid, hosts, msg = validate_ip(target)
         if not valid:
-            raise ValidationError(field="target", message=msg, value=target)
+            raise ValidationError(
+                field="target",
+                message=msg,
+                value=target
+            )
         if len(hosts) > 1:
-            raise ValidationError(field="target", message="OpenVAS solo acepta un host a la vez", value=target, expected="Una sola IP")
+            raise ValidationError(
+                field="target",
+                message="OpenVAS solo acepta un host a la vez",
+                value=target,
+                expected="Una sola IP"
+            )
 
         uid = get_current_user().id
         with get_user_managers(uid) as (_, _, openvas_manager):
@@ -929,15 +1000,24 @@ def start_openvas_scan():
                 ipaddress.ip_address(target_ip)
             except ValueError:
                 _, target_ip = normalize_target(target_ip)
-            
+
             scan_id = openvas_manager.run_scan(target_ip, scan_config=scan_config, skip_normalize=True)
         _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={get_current_user().username}")
-        return jsonify({"message": "Escaneo OpenVAS iniciado correctamente", "scanId": scan_id, "target": target_ip, "scanConfig": scan_config, "user": get_current_user().username, "note": "Use /sentinel/scan-status para verificar el progreso."}), 201
+        return jsonify(
+            {
+                "message": "Escaneo OpenVAS iniciado correctamente",
+                "scanId": scan_id,
+                "target": target_ip,
+                "scanConfig": scan_config,
+                "user": get_current_user().username,
+                "note": "Use /sentinel/scan-status para verificar el progreso."
+            }
+        ), 201
 
     except (ValidationError, ScanExecutionError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error lanzando OpenVAS: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -952,7 +1032,12 @@ def retrieve_all_scans():
     try:
         scan_type = request.args.get("type", "all").lower()
         if scan_type not in VALID_SCAN_TYPES:
-            raise ValidationError(field="type", message="Tipo de escaneo inválido", value=scan_type, expected="nmap, nikto, openvas o all")
+            raise ValidationError(
+                field="type",
+                message="Tipo de escaneo inválido",
+                value=scan_type,
+                expected="nmap, nikto, openvas o all"
+            )
 
         page = request.args.get("page", 1, type=int)
         per_page = request.args.get("per_page", 50, type=int)
@@ -966,19 +1051,19 @@ def retrieve_all_scans():
             if scan_type in ("nmap", "all"):
                 try:
                     all_results.extend(_format_nmap_scans(nmap_mgr.get_scans_for_user(), nmap_mgr))
-                except Exception as exc:
+                except (OSError, RuntimeError) as exc:
                     _logger.error(f"Error obteniendo Nmap scans: {exc}")
 
             if scan_type in ("nikto", "all"):
                 try:
                     all_results.extend(_format_nikto_scans(nikto_mgr.get_scans_for_user(), nikto_mgr))
-                except Exception as exc:
+                except (OSError, RuntimeError) as exc:
                     _logger.error(f"Error obteniendo Nikto scans: {exc}")
 
             if scan_type in ("openvas", "all"):
                 try:
                     all_results.extend(_format_openvas_scans(openvas_mgr.get_scans_for_user(), openvas_mgr))
-                except Exception as exc:
+                except (OSError, RuntimeError) as exc:
                     _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
 
         total_results = len(all_results)
@@ -1001,7 +1086,7 @@ def retrieve_all_scans():
     except ValidationError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error en /results: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -1037,12 +1122,18 @@ def retrieve_scan_by_id(scan_id: int):
                     "info":     sum(1 for r in scan.results if r.vulnerability.severity_class == "Log"),
                 }
 
-        return jsonify({"message": "Escaneo obtenido correctamente", "result": result, "user": get_current_user().username}), 200
+        return jsonify(
+            {
+                "message": "Escaneo obtenido correctamente",
+                "result": result,
+                "user": get_current_user().username
+            }
+        ), 200
 
     except ScanNotFoundError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error obteniendo escaneo {scan_id}: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -1058,16 +1149,20 @@ def generate_pdf():
         scan_id = int(require_arg("id"))
         ai_report_str = request.args.get("aiReport", "false").lower()
         ai_report = ai_report_str == "true"
-        
+
         uid = get_current_user().id
         with get_user_managers(uid) as (nmap, nikto, openvas):
             scan, scan_type = get_scan_by_id_for_user(scan_id, nmap, nikto, openvas)
 
             manager = resolve_manager(scan_type, nmap, nikto, openvas)
             if not manager.is_scan_finished(scan.id):
-                raise ValidationError(field="scan_id", message=f"El escaneo {scan_id} no está finalizado aún", value=scan_id)
-        
-            doc_id = manager.generate_report(scan_id=scan_id, ai_report=ai_report)   
+                raise ValidationError(
+                    field="scan_id",
+                    message=f"El escaneo {scan_id} no está finalizado aún",
+                    value=scan_id
+                )
+
+            doc_id = manager.generate_report(scan_id=scan_id, ai_report=ai_report)
         _logger.info(f"Generación de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {get_current_user().username} con AI Report: {ai_report}")
 
         return jsonify({
@@ -1082,7 +1177,7 @@ def generate_pdf():
     except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error generando PDF: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -1096,34 +1191,28 @@ def get_document_status():
     """Consulta el estado de generación de un documento."""
     try:
         uid = get_current_user().id
-        
+
         document_id = request.args.get("document_id", type=int)
         scan_id = request.args.get("scan_id", type=int)
-        
+
         if not document_id and not scan_id:
             raise MissingParameterError("document_id o scan_id")
-        
-        with get_user_managers(uid) as (nmap_mgr, _, _):
-            from src.modules.sentinel import SentinelDocument
-            
-            if document_id:
-                doc = nmap_mgr.session.query(SentinelDocument).filter(
-                    SentinelDocument.id == document_id,
-                    SentinelDocument.user_id == uid
-                ).first()
-            else:
-                doc = nmap_mgr.session.query(SentinelDocument).filter(
-                    SentinelDocument.scan_id == scan_id,
-                    SentinelDocument.user_id == uid
-                ).first()
-            
-            if not doc:
+
+        with get_user_managers(uid) as (nmap_mgr, nikto_mgr, openvas_mgr):
+            scan_type = ScanManager.get_scan_type(scan_id)
+            mgr = resolve_manager(scan_type, nmap_mgr, nikto_mgr, openvas_mgr)
+
+            doc = mgr.get_document_by_id(document_id) if document_id else (
+                mgr.get_latest_document_by_scan_id(scan_id) if scan_id else None
+            )
+
+            if not doc or doc.user_id != uid:
                 raise ScanNotFoundError(document_id or scan_id)
-            
+
             download_url = None
             if doc.status == "done" and doc.filename:
                 download_url = f"/sentinel/document/{doc.id}/download"
-        
+
         return jsonify({
             "documentId": doc.id,
             "scanId": doc.scan_id,
@@ -1133,14 +1222,14 @@ def get_document_status():
             "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
             "downloadUrl": download_url
         }), 200
-        
+
     except MissingParameterError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
     except ScanNotFoundError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error consultando estado de documento: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -1152,30 +1241,35 @@ def get_document_status():
 @limiter.limit("300 per hour; 2000 per day")
 def get_all_documents():
     """Obtiene todos los documentos del usuario.
-    
+
     Query params:
-        scan_type (str): Filtrar por tipo de escaneo. Valores válidos: nmap, nikto, openvas, all. Default: all.
+        scan_type (str): Filtrar por tipo de escaneo.\
+        Valores válidos: nmap, nikto, openvas, all. Default: all.
     """
     try:
         uid = get_current_user().id
         scan_type_filter = request.args.get("scan_type", "all").lower()
-        
+
         valid_types = ["nmap", "nikto", "openvas", "all"]
         if scan_type_filter not in valid_types:
-            return jsonify({"error": f"Tipo de escaneo inválido. Valores válidos: {', '.join(valid_types)}"}), 400
-        
+            return jsonify(
+                {
+                    "error": f"Tipo de escaneo inválido. Valores válidos: {', '.join(valid_types)}"
+                }
+            ), 400
+
         with get_user_managers(uid) as (nmap_mgr, _, _):
             documents = nmap_mgr.get_documents_for_user()
-            
+
             if scan_type_filter != "all":
                 documents = [d for d in documents if d.scan_type == scan_type_filter]
-            
+
             docs_list = []
             for doc in documents:
                 download_url = None
                 if doc.status == "done" and doc.filename:
                     download_url = f"/sentinel/document/{doc.id}/download"
-                
+
                 docs_list.append({
                     "documentId": doc.id,
                     "scanId": doc.scan_id,
@@ -1186,14 +1280,14 @@ def get_all_documents():
                     "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
                     "downloadUrl": download_url
                 })
-        
+
         return jsonify({
             "documents": docs_list,
             "total": len(docs_list),
             "filter": scan_type_filter
         }), 200
-        
-    except Exception as exc:
+
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error obteniendo documentos: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -1205,34 +1299,33 @@ def get_all_documents():
 @limiter.limit("300 per hour; 2000 per day")
 def get_documents_by_scan(scan_id: int):
     """Obtiene todos los documentos de un escaneo concreto.
-    
+
     Args:
         scan_id (path): ID del escaneo.
-        
+
     Returns:
         200 — Lista de documentos del escaneo.
         404 — Escaneo no encontrado.
     """
     try:
         uid = get_current_user().id
-        
+
         with get_user_managers(uid) as (nmap_mgr, nikto_mgr, openvas_mgr):
-            scan, scan_type = get_scan_by_id_for_user(scan_id, nmap_mgr, nikto_mgr, openvas_mgr)
+            scan, _ = get_scan_by_id_for_user(scan_id, nmap_mgr, nikto_mgr, openvas_mgr)
             if not scan:
                 return jsonify({"error": "Escaneo no encontrado"}), 404
-            
+
             if scan.user_id != uid:
                 return jsonify({"error": "No tienes permisos para acceder a este escaneo"}), 403
-            
-            from src.modules.sentinel import SentinelDocument
+
             documents = nmap_mgr.get_documents_by_scan_id(scan_id)
-            
+
             docs_list = []
             for doc in documents:
                 download_url = None
                 if doc.status == "done" and doc.filename:
                     download_url = f"/sentinel/document/{doc.id}/download"
-                
+
                 docs_list.append({
                     "documentId": doc.id,
                     "scanId": doc.scan_id,
@@ -1243,14 +1336,14 @@ def get_documents_by_scan(scan_id: int):
                     "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
                     "downloadUrl": download_url
                 })
-        
+
         return jsonify({
             "scanId": scan_id,
             "documents": docs_list,
             "total": len(docs_list)
         }), 200
-        
-    except Exception as exc:
+
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error obteniendo documentos del escaneo {scan_id}: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -1327,21 +1420,21 @@ def download_document(document_id: int):
     try:
         uid = get_current_user().id
         _logger.info(f"Download request for document {document_id} by user {uid}")
-        
+
         with get_user_managers(uid) as (nmap_mgr, _, _):
             doc = nmap_mgr.get_document_by_id(document_id)
             if not doc or doc.user_id != uid:
                 _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
                 return jsonify({"error": "Documento no encontrado o acceso denegado"}), 404
-            
+
             if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
                 _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
                 return jsonify({"error": f"El documento {document_id} aún no está disponible para descarga"}), 400
-            
+
             _logger.info(f"Serving document {document_id}: {doc.filename}")
             return send_file(doc.filename, mimetype="application/pdf", as_attachment=True, download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf")
-        
-    except Exception as exc:
+
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error descargando documento {document_id}: {exc}", exc_info=True)
         return jsonify({"error": str(exc)}), 500
 
@@ -1354,12 +1447,12 @@ def download_document_test(document_id: int):
             doc = nmap_mgr.get_document_by_id(document_id)
             if not doc:
                 return jsonify({"error": "Documento no encontrado"}), 404
-            
+
             if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
                 return jsonify({"error": "Documento no disponible", "status": doc.status, "filename": doc.filename}), 400
-            
+
             return send_file(doc.filename, mimetype="application/pdf", as_attachment=True, download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf")
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         return jsonify({"error": str(exc)}), 500
 
 
@@ -1368,10 +1461,10 @@ def download_document_test(document_id: int):
 @limiter.limit("30 per hour; 100 per day")
 def delete_document(document_id: int):
     """Elimina un documento.
-    
+
     Args (path):
         document_id (int): ID del documento a eliminar.
-        
+
     Returns:
         200 — Documento eliminado correctamente.
         404 — Documento no encontrado.
@@ -1435,29 +1528,55 @@ def generate_pdf_base64():
 
             manager = resolve_manager(scan_type, nmap, nikto, openvas)
             if not manager.is_scan_finished(scan.id):
-                raise ValidationError(field="scan_id", message=f"El escaneo {scan_id} no está finalizado aún", value=scan_id)
+                raise ValidationError(
+                    field="scan_id",
+                    message=f"El escaneo {scan_id} no está finalizado aún",
+                    value=scan_id
+                )
 
             try:
                 pdf_path = build_pdf_creator(scan).print_pdf()
-            except Exception as exc:
-                raise ReportGenerationError(scan_id, str(exc))
+            except (OSError, RuntimeError) as exc:
+                raise ReportGenerationError(scan_id, str(exc)) from exc
 
             if not pdf_path or not os.path.exists(pdf_path):
                 raise ReportGenerationError(scan_id, "El archivo PDF no se generó correctamente")
 
             pdf_size = os.path.getsize(pdf_path)
             if pdf_size > MAX_PDF_SIZE_BYTES:
-                return jsonify({"error": "payload_too_large", "message": f"El PDF ({pdf_size // (1024*1024)} MB) supera el límite. Usa /generate-pdf para descarga directa.", "scanId": scan_id}), 413
+                return jsonify(
+                    {
+                        "error": "payload_too_large",
+                        "message": f"El PDF ({pdf_size // (1024*1024)} MB) supera el límite.\
+                                    Usa /generate-pdf para descarga directa.",
+                        "scanId": scan_id
+                    }
+                ), 413
 
             with open(pdf_path, "rb") as f:
                 pdf_b64 = base64.b64encode(f.read()).decode()
 
-        return jsonify({"message": "PDF generado exitosamente", "scanId": scan_id, "scanType": scan_type, "filename": f"{scan_type}_scan_{scan_id}.pdf", "pdfBase64": pdf_b64, "contentType": "application/pdf", "user": get_current_user().username}), 200
+        return jsonify(
+            {
+                "message": "PDF generado exitosamente",
+                "scanId": scan_id,
+                "scanType": scan_type,
+                "filename": f"{scan_type}_scan_{scan_id}.pdf",
+                "pdfBase64": pdf_b64,
+                "contentType": "application/pdf",
+                "user": get_current_user().username
+            }
+        ), 200
 
-    except (MissingParameterError, ValidationError, ScanNotFoundError, ReportGenerationError) as exc:
+    except (
+        MissingParameterError,
+        ValidationError,
+        ScanNotFoundError,
+        ReportGenerationError
+    ) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error generando PDF base64: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
@@ -1509,17 +1628,29 @@ def delete_scan(scan_id: int):
                 manager.cancel_scan(scan_id)
 
             if not manager.delete_scan(scan_id):
-                return jsonify({"error": "deletion_failed", "message": "No se pudo eliminar el escaneo", "scanId": scan_id}), 500
+                return jsonify(
+                    {
+                        "error": "deletion_failed",
+                        "message": "No se pudo eliminar el escaneo",
+                        "scanId": scan_id
+                    }
+                ), 500
 
         _logger.info(f"Escaneo {scan_type} {scan_id} eliminado por {get_current_user().username}")
-        return jsonify({"message": "Escaneo eliminado correctamente", "scanId": scan_id, "scanType": scan_type, "user": get_current_user().username}), 200
+        return jsonify(
+            {
+                "message": "Escaneo eliminado correctamente",
+                "scanId": scan_id,
+                "scanType": scan_type,
+                "user": get_current_user().username
+            }
+        ), 200
 
     except ScanNotFoundError as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         _logger.error(f"Error eliminando escaneo {scan_id}: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
-

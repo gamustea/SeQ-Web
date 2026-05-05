@@ -101,18 +101,10 @@ def create_app(fresh_db_init: bool = False) -> Flask:
 
     Args:
         fresh_db_init: Si True, reinicializa la base de datos completamente
-                       (destructivo). Por defecto False.
+                        (destructivo). Por defecto False.
 
     Returns:
         Flask: Aplicación completamente configurada y lista para servir.
-
-    Configuration Steps:
-        1. CORS: Configura orígenes permitidos desde变量 de entorno.
-        2. Rate Limiting: Inicializa Flask-Limiter.
-        3. Blueprints: Registra system, oauth, users, sentinel, acheron, aegis, pages.
-        4. UI Route: Configura serve de archivos estáticos.
-        5. Error Handlers: JSON responses para errores 404, 405, 429, 500.
-        6. DB Warmup: Pre-calienta la conexión a la base de datos.
     """
     app = Flask(__name__)
 
@@ -204,7 +196,9 @@ def _register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(405)
     def method_not_allowed(error):
-        _logger.warning(f"Método no permitido: {request.method} {request.url}")
+        _logger.warning(
+            f"Método no permitido: {request.method} {request.url}"
+        )
         return jsonify({
             "error":          "method_not_allowed",
             "message":        f"El método {request.method} no está permitido en esta ruta",
@@ -212,16 +206,20 @@ def _register_error_handlers(app: Flask) -> None:
         }), 405
 
     @app.errorhandler(429)
-    def too_many_requests(error):
+    def too_many_requests():
         _logger.warning("Rate limit superado: %s", request.remote_addr)
         return jsonify({
             "error":   "too_many_requests",
-            "message": "Has superado el límite de peticiones. Espera un momento e inténtalo de nuevo.",
+            "message": "Has superado el límite de peticiones.\
+                        Espera un momento e inténtalo de nuevo.",
         }), 429
 
     @app.errorhandler(500)
     def internal_error(error):
-        _logger.error(f"Error interno del servidor: {error}", exc_info=True)
+        _logger.error(
+            f"Error interno del servidor: {error}",
+            exc_info=True
+        )
         return jsonify({
             "error":   "internal_server_error",
             "message": "Ha ocurrido un error inesperado en el servidor.",
@@ -276,20 +274,20 @@ def _init_db() -> None:
             WHERE pg_stat_activity.datname = '{dbname}'
             AND pid <> pg_backend_pid();
         """))
-        
+
         # Eliminar y recrear la base de datos
         print(f"[*] Eliminando la base de datos '{dbname}' si existe...")
         conn.execute(text(f'DROP DATABASE IF EXISTS "{dbname}";'))
-        
+
         print(f"[*] Creando la base de datos '{dbname}'...")
         conn.execute(text(f'CREATE DATABASE "{dbname}";'))
 
     engine_postgres.dispose()
 
     # 2. Conexión a la base de datos recién creada 'SeQ'
-    DATABASE_URL = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
+    database_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
     print(f"[*] Conectando a: {dialect}://{username}:***@{host}:{port}/{dbname}")
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(database_url)
 
     # 1. Eliminar las tablas si ya existen (en lugar de borrar toda la DB)
     print("[*] Eliminando tablas existentes (si las hay)...")
@@ -302,12 +300,12 @@ def _init_db() -> None:
 
     # 3. Inserción de los datos iniciales
     print("[*] Insertando datos de prueba (User)...")
-    with engine.connect() as conn:        
+    with engine.connect() as conn:
         conn.execute(text("""
             INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at, role)
             VALUES (
             'root',
-            'Gabe', 
+            'Gabe',
             'Joe',
             '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
             'c167837c1c2a860031d861164d69bd79',
@@ -417,17 +415,14 @@ def _init_db() -> None:
             ('El factor humano en ciberseguridad'),
             ('Cultura de seguridad en la empresa');"""
         )))
-        conn.commit() 
+        conn.commit()
 
     print("[+] ¡Datos iniciales insertados con éxito!")
 
 
-
-
 if __name__ == "__main__":
-    app = create_app(CREATE_DATABASE)
-    app.run(
-        debug=DEBUG, 
-        host=HOST, 
+    create_app(CREATE_DATABASE).run(
+        debug=DEBUG,
+        host=HOST,
         port=PORT
     )

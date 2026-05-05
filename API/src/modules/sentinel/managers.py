@@ -59,11 +59,11 @@ from .services import (
     NiktoPrintingStrategy,
     NmapPrintingStrategy,
     OpenVASPrintingStrategy,
-    PDFCreator, 
-    NiktoScanTask, 
-    NmapScanTask, 
-    OpenVASTask, 
-    TaskStatus, 
+    PDFCreator,
+    NiktoScanTask,
+    NmapScanTask,
+    OpenVASTask,
+    TaskStatus,
     _Task
 )
 
@@ -107,7 +107,12 @@ class ScanManager(ABC):
     # =========================================================================
 
     @classmethod
-    def _register_task(cls, scan_id: int, task: _Task, thread: Optional[threading.Thread] = None) -> None:
+    def _register_task(
+        cls,
+        scan_id: int,
+        task: _Task,
+        thread: Optional[threading.Thread] = None
+    ) -> None:
         """Register a running task and its thread."""
         with cls._running_tasks_lock:
             cls._running_tasks[scan_id] = task
@@ -144,7 +149,7 @@ class ScanManager(ABC):
         for task in task_snapshot.values():
             try:
                 task.cancel()
-            except Exception:
+            except (OSError, RuntimeError):
                 pass
 
         for thread in thread_snapshot.values():
@@ -187,7 +192,9 @@ class ScanManager(ABC):
         with UnitOfWork() as uow:
             scans = ScanRepository(uow).get_by_user(self.active_user.id)
 
-        self.logger.info(f"Se obtuvieron {len(scans)} escaneos para el usuario {self.active_user.id}")
+        self.logger.info(
+            f"Se obtuvieron {len(scans)} escaneos para el usuario {self.active_user.id}"
+        )
         return scans
 
     def is_scan_finished(self, scan_id: int) -> bool:
@@ -242,7 +249,27 @@ class ScanManager(ABC):
             return str(TaskStatus.COMPLETED)
         return None
 
-    
+    @classmethod
+    def get_scan_type(cls, scan_id: int) -> Optional[str]:
+        """
+        Devuelve el tipo del escaneo en función de su id
+
+        Args:
+            scan_id: Id del escaneo a revisar
+
+        Returns:
+            Tipo del escaneo ("nmap", "nikto", "openvas")
+        """
+
+        with UnitOfWork() as uow:
+            scan = ScanRepository(uow).get_by_id(scan_id)
+            scan_type = scan.scan_type
+
+        if not scan:
+            return None
+
+        return scan_type
+
     # =========================================================================
     # DOCUMENT QUERIES
     # =========================================================================
@@ -323,28 +350,43 @@ class ScanManager(ABC):
             scan_id: Primary key of the scan to delete.
         Returns:
             True if deleted successfully, False if the scan was not found.
-            Raises: Exception if an error occurs during deletion.
+        Raises:
+            Exception if an error occurs during deletion.
         """
 
         with UnitOfWork() as uow:
             doc_repo = SentinelDocumentRepository(uow)
             doc = doc_repo.get_by_id(document_id)
-            
+
             if not doc:
                 raise DocumentError(f"Documento {document_id} no encontrado")
-            
-            scan_id = doc.scan_id
+
             if doc.filename and os.path.exists(doc.filename):
                 try:
                     os.remove(doc.filename)
-                except Exception as e:
+                except (OSError, IOError) as e:
                     self.logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}")
-            
+
             doc_repo.delete(doc)
 
         return True
 
     def check_ownership(self, document_id: int, user_id: int) -> bool:
+        """
+        Checks whether the document with the given ID is owned by
+        the user with the given ID.
+
+        Args:
+            document_id: id of the document to check
+            user_id: id of the user that potentially can own the document
+
+        Returns:
+            True if the user with the given id owns \
+            the document with the given ID and false otherwise
+
+        Raises:
+            DocumentError if the document was not found
+        """
         with UnitOfWork() as uow:
             doc_repo = SentinelDocumentRepository(uow)
             doc = doc_repo.get_by_id(document_id)
@@ -413,7 +455,7 @@ class ScanManager(ABC):
                 try:
                     task.cancel()
                     self.logger.info(f"Tarea del escaneo {scan_id} cancelada")
-                except Exception as e:
+                except (OSError, RuntimeError) as e:
                     self.logger.error(f"Error cancelando tarea del escaneo {scan_id}: {e}")
                 finally:
                     self._unregister_task(scan_id)
@@ -430,7 +472,7 @@ class ScanManager(ABC):
             self.logger.info(f"Escaneo {scan_id} cancelado exitosamente")
             return True
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
             return False
 
@@ -460,7 +502,7 @@ class ScanManager(ABC):
                         try:
                             os.remove(doc.filename)
                             self.logger.info(f"Archivo eliminado: {doc.filename}")
-                        except Exception as e:
+                        except (OSError, IOError) as e:
                             self.logger.warning(f"No se pudo eliminar archivo {doc.filename}: {e}")
                     doc_repo.delete(doc)
 
@@ -470,7 +512,7 @@ class ScanManager(ABC):
             self.logger.info(f"Escaneo {scan_id} eliminado")
             return True
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self.logger.error(f"Error eliminando escaneo {scan_id}: {e}")
             raise
 
@@ -504,29 +546,29 @@ class ScanManager(ABC):
 
             if not success or task.results is None:
                 thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
-                thread_manager._update_scan_status(scan_id, ScanStatus.FAILED)
+                thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
                 return
 
             thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
 
-            processor  = thread_manager._get_result_processor()
-            domain_data = thread_manager._extract_domain_data(processor, task, scan)
+            processor  = thread_manager.get_result_processor()
+            domain_data = thread_manager.extract_domain_data(processor, task, scan)
 
             with UnitOfWork() as uow:
                 fresh_scan = ScanRepository(uow).get_by_id(scan_id)
-                thread_manager._persist_scan_results(uow.session, fresh_scan, domain_data)
+                thread_manager.persist_scan_results(uow.session, fresh_scan, domain_data)
                 fresh_scan.status     = ScanStatus.FINISHED.value
                 fresh_scan.finished_at = datetime.now()
 
             thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
-            thread_manager._update_scan_status(scan_id, ScanStatus.FAILED)
+            thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
         finally:
             self._unregister_task(scan_id)
 
-    def _update_scan_status(self, scan_id: int, status: ScanStatus) -> None:
+    def update_scan_status(self, scan_id: int, status: ScanStatus) -> None:
         """
         Persist a status change for a scan, ignoring errors (best-effort).
 
@@ -540,7 +582,7 @@ class ScanManager(ABC):
                 scan = repo.get_by_id(scan_id)
                 if scan:
                     repo.update_status(scan, status)
-        except Exception as update_err:
+        except (OSError, RuntimeError) as update_err:
             self.logger.error(f"Error actualizando estado de escaneo {scan_id}: {update_err}")
 
     def _mark_scan_as(self, scan: Scan, status: ScanStatus) -> None:
@@ -634,17 +676,14 @@ class ScanManager(ABC):
     @abstractmethod
     def run_scan(self, **kwargs) -> int:
         """Start a new scan. Returns the scan's primary key."""
-        pass
 
     @abstractmethod
     def _create_scan_record(self, **kwargs) -> Scan:
         """Create and persist the initial scan record."""
-        pass
 
     @abstractmethod
-    def _get_result_processor(self) -> ScanResultProcessor:
+    def get_result_processor(self) -> ScanResultProcessor:
         """Return the result processor for this scan type."""
-        pass
 
     @abstractmethod
     def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
@@ -654,17 +693,14 @@ class ScanManager(ABC):
         Returns:
             Document primary key.
         """
-        pass
 
     @abstractmethod
-    def _extract_domain_data(self, processor, task, scan):
+    def extract_domain_data(self, processor, task, scan):
         """Extract structured domain data from the raw task results."""
-        pass
 
     @abstractmethod
-    def _persist_scan_results(self, session, scan, domain_data) -> None:
+    def persist_scan_results(self, session, scan, domain_data) -> None:
         """Persist domain data into the database within the given session."""
-        pass
 
 
 # =============================================================================
@@ -682,10 +718,7 @@ class NmapScanManager(ScanManager):
     >>> scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
     """
 
-    def __init__(self, user: User) -> None:
-        super().__init__(user)
-
-    def run_scan(self, target_host: str, target_ports: str, timeout: int = 300) -> int:
+    def run_scan(self, target_host: str, target_ports: str, timeout: int = 300) -> int:  # pylint: disable=arguments-differ
         """
         Start an Nmap scan in a background thread.
 
@@ -720,18 +753,18 @@ class NmapScanManager(ScanManager):
             self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
             return scan_id
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str) -> NmapScan:
+    def _create_scan_record(self, target: str) -> NmapScan: # pylint: disable=arguments-differ
         """Create and persist an NmapScan row."""
         scan = NmapScan(target=target, user_id=self.active_user.id, started_at=datetime.now())
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
 
-    def _get_result_processor(self) -> NmapResultProcessor:
+    def get_result_processor(self) -> NmapResultProcessor:
         return NmapResultProcessor(self.logger)
 
     def get_scan_by_id(self, scan_id: int) -> Optional[NmapScan]:
@@ -817,7 +850,9 @@ class NmapScanManager(ScanManager):
         try:
             document = thread_manager.get_document_by_id(document_id)
             if not document:
-                thread_manager.logger.error(f"Documento {document_id} no encontrado para generación de PDF")
+                thread_manager.logger.error(
+                    f"Documento {document_id} no encontrado para generación de PDF"
+                )
                 return
 
             scan = thread_manager.get_scan_by_id(scan_id)
@@ -840,20 +875,23 @@ class NmapScanManager(ScanManager):
 
             thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
 
-        except Exception as e:
-            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
+        except (OSError, RuntimeError) as e:
+            thread_manager.logger.error(
+                f"Error generando PDF para documento {document_id}: {e}",
+                exc_info=True
+            )
             try:
                 with UnitOfWork() as uow:
                     doc = SentinelDocumentRepository(uow).get_by_id(document_id)
                     if doc:
                         doc.status = "error"
-            except Exception:
+            except (OSError, RuntimeError):
                 pass
 
-    def _extract_domain_data(self, processor, task, scan):
+    def extract_domain_data(self, processor, task, scan):
         return processor.process(task.results, scan.target)
 
-    def _persist_scan_results(self, session, scan, domain_data) -> None:
+    def persist_scan_results(self, session, scan, domain_data) -> None:
         """Persist Nmap host and port data into the database."""
         host_data, ports_data = domain_data
 
@@ -908,7 +946,7 @@ class NiktoScanManager(ScanManager):
         >>> scan_id = manager.run_scan(target_domain="example.com")
     """
 
-    def run_scan(self, target_domain: str, timeout: int = 60) -> int:
+    def run_scan(self, target_domain: str, timeout: int = 60) -> int:  # pylint: disable=arguments-differ
         """
         Start a Nikto scan in a background thread.
 
@@ -938,18 +976,18 @@ class NiktoScanManager(ScanManager):
             self.logger.info(f"Escaneo Nikto {scan_id} iniciado")
             return scan_id
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self.logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str) -> NiktoScan:
+    def _create_scan_record(self, target: str) -> NiktoScan: # pylint: disable=arguments-differ
         """Create and persist a NiktoScan row."""
         scan = NiktoScan(target=target, user_id=self.active_user.id, started_at=datetime.now())
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
 
-    def _get_result_processor(self) -> NiktoResultProcessor:
+    def get_result_processor(self) -> NiktoResultProcessor:
         return NiktoResultProcessor(self.logger)
 
     def get_scan_by_id(self, scan_id: int) -> Optional[NiktoScan]:
@@ -1048,20 +1086,23 @@ class NiktoScanManager(ScanManager):
 
             thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
 
-        except Exception as e:
-            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
+        except (OSError, RuntimeError) as e:
+            thread_manager.logger.error(
+                f"Error generando PDF para documento {document_id}: {e}",
+                exc_info=True
+            )
             try:
                 with UnitOfWork() as uow:
                     doc = SentinelDocumentRepository(uow).get_by_id(document_id)
                     if doc:
                         doc.status = "error"
-            except Exception:
+            except (OSError, RuntimeError):
                 pass
 
-    def _extract_domain_data(self, processor, task, scan):
+    def extract_domain_data(self, processor, task, scan):
         return processor.process(task.results)
 
-    def _persist_scan_results(self, session, scan, domain_data) -> None:
+    def persist_scan_results(self, session, scan, domain_data) -> None:
         """Persist Nikto incidents and associate a host."""
         incidents_data = domain_data
 
@@ -1140,7 +1181,12 @@ class OpenVASScanManager(ScanManager):
         self.username  = config["username"]
         self.password  = config["password"]
 
-    def run_scan(self, target: str, scan_config: str = "full_fast", skip_normalize: bool = False) -> int:
+    def run_scan(               # pylint: disable=arguments-differ
+        self,
+        target: str,
+        scan_config: str = "full_fast",
+        skip_normalize: bool = False
+    ) -> int:
         """
         Start an OpenVAS scan in a background thread.
 
@@ -1179,11 +1225,11 @@ class OpenVASScanManager(ScanManager):
             self.logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
             return scan_id
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str) -> OpenVASScan:
+    def _create_scan_record(self, target: str) -> OpenVASScan: # pylint: disable=arguments-differ
         """Create and persist an OpenVASScan row with placeholder task/report IDs."""
         placeholder = f"PENDING_{uuid.uuid4()}"
         scan = OpenVASScan(
@@ -1196,7 +1242,7 @@ class OpenVASScanManager(ScanManager):
             ScanRepository(uow).save(scan)
         return scan
 
-    def _get_result_processor(self) -> OpenVASResultProcessor:
+    def get_result_processor(self) -> OpenVASResultProcessor:
         return OpenVASResultProcessor(self.logger)
 
     def get_scan_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
@@ -1229,10 +1275,17 @@ class OpenVASScanManager(ScanManager):
         with UnitOfWork() as uow:
             scans = ScanRepository(uow).get_openvas_by_user(self.active_user.id)
 
-        self.logger.info(f"Se obtuvieron {len(scans)} escaneos OpenVAS")
+        self.logger.info(
+            f"Se obtuvieron {len(scans)} escaneos OpenVAS"
+        )
         return scans
 
-    def _execute_scan_in_thread(self, scan_id: int, task: OpenVASTask, skip_normalize: bool = False) -> None:
+    def _execute_scan_in_thread(
+        self,
+        scan_id: int,
+        task: OpenVASTask,
+        skip_normalize: bool = False
+    ) -> None:
         """
         Override: after the base execution, persist the OpenVAS task/report IDs.
 
@@ -1254,8 +1307,10 @@ class OpenVASScanManager(ScanManager):
                     if scan:
                         scan.task_id   = task.task_id
                         scan.report_id = task.report_id
-            except Exception as e:
-                self.logger.error(f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}")
+            except (OSError, RuntimeError) as e:
+                self.logger.error(
+                    f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}"
+                )
 
     def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
         """
@@ -1318,20 +1373,23 @@ class OpenVASScanManager(ScanManager):
 
             thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
 
-        except Exception as e:
-            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
+        except (OSError, RuntimeError) as e:
+            thread_manager.logger.error(
+                f"Error generando PDF para documento {document_id}: {e}",
+                exc_info=True
+            )
             try:
                 with UnitOfWork() as uow:
                     doc = SentinelDocumentRepository(uow).get_by_id(document_id)
                     if doc:
                         doc.status = "error"
-            except Exception:
+            except (OSError, RuntimeError):
                 pass
 
-    def _extract_domain_data(self, processor, task, scan):
+    def extract_domain_data(self, processor, task, scan):
         return processor.process(task.results)
 
-    def _persist_scan_results(self, session, scan, domain_data) -> None:
+    def persist_scan_results(self, session, scan, domain_data) -> None:
         """Persist OpenVAS vulnerabilities, hosts, and scan results."""
         vulnerabilities_data, scan_results_data, _ = domain_data
 

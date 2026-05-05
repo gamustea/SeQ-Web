@@ -136,8 +136,8 @@ class ScanExecutionError(ScanError):
 
     Ejemplo:
     >>> raise ScanExecutionError(
-    ...    scan_type="nmap", 
-    ...    target="192.168.1.1", 
+    ...    scan_type="nmap",
+    ...    target="192.168.1.1",
     ...    reason="Permission denied"
     )
     """
@@ -250,7 +250,7 @@ class ReportGenerationError(ReportError):
         reason: Descripción del error de generación.
 
     Ejemplo:
-        >>> raise ReportGenerationError(scan_id=42, reason="Error al parsear resultados")
+    >>> raise ReportGenerationError(scan_id=42, reason="Error al parsear resultados")
     """
 
     default_code = ErrorCode.REPORT_GENERATION_ERROR

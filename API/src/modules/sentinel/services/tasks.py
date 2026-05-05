@@ -60,9 +60,8 @@ class _Task(ABC):
     def _build_command(self) -> List[str]:
         """Construye el comando a ejecutar."""
 
-    @abstractmethod
     def _process_results(self) -> None:
-        """Procesa los resultados del escaneo."""
+        """Procesa los resultados del escaneo. Override en subclases si es necesario."""
 
     def _parse_progress(self, line: str) -> int:
         """Extrae el porcentaje de progreso de una línea de salida."""
