@@ -158,7 +158,7 @@ def get_vault():
 @require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
 @require_json
-def upsert_vault():
+def upsert_vault(data):
     """Crea o reemplaza completamente el vault del usuario.
  
     Args (query params):
@@ -181,7 +181,6 @@ def upsert_vault():
              -H "Content-Type: application/json" \\
              -d '{...vault_json...}'
     """
-    data = request.json_body
     try:
         uid         = get_current_user().id
         is_recovery = _parse_is_recovery()
@@ -267,8 +266,8 @@ def patch_vault_storables():
 @acheron_bp.post("/vaults/storables")
 @require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
-@require_json
-def add_vault_storable():
+@require_json(["kind"])
+def add_vault_storable(data):
     """Añade un nuevo Account o CreditCard al vault del usuario.
 
     Args (JSON body):
@@ -307,7 +306,6 @@ def add_vault_storable():
                  "password": "mypassword"
                }'
     """
-    data = request.json_body
     try:
         kind = data.get("kind")
         if kind not in ("account", "creditcard"):

@@ -25,6 +25,7 @@ from urllib.parse           import quote_plus
 
 from src.modules.shared     import BaseManager, Base
 from src.modules.shared._endpoints import _get_limiter
+from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError
 from src.modules.system     import SecOpsLogger
 from src.modules.users      import (
     UserManager,
@@ -213,6 +214,22 @@ def _register_error_handlers(app: Flask) -> None:
             "message": "Has superado el límite de peticiones.\
                         Espera un momento e inténtalo de nuevo.",
         }), 429
+
+    @app.errorhandler(MissingParameterError)
+    def handle_missing_parameter(error):
+        _logger.warning(f"Parámetro faltante: {error}")
+        return jsonify({
+            "error":   "missing_parameter",
+            "message": str(error),
+        }), 400
+
+    @app.errorhandler(MissingJsonBodyError)
+    def handle_missing_json_body(error):
+        _logger.warning(f"Body JSON inválido: {error}")
+        return jsonify({
+            "error":   "invalid_json",
+            "message": str(error),
+        }), 400
 
     @app.errorhandler(500)
     def internal_error(error):

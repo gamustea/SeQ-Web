@@ -34,6 +34,7 @@ class ErrorCode(Enum):
     SCAN_EXECUTION_ERROR = 1304
     SCAN_TIMEOUT = 1305
     MAX_CONCURRENT_SCANS = 1306
+    MAX_HOSTS_EXCEEDED = 1307
 
     REPORT_ERROR = 1400
     REPORT_GENERATION_ERROR = 1401
@@ -139,7 +140,7 @@ class SecOpsException(Exception):
         )
 
 
-class IllegalStateException(SecOpsException):
+class IllegalStateError(SecOpsException):
     default_code = ErrorCode.ILLEGAL_STATE_ERROR
     default_status_code = 409
     default_severity = ErrorSeverity.MEDIUM

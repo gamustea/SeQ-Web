@@ -30,8 +30,6 @@ from typing import TypeVar, Optional, List, Any
 from src.modules.system import SecOpsLogger
 from src.modules.shared import Document
 
-T = TypeVar("T", bound=Document)
-
 class AIWriter(ABC):
     """
     Abstract base class for AI-powered content writers using Ollama.

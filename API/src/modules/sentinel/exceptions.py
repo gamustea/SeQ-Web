@@ -217,6 +217,38 @@ class MaxConcurrentScansError(ScanError):
         )
 
 
+class MaxHostsExceededError(ScanError):
+    """
+    Excepción lanzada cuando se excede el número máximo de hosts a escanear.
+
+    Se usa cuando la especificación de IPs/rangos produce más hosts de los
+    permitidos por el tipo de escaneo.
+
+    Atributos:
+        default_code: Código de error (MAX_HOSTS_EXCEEDED).
+        default_status_code: HTTP 400.
+        default_severity: MEDIUM.
+
+    Args:
+        max_hosts: Límite máximo permitido.
+        found: Número de hosts encontrados.
+
+    Ejemplo:
+        >>> raise MaxHostsExceededError(max_hosts=10, found=50)
+    """
+
+    default_code = ErrorCode.MAX_HOSTS_EXCEEDED
+    default_status_code = 400
+    default_severity = ErrorSeverity.MEDIUM
+
+    def __init__(self, max_hosts: int, found: int):
+        super().__init__(
+            message=f"Límite de hosts excedido ({found} > {max_hosts})",
+            details={"max_hosts": max_hosts, "found": found},
+            user_message=f"El objetivo incluye más de {max_hosts} hosts."
+        )
+
+
 class ReportError(SecOpsException):
     """
     Excepción base para errores relacionados con reportes y documentos.

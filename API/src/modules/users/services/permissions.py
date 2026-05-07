@@ -5,6 +5,7 @@ from typing import List, Optional, Set
 from flask import request, jsonify
 
 from src.modules.system.logging import SecOpsLogger
+from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError
 
 from ..managers import OAuthTokenManager
 from ..model import UserAttribute
@@ -141,6 +142,7 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
 
 def _get_effective_permissions(user_id: int, user_role: str) -> Set[str]:
     """
+    TODO: Eliminar uso de UnitOfWork fuera del repositorio
     Return the effective AttributeType set for a user as a set of db_name strings.
 
     Combines role-baseline permissions with any explicit UserAttribute rows.
@@ -182,7 +184,7 @@ def require_oauth_token(f):
     Inyecta en el request:
         - request.current_user_id   (int)
         - request.current_username  (str)
-        - request.current_user_role (str)  ← nuevo: rol estructural del usuario
+        - request.current_user_role (str)
 
     Cierra siempre la sesión del OAuthTokenManager en un bloque
     finally para que la conexión se devuelva al pool.
@@ -219,6 +221,8 @@ def require_oauth_token(f):
 
             return f(*args, **kwargs)
 
+        except (MissingParameterError, MissingJsonBodyError):
+            raise
         except Exception as exc:
             _logger.error(f"Error durante la autenticación: {exc}")
             return jsonify({
@@ -273,7 +277,7 @@ def require_role(minimum_role: Role):
     return decorator
 
 
-def require_permissions(
+def require_attributes(
     at_least_one: Optional[List[AttributeType]] = None,
     all_required: Optional[List[AttributeType]] = None,
 ):
@@ -364,68 +368,3 @@ def require_permissions(
         return decorated
     return decorator
 
-
-
-def require_attributes(
-    at_least_one: Optional[List[AttributeType]] = None,
-    all_required: Optional[List[AttributeType]] = None,
-):
-    """
-    Alias de require_permissions() para compatibilidad con código existente.
-
-    Deprecated: usar require_permissions() en código nuevo.
-    """
-    return require_permissions(at_least_one=at_least_one, all_required=all_required)
-
-
-def require_auth(
-    attrs: Optional[List[AttributeType]] = None,
-    mode: str = "any",
-):
-    """
-    Decorador combinado legacy: autentica y verifica permisos en un paso.
-
-    Deprecated: usar @require_oauth_token + @require_permissions() en código nuevo.
-
-    Args:
-        attrs: Lista de permisos requeridos.
-        mode:  "any" (al menos uno) o "all" (todos requeridos).
-    """
-    def decorator(f):
-        @require_oauth_token
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            user_id       = getattr(request, "current_user_id", None)
-            user_role_str = getattr(request, "current_user_role", Role.USER.value)
-
-            if user_id is None:
-                return jsonify({"error": "forbidden", "error_description": "Authentication required"}), 403
-
-            if user_role_str == Role.ROOT.value:
-                return f(*args, **kwargs)
-
-            try:
-                effective = _get_effective_permissions(user_id, user_role_str)
-                missing = [a for a in (attrs or []) if a.db_name not in effective]
-
-                if mode == "all":
-                    has_permission = not attrs or len(missing) == 0
-                else:
-                    has_permission = not attrs or len(missing) < len(attrs)
-
-                if not has_permission:
-                    _logger.warning(f"Usuario {user_id} denegado en {f.__name__}.")
-                    return jsonify({
-                        "error": "forbidden",
-                        "error_description": "Insufficient permissions",
-                        "missing_attributes": [a.db_name for a in missing],
-                    }), 403
-
-                return f(*args, **kwargs)
-
-            except Exception as exc:
-                _logger.error(f"Error en require_auth: {exc}")
-                return jsonify({"error": "server_error", "error_description": "AttributeType check failed"}), 500
-
-        return decorated
-    return decorator

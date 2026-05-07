@@ -121,8 +121,8 @@ def get_current_user():
 
 @users_bp.post("/check-credentials")
 @limiter.limit("10 per minute; 30 per hour")
-@require_json
-def check_credentials():
+@require_json(["username", "password"])
+def check_credentials(data):
     """Valida credenciales de usuario (endpoint legacy).
 
     En producción, usar /oauth/token para autenticación OAuth2.
@@ -146,13 +146,8 @@ def check_credentials():
                 -H "Content-Type: application/json" \\
                 -d '{"username": "johnd", "password": "password123"}'
     """
-    data = request.json_body
-    try:
-        username = _require_field(data, "username")
-        password = _require_field(data, "password")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
+    username = data["username"]
+    password = data["password"]
 
     try:
         is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
@@ -176,7 +171,7 @@ def check_credentials():
 @require_oauth_token
 @limiter.limit("5 per hour; 10 per day")
 @require_json
-def change_password():
+def change_password(data):
     """Cambia la contraseña del usuario autenticado e invalida todos sus tokens.
 
     Args (JSON body):
@@ -201,7 +196,6 @@ def change_password():
              -H "Content-Type: application/json" \\
              -d '{"newPassword": "newpassword123"}'
     """
-    data = request.json_body
     try:
         new_password = _require_field(data, "newPassword")
     except MissingParameterError as exc:
@@ -455,8 +449,8 @@ def get_current_profile():
 @require_oauth_token
 @require_role(Role.ADMIN)
 @limiter.limit("10 per hour; 20 per day")
-@require_json
-def sign_up_user():
+@require_json(["username", "email", "first_name", "last_name", "password"])
+def sign_up_user(data):
     """Registra un nuevo usuario.
 
     Solo usuarios con role_root o role_admin pueden crear nuevos usuarios.
@@ -480,21 +474,15 @@ def sign_up_user():
         409 — El username o email ya existe.
 
     Example:
-        curl -X POST https://api.example.com/users/sign-up \\
-            -H "Content-Type: application/json" \\
+        curl -X POST https://api.example.com/users/sign-up \
+            -H "Content-Type: application/json" \
             -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd", "role": "role_user"}'
     """
-    data = request.json_body
-    try:
-        username        = _require_field(data, "username")
-        email           = _require_field(data, "email")
-        first_name      = _require_field(data, "first_name")
-        last_name       = _require_field(data, "last_name")
-        password        = _require_field(data, "password")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        _logger.error(err)
-        return jsonify(err), code
+    username        = data["username"]
+    email           = data["email"]
+    first_name      = data["first_name"]
+    last_name       = data["last_name"]
+    password        = data["password"]
 
     requested_role = data.get("role") or "role_user"
     current_user_id = get_current_user().id
@@ -611,8 +599,8 @@ def list_user_attributes(target_user_id: int):
 @users_bp.put("/me")
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
-@require_json
-def update_current_profile():
+@require_json(["first_name", "last_name"])
+def update_current_profile(data):
     """Actualiza el perfil del usuario autenticado (nombre y apellidos).
 
     El username y email NO se pueden modificar (solo lectura).
@@ -638,13 +626,8 @@ def update_current_profile():
     -H "Content-Type: application/json" \\
     -d '{"first_name": "NuevoNombre", "last_name": "NuevosApellidos"}'
     """
-    data = request.json_body
-    try:
-        first_name = _require_field(data, "first_name")
-        last_name = _require_field(data, "last_name")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
+    first_name = data["first_name"]
+    last_name = data["last_name"]
 
     try:
         user_id = get_current_user().id
@@ -675,8 +658,8 @@ def update_current_profile():
 @users_bp.put("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@require_json
-def add_user_attribute(target_user_id: int):
+@require_json(["attributes"])
+def add_user_attribute(target_user_id: int, data):
     """Añade uno o más atributos a un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.
@@ -703,7 +686,6 @@ def add_user_attribute(target_user_id: int):
         _logger.warning(f"Usuario {current_user_id} intentó añadir atributos a {target_user_id} sin permiso")
         return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
 
-    data = request.json_body
     attrs_to_add = data.get("attributes")
     if not attrs_to_add or not isinstance(attrs_to_add, list):
         return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
@@ -724,8 +706,8 @@ def add_user_attribute(target_user_id: int):
 @users_bp.delete("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@require_json
-def remove_user_attribute(target_user_id: int):
+@require_json(["attributes"])
+def remove_user_attribute(target_user_id: int, data):
     """Elimina uno o más atributos de un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.
@@ -759,7 +741,6 @@ def remove_user_attribute(target_user_id: int):
             }
         ), 403
 
-    data = request.json_body
     attrs_to_remove = data.get("attributes")
     if not attrs_to_remove or not isinstance(attrs_to_remove, list):
         return jsonify(

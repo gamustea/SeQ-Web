@@ -21,6 +21,7 @@ Usage:
     scan = manager.get_scan_by_id(scan_id)
 """
 
+import ipaddress
 import os
 import threading
 import uuid
@@ -65,6 +66,12 @@ from .services import (
     OpenVASTask,
     TaskStatus,
     _Task
+)
+from .exceptions import (
+    ScanNotFoundError,
+    IPValidationError,
+    MaxHostsExceededError,
+    PortValidationError,
 )
 
 
@@ -132,29 +139,320 @@ class ScanManager(ABC):
             cls._running_tasks.pop(scan_id, None)
             cls._running_threads.pop(scan_id, None)
 
-    @classmethod
-    def cancel_all_running(cls, timeout: float = 10.0) -> None:
+    @staticmethod
+    def validate_ip(ips_str: str, max_hosts: int = 10) -> List[str]:
         """
-        Cancel all running tasks and wait for threads to finish.
+        Valida y expande una especificación de IPs/rangos.
 
-        Intended to be called from the shutdown signal handler.
+        Formatos soportados:
+        - IP individual: "192.168.1.1"
+        - CIDR: "192.168.1.0/24"
+        - Rangos por octeto: "192.168.1.1-10" o "192.168.1-2.1-10"
+        - Lista separada por comas: "192.168.1.1,192.168.1.5"
+        - Wildcards: "192.168.1.*" (equivalente a 192.168.1.0-255)
 
-        Args:
-            timeout: Maximum time to wait for each thread to join.
+        Raises:
+            IPValidationError: Si el formato es inválido.
+            MaxHostsExceededError: Si se excede max_hosts.
+
+        Returns:
+            Lista de IPs expandidas (sin duplicados).
         """
-        with cls._running_tasks_lock:
-            task_snapshot   = dict(cls._running_tasks)
-            thread_snapshot = dict(cls._running_threads)
+        def _expand_octal(rango_str: str) -> Optional[List[str]]:
+            rango_str = rango_str.replace("*", "0-255")
+            octetos = rango_str.split(".")
 
-        for task in task_snapshot.values():
-            try:
-                task.cancel()
-            except (OSError, RuntimeError):
-                pass
+            if len(octetos) != 4:
+                raise IPValidationError(
+                    message="Deben ser exactamente 4 octetos",
+                    ip_spec=rango_str
+                )
 
-        for thread in thread_snapshot.values():
-            thread.join(timeout=timeout)
+            rangos_octetos: List[range | List[int]] = []
 
+            for octeto in octetos:
+                if "-" in octeto:
+                    partes = octeto.split("-")
+                    if len(partes) != 2:
+                        raise IPValidationError(
+                            message="Rango de octeto inválido",
+                            ip_spec=rango_str
+                        )
+                    try:
+                        inicio = int(partes[0])
+                        fin = int(partes[1])
+                    except ValueError:
+                        raise IPValidationError(
+                            message="Los límites del rango deben ser numéricos",
+                            ip_spec=rango_str
+                        )
+                    if not (0 <= inicio <= 255 and 0 <= fin <= 255):
+                        raise IPValidationError(
+                            message="Los octetos deben estar entre 0 y 255",
+                            ip_spec=rango_str
+                        )
+                    if inicio > fin:
+                        raise IPValidationError(
+                            message="El inicio del rango no puede ser mayor que el fin",
+                            ip_spec=rango_str
+                        )
+                    rangos_octetos.append(range(inicio, fin + 1))
+                else:
+                    try:
+                        valor = int(octeto)
+                    except ValueError:
+                        raise IPValidationError(
+                            message="El octeto debe ser numérico",
+                            ip_spec=rango_str
+                        )
+                    if not (0 <= valor <= 255):
+                        raise IPValidationError(
+                            message="Los octetos deben estar entre 0 y 255",
+                            ip_spec=rango_str
+                        )
+                    rangos_octetos.append([valor])
+
+            lista_ips = []
+            for combinacion in itertools.product(*rangos_octetos):
+                ip_str = ".".join(map(str, combinacion))
+                try:
+                    ipaddress.ip_address(ip_str)
+                    lista_ips.append(ip_str)
+                except ValueError:
+                    continue
+
+            if not lista_ips:
+                raise IPValidationError(
+                    message="No se generaron IPs válidas desde el rango",
+                    ip_spec=rango_str
+                )
+            return lista_ips
+
+        if not ips_str or not isinstance(ips_str, str):
+            raise IPValidationError(
+                message="El parámetro debe ser una cadena no vacía",
+                ip_spec=str(ips_str)
+            )
+
+        ips_str = ips_str.strip()
+        if not ips_str:
+            raise IPValidationError(
+                message="La cadena de IPs está vacía",
+                ip_spec=ips_str
+            )
+
+        segmentos = [s.strip() for s in ips_str.split(",")]
+        lista_ips = []
+        for segmento in segmentos:
+            if not segmento:
+                raise IPValidationError(
+                    message="Segmento vacío encontrado",
+                    ip_spec=ips_str
+                )
+
+            if "/" in segmento:
+                try:
+                    red = ipaddress.ip_network(segmento, strict=False)
+                    num_hosts = red.num_addresses - 2 if red.num_addresses > 2 else red.num_addresses
+
+                    if num_hosts > max_hosts:
+                        raise MaxHostsExceededError(max_hosts=max_hosts, found=num_hosts)
+                    else:
+                        lista_ips.extend([str(ip) for ip in red.hosts()])
+                        if not lista_ips or red.prefixlen >= 31:
+                            lista_ips.extend([str(ip) for ip in red])
+                except ValueError as e:
+                    raise IPValidationError(
+                        message=f"Notación CIDR inválida: {str(e)}",
+                        ip_spec=segmento
+                    )
+
+            elif "-" in segmento:
+                try:
+                    ips_expandidas = _expand_octal(segmento)
+                    if ips_expandidas is None:
+                        raise IPValidationError(
+                            message="Formato de rango inválido",
+                            ip_spec=segmento
+                        )
+                    if len(ips_expandidas) > max_hosts:
+                        raise MaxHostsExceededError(max_hosts=max_hosts, found=len(ips_expandidas))
+                    lista_ips.extend(ips_expandidas)
+                except (ValueError, OSError) as e:
+                    raise IPValidationError(
+                        message=f"Error al procesar rango: {str(e)}",
+                        ip_spec=segmento
+                    )
+
+            else:
+                try:
+                    ip = ipaddress.ip_address(segmento)
+                    lista_ips.append(str(ip))
+                except ValueError:
+                    raise IPValidationError(
+                        message="Dirección IP inválida",
+                        ip_spec=segmento
+                    )
+
+        if not lista_ips:
+            raise IPValidationError(
+                message="No se generaron IPs válidas",
+                ip_spec=ips_str
+            )
+
+        return list(dict.fromkeys(lista_ips))
+
+    @staticmethod
+    def validate_port(ports_str: str) -> List[int]:
+        """
+        Valida y expande una especificación de puertos.
+
+        Reglas de validación:
+        - Puertos en rango 1-65535
+        - Puertos y rangos en orden ascendente
+        - Rangos válidos (inicio < fin)
+        - No solapamiento de rangos
+        - Formato: "80", "80,443", "1-1000", "80,443-8080,9000"
+
+        Raises:
+            PortValidationError: Si el formato es inválido.
+
+        Returns:
+            Lista de puertos expandida (sin duplicados, ordenada).
+        """
+        if not ports_str or not isinstance(ports_str, str):
+            raise PortValidationError(
+                message="El parámetro debe ser una cadena no vacía",
+                port_spec=str(ports_str)
+            )
+
+        ports_str = ports_str.strip()
+        if not ports_str:
+            raise PortValidationError(
+                message="La cadena de puertos está vacía",
+                port_spec=ports_str
+            )
+
+        segmentos = ports_str.split(",")
+        ultimo_puerto = 0
+        lista_puertos: List[int] = []
+
+        for i, segmento in enumerate(segmentos):
+            segmento = segmento.strip()
+
+            if not segmento:
+                raise PortValidationError(
+                    message=f"Segmento vacío encontrado en la posición {i + 1}",
+                    port_spec=ports_str
+                )
+
+            if "-" in segmento:
+                partes = segmento.split("-")
+
+                if segmento.startswith("-"):
+                    if len(partes) != 2 or partes[0] != "":
+                        raise PortValidationError(
+                            message=f"Formato de rango incorrecto: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    try:
+                        fin = int(partes[1])
+                    except ValueError:
+                        raise PortValidationError(
+                            message=f"Puerto de fin no válido en rango: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    if fin < 1 or fin > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de fin fuera de rango (1-65535): {fin}",
+                            port_spec=ports_str
+                        )
+                    inicio = 1
+
+                elif segmento.endswith("-"):
+                    if len(partes) != 2 or partes[1] != "":
+                        raise PortValidationError(
+                            message=f"Formato de rango incorrecto: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    try:
+                        inicio = int(partes[0])
+                    except ValueError:
+                        raise PortValidationError(
+                            message=f"Puerto de inicio no válido en rango: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    if inicio < 1 or inicio > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                            port_spec=ports_str
+                        )
+                    fin = 65535
+
+                else:
+                    if len(partes) != 2:
+                        raise PortValidationError(
+                            message=f"Formato de rango incorrecto (demasiados guiones): '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    try:
+                        inicio = int(partes[0])
+                        fin = int(partes[1])
+                    except ValueError:
+                        raise PortValidationError(
+                            message=f"Puertos no numéricos en rango: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    if inicio < 1 or inicio > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                            port_spec=ports_str
+                        )
+                    if fin < 1 or fin > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de fin fuera de rango (1-65535): {fin}",
+                            port_spec=ports_str
+                        )
+                    if inicio >= fin:
+                        raise PortValidationError(
+                            message=f"Rango inválido: el inicio ({inicio}) debe ser menor que el fin ({fin})",
+                            port_spec=ports_str
+                        )
+
+                if inicio <= ultimo_puerto:
+                    raise PortValidationError(
+                        message=f"Los puertos no están en orden ascendente: {inicio} aparece después de {ultimo_puerto}",
+                        port_spec=ports_str
+                    )
+
+                lista_puertos.extend(range(inicio, fin + 1))
+                ultimo_puerto = fin
+
+            else:
+                try:
+                    puerto = int(segmento)
+                except ValueError:
+                    raise PortValidationError(
+                        message=f"Puerto no numérico: '{segmento}'",
+                        port_spec=ports_str
+                    )
+                if puerto < 1 or puerto > 65535:
+                    raise PortValidationError(
+                        message=f"Puerto fuera de rango (1-65535): {puerto}",
+                        port_spec=ports_str
+                    )
+                if puerto <= ultimo_puerto:
+                    raise PortValidationError(
+                        message=f"Los puertos no están en orden ascendente: {puerto} aparece después de {ultimo_puerto}",
+                        port_spec=ports_str
+                    )
+                lista_puertos.append(puerto)
+                ultimo_puerto = puerto
+
+        return list(dict.fromkeys(lista_puertos))
+
+    # =========================================================================
+    # COMMON SCAN QUERIES
     # =========================================================================
     # COMMON SCAN QUERIES
     # =========================================================================
@@ -190,7 +488,7 @@ class ScanManager(ABC):
             List of Scan instances ordered by start time descending.
         """
         with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_by_user(self.active_user.id)
+            scans = ScanRepository(uow).get_by_user(self.active_user.id) # pyright: ignore[reportArgumentType]
 
         self.logger.info(
             f"Se obtuvieron {len(scans)} escaneos para el usuario {self.active_user.id}"
@@ -212,7 +510,7 @@ class ScanManager(ABC):
             self.logger.warning(f"Escaneo {scan_id} no encontrado para verificar finalización")
             return False
 
-        return scan.status == ScanStatus.FINISHED.value
+        return scan.status == ScanStatus.FINISHED.value # pyright: ignore[reportReturnType]
 
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
         """
@@ -263,12 +561,39 @@ class ScanManager(ABC):
 
         with UnitOfWork() as uow:
             scan = ScanRepository(uow).get_by_id(scan_id)
+            if scan is None:
+                raise ScanNotFoundError(scan_id)
+
             scan_type = scan.scan_type
 
-        if not scan:
-            return None
+            if scan_type is None:
+                return None
 
-        return scan_type
+            return scan_type # pyright: ignore[reportReturnType]
+
+    @classmethod
+    def resolve_manager(cls, scan_id: int, user: User) -> "ScanManager":
+        """
+        Obtiene una instancia del manager adecuado según el tipo del escaneo.
+
+        Args:
+            scan_id: ID del escaneo.
+            user:   Usuario activo.
+
+        Returns:
+            Instancia de NmapScanManager, NiktoScanManager u OpenVASScanManager.
+
+        Raises:
+            ScanNotFoundError: Si el escaneo no existe o su tipo no es reconocido.
+        """
+        scan_type = cls.get_scan_type(scan_id)
+        if scan_type == "nmap":
+            return NmapScanManager(user)
+        if scan_type == "nikto":
+            return NiktoScanManager(user)
+        if scan_type == "openvas":
+            return OpenVASScanManager(user)
+        raise ScanNotFoundError(scan_id)
 
     # =========================================================================
     # DOCUMENT QUERIES
@@ -321,7 +646,7 @@ class ScanManager(ABC):
             List of SentinelDocument instances, ordered by creation date descending.
         """
         with UnitOfWork() as uow:
-            docs = SentinelDocumentRepository(uow).get_documents_by_user(self.active_user.id)
+            docs = SentinelDocumentRepository(uow).get_documents_by_user(self.active_user.id) # type: ignore
 
         self.logger.info(f"Se obtuvieron {len(docs)} documentos")
         return docs
@@ -361,9 +686,9 @@ class ScanManager(ABC):
             if not doc:
                 raise DocumentError(f"Documento {document_id} no encontrado")
 
-            if doc.filename and os.path.exists(doc.filename):
+            if doc.filename and os.path.exists(doc.filename): # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
                 try:
-                    os.remove(doc.filename)
+                    os.remove(doc.filename) # type: ignore
                 except (OSError, IOError) as e:
                     self.logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}")
 
@@ -392,7 +717,9 @@ class ScanManager(ABC):
             doc = doc_repo.get_by_id(document_id)
             if not doc:
                 raise DocumentError(f"Documento {document_id} no encontrado")
-            return doc.user_id == user_id
+            return doc.user_id == user_id # type: ignore
+
+        return False
 
     def validate_document_ownership(self, document_id: int, user_id: int) -> None:
         """
@@ -595,9 +922,9 @@ class ScanManager(ABC):
             scan:   Scan instance to update.
             status: New ScanStatus value.
         """
-        old_status = scan.status
-        scan.status     = status.value
-        scan.finished_at = datetime.now()
+        old_status          = scan.status
+        scan.statu         = status.value # type: ignore
+        scan.finished_at    = datetime.now() # type: ignore
         self.logger.info(
             f"Estado del escaneo {scan.id} actualizado: {old_status} -> {status.value}"
         )
@@ -606,8 +933,13 @@ class ScanManager(ABC):
     # HOST HELPERS
     # =========================================================================
 
-    def _get_or_create_host_in_session(self, session, hostname: str, ip_address: str,
-                                       mac_address: str = "", vendor: str = "") -> Host:
+    def _get_or_create_host_in_session(
+            self,
+            session,
+            hostname: str,
+            ip_address: str,
+            mac_address: str = "",
+            vendor: str = "") -> Host:
         """
         Get or create a Host row within an existing session (no independent commit).
 

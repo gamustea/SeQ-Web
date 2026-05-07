@@ -8,7 +8,6 @@ from .secrets import (
 from .permissions import (
     require_oauth_token,
     require_attributes,
-    require_auth,
     require_role,
     AttributeType,
     Role
@@ -22,7 +21,6 @@ __all__ = [
 
     'require_oauth_token',
     'require_attributes',
-    'require_auth',
     'require_role',
     'AttributeType',
     'Role'

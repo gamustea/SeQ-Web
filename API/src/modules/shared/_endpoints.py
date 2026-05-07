@@ -128,29 +128,49 @@ def _get_limiter():
 # DATA PARSING
 # =========================================================================
 
-def require_json(f):
+def require_json(required_fields: list):
     """Decorador que valida y extrae el cuerpo JSON del request.
 
-    Inyecta los datos validados en request.json_body para que el endpoint los use.
+    Pasa los datos validados como argumento 'data' a la función decorada.
     Lanza MissingJsonBodyError si el Content-Type no es application/json
     o el JSON es inválido.
 
+    Args:
+        required_fields: Lista opcional de campos requeridos. Si se especifica,
+                        valida que todos existan y no estén vacíos antes de llamar
+                        al endpoint. Lanza MissingParameterError si falta alguno.
+
     Usage:
     >>> @require_json
-    >>> def create_user():
-    ...    data = request.json_body
+    >>> def create_user(data):
     ...    username = require_str(data, "username")
+
+    >>> @require_json(["target", "ports"])
+    >>> def start_scan(data):
+    ...    # data ya tiene "target" y "ports" validados
     """
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if not request.is_json:
-            raise MissingJsonBodyError("Content-Type must be application/json")
-        data = request.get_json(silent=True)
-        if not data:
-            raise MissingJsonBodyError("Request body must be JSON")
-        request.json_body = data
-        return f(*args, **kwargs)
-    return wrapper
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if not request.is_json:
+                raise MissingJsonBodyError("Content-Type must be application/json")
+            data = request.get_json(silent=True)
+            if not data or not isinstance(data, dict):
+                raise MissingJsonBodyError("Request body must be a JSON object")
+
+            if required_fields:
+                for field in required_fields:
+                    value = data.get(field)
+                    if value is None or (isinstance(value, str) and not value.strip()):
+                        raise MissingParameterError(field)
+
+            return f(data, *args, **kwargs)
+        return wrapper
+
+    if callable(required_fields):
+        return decorator(required_fields)
+
+    return decorator
 
 def require_str(data: dict, field: str) -> str:
     """Extrae un campo obligatorio del JSON y lo valida como string no vacío.

@@ -16,7 +16,7 @@ from .model import (
     RefreshToken,
     UserAttribute,
 )
-from .services import require_oauth_token, require_attributes, require_auth, AttributeType
+from .services import require_oauth_token, require_attributes, AttributeType
 from .endpoints import oauth_bp, users_bp, get_current_user
 from .managers import UserManager, OAuthTokenManager
 
@@ -58,7 +58,6 @@ __all__ = [
     "oauth_bp",
     "require_oauth_token",
     "require_attributes",
-    "require_auth",
     "AttributeType",
     "get_current_user"
 ]
