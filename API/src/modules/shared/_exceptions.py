@@ -4,11 +4,14 @@ from enum import Enum
 import traceback
 import sys
 
+from typing import Any, Optional, Type
+
 
 class ErrorCode(Enum):
     UNKNOWN_ERROR = 1000
     INTERNAL_SERVER_ERROR = 1001
     NOT_IMPLEMENTED = 1002
+    ILLEGAL_STATE_ERROR = 1003
 
     VALIDATION_ERROR = 1100
     INVALID_PORT_SPEC = 1101
@@ -136,7 +139,41 @@ class SecOpsException(Exception):
         )
 
 
-from typing import Any, Optional
+class IllegalStateException(SecOpsException):
+    default_code = ErrorCode.ILLEGAL_STATE_ERROR
+    default_status_code = 409
+    default_severity = ErrorSeverity.MEDIUM
+
+    def __init__(
+        self,
+        message: str,
+        expected_state: Optional[str] = None,
+        current_state: Optional[str] = None,
+        **kwargs
+    ):
+        details = {}
+        if expected_state:
+            details["expected_state"] = expected_state
+        if current_state:
+            details["current_state"] = current_state
+
+        if "details" in kwargs:
+            details.update(kwargs.pop("details"))
+
+        if "user_message" not in kwargs:
+            if current_state and expected_state:
+                kwargs["user_message"] = (
+                    f"Estado inválido: se esperaba '{expected_state}' "
+                    f"pero se encontró '{current_state}'."
+                )
+            else:
+                kwargs["user_message"] = "Estado inválido en el sistema."
+
+        super().__init__(
+            message=message,
+            details=details,
+            **kwargs
+        )
 
 
 class ValidationError(SecOpsException):
@@ -197,9 +234,6 @@ class MissingJsonBodyError(SecOpsException):
             message=message,
             user_message="El cuerpo de la petición debe ser JSON válido."
         )
-
-
-from typing import Any, Optional
 
 
 class DatabaseError(SecOpsException):
@@ -278,9 +312,6 @@ class JSONParsingError(ParsingError):
             details={"data": data[:100], "reason": reason},
             user_message="Error procesando datos JSON."
         )
-
-
-from typing import Any, Dict, Optional, Type
 
 
 class ExceptionHandler:
@@ -372,7 +403,6 @@ def handle_exceptions(
                 return secops_exc
         return wrapper
     return decorator
-
 
 def create_error_response(
     exception: SecOpsException,
