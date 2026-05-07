@@ -94,9 +94,7 @@ from src.modules.shared._exceptions import (
 
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared._endpoints import (
-    normalize_target,
     require_json,
-    require_str,
     require_arg,
     _get_limiter
 )

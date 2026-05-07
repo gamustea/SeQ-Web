@@ -25,6 +25,7 @@ import ipaddress
 import itertools
 import os
 import threading
+import time
 import uuid
 
 
@@ -809,6 +810,52 @@ class ScanManager(ABC):
         except (OSError, RuntimeError) as e:
             self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
             return False
+
+    @classmethod
+    def cancel_all_running(cls, timeout: int = 30) -> None:
+        """
+        Cancel all running scans and wait for tasks to finish.
+
+        Called during graceful shutdown to ensure no orphaned scans.
+        Signals all registered tasks to stop and waits for their threads
+        to complete within the specified timeout.
+
+        Args:
+            timeout: Maximum seconds to wait for tasks to finish.
+        """
+        with cls._running_tasks_lock:
+            task_ids = list(cls._running_tasks.keys())
+
+        if not task_ids:
+            cls.logger.info("No hay tareas activas que cancelar")
+            return
+
+        cls.logger.info(f"Cancelando {len(task_ids)} tarea(s) activa(s)...")
+
+        for scan_id in task_ids:
+            task = cls._get_task(scan_id)
+            if task:
+                try:
+                    task.cancel()
+                except (OSError, RuntimeError) as e:
+                    cls.logger.warning(f"Error cancelando tarea {scan_id}: {e}")
+
+        cls.logger.info("Esperando a que las tareas finalicen...")
+        start_time = time.monotonic()
+        remaining = timeout
+
+        while cls._running_tasks and remaining > 0:
+            time.sleep(0.5)
+            elapsed = time.monotonic() - start_time
+            remaining = timeout - elapsed
+
+        if cls._running_tasks:
+            cls.logger.warning(
+                f"{len(cls._running_tasks)} tarea(s) no respondieron al cancel "
+                "— forzada la terminación"
+            )
+
+        cls.logger.info("Todas las tareas finalizadas")
 
     def delete_scan(self, scan_id: int) -> bool:
         """

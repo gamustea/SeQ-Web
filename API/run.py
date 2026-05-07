@@ -58,7 +58,7 @@ _UI_DIR = os.path.abspath(
 
 
 
-def _graceful_shutdown(signum) -> None:
+def _graceful_shutdown(signum, *args) -> None:
     """
     Manejador de señales para shutdown graceful de la aplicación.
 
@@ -67,12 +67,13 @@ def _graceful_shutdown(signum) -> None:
 
     Args:
         signum: Número de señal recibida (SIGTERM o SIGINT).
+        *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
 
     Behavior:
         1. Registra la señal recibida.
         2. Importa ScanManager y cancela todas las tareas en ejecución.
         3. Espera hasta SHUTDOWN_TIMEOUT segundos a que terminen.
-        4. Finaliza el proceso con sys.exit(0).
+        4. Finaliza el proceso con SIGKILL para asegurar terminación.
 
     Note:
         Este manejador se registra para SIGTERM y SIGINT al inicio del módulo.
@@ -88,7 +89,8 @@ def _graceful_shutdown(signum) -> None:
         _logger.error(f"Error durante el apagado: {e}")
 
     _logger.info("[Shutdown] Proceso terminado.")
-    sys.exit(0)
+    import os as _os
+    _os.kill(_os.getpid(), signal.SIGTERM)
 
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT,  _graceful_shutdown)
