@@ -26,9 +26,11 @@ from typing import Any, Optional
 from datetime import datetime
 from pathlib import Path
 from typing import TypeVar, Optional, List, Any
+from sqlalchemy import desc
 
 from src.modules.system import SecOpsLogger
 from src.modules.shared import Document
+from src.modules.infrastructure import UnitOfWork
 
 class AIWriter(ABC):
     """
@@ -238,7 +240,7 @@ class AIWriter(ABC):
                 "content":    resp.message.content or "", # pylint: disable=no-member
                 "tool_calls": resp.message.tool_calls, # pylint: disable=no-member
             })
-            for tc in resp.message.tool_calls: # pylint: disable=no-member
+            for tc in resp.message.tool_calls: # type: ignore
                 query         = tc.function.arguments.get("query", "")
                 search_result = self._web_search(query)
                 messages.append({"role": "tool", "content": search_result})
@@ -282,15 +284,19 @@ def update_document_status(
     Returns:
         El documento con los campos actualizados (no hace flush/commit).
     """
-    doc.status = status
+    doc.status = status # type: ignore
     if title:
         doc.title = title[:64]
     if filename:
-        doc.filename = filename[:128]
+        doc.filename = filename[:128] # type: ignore
     if set_generated_at and status == "done":
-        doc.generated_at = datetime.utcnow()
+        doc.generated_at = datetime.utcnow() # type: ignore
     if error and status == "error":
         doc.title = f"[ERR{doc.id}] {error[:50]}"[:64]
+
+    with UnitOfWork() as uow:
+        uow.session.add(doc) # type: ignore
+        uow.session.add(doc) # type: ignore
     return doc
 
 
@@ -308,24 +314,9 @@ def get_document_path(doc: Document, output_dir: Path) -> Path:
     Raises:
         ValueError: Si el documento no tiene filename.
     """
-    if not doc.filename:
+    if not doc.filename: # type: ignore
         raise ValueError(f"Documento {doc.id} no tiene filename")
-    return output_dir / doc.filename
-
-
-def check_ownership(doc: Document, user_id: int, owner_field: str = "user_id") -> bool:
-    """
-    Verifica que el documento pertenece al usuario.
-
-    Args:
-        doc: Instancia del documento.
-        user_id: ID del usuario a verificar.
-        owner_field: Nombre del campo que contiene el owner (default: 'user_id').
-
-    Returns:
-        True si el documento pertenece al usuario, False en caso contrario.
-    """
-    return getattr(doc, owner_field, None) == user_id
+    return output_dir / doc.filename # type: ignore
 
 
 def serialize_document_list(
@@ -369,26 +360,6 @@ def serialize_document_list(
     return result
 
 
-def validate_document_ownership(
-    doc: Document,
-    user_id: int,
-    owner_field: str = "user_id",
-) -> None:
-    """
-    Valida la propiedad del documento y lanza excepción si no pertenece.
-
-    Args:
-        doc: Instancia del documento.
-        user_id: ID del usuario a verificar.
-        owner_field: Nombre del campo que contiene el owner.
-
-    Raises:
-        ValueError: Si el documento no pertenece al usuario.
-    """
-    if not check_ownership(doc, user_id, owner_field):
-        raise ValueError(f"Documento {doc.id} no pertenece al usuario {user_id}")
-
-
 def safe_delete_file(filename: str, logger: Any = None) -> bool:
     """
     Elimina un archivo del sistema de archivos de forma segura.
@@ -415,3 +386,72 @@ def safe_delete_file(filename: str, logger: Any = None) -> bool:
         if logger:
             logger.warning(f"No se pudo eliminar el archivo {filename}: {exc}")
         return False
+
+
+def get_document_by_id(document_id: int) -> Document | None:
+    """
+    Obtiene un documento por su ID.
+
+    Args:
+        document_id: ID del documento a obtener.
+
+    Returns:
+        Instancia del documento o None si no existe.
+    """
+    with UnitOfWork() as uow:
+        return uow.session.get(Document, document_id)
+
+
+def get_documents_by_user(user_id: int, limit: int = 100, document_type: str | None = None) -> List[dict]:
+    """
+    Obtiene todos los documentos de un usuario ordenados por fecha descendente.
+
+    Args:
+        user_id: ID del usuario.
+        limit: Número máximo de documentos a devolver (default: 100).
+        document_type: Tipo de documento a filtrar ('aegis', 'sentinel', etc.).
+
+    Returns:
+        Lista de diccionarios con los datos de los documentos.
+    """
+    with UnitOfWork() as uow:
+        from sqlalchemy import desc
+        query = uow.session.query(Document).filter(Document.user_id == user_id)
+        if document_type:
+            query = query.filter(Document.document_type == document_type)
+        docs = (
+            query
+            .order_by(desc(Document.generated_at))
+            .limit(limit)
+            .all()
+        )
+        return serialize_document_list(docs)
+
+
+def delete_document_file(document_id: int, output_dir: Path, logger: Any = None) -> None:
+    """
+    Elimina un documento de la base de datos y su archivo en disco.
+
+    Args:
+        document_id: ID del documento a eliminar.
+        output_dir: Directorio donde se encuentran los archivos.
+        logger: Opcional. Instancia de logger para registrar operaciones.
+
+    Raises:
+        ValueError: Si el documento no existe.
+    """
+    with UnitOfWork() as uow:
+        doc = uow.session.get(Document, document_id)
+        if not doc:
+            raise ValueError(f"Documento {document_id} no existe")
+
+        if doc.filename: # type: ignore
+            file_path = output_dir / doc.filename
+            if file_path.exists():
+                safe_delete_file(str(file_path), logger)
+                if logger:
+                    logger.info(f"Archivo eliminado: {file_path}")
+
+        uow.session.delete(doc)
+        if logger:
+            logger.info(f"Documento {document_id} eliminado de BD")

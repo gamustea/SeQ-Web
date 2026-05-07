@@ -95,6 +95,7 @@ from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, UserManager, get_current_user
 
 from .managers import AegisManager
+
 from .services import (
     ExportData,
     ExportFormat,
@@ -269,30 +270,26 @@ def aegis_status():
     Example:
         curl "https://api.example.com/aegis/status?id=42" \\
              -H "Authorization: Bearer <token>"
-    """
+"""
     try:
         doc_id   = _parse_doc_id()
         uid      = get_current_user().id
         mgr = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
 
+        doc_info = mgr.get_document(doc_id)
         if not doc_info or doc_info.get("userId") != uid:
             return _doc_not_found(doc_id)
 
-        return jsonify({
-            "id":          doc_info["id"],
-            "title":       doc_info["title"],
-            "status":      doc_info["status"],
-            "format":      doc_info.get("format", "json"),
-            "generatedAt": doc_info["generatedAt"],
-            "topicId":     doc_info["topicId"],
-        }), 200
+        if doc_info["status"] != "done": # type: ignore
+            return _doc_not_ready(doc_id, doc_info["status"]) # type: ignore
+
+        return jsonify(doc_info), 200
 
     except (MissingParameterError, ValidationError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
     except Exception as exc:
-        _logger.error(f"Error en /aegis/status: {exc}", exc_info=True)
+        _logger.error(f"Error en /aegis/document: {exc}", exc_info=True)
         err, code = create_error_response(ExceptionHandler.wrap_exception(exc, logger=_logger), include_debug_info=False)
         return jsonify(err), code
 
@@ -317,10 +314,13 @@ def aegis_get_document():
                 -H "Authorization: Bearer <token>"
     """
     try:
-        doc_id   = _parse_doc_id()
-        uid      = get_current_user().id
-        mgr = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
+        doc_id      = _parse_doc_id()
+        user        = get_current_user()
+        uid         = user.id
+        mgr         = get_aegis_manager(uid)
+        doc_info    = mgr.get_document(doc_id)
+
+        mgr.assert_document_ownership(doc_id)
 
         if not doc_info or doc_info.get("userId") != uid:
             return _doc_not_found(doc_id)
@@ -366,10 +366,11 @@ def aegis_download():
         doc_id   = _parse_doc_id()
         uid      = get_current_user().id
         mgr = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
 
+        doc_info = mgr.get_document(doc_id)
         if not doc_info or doc_info.get("userId") != uid:
             return _doc_not_found(doc_id)
+
         if doc_info["status"] != "done":
             return _doc_not_ready(doc_id, doc_info["status"])
 
@@ -419,17 +420,14 @@ def aegis_delete_document():
                 -H "Authorization: Bearer <token>"
     """
     try:
-        doc_id   = _parse_doc_id()
-        uid      = get_current_user().id
-        mgr = get_aegis_manager(uid)
-        doc_info = mgr.get_document(doc_id)
-
-        if not doc_info or doc_info.get("userId") != uid:
-            return _doc_not_found(doc_id)
+        doc_id  = _parse_doc_id()
+        user    = get_current_user()
+        uid     = user.id
+        mgr     = get_aegis_manager(uid)
 
         mgr.delete_document(doc_id)
 
-        _logger.info(f"Aegis doc {doc_id} eliminado para usuario {get_current_user().username}")
+        _logger.info(f"Aegis doc {doc_id} eliminado para usuario {user.username}")
         return jsonify({"message": "Documento eliminado correctamente", "documentId": doc_id}), 200
 
     except (MissingParameterError, ValidationError) as exc:
