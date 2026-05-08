@@ -46,7 +46,7 @@ import src.modules.system.config_reading as CR
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
 SHUTDOWN_TIMEOUT = 30
-CREATE_DATABASE = True
+CREATE_DATABASE = False
 DEBUG = True
 HOST = '0.0.0.0'
 PORT = 5000

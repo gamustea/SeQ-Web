@@ -75,11 +75,8 @@ curl "https://api.example.com/sentinel/scan-status?id=42" \
 
 from __future__ import annotations
 
-import base64
 import os
 import ipaddress
-from typing import Optional, List, Tuple
-from contextlib import contextmanager
 
 from flask import Blueprint, jsonify, request, send_file
 
@@ -101,27 +98,19 @@ from src.modules.shared._endpoints import (
 limiter = _get_limiter()
 from src.modules.system import SecOpsLogger
 
-
 from .managers import (
     ScanManager,
     NmapScanManager,
     NiktoScanManager,
     OpenVASScanManager,
+    SentinelReportManager,
 )
-from .model import Scan
 from .exceptions import (
-    ReportGenerationError,
     ScanExecutionError,
     ScanNotFoundError,
     IPValidationError,
     MaxHostsExceededError,
     PortValidationError,
-)
-from .services import (
-    NmapPrintingStrategy,
-    NiktoPrintingStrategy,
-    OpenVASPrintingStrategy,
-    PDFCreator
 )
 
 
@@ -138,7 +127,7 @@ VALID_OPENVAS_CONFIGS   = frozenset({"full_fast", "full_deep", "full_ultimate"})
 MAX_PDF_SIZE_BYTES      = 50 * 1024 * 1024
 
 # =========================================================================
-# ENDPOINTS
+# SCAN ENDPOINTS
 # =========================================================================
 
 @sentinel_bp.get("/scan-status")
@@ -182,6 +171,7 @@ def get_scan_status():
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
+
 
 @sentinel_bp.post("/scans/<int:scan_id>/cancel")
 @require_oauth_token
@@ -240,6 +230,7 @@ def cancel_scan(scan_id: int):
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
+
 
 @sentinel_bp.post("/nmap")
 @require_oauth_token
@@ -559,222 +550,6 @@ def retrieve_scan_by_id(scan_id: int):
         return jsonify(err), code
 
 
-@sentinel_bp.get("/generate-pdf")
-@require_oauth_token
-@limiter.limit("30 per hour; 100 per day")
-def generate_pdf():
-    """Solicita la generación asíncrona de un PDF."""
-    try:
-        scan_id = int(require_arg("id"))
-        ai_report_str = request.args.get("aiReport", "false").lower()
-        ai_report = ai_report_str == "true"
-
-        user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
-
-        manager = ScanManager.resolve_manager(scan_id, user)
-
-        if not manager.is_scan_finished(scan_id):
-            raise ValidationError(
-                field="scan_id",
-                message=f"El escaneo {scan_id} no está finalizado aún",
-                value=scan_id
-            )
-
-        doc_id = manager.generate_report(scan_id=scan_id, ai_report=ai_report)
-        _logger.info(f"Generación de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {user.username} con AI Report: {ai_report}")
-
-        return jsonify({
-            "message": "Generación de PDF iniciada",
-            "documentId": doc_id,
-            "scanId": scan_id,
-            "status": "pending",
-            "aiReport": ai_report,
-            "downloadUrl": f"/sentinel/document/{doc_id}/download"
-        }), 202
-
-    except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except (OSError, RuntimeError) as exc:
-        _logger.error(f"Error generando PDF: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
-
-
-@sentinel_bp.get("/document-status")
-@require_oauth_token
-@limiter.limit("300 per hour; 2000 per day")
-def get_document_status():
-    """Consulta el estado de generación de un documento."""
-    try:
-        user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
-
-        nmap_mgr = NmapScanManager(user)
-
-        document_id = request.args.get("document_id", type=int)
-        scan_id = request.args.get("scan_id", type=int)
-
-        if not document_id and not scan_id:
-            raise MissingParameterError("document_id o scan_id")
-
-        doc = nmap_mgr.get_document_by_id(document_id) if document_id else (
-            nmap_mgr.get_latest_document_by_scan_id(scan_id) if scan_id else None
-        )
-
-        if not doc or doc.user_id != user.id: # type: ignore
-            raise ScanNotFoundError(document_id or scan_id) # type: ignore
-
-        download_url = None
-        if doc.status == "done" and doc.filename: # type: ignore
-            download_url = f"/sentinel/document/{doc.id}/download"
-
-        return jsonify({
-            "documentId": doc.id,
-            "scanId": doc.scan_id,
-            "status": doc.status,
-            "aiReport": doc.enrichment_json is not None,
-            "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
-            "downloadUrl": download_url
-        }), 200
-
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except ScanNotFoundError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except (OSError, RuntimeError) as exc:
-        _logger.error(f"Error consultando estado de documento: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
-
-
-@sentinel_bp.get("/documents")
-@require_oauth_token
-@limiter.limit("300 per hour; 2000 per day")
-def get_all_documents():
-    """Obtiene todos los documentos del usuario.
-
-    Query params:
-        scan_type (str): Filtrar por tipo de escaneo.\
-        Valores válidos: nmap, nikto, openvas, all. Default: all.
-    """
-    try:
-        user = get_current_user()
-        scan_type_filter = request.args.get("scan_type", "all").lower()
-
-        valid_types = ["nmap", "nikto", "openvas", "all"]
-        if scan_type_filter not in valid_types:
-            return jsonify(
-                {
-                    "error": f"Tipo de escaneo inválido. Valores válidos: {', '.join(valid_types)}"
-                }
-            ), 400
-
-        nmap_mgr = NmapScanManager(user)
-        documents = nmap_mgr.get_documents_for_user()
-
-        if scan_type_filter != "all":
-            documents = [d for d in documents if d.scan_type == scan_type_filter] # type: ignore
-
-        docs_list = []
-        for doc in documents:
-            download_url = None
-            if doc.status == "done" and doc.filename: # type: ignore
-                download_url = f"/sentinel/document/{doc.id}/download"
-
-            docs_list.append({
-                "documentId": doc.id,
-                "scanId": doc.scan_id,
-                "scanType": doc.scan_type,
-                "status": doc.status,
-                "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
-                "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
-                "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
-                "downloadUrl": download_url
-            })
-
-        return jsonify({
-            "documents": docs_list,
-            "total": len(docs_list),
-            "filter": scan_type_filter
-        }), 200
-
-    except (OSError, RuntimeError) as exc:
-        _logger.error(f"Error obteniendo documentos: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
-
-
-@sentinel_bp.get("/scan/<int:scan_id>/documents")
-@require_oauth_token
-@limiter.limit("300 per hour; 2000 per day")
-def get_documents_by_scan(scan_id: int):
-    """Obtiene todos los documentos de un escaneo concreto.
-
-    Args:
-        scan_id(path): ID del escaneo.
-
-    Returns:
-        200 — Lista de documentos del escaneo.
-        404 — Escaneo no encontrado.
-    """
-    try:
-        user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
-
-
-        uid = user.id
-
-        manager = ScanManager.resolve_manager(scan_id, user)
-        scan = manager.get_scan_by_id(scan_id)
-        if not scan:
-            return jsonify({"error": "Escaneo no encontrado"}), 404
-
-        if scan.user_id != uid: # type: ignore
-            return jsonify({"error": "No tienes permisos para acceder a este escaneo"}), 403
-
-        documents = manager.get_documents_by_scan_id(scan_id)
-
-        docs_list = []
-        for doc in documents:
-            download_url = None
-            if doc.status == "done" and doc.filename: # type: ignore
-                download_url = f"/sentinel/document/{doc.id}/download"
-
-            docs_list.append({
-                "documentId": doc.id,
-                "scanId": doc.scan_id,
-                "scanType": doc.scan_type,
-                "status": doc.status,
-                "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
-                "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
-                "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
-                "downloadUrl": download_url
-            })
-
-        return jsonify({
-            "scanId": scan_id,
-            "documents": docs_list,
-            "total": len(docs_list)
-        }), 200
-
-    except (OSError, RuntimeError) as exc:
-        _logger.error(f"Error obteniendo documentos del escaneo {scan_id}: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
-
-
 @sentinel_bp.get("/is-finished")
 @require_oauth_token
 @limiter.limit("300 per hour; 2000 per day")
@@ -827,196 +602,56 @@ def is_scan_finished():
         return jsonify(err), code
 
 
-@sentinel_bp.get("/document/<int:document_id>/download")
-@require_oauth_token
-def download_document(document_id: int):
-    """Descarga un documento generado previamente.
+# =========================================================================
+# DOCUMENT ENDPOINTS
+# =========================================================================
 
-    Args (path):
-        document_id (int): ID del documento a descargar.
-
-    Returns:
-        200 — Archivo PDF como attachment.
-        400 — El documento aún no está listo (status != 'done').
-        404 — Documento no encontrado.
-
-    Example:
-        curl "http://localhost:5000/sentinel/document/123/download" \\
-                -H "Authorization: Bearer <token>" \\
-                -o reporte.pdf
-    """
-    try:
-        user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
-
-        uid = user.id
-        _logger.info(f"Download request for document {document_id} by user {uid}")
-
-        nmap_mgr = NmapScanManager(user)
-        doc = nmap_mgr.get_document_by_id(document_id)
-        if not doc or doc.user_id != uid: # type: ignore
-            _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
-            return jsonify({"error": "Documento no encontrado o acceso denegado"}), 404
-
-        if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename): # type: ignore
-            _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
-            return jsonify({"error": f"El documento {document_id} aún no está disponible para descarga"}), 400
-
-        _logger.info(f"Serving document {document_id}: {doc.filename}")
-        return send_file(
-            doc.filename, # type: ignore
-            mimetype="application/pdf",
-            as_attachment=True,
-            download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf"
-        ) # type: ignore
-
-    except (OSError, RuntimeError) as exc:
-        _logger.error(f"Error descargando documento {document_id}: {exc}", exc_info=True)
-        return jsonify({"error": str(exc)}), 500
-
-
-@sentinel_bp.route("/document/<int:document_id>", methods=["DELETE"])
+@sentinel_bp.get("/generate-pdf")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
-def delete_document(document_id: int):
-    """Elimina un documento.
-
-    Args (path):
-        document_id (int): ID del documento a eliminar.
-
-    Returns:
-        200 — Documento eliminado correctamente.
-        404 — Documento no encontrado.
-        403 — Sin permisos.
-    """
-    user = get_current_user()
-    if not user:
-            raise IllegalStateError("'user' detectado como None")
-    uid = user.id
-
-    manager = NmapScanManager(user)
-    try:
-        manager.assert_document_ownership(document_id)
-
-        manager.delete_document(document_id)
-        _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
-        return jsonify({"message": "Documento eliminado correctamente", "documentId": document_id}), 200
-    except DocumentError as exc:
-        _logger.error(f"Error eliminando documento {document_id} por usuario {uid}: {exc}", exc_info=True)
-        return jsonify({"error": "No se pudo eliminar el documento"}), 500
-
-
-@sentinel_bp.get("/generate-pdf-base64")
-@require_oauth_token
-@limiter.limit("30 per hour; 100 per day")
-def generate_pdf_base64():
-    """Devuelve el PDF codificado en Base64 para integraciones cliente.
-
-    Útil cuando se necesita incluir el PDF en una respuesta JSON o передать
-    el contenido directamente al frontend.
-
-    Args (query params):
-        id (int): ID del escaneo.
-
-    Returns:
-        200 — JSON con el PDF en Base64.
-            {
-                "message": "PDF generado exitosamente",
-                "scanId": 42,
-                "scanType": "nmap",
-                "filename": "nmap_scan_42.pdf",
-                "pdfBase64": "JVBERi0xLjQK...",
-                "contentType": "application/pdf",
-                "user": "admin"
-            }
-        400 — El escaneo aún no ha terminado.
-        413 — El PDF supera el límite de tamaño (10MB). Usa /generate-pdf.
-        404 — Escaneo no encontrado.
-
-    Example:
-        curl "http://localhost:5000/sentinel/generate-pdf-base64?id=42" \\
-             -H "Authorization: Bearer <token>"
-    """
+def generate_pdf():
+    """Solicita la generación asíncrona de un PDF."""
     try:
         scan_id = int(require_arg("id"))
+        ai_report_str = request.args.get("aiReport", "false").lower()
+        ai_report = ai_report_str == "true"
 
         user = get_current_user()
         if not user:
-            raise IllegalStateError("'user' encontrado como None")
+            raise IllegalStateError("'user' detectado como None")
 
         manager = ScanManager.resolve_manager(scan_id, user)
-        scan = manager.get_scan_by_id(scan_id)
-        if not scan:
-            raise ScanNotFoundError(scan_id)
-        manager.assert_scan_ownership(scan_id) # type: ignore
+        manager.assert_scan_ownership(scan_id)
 
-        if not manager.is_scan_finished(scan.id): # type: ignore
+        if not manager.is_scan_finished(scan_id):
             raise ValidationError(
                 field="scan_id",
                 message=f"El escaneo {scan_id} no está finalizado aún",
                 value=scan_id
             )
 
-        try:
-            scan_type = getattr(scan, "scan_type", "").lower()
+        doc_mgr = SentinelReportManager(user)
+        doc_id = doc_mgr.generate_report(
+            scan_id=scan_id,
+            ai_report=ai_report,
+            strategy_class=manager._strategy_class # type: ignore
+        )
+        _logger.info(f"Generación de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {user.username} con AI Report: {ai_report}")
 
-            if scan_type == "nmap":
-                strategy = NmapPrintingStrategy(scan=scan)
-            elif scan_type == "nikto":
-                strategy = NiktoPrintingStrategy(scan=scan)
-            elif scan_type == "openvas":
-                strategy = OpenVASPrintingStrategy(scan=scan)
-            else:
-                raise ValidationError(
-                    field="scan_type",
-                    message=f"Tipo de escaneo '{scan_type}' no soportado",
-                    expected="'nmap', 'nikto' u 'openvas'",
-                )
+        return jsonify({
+            "message": "Generación de PDF iniciada",
+            "documentId": doc_id,
+            "scanId": scan_id,
+            "status": "pending",
+            "aiReport": ai_report,
+            "downloadUrl": f"/sentinel/document/{doc_id}/download"
+        }), 202
 
-            pdf_path = PDFCreator(strategy).print_pdf()
-        except (OSError, RuntimeError) as exc:
-            raise ReportGenerationError(scan_id, str(exc)) from exc
-
-        if not pdf_path or not os.path.exists(pdf_path):
-            raise ReportGenerationError(scan_id, "El archivo PDF no se generó correctamente")
-
-        pdf_size = os.path.getsize(pdf_path)
-        if pdf_size > MAX_PDF_SIZE_BYTES:
-            return jsonify(
-                {
-                    "error": "payload_too_large",
-                    "message": f"El PDF ({pdf_size // (1024*1024)} MB) supera el límite.\
-                                Usa /generate-pdf para descarga directa.",
-                    "scanId": scan_id
-                }
-            ), 413
-
-        with open(pdf_path, "rb") as f:
-            pdf_b64 = base64.b64encode(f.read()).decode()
-
-        return jsonify(
-            {
-                "message": "PDF generado exitosamente",
-                "scanId": scan_id,
-                "scanType": scan.scan_type,
-                "filename": f"{scan.scan_type}_scan_{scan_id}.pdf",
-                "pdfBase64": pdf_b64,
-                "contentType": "application/pdf",
-                "user": user.username
-            }
-        ), 200
-
-    except (
-        MissingParameterError,
-        ValidationError,
-        ScanNotFoundError,
-        ReportGenerationError
-    ) as exc:
+    except (MissingParameterError, ValidationError, ScanNotFoundError) as exc:
         err, code = create_error_response(exc, include_debug_info=False)
         return jsonify(err), code
     except (OSError, RuntimeError) as exc:
-        _logger.error(f"Error generando PDF base64: {exc}", exc_info=True)
+        _logger.error(f"Error generando PDF: {exc}", exc_info=True)
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
@@ -1094,3 +729,252 @@ def delete_scan(scan_id: int):
         sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
         err, code = create_error_response(sec_exc, include_debug_info=False)
         return jsonify(err), code
+
+
+@sentinel_bp.get("/document-status")
+@require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
+def get_document_status():
+    """Consulta el estado de generación de un documento."""
+    try:
+        user = get_current_user()
+        if not user:
+            raise IllegalStateError("'user' detectado como None")
+
+        document_id = request.args.get("document_id", type=int)
+        scan_id = request.args.get("scan_id", type=int)
+
+        doc_mgr = SentinelReportManager(user)
+
+        if not document_id and not scan_id:
+            raise MissingParameterError("document_id o scan_id")
+
+        doc = doc_mgr.get_document_by_id(document_id) if document_id else (
+            doc_mgr.get_latest_document_by_scan_id(scan_id) if scan_id else None
+        )
+
+        if not doc:
+            raise ScanNotFoundError(document_id or scan_id)  # type: ignore
+
+        doc_mgr.assert_document_ownership(document_id) if document_id else None
+
+        download_url = None
+        if doc.status == "done" and doc.filename:  # type: ignore
+            download_url = f"/sentinel/document/{doc.id}/download"
+
+        return jsonify({
+            "documentId": doc.id,
+            "scanId": doc.scan_id,
+            "status": doc.status,
+            "aiReport": doc.enrichment_json is not None,
+            "createdAt": doc.created_at.isoformat() if doc.created_at else None,  # type: ignore
+            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,  # type: ignore
+            "downloadUrl": download_url
+        }), 200
+
+    except MissingParameterError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+    except ScanNotFoundError as exc:
+        err, code = create_error_response(exc, include_debug_info=False)
+        return jsonify(err), code
+    except (OSError, RuntimeError) as exc:
+        _logger.error(f"Error consultando estado de documento: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@sentinel_bp.get("/documents")
+@require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
+def get_all_documents():
+    """Obtiene todos los documentos del usuario.
+
+    Query params:
+        scan_type (str): Filtrar por tipo de escaneo.\
+        Valores válidos: nmap, nikto, openvas, all. Default: all.
+    """
+    try:
+        user = get_current_user()
+        scan_type_filter = request.args.get("scan_type", "all").lower()
+
+        valid_types = ["nmap", "nikto", "openvas", "all"]
+        if scan_type_filter not in valid_types:
+            return jsonify(
+                {
+                    "error": f"Tipo de escaneo inválido. Valores válidos: {', '.join(valid_types)}"
+                }
+            ), 400
+
+        doc_mgr = SentinelReportManager(user)
+        documents = doc_mgr.get_documents_for_user()
+
+        if scan_type_filter != "all":
+            documents = [d for d in documents if d.scan_type == scan_type_filter] # type: ignore
+
+        docs_list = []
+        for doc in documents:
+            download_url = None
+            if doc.status == "done" and doc.filename: # type: ignore
+                download_url = f"/sentinel/document/{doc.id}/download"
+
+            docs_list.append({
+                "documentId": doc.id,
+                "scanId": doc.scan_id,
+                "scanType": doc.scan_type,
+                "status": doc.status,
+                "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
+                "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
+                "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
+                "downloadUrl": download_url
+            })
+
+        return jsonify({
+            "documents": docs_list,
+            "total": len(docs_list),
+            "filter": scan_type_filter
+        }), 200
+
+    except (OSError, RuntimeError) as exc:
+        _logger.error(f"Error obteniendo documentos: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@sentinel_bp.get("/scan/<int:scan_id>/documents")
+@require_oauth_token
+@limiter.limit("300 per hour; 2000 per day")
+def get_documents_by_scan(scan_id: int):
+    """Obtiene todos los documentos de un escaneo concreto.
+
+    Args:
+        scan_id(path): ID del escaneo.
+
+    Returns:
+        200 — Lista de documentos del escaneo.
+        404 — Escaneo no encontrado.
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            raise IllegalStateError("'user' detectado como None")
+
+        doc_mgr = SentinelReportManager(user)
+        scan_mgr = ScanManager.resolve_manager(scan_id, user)
+
+        scan = scan_mgr.get_scan_by_id(scan_id)
+        if not scan:
+            return jsonify({"error": "Escaneo no encontrado"}), 404
+
+        documents = doc_mgr.get_documents_by_scan_id(scan_id)
+
+        docs_list = []
+        for doc in documents:
+            download_url = None
+            if doc.status == "done" and doc.filename: # type: ignore
+                download_url = f"/sentinel/document/{doc.id}/download"
+
+            docs_list.append({
+                "documentId": doc.id,
+                "scanId": doc.scan_id,
+                "scanType": doc.scan_type,
+                "status": doc.status,
+                "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
+                "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
+                "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
+                "downloadUrl": download_url
+            })
+
+        return jsonify({
+            "scanId": scan_id,
+            "documents": docs_list,
+            "total": len(docs_list)
+        }), 200
+
+    except (OSError, RuntimeError) as exc:
+        _logger.error(f"Error obteniendo documentos del escaneo {scan_id}: {exc}", exc_info=True)
+        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
+        err, code = create_error_response(sec_exc, include_debug_info=False)
+        return jsonify(err), code
+
+
+@sentinel_bp.get("/document/<int:document_id>/download")
+@require_oauth_token
+def download_document(document_id: int):
+    """Descarga un documento generado previamente.
+
+    Args (path):
+        document_id (int): ID del documento a descargar.
+
+    Returns:
+        200 — Archivo PDF como attachment.
+        400 — El documento aún no está listo (status != 'done').
+        404 — Documento no encontrado.
+
+    Example:
+        curl "http://localhost:5000/sentinel/document/123/download" \\
+                -H "Authorization: Bearer <token>" \\
+                -o reporte.pdf
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            raise IllegalStateError("'user' detectado como None")
+
+        uid = user.id
+        _logger.info(f"Download request for document {document_id} by user {uid}")
+
+        doc_mgr = SentinelReportManager(user)
+        doc = doc_mgr.get_document_by_id(document_id)
+        if not doc or doc.user_id != uid:  # type: ignore
+            _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
+            return jsonify({"error": "Documento no encontrado o acceso denegado"}), 404
+
+        if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename): # type: ignore
+            _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
+            return jsonify({"error": f"El documento {document_id} aún no está disponible para descarga"}), 400
+
+        _logger.info(f"Serving document {document_id}: {doc.filename}")
+        return send_file(
+            doc.filename, # type: ignore
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf"
+        ) # type: ignore
+
+    except (OSError, RuntimeError) as exc:
+        _logger.error(f"Error descargando documento {document_id}: {exc}", exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@sentinel_bp.route("/document/<int:document_id>", methods=["DELETE"])
+@require_oauth_token
+@limiter.limit("30 per hour; 100 per day")
+def delete_document(document_id: int):
+    """Elimina un documento.
+
+    Args (path):
+        document_id (int): ID del documento a eliminar.
+
+    Returns:
+        200 — Documento eliminado correctamente.
+        404 — Documento no encontrado.
+        403 — Sin permisos.
+    """
+    user = get_current_user()
+    if not user:
+            raise IllegalStateError("'user' detectado como None")
+    uid = user.id
+
+    doc_mgr = SentinelReportManager(user)
+    try:
+        doc_mgr.assert_document_ownership(document_id)
+
+        doc_mgr.delete_document(document_id)
+        _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
+        return jsonify({"message": "Documento eliminado correctamente", "documentId": document_id}), 200
+    except DocumentError as exc:
+        _logger.error(f"Error eliminando documento {document_id} por usuario {uid}: {exc}", exc_info=True)
+        return jsonify({"error": "No se pudo eliminar el documento"}), 500
