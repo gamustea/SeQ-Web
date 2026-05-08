@@ -67,6 +67,44 @@ ScanIncident = Table(
     Column("nikto_incident_id", Integer, ForeignKey("NiktoIncident.id"), primary_key=True),
 )
 
+# =========================================================================
+# ENUMS
+# =========================================================================
+
+class ScanStatus(Enum):
+    """
+    Enumeration of possible scan execution states.
+
+    Attributes:
+        PENDING: Scan created but not yet started.
+        RUNNING: Scan is currently executing.
+        FINISHED: Scan completed successfully.
+        FAILED: Scan encountered an error.
+        CANCELLED: Scan was cancelled by user.
+    """
+    PENDING   = "pending"
+    RUNNING   = "running"
+    FINISHED  = "finished"
+    FAILED    = "failed"
+    CANCELLED = "cancelled"
+
+class ScanType(str, Enum):
+    """
+    Enumeration of supported scan tool types.
+
+    Inherits from str so that ScanType.NMAP == "nmap" is True,
+    making it directly compatible with SQLAlchemy's polymorphic_identity
+    and with any existing string comparisons.
+
+    Attributes:
+        NMAP:    Nmap network and port scanner.
+        NIKTO:   Nikto web server vulnerability scanner.
+        OPENVAS: OpenVAS comprehensive vulnerability manager.
+    """
+    NMAP    = "nmap"
+    NIKTO   = "nikto"
+    OPENVAS = "openvas"
+
 
 # =========================================================================
 # HOST MODEL
@@ -98,28 +136,6 @@ class Host(Base):
     vendor      = Column(String(64))
 
     scans = relationship("Scan", back_populates="host", cascade="all, delete-orphan")
-
-
-# =========================================================================
-# ENUMS
-# =========================================================================
-
-class ScanStatus(Enum):
-    """
-    Enumeration of possible scan execution states.
-
-    Attributes:
-        PENDING: Scan created but not yet started.
-        RUNNING: Scan is currently executing.
-        FINISHED: Scan completed successfully.
-        FAILED: Scan encountered an error.
-        CANCELLED: Scan was cancelled by user.
-    """
-    PENDING   = "pending"
-    RUNNING   = "running"
-    FINISHED  = "finished"
-    FAILED    = "failed"
-    CANCELLED = "cancelled"
 
 
 # =========================================================================
@@ -293,7 +309,7 @@ class NmapScan(Scan):
         "OpenPort", back_populates="nmap_scan", cascade="all, delete-orphan"
     )
 
-    __mapper_args__ = {"polymorphic_identity": "nmap"}
+    __mapper_args__ = {"polymorphic_identity": ScanType.NMAP}
 
     def __str__(self):
         """
@@ -380,7 +396,7 @@ class NiktoScan(Scan):
         "NiktoIncident", secondary=ScanIncident, back_populates="nikto_scans"
     )
 
-    __mapper_args__ = {"polymorphic_identity": "nikto"}
+    __mapper_args__ = {"polymorphic_identity": ScanType.NIKTO}
 
     def __repr__(self):
         """
@@ -473,7 +489,7 @@ class OpenVASScan(Scan):
         "OpenVASScanResult", back_populates="openvas_scan", cascade="all, delete-orphan"
     )
 
-    __mapper_args__ = {"polymorphic_identity": "openvas"}
+    __mapper_args__ = {"polymorphic_identity": ScanType.OPENVAS}
 
     __table_args__ = (
         UniqueConstraint("task_id", "report_id", name="unique_task_report"),

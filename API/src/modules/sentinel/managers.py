@@ -50,6 +50,7 @@ from .model import (
     OpenVASScan,
     Scan,
     ScanStatus,
+    ScanType,
     SentinelDocument,
 )
 from .services import (
@@ -98,6 +99,7 @@ class ScanManager(ABC):
     _running_threads: Dict[int, threading.Thread] = {}
     _running_tasks_lock = threading.RLock()
     _scan_timeout_margin: int = 30
+    _registry: Dict[ScanType, type["ScanManager"]] = {}
 
     def __init__(self, user: User) -> None:
         """
@@ -485,6 +487,25 @@ class ScanManager(ABC):
     # STATIC UTILITIES
     # =========================================================================
 
+    @classmethod
+    def register(cls, scan_type: ScanType):
+        def decorator(subclass: type["ScanManager"]):
+            cls._registry[scan_type] = subclass
+            return subclass
+        return decorator
+
+    @classmethod
+    def resolve_manager(cls, scan_id: int, user: User) -> "ScanManager":
+        raw_type = cls.get_scan_type(scan_id)
+        try:
+            scan_type = ScanType(raw_type)
+        except ValueError:
+            raise ScanNotFoundError(scan_id)
+        manager_class = cls._registry.get(scan_type)
+        if manager_class is None:
+            raise ScanNotFoundError(scan_id)
+        return manager_class(user)
+
     @staticmethod
     def _require_non_empty(
         value: object,
@@ -531,28 +552,13 @@ class ScanManager(ABC):
             return scan_type # pyright: ignore[reportReturnType]
 
     @classmethod
-    def resolve_manager(cls, scan_id: int, user: User) -> "ScanManager":
-        """
-        Obtiene una instancia del manager adecuado según el tipo del escaneo.
-
-        Args:
-            scan_id: ID del escaneo.
-            user:   Usuario activo.
-
-        Returns:
-            Instancia de NmapScanManager, NiktoScanManager u OpenVASScanManager.
-
-        Raises:
-            ScanNotFoundError: Si el escaneo no existe o su tipo no es reconocido.
-        """
-        scan_type = cls.get_scan_type(scan_id)
-        if scan_type == "nmap":
-            return NmapScanManager(user)
-        if scan_type == "nikto":
-            return NiktoScanManager(user)
-        if scan_type == "openvas":
-            return OpenVASScanManager(user)
-        raise ScanNotFoundError(scan_id)
+    def _append_document_info(cls, scan, result: dict, user: User) -> None:
+        """Append the latest document ID and status to a scan result dict."""
+        inst = SentinelReportManager(user)
+        doc = inst.get_latest_document_by_scan_id(scan.id)
+        if doc:
+            result["documentId"] = doc.id
+            result["documentStatus"] = doc.status
 
     @staticmethod
     def validate_ip(ips_str: str, max_hosts: int = 10) -> List[str]:
@@ -845,15 +851,6 @@ class ScanManager(ABC):
     def get_result_processor(self) -> ScanResultProcessor:
         """Return the result processor for this scan type."""
 
-    @classmethod
-    def _append_document_info(cls, scan, result: dict, user: User) -> None:
-        """Append the latest document ID and status to a scan result dict."""
-        inst = SentinelReportManager(user)
-        doc = inst.get_latest_document_by_scan_id(scan.id)
-        if doc:
-            result["documentId"] = doc.id
-            result["documentStatus"] = doc.status
-
     @abstractmethod
     def persist_scan_results(self, uow, scan, domain_data) -> None:
         """Persist domain data into the database within the given UnitOfWork."""
@@ -875,6 +872,7 @@ class ScanManager(ABC):
 # NMAP
 # =============================================================================
 
+@ScanManager.register(ScanType.NMAP)
 class NmapScanManager(ScanManager):
     _strategy_class = NmapPrintingStrategy
 
@@ -1008,6 +1006,7 @@ class NmapScanManager(ScanManager):
 # NIKTO
 # =============================================================================
 
+@ScanManager.register(ScanType.NIKTO)
 class NiktoScanManager(ScanManager):
     _strategy_class = NiktoPrintingStrategy
 
@@ -1142,6 +1141,7 @@ class NiktoScanManager(ScanManager):
 # OPENVAS
 # =============================================================================
 
+@ScanManager.register(ScanType.OPENVAS)
 class OpenVASScanManager(ScanManager):
     """
     Manager for OpenVAS vulnerability scans.
