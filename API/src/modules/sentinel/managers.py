@@ -352,14 +352,16 @@ class ScanManager(ABC):
 
     def delete_document(self, document_id: int) -> bool:
         """
-        Delete a scan and its associated documents.
+        Delete a document and its associated file on disk.
 
         Args:
-            scan_id: Primary key of the scan to delete.
+            document_id: Primary key of the document to delete.
+
         Returns:
-            True if deleted successfully, False if the scan was not found.
+            True if deleted successfully.
+
         Raises:
-            Exception if an error occurs during deletion.
+            DocumentError: If the document was not found.
         """
 
         with UnitOfWork() as uow:
@@ -581,7 +583,7 @@ class ScanManager(ABC):
             domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
 
             with UnitOfWork() as uow:
-                fresh_scan = ScanRepository(uow).get_by_id(scan_id)
+                fresh_scan              = ScanRepository(uow).get_by_id(scan_id)
                 thread_manager.persist_scan_results(uow.session, fresh_scan, domain_data)
                 fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
                 fresh_scan.finished_at  = datetime.now() # type: ignore
@@ -662,6 +664,27 @@ class ScanManager(ABC):
     # STATIC UTILITIES
     # =========================================================================
 
+    @staticmethod
+    def _require_non_empty(
+        value: object,
+        ErrorClass: type,
+        default_msg: str = "El parámetro debe ser una cadena no vacía"
+    ) -> str:
+        """Validate and strip a string, raising ErrorClass if empty/invalid."""
+        if not value or not isinstance(value, str):
+            raise ErrorClass(message=default_msg, ip_spec=str(value) if ErrorClass.__name__ == "IPValidationError" else str(value))
+        stripped = value.strip()
+        if not stripped:
+            msg_map = {
+                "IPValidationError": "La cadena de IPs está vacía",
+                "PortValidationError": "La cadena de puertos está vacía",
+            }
+            raise ErrorClass(
+                message=msg_map.get(ErrorClass.__name__, default_msg),
+                port_spec=stripped if ErrorClass.__name__ == "PortValidationError" else str(value)
+            )
+        return stripped
+
     @classmethod
     def get_scan_type(cls, scan_id: int) -> Optional[str]:
         """
@@ -729,7 +752,7 @@ class ScanManager(ABC):
         Returns:
             Lista de IPs expandidas (sin duplicados).
         """
-        def _expand_octal(rango_str: str) -> Optional[List[str]]:
+        def _expand_octal(rango_str: str) -> List[str]:
             rango_str = rango_str.replace("*", "0-255")
             octetos = rango_str.split(".")
 
@@ -757,11 +780,6 @@ class ScanManager(ABC):
                             message="Los límites del rango deben ser numéricos",
                             ip_spec=rango_str
                         )
-                    if not (0 <= inicio <= 255 and 0 <= fin <= 255):
-                        raise IPValidationError(
-                            message="Los octetos deben estar entre 0 y 255",
-                            ip_spec=rango_str
-                        )
                     if inicio > fin:
                         raise IPValidationError(
                             message="El inicio del rango no puede ser mayor que el fin",
@@ -774,11 +792,6 @@ class ScanManager(ABC):
                     except ValueError:
                         raise IPValidationError(
                             message="El octeto debe ser numérico",
-                            ip_spec=rango_str
-                        )
-                    if not (0 <= valor <= 255):
-                        raise IPValidationError(
-                            message="Los octetos deben estar entre 0 y 255",
                             ip_spec=rango_str
                         )
                     rangos_octetos.append([valor])
@@ -799,18 +812,7 @@ class ScanManager(ABC):
                 )
             return lista_ips
 
-        if not ips_str or not isinstance(ips_str, str):
-            raise IPValidationError(
-                message="El parámetro debe ser una cadena no vacía",
-                ip_spec=str(ips_str)
-            )
-
-        ips_str = ips_str.strip()
-        if not ips_str:
-            raise IPValidationError(
-                message="La cadena de IPs está vacía",
-                ip_spec=ips_str
-            )
+        ips_str = ScanManager._require_non_empty(ips_str, IPValidationError)
 
         segmentos = [s.strip() for s in ips_str.split(",")]
         lista_ips = []
@@ -841,11 +843,6 @@ class ScanManager(ABC):
             elif "-" in segmento:
                 try:
                     ips_expandidas = _expand_octal(segmento)
-                    if ips_expandidas is None:
-                        raise IPValidationError(
-                            message="Formato de rango inválido",
-                            ip_spec=segmento
-                        )
                     if len(ips_expandidas) > max_hosts:
                         raise MaxHostsExceededError(max_hosts=max_hosts, found=len(ips_expandidas))
                     lista_ips.extend(ips_expandidas)
@@ -891,18 +888,7 @@ class ScanManager(ABC):
         Returns:
             Lista de puertos expandida (sin duplicados, ordenada).
         """
-        if not ports_str or not isinstance(ports_str, str):
-            raise PortValidationError(
-                message="El parámetro debe ser una cadena no vacía",
-                port_spec=str(ports_str)
-            )
-
-        ports_str = ports_str.strip()
-        if not ports_str:
-            raise PortValidationError(
-                message="La cadena de puertos está vacía",
-                port_spec=ports_str
-            )
+        ports_str = ScanManager._require_non_empty(ports_str, PortValidationError)
 
         segmentos = ports_str.split(",")
         ultimo_puerto = 0
@@ -1023,6 +1009,106 @@ class ScanManager(ABC):
         return list(dict.fromkeys(lista_puertos))
 
     # =========================================================================
+    # PDF REPORTING
+    # =========================================================================
+
+    @staticmethod
+    def _create_document(scan, ai_report: bool) -> int:
+        """Create a SentinelDocument for a scan and return its ID."""
+        with UnitOfWork() as uow:
+            document = SentinelDocument(
+                scan_id         = scan.id,
+                scan_type       = scan.scan_type,
+                document_type   = "sentinel",
+                filename        = "",
+                format          = "pdf",
+                status          = "running",
+                user_id         = scan.user_id,
+                is_ai_generated = 1 if ai_report else 0,
+            )
+            SentinelDocumentRepository(uow).save(document)
+            return document.id  # type: ignore
+
+    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
+        """
+        Create a SentinelDocument and start async PDF generation.
+
+        Args:
+            scan_id:   Primary key of the scan.
+            ai_report: Include AI-generated analysis in the report.
+
+        Returns:
+            Primary key of the created SentinelDocument.
+        """
+        scan = self.get_scan_by_id(scan_id)
+        if not scan:
+            raise ValueError(f"Escaneo {scan_id} no encontrado")
+
+        doc_id = self._create_document(scan, ai_report)
+
+        thread = threading.Thread(
+            target=self.__class__._generate_pdf_async,
+            args=(doc_id, scan.id, ai_report, self.__class__._strategy_class, scan.user_id),
+            daemon=True,
+            name=f"PDFGeneration-Scan-{scan.id}",
+        )
+        thread.start()
+        return doc_id  # type: ignore
+
+    @classmethod
+    def _generate_pdf_async(
+        cls,
+        document_id: int,
+        scan_id: int,
+        ai_report: bool,
+        strategy_class,
+        user_id: int,
+    ) -> None:
+        """Generate PDF in a background thread and update the document status."""
+        from src.modules.users.repositories import UserRepository
+
+        inst = cls(None)
+        with UnitOfWork() as uow:
+            inst.active_user = UserRepository(uow).get_by_id(user_id)
+        inst.logger = SecOpsLogger(cls.__name__).get_logger()
+
+        try:
+            document = inst.get_document_by_id(document_id)
+            if not document:
+                inst.logger.error(f"Documento {document_id} no encontrado")
+                return
+
+            scan = inst.get_scan_by_id(scan_id)
+            if not scan:
+                inst.logger.error(f"Escaneo {scan_id} no encontrado")
+                return
+
+            strategy = strategy_class(scan)
+            pdf_path = PDFCreator(strategy).print_pdf(ai_report=ai_report)
+
+            with UnitOfWork() as uow:
+                doc = SentinelDocumentRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.filename     = pdf_path  # type: ignore
+                    doc.status       = "done"  # type: ignore
+                    doc.generated_at = datetime.utcnow()  # type: ignore
+
+            inst.logger.info(f"PDF generado exitosamente para documento {document_id}")
+
+        except (OSError, RuntimeError) as e:
+            inst.logger.error(
+                f"Error generando PDF para documento {document_id}: {e}",
+                exc_info=True
+            )
+            try:
+                with UnitOfWork() as uow:
+                    doc = SentinelDocumentRepository(uow).get_by_id(document_id)
+                    if doc:
+                        doc.status = "error"  # type: ignore
+            except (OSError, RuntimeError):
+                pass
+
+    # =========================================================================
     # ABSTRACT INTERFACE
     # =========================================================================
 
@@ -1038,14 +1124,14 @@ class ScanManager(ABC):
     def get_result_processor(self) -> ScanResultProcessor:
         """Return the result processor for this scan type."""
 
-    @abstractmethod
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        """
-        Create a SentinelDocument and start async PDF generation.
-
-        Returns:
-            Document primary key.
-        """
+    @classmethod
+    def _append_document_info(cls, scan, result: dict) -> None:
+        """Append the latest document ID and status to a scan result dict."""
+        inst = cls(None)
+        doc = inst.get_latest_document_by_scan_id(scan.id)
+        if doc:
+            result["documentId"] = doc.id
+            result["documentStatus"] = doc.status
 
     @abstractmethod
     def persist_scan_results(self, session, scan, domain_data) -> None:
@@ -1069,6 +1155,8 @@ class ScanManager(ABC):
 # =============================================================================
 
 class NmapScanManager(ScanManager):
+    _strategy_class = NmapPrintingStrategy
+
     """
     Manager for Nmap network security scans.
 
@@ -1161,94 +1249,6 @@ class NmapScanManager(ScanManager):
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
         return scans
 
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        """
-        Create a SentinelDocument and start async PDF generation for an Nmap scan.
-
-        Args:
-            scan_id:   Primary key of the scan.
-            ai_report: Include AI-generated analysis in the report.
-
-        Returns:
-            Primary key of the created SentinelDocument.
-        """
-        scan = self.get_scan_by_id(scan_id)
-        if not scan:
-            raise ValueError(f"Escaneo {scan_id} no encontrado")
-
-        self.logger.info(f"Creando documento con ai_report: {ai_report}")
-
-        with UnitOfWork() as uow:
-            doc_repo = SentinelDocumentRepository(uow)
-            document = SentinelDocument(
-                scan_id       = scan.id,
-                scan_type     = scan.scan_type,
-                document_type = "sentinel",
-                filename      = "",
-                format        = "pdf",
-                status        = "running",
-                user_id       = scan.user_id,
-                is_ai_generated = 1 if ai_report else 0,
-            )
-            doc_repo.save(document)
-            doc_id = document.id
-            # commits on __exit__
-
-        thread = threading.Thread(
-            target = self._generate_pdf_async,
-            args   = (doc_id, scan.id, ai_report),
-            daemon = True,
-            name   = f"PDFGeneration-Scan-{scan.id}",
-        )
-        thread.start()
-        return doc_id # type: ignore
-
-    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False) -> None:
-        """Generate PDF in a background thread and update the document status."""
-        thread_manager = self.__class__(self.active_user)
-        document = None
-
-        try:
-            document = thread_manager.get_document_by_id(document_id)
-            if not document:
-                thread_manager.logger.error(
-                    f"Documento {document_id} no encontrado para generación de PDF"
-                )
-                return
-
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan or scan.scan_type != "nmap": # type: ignore
-                thread_manager.logger.error(
-                    f"Escaneo {scan_id} no válido para NmapScanManager "
-                    f"(tipo: {getattr(scan, 'scan_type', 'N/A')})"
-                )
-                return
-
-            strategy  = NmapPrintingStrategy(scan)
-            pdf_path  = PDFCreator(strategy).print_pdf(ai_report=ai_report)
-
-            with UnitOfWork() as uow:
-                doc = SentinelDocumentRepository(uow).get_by_id(document_id)
-                if doc:
-                    doc.filename     = pdf_path # type: ignore
-                    doc.status       = "done" # type: ignore
-                    doc.generated_at = datetime.utcnow() # type: ignore
-
-            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
-
-        except (OSError, RuntimeError) as e:
-            thread_manager.logger.error(
-                f"Error generando PDF para documento {document_id}: {e}",
-                exc_info=True
-            )
-            try:
-                with UnitOfWork() as uow:
-                    doc = SentinelDocumentRepository(uow).get_by_id(document_id)
-                    if doc:
-                        doc.status = "error" # type: ignore
-            except (OSError, RuntimeError):
-                pass
-
     def persist_scan_results(self, session, scan, domain_data) -> None:
         """Persist Nmap host and port data into the database."""
         host_data, ports_data = domain_data
@@ -1308,10 +1308,7 @@ class NmapScanManager(ScanManager):
             ],
             "totalOpenPorts": len(scan.open_ports_relation),
         }
-        doc = self.get_latest_document_by_scan_id(scan.id) # type: ignore
-        if doc:
-            result["documentId"] = doc.id
-            result["documentStatus"] = doc.status
+        self._append_document_info(scan, result)
         return result
 
 
@@ -1320,6 +1317,8 @@ class NmapScanManager(ScanManager):
 # =============================================================================
 
 class NiktoScanManager(ScanManager):
+    _strategy_class = NiktoPrintingStrategy
+
     """
     Manager for Nikto web vulnerability scans.
 
@@ -1405,82 +1404,6 @@ class NiktoScanManager(ScanManager):
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
         return scans
 
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        """
-        Create a SentinelDocument and start async PDF generation for a Nikto scan.
-
-        Returns:
-            Primary key of the created SentinelDocument.
-        """
-        scan = self.get_scan_by_id(scan_id)
-        if not scan:
-            raise ValueError(f"Escaneo {scan_id} no encontrado")
-
-        with UnitOfWork() as uow:
-            document = SentinelDocument(
-                scan_id         = scan.id,
-                scan_type       = scan.scan_type,
-                document_type   = "sentinel",
-                filename        = "",
-                format          = "pdf",
-                status          = "running",
-                user_id         = scan.user_id,
-                is_ai_generated = 1 if ai_report else 0,
-            )
-            SentinelDocumentRepository(uow).save(document)
-            doc_id = document.id
-
-        thread = threading.Thread(
-            target = self._generate_pdf_async,
-            args   = (doc_id, scan.id, ai_report),
-            daemon = True,
-            name   = f"PDFGeneration-Scan-{scan.id}",
-        )
-        thread.start()
-        return doc_id # type: ignore
-
-    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False) -> None:
-        """Generate PDF in a background thread and update the document status."""
-        thread_manager = self.__class__(self.active_user)
-        document = None
-
-        try:
-            document = thread_manager.get_document_by_id(document_id)
-            if not document:
-                thread_manager.logger.error(f"Documento {document_id} no encontrado")
-                return
-
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan or scan.scan_type != "nikto": # type: ignore
-                thread_manager.logger.error(f"Escaneo {scan_id} no válido para NiktoScanManager")
-                return
-
-            strategy = NiktoPrintingStrategy(scan)
-            pdf_path = PDFCreator(strategy).print_pdf(ai_report=ai_report)
-
-            with UnitOfWork() as uow:
-                doc_repo = SentinelDocumentRepository(uow)
-                doc = doc_repo.get_by_id(document_id)
-                if doc:
-                    doc.filename     = pdf_path # type: ignore
-                    doc.status       = "done" # type: ignore
-                    doc.generated_at = datetime.utcnow() # type: ignore
-
-            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
-
-        except (OSError, RuntimeError) as e:
-            thread_manager.logger.error(
-                f"Error generando PDF para documento {document_id}: {e}",
-                exc_info=True
-            )
-            try:
-                with UnitOfWork() as uow:
-                    doc = SentinelDocumentRepository(uow).get_by_id(document_id)
-                    if doc:
-                        doc.status = "error" # type: ignore
-            except (OSError, RuntimeError):
-                pass
-
     def persist_scan_results(self, session, scan, domain_data) -> None:
         """Persist Nikto incidents and associate a host."""
         incidents_data = domain_data
@@ -1545,10 +1468,7 @@ class NiktoScanManager(ScanManager):
             ],
             "totalIncidents": len(scan.incidents),
         }
-        doc = self.get_latest_document_by_scan_id(scan.id) # type: ignore
-        if doc:
-            result["documentId"] = doc.id
-            result["documentStatus"] = doc.status
+        self._append_document_info(scan, result)
         return result
 
 
@@ -1582,6 +1502,8 @@ class OpenVASScanManager(ScanManager):
         "tcp_udp_all":       "4a4717fe-57d2-11e1-9a26-406186ea4fc5",
         "tcp_all_udp_top100":"730ef368-57e2-11e1-a90f-406186ea4fc5",
     }
+
+    _strategy_class = OpenVASPrintingStrategy
 
     def __init__(self, user: User) -> None:
         super().__init__(user)
@@ -1723,80 +1645,6 @@ class OpenVASScanManager(ScanManager):
                     f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}"
                 )
 
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        """
-        Create a SentinelDocument and start async PDF generation for an OpenVAS scan.
-
-        Returns:
-            Primary key of the created SentinelDocument.
-        """
-        scan = self.get_scan_by_id(scan_id)
-        if not scan:
-            raise ValueError(f"Escaneo {scan_id} no encontrado")
-
-        with UnitOfWork() as uow:
-            document = SentinelDocument(
-                scan_id         = scan.id,
-                scan_type       = scan.scan_type,
-                document_type   = "sentinel",
-                filename        = "",
-                format          = "pdf",
-                status          = "running",
-                user_id         = scan.user_id,
-                is_ai_generated = 1 if ai_report else 0,
-            )
-            SentinelDocumentRepository(uow).save(document)
-            doc_id = document.id
-
-        thread = threading.Thread(
-            target = self._generate_pdf_async,
-            args   = (doc_id, scan.id, ai_report),
-            daemon = True,
-            name   = f"PDFGeneration-Scan-{scan.id}",
-        )
-        thread.start()
-        return doc_id # type: ignore
-
-    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False) -> None:
-        """Generate PDF in a background thread and update the document status."""
-        thread_manager = self.__class__(self.active_user)
-
-        try:
-            document = thread_manager.get_document_by_id(document_id)
-            if not document:
-                thread_manager.logger.error(f"Documento {document_id} no encontrado")
-                return
-
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan or scan.scan_type != "openvas": # type: ignore
-                thread_manager.logger.error(f"Escaneo {scan_id} no válido para OpenVASScanManager")
-                return
-
-            strategy = OpenVASPrintingStrategy(scan)
-            pdf_path = PDFCreator(strategy).print_pdf(ai_report=ai_report)
-
-            with UnitOfWork() as uow:
-                doc = SentinelDocumentRepository(uow).get_by_id(document_id)
-                if doc:
-                    doc.filename     = pdf_path # type: ignore
-                    doc.status       = "done" # type: ignore
-                    doc.generated_at = datetime.utcnow() # type: ignore
-
-            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
-
-        except (OSError, RuntimeError) as e:
-            thread_manager.logger.error(
-                f"Error generando PDF para documento {document_id}: {e}",
-                exc_info=True
-            )
-            try:
-                with UnitOfWork() as uow:
-                    doc = SentinelDocumentRepository(uow).get_by_id(document_id)
-                    if doc:
-                        doc.status = "error" # type: ignore
-            except (OSError, RuntimeError):
-                pass
-
     def persist_scan_results(self, session, scan, domain_data) -> None:
         """Persist OpenVAS vulnerabilities, hosts, and scan results."""
         vulnerabilities_data, scan_results_data, _ = domain_data
@@ -1875,8 +1723,5 @@ class OpenVASScanManager(ScanManager):
             "criticalCount": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
             "highCount": sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
         }
-        doc = self.get_latest_document_by_scan_id(scan.id) # type: ignore
-        if doc:
-            result["documentId"] = doc.id
-            result["documentStatus"] = doc.status
+        self._append_document_info(scan, result)
         return result
