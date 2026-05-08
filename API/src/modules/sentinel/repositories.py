@@ -200,11 +200,11 @@ class ScanRepository(BaseRepository[Scan]):
     # =========================================================================
 
     def update_status(self, scan: Scan, status: ScanStatus) -> Scan:
-        scan.status = status.value
+        scan.status = status.value # type: ignore
 
         terminal = {ScanStatus.FINISHED, ScanStatus.FAILED, ScanStatus.CANCELLED}
         if status in terminal and scan.finished_at is None:
-            scan.finished_at = datetime.utcnow()
+            scan.finished_at = datetime.utcnow() # type: ignore
 
         return self.update(scan)
 
@@ -286,9 +286,9 @@ class SentinelDocumentRepository(BaseRepository[SentinelDocument]):
             return None
 
         from datetime import datetime as _dt
-        doc.status = status
+        doc.status = status # type: ignore
         if filename is not None:
-            doc.filename = filename
+            doc.filename = filename # type: ignore
         if status == "done":
-            doc.generated_at = _dt.utcnow()
+            doc.generated_at = _dt.utcnow() # type: ignore
         return doc
