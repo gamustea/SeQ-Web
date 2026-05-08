@@ -281,12 +281,15 @@ function showCreateModal() {
     var roleField = "";
     if (isRoot()) {
         roleField =
+            '<div class="form-section">' +
+            '<div class="form-section__title">Configuración</div>' +
             '<div class="form-group">' +
             '<label for="new-role">Rol</label>' +
             '<select id="new-role" name="role">' +
             '<option value="role_user">Usuario</option>' +
             '<option value="role_admin">Administrador</option>' +
             "</select>" +
+            "</div>" +
             "</div>";
     }
 
@@ -299,20 +302,113 @@ function showCreateModal() {
         '<button class="modal-close">&times;</button>' +
         "</div>" +
         '<form id="create-user-form">' +
-        '<div class="form-group"><label for="new-username">Nombre de usuario</label><input type="text" id="new-username" name="username" required /></div>' +
-        '<div class="form-group"><label for="new-email">Correo electrónico</label><input type="email" id="new-email" name="email" required /></div>' +
-        '<div class="form-group"><label for="new-first-name">Nombre</label><input type="text" id="new-first-name" name="first_name" required /></div>' +
-        '<div class="form-group"><label for="new-last-name">Apellidos</label><input type="text" id="new-last-name" name="last_name" required /></div>' +
-        '<div class="form-group"><label for="new-password">Contraseña</label><input type="password" id="new-password" name="password" required minlength="8" /></div>' +
+        '<div class="form-section">' +
+        '<div class="form-section__title">Información Personal</div>' +
+        '<div class="form-row">' +
+        '<div class="form-group">' +
+        '<label for="new-first-name">Nombre</label>' +
+        '<div class="input-wrapper">' +
+        '<svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' +
+        '<input type="text" id="new-first-name" name="first_name" required />' +
+        "</div>" +
+        "</div>" +
+        '<div class="form-group">' +
+        '<label for="new-last-name">Apellidos</label>' +
+        '<div class="input-wrapper">' +
+        '<svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' +
+        '<input type="text" id="new-last-name" name="last_name" required />' +
+        "</div>" +
+        "</div>" +
+        "</div>" +
+        "</div>" +
+        '<div class="form-section">' +
+        '<div class="form-section__title">Credenciales</div>' +
+        '<div class="form-group">' +
+        '<label for="new-username">Nombre de usuario</label>' +
+        '<div class="input-wrapper">' +
+        '<svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' +
+        '<input type="text" id="new-username" name="username" required />' +
+        "</div>" +
+        "</div>" +
+        '<div class="form-group">' +
+        '<label for="new-email">Correo electrónico</label>' +
+        '<div class="input-wrapper">' +
+        '<svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/></svg>' +
+        '<input type="email" id="new-email" name="email" required />' +
+        "</div>" +
+        "</div>" +
+        '<div class="form-group">' +
+        '<label for="new-password">Contraseña</label>' +
+        '<div class="input-wrapper">' +
+        '<svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' +
+        '<input type="password" id="new-password" name="password" required minlength="8" />' +
+        '<button type="button" class="toggle-password" aria-label="Mostrar contraseña">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>' +
+        "</button>" +
+        "</div>" +
+        '<div class="password-strength" id="password-strength" style="display:none;">' +
+        '<div class="strength-bar"><div class="strength-fill" id="strength-fill"></div></div>' +
+        '<span class="strength-text" id="strength-text"></span>' +
+        "</div>" +
+        '<span class="form-hint">Mínimo 8 caracteres</span>' +
+        "</div>" +
+        "</div>" +
         roleField +
+        '<div class="form-section">' +
         '<div class="form-actions">' +
         '<button type="button" class="btn btn--ghost" id="btn-cancel">Cancelar</button>' +
         '<button type="submit" class="btn btn--primary">Crear Usuario</button>' +
+        "</div>" +
         "</div>" +
         "</form>" +
         "</div>";
 
     document.body.appendChild(modal);
+
+    // Toggle password visibility
+    var toggleBtn = modal.querySelector(".toggle-password");
+    var passwordInput = modal.querySelector("#new-password");
+    if (toggleBtn && passwordInput) {
+        toggleBtn.addEventListener("click", function () {
+            var isPassword = passwordInput.type === "password";
+            passwordInput.type = isPassword ? "text" : "password";
+            this.innerHTML = isPassword
+                ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+                : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+        });
+    }
+
+    // Password strength indicator
+    if (passwordInput) {
+        passwordInput.addEventListener("input", function () {
+            var pwd = this.value;
+            var strengthEl = document.getElementById("password-strength");
+            var fillEl = document.getElementById("strength-fill");
+            var textEl = document.getElementById("strength-text");
+            if (!pwd) {
+                strengthEl.style.display = "none";
+                return;
+            }
+            strengthEl.style.display = "block";
+            var strength = 0;
+            if (pwd.length >= 8) strength++;
+            if (/[a-z]/.test(pwd) && /[A-Z]/.test(pwd)) strength++;
+            if (/\d/.test(pwd)) strength++;
+            if (/[^a-zA-Z0-9]/.test(pwd)) strength++;
+
+            fillEl.className = "strength-fill";
+            if (strength <= 1) {
+                fillEl.classList.add("weak");
+                textEl.textContent = "Débil";
+            } else if (strength <= 2) {
+                fillEl.classList.add("medium");
+                textEl.textContent = "Media";
+            } else {
+                fillEl.classList.add("strong");
+                textEl.textContent = "Fuerte";
+            }
+        });
+    }
 
     modal.querySelector(".modal-close").addEventListener("click", function () { modal.remove(); });
     modal.querySelector("#btn-cancel").addEventListener("click", function () { modal.remove(); });
@@ -395,36 +491,41 @@ async function showUserDetails(userId) {
 
 /* SHOW DETAILS MODAL */
 function showDetailsModal(user, attributes) {
+    var currentSession = getSession();
+    var isAdminOrRoot = currentSession.role === "role_admin" || currentSession.role === "role_root";
+
     var roleLabel = user.role === "role_root"
         ? "Root"
         : user.role === "role_admin"
           ? "Administrador"
           : "Usuario";
 
-    var attrHtml = "";
-    if (attributes.length > 0) {
-        attrHtml = '<div class="user-attributes"><span class="attr-label">Atributos:</span><div class="attr-tags">';
-        for (var i = 0; i < attributes.length; i++) {
-            attrHtml += '<span class="attr-tag">' + attributes[i] + "</span>";
-        }
-        attrHtml += "</div></div>";
-    } else {
-        attrHtml = '<div class="user-attributes"><span class="attr-label">Atributos:</span><span class="no-attrs">Sin atributos adicionales</span></div>';
-    }
+    var roleBadgeClass = user.role === "role_root"
+        ? "detail-badge detail-badge--root"
+        : user.role === "role_admin"
+          ? "detail-badge detail-badge--admin"
+          : "detail-badge detail-badge--user";
+
+    var attrHtml = buildAttributeSection(attributes, isAdminOrRoot);
 
     var modal = document.createElement("div");
     modal.className = "modal-overlay";
     modal.innerHTML =
-        '<div class="modal modal-details">' +
+        '<div class="modal modal-details" id="modal-user-details">' +
         '<div class="modal-header">' +
         "<h2>Detalles del Usuario</h2>" +
         '<button class="modal-close">&times;</button>' +
         "</div>" +
-        '<div class="modal-body">' +
-        '<div class="detail-section">' +
+        '<div class="detail-profile">' +
+        '<div class="detail-avatar-wrapper">' +
         '<div class="detail-avatar">' + getInitials(user.first_name, user.last_name) + "</div>" +
+        '<div class="status-indicator"></div>' +
+        "</div>" +
+        '<div class="detail-info">' +
+        '<div class="detail-name">' + user.first_name + " " + user.last_name + "</div>" +
         '<div class="detail-username">@' + user.username + "</div>" +
-        '<div class="detail-id">ID: ' + user.id + "</div>" +
+        '<span class="' + roleBadgeClass + '">' + roleLabel + "</span>" +
+        "</div>" +
         "</div>" +
         '<div class="detail-grid">' +
         '<div class="detail-item"><span class="detail-label">Nombre</span><span class="detail-value">' + user.first_name + " " + user.last_name + "</span></div>" +
@@ -433,13 +534,196 @@ function showDetailsModal(user, attributes) {
         '<div class="detail-item"><span class="detail-label">Creado</span><span class="detail-value">' + formatDate(user.created_at) + "</span></div>" +
         "</div>" +
         attrHtml +
-        "</div>" +
         "</div>";
 
     document.body.appendChild(modal);
 
     modal.querySelector(".modal-close").addEventListener("click", function () { modal.remove(); });
     modal.addEventListener("click", function (e) { if (e.target === modal) modal.remove(); });
+
+    if (isAdminOrRoot) {
+        var btnAdd = document.getElementById("btn-add-attr");
+        if (btnAdd) {
+            btnAdd.addEventListener("click", function () {
+                toggleAttributeForm(user.id, attributes, modal);
+            });
+        }
+
+        modal.querySelectorAll(".attr-remove").forEach(function (btn) {
+            btn.addEventListener("click", async function () {
+                var attr = this.getAttribute("data-attr");
+                await removeAttribute(user.id, attr, modal);
+            });
+        });
+    }
+}
+
+function buildAttributeSection(attributes, isAdminOrRoot) {
+    var tags = "";
+    if (attributes.length > 0) {
+        for (var i = 0; i < attributes.length; i++) {
+            var rmBtn = isAdminOrRoot
+                ? '<button class="attr-remove" data-attr="' + attributes[i] + '" title="Eliminar">&times;</button>'
+                : "";
+            tags += '<span class="attr-tag">' + attributes[i] + rmBtn + "</span>";
+        }
+    }
+
+    var addBtn = isAdminOrRoot
+        ? '<button class="btn btn--ghost btn--sm" id="btn-add-attr">+ A&ntilde;adir atributo</button>'
+        : "";
+
+    return (
+        '<div class="user-attributes" id="attr-section">' +
+        '<div class="attr-header">' +
+        '<span class="attr-label">Atributos ABAC</span>' +
+        addBtn +
+        "</div>" +
+        (attributes.length > 0 ? '<div class="attr-tags">' + tags + '</div>' : '<span class="no-attrs">Sin atributos adicionales</span>') +
+        '<div id="attr-form-container"></div>' +
+        "</div>"
+    );
+}
+
+var ALL_ATTRIBUTES = [
+    { module: "Aegis",    attrs: ["aegis_create", "aegis_read", "aegis_update", "aegis_delete"] },
+    { module: "Sentinel", attrs: ["sentinel_create", "sentinel_read", "sentinel_update", "sentinel_delete"] },
+    { module: "Acheron", attrs: ["acheron_create", "acheron_read", "acheron_update", "acheron_delete"] },
+];
+
+function toggleAttributeForm(userId, currentAttrs, modal) {
+    var container = document.getElementById("attr-form-container");
+    if (!container) return;
+
+    if (container.innerHTML.trim() !== "") {
+        container.innerHTML = "";
+        return;
+    }
+
+    var selectHtml = '<div class="attr-form"><label class="attr-form__label">Selecciona atributos:</label><div class="attr-form__groups">';
+    for (var g = 0; g < ALL_ATTRIBUTES.length; g++) {
+        var grp = ALL_ATTRIBUTES[g];
+        selectHtml += '<div class="attr-form__group"><span class="attr-form__module">' + grp.module + '</span>';
+        for (var a = 0; a < grp.attrs.length; a++) {
+            var attr = grp.attrs[a];
+            var checked = currentAttrs.indexOf(attr) !== -1 ? " checked" : "";
+            selectHtml +=
+                '<label class="attr-form__opt">' +
+                '<input type="checkbox" class="attr-cb" value="' + attr + '"' + checked + " />" +
+                attr +
+                "</label>";
+        }
+        selectHtml += "</div>";
+    }
+    selectHtml +=
+        '</div>' +
+        '<div class="attr-form__actions">' +
+        '<button class="btn btn--ghost btn--sm" id="btn-cancel-attr">Cancelar</button>' +
+        '<button class="btn btn--primary btn--sm" id="btn-save-attr">Guardar</button>' +
+        "</div></div>";
+
+    container.innerHTML = selectHtml;
+
+    document.getElementById("btn-cancel-attr").addEventListener("click", function () {
+        container.innerHTML = "";
+    });
+
+    document.getElementById("btn-save-attr").addEventListener("click", async function () {
+        var cbs = container.querySelectorAll(".attr-cb:checked");
+        var selected = Array.prototype.map.call(cbs, function (cb) { return cb.value; });
+        var toAdd = selected.filter(function (a) { return currentAttrs.indexOf(a) === -1; });
+        if (toAdd.length > 0) {
+            await addAttributes(userId, toAdd, modal);
+        } else {
+            container.innerHTML = "";
+        }
+    });
+}
+
+async function addAttributes(userId, newAttrs, modal) {
+    var session = getSession();
+    if (!session.accessToken) return;
+
+    try {
+        var res = await fetch(API_URL.users + "/" + userId + "/attributes", {
+            method: "PUT",
+            headers: {
+                Authorization: "Bearer " + session.accessToken,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ attributes: newAttrs }),
+        });
+
+        if (!res.ok) {
+            var err = await res.json();
+            showToast(err.error_description || "Error al a&ntilde;adir atributos", "error");
+            return;
+        }
+
+        var data = await res.json();
+        var updated = data.attributes || [];
+        refreshAttributeSection(updated, modal, userId);
+        showToast("Atributos a&ntilde;adidos correctamente", "success");
+    } catch (e) {
+        console.error(e);
+        showToast("Error al a&ntilde;adir atributos", "error");
+    }
+}
+
+async function removeAttribute(userId, attr, modal) {
+    var session = getSession();
+    if (!session.accessToken) return;
+
+    try {
+        var res = await fetch(API_URL.users + "/" + userId + "/attributes", {
+            method: "DELETE",
+            headers: {
+                Authorization: "Bearer " + session.accessToken,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ attributes: [attr] }),
+        });
+
+        if (!res.ok) {
+            var err = await res.json();
+            showToast(err.error_description || "Error al eliminar atributo", "error");
+            return;
+        }
+
+        var data = await res.json();
+        var updated = data.attributes || [];
+        refreshAttributeSection(updated, modal, userId);
+        showToast("Atributo eliminado", "success");
+    } catch (e) {
+        console.error(e);
+        showToast("Error al eliminar atributo", "error");
+    }
+}
+
+function refreshAttributeSection(attributes, modal, userId) {
+    var currentSession = getSession();
+    var isAdminOrRoot = currentSession.role === "role_admin" || currentSession.role === "role_root";
+    var newHtml = buildAttributeSection(attributes, isAdminOrRoot);
+    var attrSection = document.getElementById("attr-section");
+    if (attrSection) {
+        var tmp = document.createElement("div");
+        tmp.innerHTML = newHtml;
+        attrSection.innerHTML = tmp.firstElementChild.innerHTML;
+    }
+
+    modal.querySelectorAll(".attr-remove").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+            var attr = this.getAttribute("data-attr");
+            await removeAttribute(userId, attr, modal);
+        });
+    });
+
+    var btnAdd = document.getElementById("btn-add-attr");
+    if (btnAdd) {
+        btnAdd.addEventListener("click", function () {
+            toggleAttributeForm(userId, attributes, modal);
+        });
+    }
 }
 
 /* INITIALIZATION */

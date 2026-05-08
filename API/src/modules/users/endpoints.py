@@ -659,7 +659,7 @@ def update_current_profile(data):
 @require_oauth_token
 @require_role(Role.ADMIN)
 @require_json(["attributes"])
-def add_user_attribute(target_user_id: int, data):
+def add_user_attribute(data, target_user_id: int):
     """Añade uno o más atributos a un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.
@@ -692,7 +692,7 @@ def add_user_attribute(target_user_id: int, data):
 
     try:
         added_attrs = USER_MANAGER.add_user_attributes(
-            target_user_id, attrs_to_add
+            user_id=target_user_id, attribute_names=attrs_to_add
         )
 
         _logger.info(f"Atributos {added_attrs} añadidos al usuario {target_user_id}")
@@ -707,7 +707,7 @@ def add_user_attribute(target_user_id: int, data):
 @require_oauth_token
 @require_role(Role.ADMIN)
 @require_json(["attributes"])
-def remove_user_attribute(target_user_id: int, data):
+def remove_user_attribute(data, target_user_id: int):
     """Elimina uno o más atributos de un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.
@@ -752,7 +752,7 @@ def remove_user_attribute(target_user_id: int, data):
 
     try:
         USER_MANAGER.remove_user_attributes(
-            target_user_id, attrs_to_remove
+            user_id=target_user_id, attribute_names=attrs_to_remove
         )
 
         _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")

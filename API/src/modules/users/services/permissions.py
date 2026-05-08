@@ -224,7 +224,7 @@ def require_oauth_token(f):
         except (MissingParameterError, MissingJsonBodyError):
             raise
         except Exception as exc:
-            _logger.error(f"Error durante la autenticación: {exc}")
+            _logger.exception("Error durante la autenticación")
             return jsonify({
                 "error": "server_error",
                 "error_description": "Authentication error",

@@ -208,7 +208,7 @@ def _register_error_handlers(app: Flask) -> None:
             "allowedMethods": list(error.valid_methods) if hasattr(error, "valid_methods") else [],
         }), 405
 
-    @app.errorhandler(429)
+    @app.errorhandler(429) # type: ignore
     def too_many_requests():
         _logger.warning("Rate limit superado: %s", request.remote_addr)
         return jsonify({
@@ -266,8 +266,8 @@ def _init_db() -> None:
         SQLAlchemy Error: Si falla la conexión o ejecución de SQL.
 
     Example:
-        >>> from run import create_app
-        >>> app = create_app(fresh_db_init=True)  # Crea DB limpia
+    >>> from run import create_app
+    >>> app = create_app(fresh_db_init=True)  # Crea DB limpia
     """
     db_creds = CR.get_db_credentials()
 
@@ -278,14 +278,11 @@ def _init_db() -> None:
     dialect = db_creds["dialect"]
     port = db_creds["port"]
 
-    # 1. Conexión a la base de datos 'postgres' por defecto para recrear 'SeQ'
     default_db_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/postgres"
     print(f"[*] Conectando a la base de datos por defecto para configurar '{dbname}'...")
-    # Es necesario AUTOCOMMIT para crear y eliminar bases de datos en PostgreSQL
     engine_postgres = create_engine(default_db_url, isolation_level="AUTOCOMMIT")
 
     with engine_postgres.connect() as conn:
-        # Cerrar conexiones activas de otros usuarios a la base de datos antes de eliminarla
         print(f"[*] Terminando conexiones activas a la base de datos '{dbname}'...")
         conn.execute(text(f"""
             SELECT pg_terminate_backend(pg_stat_activity.pid)
@@ -303,7 +300,6 @@ def _init_db() -> None:
 
     engine_postgres.dispose()
 
-    # 2. Conexión a la base de datos recién creada 'SeQ'
     database_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
     print(f"[*] Conectando a: {dialect}://{username}:***@{host}:{port}/{dbname}")
     engine = create_engine(database_url)
