@@ -7,7 +7,7 @@ Responsabilidades:
     — Crear documentos pendientes y lanzar el workflow de generación en thread
     — Persistir AegisContent (tips directamente en AegisTip con FK a AegisDocument)
     — Persistir AegisAlert en AegisDocumentAlert
-    — Exponer get_document, list_documents, delete_document, get_document_path y get_topics
+    — Exponer get_document, list_user_documents, delete_document, get_document_path y get_topics
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ class AegisManager:
         except Exception as exc:
             raise RuntimeError(f"Error eliminando documento: {exc}")
 
-    def list_documents(self) -> list[dict]:
+    def list_user_documents(self) -> list[dict]:
         """Lista todos los documentos del usuario, ordenados por fecha descendente."""
         return get_documents_by_user(self.user.id, limit=100, document_type="aegis") # type: ignore
 
