@@ -57,6 +57,8 @@ class ErrorCode(Enum):
     JSON_PARSING_ERROR = 1702
     VAULT_ERROR = 1703
 
+    DOCUMENT_NOT_FOUND = 1801
+
 
 class ErrorSeverity(Enum):
     LOW = "low"

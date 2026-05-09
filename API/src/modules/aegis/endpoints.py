@@ -83,12 +83,10 @@ from flask import Blueprint, jsonify, request, send_file, Response
 
 import src.modules.system.config_reading as CR
 from src.modules.shared import handle_exceptions
-from src.modules.shared._exceptions import (
-    MissingParameterError,
-    ValidationError,
-)
+from src.modules.shared._exceptions import ValidationError
 from src.modules.users.exceptions import UserNotFoundError
-from src.modules.shared._endpoints import _get_limiter
+from src.modules.shared._endpoints import _get_limiter, require_arg, require_json
+
 limiter = _get_limiter()
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, UserManager, get_current_user
@@ -123,21 +121,6 @@ USER_MANAGER = UserManager()
 # HELPERS INTERNOS
 # ============================================================================
 
-def _parse_doc_id(source: str = "args") -> int:
-    """Extrae y valida el parámetro 'id' desde query string o JSON body."""
-    raw = (
-        request.args.get("id")
-        if source == "args"
-        else (request.get_json(silent=True) or {}).get("id")
-    )
-    if not raw:
-        raise MissingParameterError("id")
-    try:
-        return int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValidationError(field="id", message="El ID debe ser un número entero", value=raw) from exc
-
-
 def _get_document_checked(manager, doc_id: int, user_id: int) -> dict:
     """
     Recupera un documento validando propiedad y estado.
@@ -169,8 +152,9 @@ def get_aegis_manager(user_id: int) -> AegisManager:
 @aegis_bp.post("/generate")
 @require_oauth_token
 @limiter.limit("10 per hour; 30 per day")
+@require_json(["topicId"])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
-def aegis_generate():
+def aegis_generate(data: dict):
     """Inicia la generación asíncrona de una píldora Aegis.
 
     Args (JSON body):
@@ -197,17 +181,7 @@ def aegis_generate():
         Este endpoint devuelve inmediatamente con un documentId.
         Usa /aegis/status?id=<documentId> para consultar el progreso.
     """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be a JSON object"}), 400
-
-    topic_id_raw = data.get("topicId")
-    if topic_id_raw is None:
-        raise MissingParameterError("topicId")
-
+    topic_id_raw = data["topicId"]
     try:
         topic_id = int(topic_id_raw)
     except (TypeError, ValueError) as exc:
@@ -218,7 +192,7 @@ def aegis_generate():
         raise ValidationError(field="tweaks", message="tweaks debe ser un objeto JSON", value=str(type(tweaks)))
 
     uid = get_current_user().id
-    mgr = get_aegis_manager(uid) # type: ignore
+    mgr = get_aegis_manager(uid)
     document_id = mgr.generate(topic_id=topic_id, tweaks=tweaks)
     _logger.info(f"Aegis generate lanzado — topicId={topic_id} documentId={document_id} user={get_current_user().username}")
     return jsonify({"message": "Generación Aegis iniciada", "documentId": document_id, "status": "pending"}), 202
@@ -229,16 +203,38 @@ def aegis_generate():
 @limiter.limit("120 per hour; 500 per day")
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_status():
-    doc_id = _parse_doc_id()
+    """Devuelve el estado de generación de un documento.
+
+    Args (query params):
+        id (int): ID del documento a consultar.
+
+    Returns:
+        200 — Estado del documento.
+            {
+                "id": 42,
+                "title": "Mi Documento",
+                "status": "done",
+                "format": "json",
+                "generatedAt": "2026-04-11T10:00:00",
+                "topicId": 1
+            }
+        400 — ID faltante o inválido.
+        404 — Documento no encontrado.
+
+    Example:
+        curl "https://api.example.com/aegis/status?id=42" \\
+             -H "Authorization: Bearer <token>"
+    """
+    doc_id = int(require_arg("id"))
     uid    = get_current_user().id
-    mgr    = get_aegis_manager(uid) # type: ignore
+    mgr    = get_aegis_manager(uid)
 
     doc_info = mgr.get_document(doc_id)
     if not doc_info or doc_info.get("userId") != uid:
         raise DocumentNotFoundError(doc_id)
 
-    if doc_info["status"] != "done": # type: ignore
-        raise DocumentNotReadyError(doc_id, doc_info["status"]) # type: ignore
+    if doc_info["status"] != "done":
+        raise DocumentNotReadyError(doc_id, doc_info["status"])
 
     return jsonify(doc_info), 200
 
@@ -263,7 +259,7 @@ def aegis_get_document():
         curl "https://api.example.com/aegis/document?id=42" \\
                 -H "Authorization: Bearer <token>"
     """
-    doc_id      = _parse_doc_id()
+    doc_id      = int(require_arg("id"))
     user        = get_current_user()
     uid         = user.id
     mgr         = get_aegis_manager(uid)
@@ -302,7 +298,7 @@ def aegis_download():
         curl "https://api.example.com/aegis/download?id=42" \\
                 -H "Authorization: Bearer <token>" -o document.json
     """
-    doc_id   = _parse_doc_id()
+    doc_id   = int(require_arg("id"))
     uid      = get_current_user().id
     mgr      = get_aegis_manager(uid)
 
@@ -328,12 +324,11 @@ def aegis_download():
 
 
 @aegis_bp.delete("/document")
-@require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
+@require_oauth_token
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_delete_document():
-    """
-    Elimina un documento Aegis (BD + archivo en disco).
+    """Elimina un documento Aegis (BD + archivo en disco).
 
     Args (query params):
         id (int): ID del documento a eliminar.
@@ -351,7 +346,7 @@ def aegis_delete_document():
         curl -X DELETE "https://api.example.com/aegis/document?id=42" \\
                 -H "Authorization: Bearer <token>"
     """
-    doc_id  = _parse_doc_id()
+    doc_id  = int(require_arg("id"))
     user    = get_current_user()
     mgr     = get_aegis_manager(user.id)
 
@@ -362,8 +357,8 @@ def aegis_delete_document():
 
 
 @aegis_bp.get("/documents")
-@require_oauth_token
 @limiter.limit("60 per hour; 300 per day")
+@require_oauth_token
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_list_documents():
     """Lista todos los documentos Aegis del usuario autenticado.
@@ -522,8 +517,9 @@ def list_export_formats():
 @aegis_bp.post("/export/<int:doc_id>")
 @require_oauth_token
 @limiter.limit("20 per hour; 100 per day")
+@require_json([])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
-def export_document(doc_id: int):
+def export_document(data: dict, doc_id: int):
     """Exporta un documento Aegis al formato solicitado.
 
     Args (path):
@@ -551,12 +547,8 @@ def export_document(doc_id: int):
              -H "Content-Type: application/json" \\
              -d '{"format": "md", "options": {"includeToc": true}}'
     """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type debe ser application/json"}), 400
-
-    body       = request.get_json(silent=True) or {}
-    format_str = body.get("format", "md")
-    options    = body.get("options", {})
+    format_str = data.get("format", "md")
+    options    = data.get("options", {})
 
     try:
         export_format = ExportFormat(format_str.lower())

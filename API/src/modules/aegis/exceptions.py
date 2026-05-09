@@ -54,7 +54,7 @@ class DocumentError(SecOpsException):
 
 
 class DocumentNotFoundError(DocumentError):
-    default_code = ErrorCode.REPORT_NOT_FOUND
+    default_code = ErrorCode.DOCUMENT_NOT_FOUND
     default_status_code = 404
     default_severity = ErrorSeverity.LOW
 
@@ -67,7 +67,7 @@ class DocumentNotFoundError(DocumentError):
 
 
 class DocumentNotReadyError(DocumentError):
-    default_code = ErrorCode.SCAN_NOT_FINISHED
+    default_code = ErrorCode.DOCUMENT_NOT_FOUND
     default_status_code = 409
 
     def __init__(self, doc_id: int, status: str):
