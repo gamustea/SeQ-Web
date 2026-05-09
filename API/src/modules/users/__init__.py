@@ -14,27 +14,26 @@ from .model import (
     User,
     AccessToken,
     RefreshToken,
+    UserAttribute,
 )
-from .permissions import require_oauth_token
-from .endpoints import oauth_bp, users_bp
+from .services import require_oauth_token, require_attributes, AttributeType
+from .endpoints import oauth_bp, users_bp, get_current_user
 from .managers import UserManager, OAuthTokenManager
 
 
 class _LazyLoader:
     _users_bp = None
     _oauth_bp = None
-    
+
     @property
     def users_bp(self):
         if self._users_bp is None:
-            from .endpoints import users_bp
             self._users_bp = users_bp
         return self._users_bp
-    
+
     @property
     def oauth_bp(self):
         if self._oauth_bp is None:
-            from .oauth_endpoints import oauth_bp
             self._oauth_bp = oauth_bp
         return self._oauth_bp
 
@@ -52,9 +51,13 @@ __all__ = [
     "User",
     "AccessToken",
     "RefreshToken",
+    "UserAttribute",
     "UserManager",
     "OAuthTokenManager",
     "users_bp",
     "oauth_bp",
     "require_oauth_token",
+    "require_attributes",
+    "AttributeType",
+    "get_current_user"
 ]

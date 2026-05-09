@@ -1,6 +1,7 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Type
 from datetime import datetime
 from enum import Enum
+from functools import wraps
 import traceback
 import sys
 
@@ -9,6 +10,7 @@ class ErrorCode(Enum):
     UNKNOWN_ERROR = 1000
     INTERNAL_SERVER_ERROR = 1001
     NOT_IMPLEMENTED = 1002
+    ILLEGAL_STATE_ERROR = 1003
 
     VALIDATION_ERROR = 1100
     INVALID_PORT_SPEC = 1101
@@ -31,6 +33,7 @@ class ErrorCode(Enum):
     SCAN_EXECUTION_ERROR = 1304
     SCAN_TIMEOUT = 1305
     MAX_CONCURRENT_SCANS = 1306
+    MAX_HOSTS_EXCEEDED = 1307
 
     REPORT_ERROR = 1400
     REPORT_GENERATION_ERROR = 1401
@@ -52,6 +55,9 @@ class ErrorCode(Enum):
     PARSING_ERROR = 1700
     XML_PARSING_ERROR = 1701
     JSON_PARSING_ERROR = 1702
+    VAULT_ERROR = 1703
+
+    DOCUMENT_NOT_FOUND = 1801
 
 
 class ErrorSeverity(Enum):
@@ -136,7 +142,41 @@ class SecOpsException(Exception):
         )
 
 
-from typing import Any, Optional
+class IllegalStateError(SecOpsException):
+    default_code = ErrorCode.ILLEGAL_STATE_ERROR
+    default_status_code = 409
+    default_severity = ErrorSeverity.MEDIUM
+
+    def __init__(
+        self,
+        message: str,
+        expected_state: Optional[str] = None,
+        current_state: Optional[str] = None,
+        **kwargs
+    ):
+        details = {}
+        if expected_state:
+            details["expected_state"] = expected_state
+        if current_state:
+            details["current_state"] = current_state
+
+        if "details" in kwargs:
+            details.update(kwargs.pop("details"))
+
+        if "user_message" not in kwargs:
+            if current_state and expected_state:
+                kwargs["user_message"] = (
+                    f"Estado inválido: se esperaba '{expected_state}' "
+                    f"pero se encontró '{current_state}'."
+                )
+            else:
+                kwargs["user_message"] = "Estado inválido en el sistema."
+
+        super().__init__(
+            message=message,
+            details=details,
+            **kwargs
+        )
 
 
 class ValidationError(SecOpsException):
@@ -187,7 +227,16 @@ class MissingParameterError(ValidationError):
         )
 
 
-from typing import Any, Optional
+class MissingJsonBodyError(SecOpsException):
+    default_code = ErrorCode.JSON_PARSING_ERROR
+    default_status_code = 400
+    default_severity = ErrorSeverity.LOW
+
+    def __init__(self, message: str = "Request body must be JSON"):
+        super().__init__(
+            message=message,
+            user_message="El cuerpo de la petición debe ser JSON válido."
+        )
 
 
 class DatabaseError(SecOpsException):
@@ -268,9 +317,6 @@ class JSONParsingError(ParsingError):
         )
 
 
-from typing import Any, Dict, Optional, Type
-
-
 class ExceptionHandler:
     @staticmethod
     def wrap_exception(
@@ -343,7 +389,40 @@ def handle_exceptions(
     logger=None,
     re_raise: bool = True
 ):
+    """
+    Decorador para manejo automático de excepciones en funciones/métodos.
+
+    Envuelve una función para capturar excepciones que no sean SecOpsException
+    y convertirlas automáticamente al formato de la aplicación.
+
+    Args:
+        default_exception: Clase de excepción SecOpsException a usar como base
+                          cuando se envuelve una excepción unknown. Por defecto
+                          SecOpsException.
+        logger: Logger opcional para registrar las excepciones envueltas.
+        re_raise: Si True, relanza la excepción envuelta. Si False, la retorna
+                  sin relanzar. Por defecto True.
+
+    Returns:
+        Función decorada con manejo automático de excepciones.
+
+    Example:
+    >>> from src.modules.shared import handle_exceptions
+    >>> from src.modules.sentinel.exceptions import ScanError
+    >>> import logging
+    >>> _logger = logging.getLogger(__name__)
+    >>>
+    >>> @handle_exceptions(default_exception=ScanError, logger=_logger)
+    ... def scan_operation(target):
+    ...     # código que puede lanzar excepciones
+    ...     pass
+
+    Note:
+        Las excepciones que ya heredan de SecOpsException se propagan directamente
+        sin conversión.
+    """
     def decorator(func):
+        @wraps(func)
         def wrapper(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
@@ -366,5 +445,18 @@ def create_error_response(
     exception: SecOpsException,
     include_debug_info: bool = False
 ) -> tuple[Dict[str, Any], int]:
-    error_dict = exception.to_dict(include_traceback=include_debug_info)
-    return error_dict, exception.status_code
+    response = {
+        "error": exception.__class__.__name__,
+        "error_description": exception.user_message,
+        "code": exception.code.value,
+    }
+
+    if include_debug_info:
+        response["technical_message"] = exception.message
+        response["traceback"] = exception.traceback
+        if exception.original_exception:
+            response["original_error"] = str(exception.original_exception)
+        if exception.details:
+            response["details"] = exception.details
+
+    return response, exception.status_code

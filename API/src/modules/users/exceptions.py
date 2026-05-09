@@ -28,6 +28,15 @@ class AuthorizationError(SecOpsException):
         super().__init__(message=message, **kwargs)
 
 
+class PermissionsError(AuthorizationError):
+    default_code = ErrorCode.AUTHORIZATION_ERROR
+
+    def __init__(self, message: str = "Permisos insuficientes", **kwargs):
+        if "user_message" not in kwargs:
+            kwargs["user_message"] = message
+        super().__init__(message=message, **kwargs)
+
+
 class InvalidCredentialsError(AuthenticationError):
     default_code = ErrorCode.INVALID_CREDENTIALS
 

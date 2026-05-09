@@ -12,6 +12,10 @@ from functools import wraps
 from pathlib import Path
 from dotenv import load_dotenv
 
+from typing import Optional
+
+from src.modules.shared._exceptions import IllegalStateError
+
 load_dotenv()
 
 # =============================================================================
@@ -30,10 +34,10 @@ class DirectoryType(Enum):
     TEMP            = "tempdir"
     LOG             = "logdir"
     RESOURCE        = "resourcedir"
-    
+
     STACK_AEGIS     = "aegis.stack"
     OUTPUT_AEGIS    = "aegis.output"
-    
+
     OUTPUT_SENTINEL = "sentinel.output"
 
 # =============================================================================
@@ -97,19 +101,20 @@ def get_ollama_config() -> tuple[str, str]:
     return host, model
 
 
-def get_oauth_config() -> tuple[float, float, str, str]:
+def get_oauth_config() -> tuple[float, float, Optional[str], Optional[str]]:
     """Solo variables de entorno."""
-    secret = os.getenv("JWT_SECRET_KEY")
-    algorithm = os.getenv("JWT_ALGORITHM")
-    access = os.getenv("ACCESS_TOKEN_EXPIRY_MINUTES")
-    refresh = os.getenv("REFRESH_TOKEN_EXPIRY_DAYS")
+    secret      = os.getenv("JWT_SECRET_KEY")
+    algorithm   = os.getenv("JWT_ALGORITHM")
+    access      = os.getenv("ACCESS_TOKEN_EXPIRY_MINUTES") or ""
+    refresh     = os.getenv("REFRESH_TOKEN_EXPIRY_DAYS") or ""
 
-    if all([secret, algorithm, access, refresh]):
-        return (float(access), float(refresh), secret, algorithm)
-
-    raise ValueError("Faltan variables de entorno para OAuth. "
+    if not all([secret, algorithm, access, refresh]):
+        raise ValueError("Faltan variables de entorno para OAuth. "
                 "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
                 "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS.")
+
+    return (float(access), float(refresh), secret, algorithm)
+
 
 
 def get_openvas_config() -> dict[str, str]:
@@ -120,9 +125,13 @@ def get_openvas_config() -> dict[str, str]:
     password = os.getenv("OPENVAS_PASSWORD")
 
     if all([hostname, port, user, password]):
-        return {"hostname": hostname, "port": port,
-                "username": user, "password": password}
-    
+        return {
+            "hostname": hostname,
+            "port": port,
+            "username": user,
+            "password": password
+        } # pyright: ignore[reportReturnType]
+
     raise ValueError("Faltan variables de entorno para OpenVAS. "
                 "Asegúrate de definir OPENVAS_HOST, OPENVAS_PORT, "
                 "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
@@ -134,6 +143,9 @@ def get_openvas_config() -> dict[str, str]:
 
 @_lazy_load
 def get_db_credentials() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     user = os.getenv("POSTGRES_USER")
     password = os.getenv("POSTGRES_PASSWORD")
     host = os.getenv("POSTGRES_HOST", "postgres")
@@ -174,6 +186,9 @@ def verify_directory(directory: DirectoryType) -> Path:
 
 @_lazy_load
 def get_directory_of(directory_type) -> str:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     dir_key = directory_type.value if hasattr(directory_type, 'value') else directory_type
 
     env_mapping = {
@@ -223,29 +238,44 @@ def get_directory_of(directory_type) -> str:
 
 @_lazy_load
 def get_aegis_config() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     return _configs.get("aegis", {})
 
 
 @_lazy_load
 def get_aegis_tips_amount() -> int:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     cfg = _configs.get("aegis", {})
     return int(cfg.get("tipsAmount", 7))
 
 
 @_lazy_load
 def get_aegis_vulnerabilities_antiquity() -> int:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     cfg = _configs.get("aegis", {})
     return int(cfg.get("vulnerabilitiesAntiquity", 5))
 
 
 @_lazy_load
 def get_aegis_brands() -> list[dict]:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     cfg = _configs.get("aegis", {})
     return list(cfg.get("brands", []))
 
 
 @_lazy_load
 def get_aegis_prompts() -> dict:
+    if _configs is None:
+        raise IllegalStateError(f"_configs encontrado como None")
+
     aegis = _configs.get("aegis", {})
     return aegis.get("prompts", {})
 
@@ -256,13 +286,19 @@ def get_aegis_prompts() -> dict:
 
 @_lazy_load
 def get_sentinel_config() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     return _configs.get("sentinel", {})
 
 
 @_lazy_load
 def get_prompts_config() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     sentinel = _configs.get("sentinel", {})
-    
+
     return {
         "nmap": sentinel.get("nmap", {}).get("prompts", {}),
         "nikto": sentinel.get("nikto", {}).get("prompts", {}),
@@ -278,15 +314,28 @@ def get_tool_prompts(tool: str) -> dict:
 
 @_lazy_load
 def get_tool_color_palette(tool: str) -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     sentinel = _configs.get("sentinel", {})
-    
+
     tool_key = tool
     if tool_key not in sentinel:
         return {}
-    
+
     tool_config = sentinel[tool_key]
     return tool_config.get("colorPalette", {})
 
+
+@_lazy_load
+def are_local_ips_allowed() -> bool:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como None")
+
+    sentinel = _configs.get("sentinel", {})
+    are_allowed = sentinel.get("areLocalIpsAllowed", None)
+
+    return False if are_allowed is None else are_allowed == "true"
 
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
@@ -295,6 +344,9 @@ def get_tool_color_palette(tool: str) -> dict:
 @_lazy_load
 def get_full_config() -> dict:
     """Devuelve toda la configuración."""
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
     return _configs.copy()
 
 
@@ -307,3 +359,12 @@ def save_full_config(new_config: dict) -> dict:
         json.dump(new_config, f, indent=2, ensure_ascii=False)
     _configs = new_config
     return new_config
+
+
+# =============================================================================
+# ENTORNO
+# =============================================================================
+
+def is_development() -> bool:
+    """Indica si la aplicación está en modo desarrollo."""
+    return os.environ.get("FLASK_ENV", "production") == "development"
