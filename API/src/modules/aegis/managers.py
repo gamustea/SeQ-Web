@@ -7,13 +7,12 @@ Responsabilidades:
     — Crear documentos pendientes y lanzar el workflow de generación en thread
     — Persistir AegisContent (tips directamente en AegisTip con FK a AegisDocument)
     — Persistir AegisAlert en AegisDocumentAlert
-    — Exponer get_document, list_documents, delete_document, get_document_path y get_topics
+    — Exponer get_document, list_user_documents, delete_document, get_document_path y get_topics
 """
 
 from __future__ import annotations
 
 import json
-import os
 import random
 import threading
 from datetime import date, datetime
@@ -21,15 +20,22 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from src.modules.aegis.exceptions import DocumentError
 import src.modules.system.config_reading as CR
 from src.modules.users import User
 from src.modules.system import SecOpsLogger
 from src.modules.infrastructure import UnitOfWork
+from src.modules.shared._documents import (
+    get_document_by_id,
+    get_documents_by_user,
+    get_document_path,
+    delete_document_file,
+    update_document_status,
+)
 
-from .model import AegisDocument, AegisDocumentAlert, AegisTip, Topic
-from .services import AegisAIWriter, AegisAlertFetcher, AlertSource
+from .model import AegisDocument, Topic
+from .services import AegisAIWriter, AegisAlertFetcher, AlertSource, AegisAlert, AegisContent
 from .repositories import AegisDocumentRepository
-from src.modules.shared._documents import validate_document_ownership
 
 
 class AegisManager:
@@ -46,7 +52,7 @@ class AegisManager:
     def __init__(self, user: User) -> None:
         self.user = user
         self.logger = SecOpsLogger(f"AegisManager[{user.id}]").get_logger()
-        self.alert_fetcher = AegisAlertFetcher(logger=self.logger)
+        self.alert_fetcher = AegisAlertFetcher(logger=self.logger) # type: ignore
 
     # =========================================================================
     # API PÚBLICA
@@ -78,8 +84,6 @@ class AegisManager:
             if not doc:
                 return None
 
-            validate_document_ownership(doc, self.user.id)
-
             result = {
                 "id": doc.id,
                 "internalName": doc.title,
@@ -100,7 +104,7 @@ class AegisManager:
                 "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
             }
 
-            if doc.status == "done":
+            if doc.status == "done": # type: ignore
                 result["pill"] = doc.pill_to_dict()
                 result["alerts"] = [a.to_dict() for a in sorted(doc.alerts, key=lambda a: a.position)]
 
@@ -108,69 +112,68 @@ class AegisManager:
 
     def get_document_path(self, document_id: int) -> Path:
         """Devuelve la ruta al archivo generado, validando propiedad y existencia."""
-        with UnitOfWork() as uow:
-            repo = AegisDocumentRepository(uow)
-            doc = repo.get_by_id(document_id)
-            if not doc:
-                raise ValueError(f"Documento {document_id} no existe o no pertenece al usuario")
+        assert_document_ownership(document_id, self.user.id)
 
-            validate_document_ownership(doc, self.user.id)
+        doc = get_document_by_id(document_id)
+        if not doc:
+            raise ValueError(f"Documento {document_id} no existe")
 
-            if not doc.filename:
-                raise ValueError(f"Documento {document_id} no tiene filename")
+        if not doc.filename:
+            raise ValueError(f"Documento {document_id} no tiene filename")
 
-            cfg = self._read_cfg()
-            path = cfg["output_dir"] / doc.filename
-            if not path.exists():
-                raise FileNotFoundError(f"Archivo no encontrado: {doc.filename}")
+        cfg = self._read_cfg()
+        path = cfg["output_dir"] / doc.filename
+        if not path.exists():
+            raise FileNotFoundError(f"Archivo no encontrado: {doc.filename}")
 
-            return path
+        return path
 
     def delete_document(self, document_id: int) -> None:
         """Elimina el documento de BD y el archivo en disco de forma atómica."""
-        with UnitOfWork() as uow:
-            repo = AegisDocumentRepository(uow)
-            doc = repo.get_by_id(document_id)
-            if not doc:
-                raise ValueError(f"Documento {document_id} no existe o no pertenece al usuario")
 
-            validate_document_ownership(doc, self.user.id)
+        cfg = self._read_cfg()
+        try:
+            delete_document_file(document_id, cfg["output_dir"], self.logger)
+        except Exception as exc:
+            raise RuntimeError(f"Error eliminando documento: {exc}")
 
-            cfg = self._read_cfg()
-            path = cfg["output_dir"] / doc.filename
-            try:
-                if path.exists():
-                    os.remove(path)
-                    self.logger.info(f"Archivo eliminado: {path}")
-                repo.delete(doc)
-                self.logger.info(f"Documento {document_id} eliminado de BD")
-            except Exception as exc:
-                raise RuntimeError(f"Error eliminando documento: {exc}")
-
-    def list_documents(self) -> list[dict]:
+    def list_user_documents(self) -> list[dict]:
         """Lista todos los documentos del usuario, ordenados por fecha descendente."""
-        with UnitOfWork() as uow:
-            repo = AegisDocumentRepository(uow)
-            docs = repo.get_documents_by_user(self.user.id, limit=100)
-            return [
-                {
-                    "id": d.id,
-                    "title": d.title,
-                    "filename": d.filename,
-                    "format": d.format,
-                    "status": d.status,
-                    "generatedAt": d.generated_at.isoformat() if d.generated_at else None,
-                    "topicId": d.topic_id,
-                }
-                for d in docs
-            ]
+        return get_documents_by_user(self.user.id, limit=100, document_type="aegis") # type: ignore
 
     def get_topics(self) -> list[dict]:
         """Devuelve todos los temas disponibles ordenados por título."""
         with UnitOfWork() as uow:
             repo = AegisDocumentRepository(uow)
+
             topics = repo.get_topics()
-            return [{"id": t.id, "title": t.title} for t in topics]
+        return [{"id": t.id, "title": t.title} for t in topics]
+
+    def assert_document_ownership(self, document_id: int) -> AegisDocument:
+        """
+        Checks whether the document with the given ID is owned by
+        the user with the given ID.
+
+        Args:
+            document_id: id of the document to check
+            user_id: id of the user that potentially can own the document
+
+        Returns:
+            True if the user with the given id owns \
+            the document with the given ID and false otherwise
+
+        Raises:
+            DocumentError if the document was not found
+        """
+        with UnitOfWork() as uow:
+            doc_repo = AegisDocumentRepository(uow)
+            doc = doc_repo.get_by_id(document_id)
+            if not doc:
+                raise DocumentError(f"Documento {document_id} no encontrado")
+            if doc.user_id != self.user.id: # type: ignore
+                raise DocumentError(f"Documento {document_id} no encontrado")
+
+        return doc
 
     # =========================================================================
     # WORKFLOW DE GENERACIÓN (privado)
@@ -351,7 +354,7 @@ class AegisManager:
             if not all_topics:
                 return None, False
 
-            return random.choice(all_topics), True
+        return random.choice(all_topics), True
 
     def _load_reference_stack(self, stack_dir: Path) -> str:
         """Carga los 3 archivos .md más recientes del directorio de referencias."""
@@ -389,7 +392,8 @@ class AegisManager:
         with UnitOfWork() as uow:
             repo = AegisDocumentRepository(uow)
             saved_doc = repo.save(doc)
-            return saved_doc.id
+
+        return saved_doc.id # type: ignore
 
     def _update_document_status(
         self,
@@ -400,14 +404,10 @@ class AegisManager:
         error: str | None = None,
     ) -> None:
         """Actualiza el estado del documento usando el repositorio."""
-        with UnitOfWork() as uow:
-            repo = AegisDocumentRepository(uow)
-            doc = repo.update_status(
-                doc_id=document_id,
-                status=status,
-                title=title,
-                filename=filename,
-                error=error,
-            )
-            if not doc:
-                self.logger.error(f"Documento {document_id} no encontrado para actualizar estado")
+        doc = get_document_by_id(document_id)
+        if not doc:
+            self.logger.error(f"Documento {document_id} no encontrado para actualizar estado")
+            return
+
+        set_generated_at = status == "done"
+        update_document_status(doc, status, title, filename, error, set_generated_at)

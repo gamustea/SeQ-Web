@@ -6,12 +6,12 @@ Provides typed data access for Scan, its polymorphic subtypes
 
 Classes:
     ScanRepository:                Repository for Scan and its polymorphic subtypes.
-    SentinelDocumentRepository:    Repository for SentinelDocument (PDF reports).
+    SentinelReportRepository:    Repository for SentinelDocument (PDF reports).
 
 Usage:
     with UnitOfWork() as uow:
         scan_repo = ScanRepository(uow)
-        doc_repo  = SentinelDocumentRepository(uow)
+        doc_repo  = SentinelReportRepository(uow)
 
         scan = scan_repo.get_by_id(42)
         docs = doc_repo.get_documents_by_user(user_id=1)
@@ -30,11 +30,15 @@ from typing import List, Optional
 from sqlalchemy.orm import joinedload
 
 from src.modules.sentinel.model import (
+    Host,
+    NiktoIncident,
     NiktoScan,
     NmapScan,
     OpenPort,
+    OpenVASVulnerability,
     OpenVASScan,
     OpenVASScanResult,
+    Port,
     Scan,
     ScanStatus,
     SentinelDocument,
@@ -200,16 +204,133 @@ class ScanRepository(BaseRepository[Scan]):
     # =========================================================================
 
     def update_status(self, scan: Scan, status: ScanStatus) -> Scan:
-        scan.status = status.value
+        scan.status = status.value # type: ignore
 
         terminal = {ScanStatus.FINISHED, ScanStatus.FAILED, ScanStatus.CANCELLED}
         if status in terminal and scan.finished_at is None:
-            scan.finished_at = datetime.utcnow()
+            scan.finished_at = datetime.utcnow() # type: ignore
 
         return self.update(scan)
 
+    def get_or_create_host(
+        self,
+        hostname: str,
+        ip_address: str,
+        mac_address: str = "",
+        vendor: str = ""
+    ) -> Host:
+        """Get or create a Host row using upsert to avoid race conditions."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-class SentinelDocumentRepository(BaseRepository[SentinelDocument]):
+        host = self._session.query(Host).filter(Host.hostname == hostname).first()
+        if host:
+            return host
+
+        stmt = pg_insert(Host).values(
+            hostname    = hostname,
+            ip_address  = ip_address,
+            mac_address = mac_address or "",
+            vendor      = vendor,
+        ).on_conflict_do_nothing(index_elements=["hostname"])
+
+        self._session.execute(stmt)
+        self._session.flush()
+
+        return self._session.query(Host).filter(Host.hostname == hostname).first()
+
+    def get_or_create_port(self, protocol: str) -> Port:
+        """Get or create a Port row by its protocol string."""
+        port = self._session.query(Port).filter(Port.protocol == protocol).one_or_none()
+        if port:
+            return port
+
+        new_port = Port(protocol=protocol)
+        self._session.add(new_port)
+        self._session.flush()
+        return new_port
+
+    def get_or_create_nikto_incident(self, inc_data: dict) -> NiktoIncident:
+        """Get or create a NiktoIncident row by its unique fields."""
+        existing = self._session.query(NiktoIncident).filter(
+            NiktoIncident.description == inc_data["description"],
+            NiktoIncident.url         == inc_data["url"],
+            NiktoIncident.method      == inc_data["method"],
+        ).first()
+
+        if existing:
+            return existing
+
+        incident = NiktoIncident(
+            description = inc_data["description"],
+            osvdb_id    = inc_data["osvdb_id"],
+            method      = inc_data["method"],
+            url         = inc_data["url"],
+            severity    = inc_data["severity"],
+        )
+        self._session.add(incident)
+        self._session.flush()
+        return incident
+
+    def get_or_create_vulnerability(self, vuln_data: dict) -> OpenVASVulnerability:
+        """Get or create an OpenVASVulnerability row by NVT OID."""
+        nvt_oid = vuln_data["nvt_oid"]
+        vuln = self._session.query(OpenVASVulnerability).filter(
+            OpenVASVulnerability.nvt_oid == nvt_oid
+        ).one_or_none()
+
+        if vuln:
+            return vuln
+
+        vuln = OpenVASVulnerability(**vuln_data)
+        self._session.add(vuln)
+        self._session.flush()
+        return vuln
+
+    def persist_nmap_results(self, scan, host, ports_data) -> None:
+        """Persist Nmap host and port data into the database."""
+        scan.host_id = host.id
+
+        for port_info in ports_data:
+            port = self.get_or_create_port(port_info["protocol"])
+            if port not in scan.target_ports:
+                scan.target_ports.append(port)
+
+            open_port = OpenPort(
+                nmap_scan_id = scan.id,
+                port_id      = port.id,
+                reason       = port_info["reason"],
+                product      = port_info["product"],
+                version      = port_info["version"],
+                given_use    = port_info["given_use"],
+            )
+            self._session.add(open_port)
+
+    def persist_nikto_results(self, scan, host, incidents_data) -> None:
+        """Persist Nikto incidents and associate a host."""
+        for inc_data in incidents_data:
+            incident = self.get_or_create_nikto_incident(inc_data)
+            if incident not in scan.incidents:
+                scan.incidents.append(incident)
+
+        scan.host = host
+
+    def persist_openvas_results(self, scan, results_data, vulnerability_map) -> None:
+        """Persist OpenVAS scan results."""
+        for result_data in results_data:
+            host = self.get_or_create_host(
+                hostname   = result_data["host_ip"],
+                ip_address = result_data["host_ip"],
+            )
+
+            scan_result = OpenVASScanResult(
+                openvas_scan_id  = scan.id,
+                vulnerability_id = vulnerability_map[result_data["nvt_oid"]].id,
+                host_id          = host.id,
+            )
+            self._session.add(scan_result)
+
+
+class SentinelReportRepository(BaseRepository[SentinelDocument]):
     """
     Repository for the SentinelDocument entity (PDF reports).
 
@@ -219,7 +340,7 @@ class SentinelDocumentRepository(BaseRepository[SentinelDocument]):
 
     Example:
     >>> with UnitOfWork() as uow:
-    ...     repo = SentinelDocumentRepository(uow)
+    ...     repo = SentinelReportRepository(uow)
     ...     doc  = repo.get_by_id(1)
     ...     repo.delete(doc)
     """
@@ -286,9 +407,9 @@ class SentinelDocumentRepository(BaseRepository[SentinelDocument]):
             return None
 
         from datetime import datetime as _dt
-        doc.status = status
+        doc.status = status # type: ignore
         if filename is not None:
-            doc.filename = filename
+            doc.filename = filename # type: ignore
         if status == "done":
-            doc.generated_at = _dt.utcnow()
+            doc.generated_at = _dt.utcnow() # type: ignore
         return doc

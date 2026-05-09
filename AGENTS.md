@@ -3,60 +3,56 @@
 ## Quick Start
 
 ```bash
-# Levantar infra (BD, Ollama, OpenVAS)
 docker compose --profile dev up -d
-
-# Arrancar API
-cd API && python run.py    # → http://0.0.0.0:5000
+cd API && python run.py
 ```
 
-## Ports (de docker-compose.yml)
+## Ports
 
-| Servicio | Puerto host | Nota |
+| Service | Port | Note |
 |---|---|---|
-| PostgreSQL | **15432** | No 5432 (verificar `.env`) |
-| OpenVAS | 9390 | tarda ~15min primera vez |
+| PostgreSQL | **15432** | Not 5432 |
+| OpenVAS | 9390 | ~15min first start |
 | Ollama | 11434 | |
 | API | 5000 | |
 
 ## Modules
 
-- `API/src/modules/sentinel/` — Nmap, Nikto, OpenVAS + informes PDF/IA
-- `API/src/modules/aegis/` — Píldoras de concienciación (Ollama)
-- `API/src/modules/acheron/` — Vault de secretos cifrados
+- `API/src/modules/sentinel/` — Nmap, Nikto, OpenVAS + PDF/IA reports
+- `API/src/modules/aegis/` — Awareness pills (Ollama)
+- `API/src/modules/acheron/` — Encrypted secret vault
 
-Entry point: `API/run.py`
+Entry: `API/run.py`
 
-## API Auth
+## Auth
 
-Todos los endpoints requieren:
 ```
 Authorization: Bearer <access_token>
 ```
 
-Obtener token: `POST /oauth/token` con `grantType: password`
-Renovar: `grantType: refresh_token`
+- Get token: `POST /oauth/token` with `{"grantType": "password", "username": "root", "password": "admin"}`
+- Refresh: `grantType: refresh_token`
 
-Test user: `root` / `admin`
-
-## Testing
+## Dev Commands
 
 ```bash
-cd API && pip install -r requirements.txt && pytest
+cd API && pytest
+cd API && flake8 .
+cd API && mypy .
+cd API && black --check .
 ```
 
-## Documentation Workflow
+## Documentation
 
-Push a `main` → genera docs Python en `docs/py/` → push a rama `docs` → GitHub Pages.
+Push to `main` → docs generated in `docs/py/` → push to `docs` branch → GitHub Pages.
 
-## Config Clave
+## Config
 
-- `API/.env` — conecta a `localhost:15432`
-- `API/SecOpsConfig.json` — prompts IA
-- `API/requirements.txt` — dependencias (incluye pytest, mypy, black, flake8)
+- `API/.env` — connects to `localhost:15432`
+- `API/SecOpsConfig.json` — AI prompts
 
-## Importante
+## Ignore & Security
 
-- `.env` contiene credenciales — no hacer commit
-- OpenVAS tarda ~15min en iniciar (descarga NVT feed)
-- `API/src/data/` está en `.gitignore` (outputs de escaneos)
+- `.env` has credentials — never commit
+- `API/src/data/` is gitignored
+- `API/.gitignore` excludes scan outputs

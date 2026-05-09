@@ -49,9 +49,8 @@ from reportlab.platypus import (
 
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
-from src.modules.sentinel.exceptions import PDFGenerationError
 
-from ..model import NmapScan, NiktoScan, OpenVASScan, Scan, Host, NiktoIncident
+from ..model import NmapScan, NiktoScan, Scan, Host
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
 
 
@@ -75,10 +74,10 @@ class ColorType(Enum):
 
 class ReportTheme:
     """PDF report theme configuration.
-    
+
     Manages styling for PDF reports including paragraph styles, table styles,
     and helper methods for creating report sections like headers, cards, and tables.
-    
+
     Attributes:
         palette: Dictionary mapping ColorType to hex color values.
         styles: Base styles from ReportLab.
@@ -91,7 +90,7 @@ class ReportTheme:
         footer: Footer style.
         kv_table_style: Key-value table style.
     """
-    
+
     def __init__(self, base_styles, palette):
         self.palette = palette
         self.styles = base_styles
@@ -200,11 +199,11 @@ class ReportTheme:
 
     def kv_table(self, data, col_widths):
         """Create a key-value style table.
-        
+
         Args:
             data: List of [key, value] pairs.
             col_widths: Column widths for the table.
-            
+
         Returns:
             Table with applied key-value style.
         """
@@ -214,11 +213,11 @@ class ReportTheme:
 
     def section_header(self, title_text: str, tag_text: str) -> list:
         """Create a section header with pill, title, and accent line.
-        
+
         Args:
             title_text: The main title text.
             tag_text: The pill/tag text to display.
-            
+
         Returns:
             List of flowable elements: [pill_wrapper, title_wrapper, divider_wrapper].
         """
@@ -261,7 +260,7 @@ class ReportTheme:
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
-        
+
         divider_wrapper = Table([[divider]], colWidths=[6 * inch])
         divider_wrapper.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -275,18 +274,18 @@ class ReportTheme:
 
     def card(self, inner_flowables, severity_color=None):
         """Create a card container with optional severity color band.
-        
+
         Args:
             inner_flowables: Content to put inside the card.
             severity_color: Optional color for the left severity band.
-            
+
         Returns:
             Table representing the card.
         """
-        white = colors.HexColor(self.palette[ColorType.WHITE]) 
+        white = colors.HexColor(self.palette[ColorType.WHITE])
         border = colors.HexColor("#DDDDDD")
         band_color = severity_color or colors.HexColor(self.palette[ColorType.MAIN])
-        
+
         band = Table([[""]], colWidths=[0.12 * inch])
         band.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), band_color),
@@ -318,12 +317,12 @@ class ReportTheme:
 
     def severity_header_table(self, left_text: str, right_text: str, bg_color) -> Table:
         """Create a severity header table with left and right text.
-        
+
         Args:
             left_text: Text for the left side.
             right_text: Text for the right side.
             bg_color: Background color for the header.
-            
+
         Returns:
             Table with severity header styling.
         """
@@ -388,7 +387,7 @@ class ReportTheme:
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
-        
+
         divider_wrapper = Table([[divider]], colWidths=[6 * inch])
         divider_wrapper.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -405,10 +404,10 @@ class ReportTheme:
         Envuelve un bloque (vuln/incidente) en una 'card' con borde, padding
         y banda de color opcional a la izquierda.
         """
-        white = colors.HexColor(self.palette[ColorType.WHITE]) 
+        white = colors.HexColor(self.palette[ColorType.WHITE])
         border = colors.HexColor("#DDDDDD")
         band_color = severity_color or colors.HexColor(self.palette[ColorType.MAIN])
-        
+
         # banda vertical + contenido
         band = Table([[""]], colWidths=[0.12 * inch])
         band.setStyle(TableStyle([
@@ -458,10 +457,10 @@ class ReportTheme:
 
 class _PrintingStrategy(ABC):
     """Abstract base class for printing strategies.
-    
+
     Defines the interface for generating PDF report content from scan data.
     Each subclass implements type-specific report generation.
-    
+
     Attributes:
         scan: The scan object to generate report from.
         writer: AI writer instance for analysis generation.
@@ -480,38 +479,38 @@ class _PrintingStrategy(ABC):
         """Append AI-generated security analysis to the report."""
         scan_type = type(self.scan).__name__
         self.logger.info(f"[IA] Iniciando para scan {self.scan.id} ({scan_type})")
-        
+
         prompts = CR.get_prompts_config()
         tool_key = {'NmapScan': 'nmap', 'NiktoScan': 'nikto', 'OpenVASScan': 'openvas'}.get(scan_type, 'nmap')
         tool_prompts = prompts.get(tool_key, {})
-        
+
         if not tool_prompts.get('system'):
             self.logger.error(f"[IA] Prompt 'system' no encontrado para {tool_key}")
             elements.append(PageBreak())
             elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
             elements.append(Paragraph("Error: Configuración IA no encontrada", theme.body))
             return
-        
+
         if not tool_prompts.get('userTemplate'):
             self.logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
-        
+
         try:
             ai_analysis = self.writer.generate(self.scan)
         except Exception as e:
             self.logger.error(f"[IA] Excepción: {e}", exc_info=True)
             ai_analysis = {}
-        
+
         if not ai_analysis:
             self.logger.warning(f"[IA] Respuesta vacía para scan {self.scan.id}")
             elements.append(PageBreak())
             elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
             elements.append(Paragraph("No se pudo generar análisis IA", theme.body))
             return
-        
+
         self.logger.info(f"[IA] OK - keys: {list(ai_analysis.keys())}")
-        
+
         elements.append(PageBreak())
-        
+
         elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
         elements.append(Spacer(1, 0.15 * inch))
 
@@ -524,9 +523,9 @@ class _PrintingStrategy(ABC):
             "BAJO": colors.HexColor("#388e3c"),
             "INFORMATIVO": colors.HexColor("#1976d2"),
         }
-        
+
         risk_color = risk_colors.get(risk.upper(), colors.HexColor("#757575"))
-        
+
         risk_para = Paragraph(f"NIVEL DE RIESGO: {risk.upper()}", theme.pill)
         risk_table = Table([[risk_para]], colWidths=[2 * inch])
         risk_table.setStyle(TableStyle([
@@ -537,7 +536,7 @@ class _PrintingStrategy(ABC):
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ("BOX", (0, 0), (-1, -1), 0.5, risk_color),
         ]))
-        
+
         risk_wrapper = Table([[risk_table]], colWidths=[6 * inch])
         risk_wrapper.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -588,7 +587,7 @@ class _PrintingStrategy(ABC):
                 if remediation:
                     rec_flowables.append(Spacer(1, 0.05 * inch))
                     rec_flowables.append(Paragraph(f"<b>Acción:</b> {remediation}", theme.body))
-                    
+
                 elements.append(theme.card(rec_flowables, severity_color=pri_color))
                 elements.append(Spacer(1, 0.1 * inch))
 
@@ -600,13 +599,13 @@ class _PrintingStrategy(ABC):
             elements.append(Paragraph(conclusions, theme.body))
 
         disclaimer_text = """
-        <b>Nota:</b> El contenido de esta sección ha sido generado mediante 
-        inteligencia artificial y se basa en el análisis automático de los datos del escaneo. 
-        Si bien se ha diseñado para proporcionar una evaluación de seguridad objetiva, los 
+        <b>Nota:</b> El contenido de esta sección ha sido generado mediante
+        inteligencia artificial y se basa en el análisis automático de los datos del escaneo.
+        Si bien se ha diseñado para proporcionar una evaluación de seguridad objetiva, los
         resultados deben ser interpretados por un profesional cualificado, pues Sentinel no cuenta
-        con todo el contexto en el que se encuentran los hosts escaneados. SeQ no garantiza 
+        con todo el contexto en el que se encuentran los hosts escaneados. SeQ no garantiza
         la exactitud, completitud o aplicabilidad de las recomendaciones generadas. Este análisis con
-        inteligencia artificial no sustituye —sino complementa— una auditoría de seguridad manual o la evaluación 
+        inteligencia artificial no sustituye —sino complementa— una auditoría de seguridad manual o la evaluación
         detallada por parte de un experto en ciberseguridad.
         """
         disclaimer_style = ParagraphStyle(
@@ -625,52 +624,48 @@ class _PrintingStrategy(ABC):
     @abstractmethod
     def append_body(self, theme: ReportTheme, elements: list, ai_report: bool = False) -> None:
         """Add the report body specific to each scan tool.
-        
+
         Args:
             theme: Report theme for styling.
             elements: List of flowable elements to append to.
             ai_report: Whether to include AI-generated analysis.
         """
-        ...
 
     @abstractmethod
     def get_filename_suffix(self) -> str:
         """Get the PDF filename suffix for this scan type.
-        
+
         Returns:
             Filename suffix string (e.g., "_Nmap.pdf").
         """
-        ...
 
     @abstractmethod
     def get_picture_name(self, dark: bool = True) -> str:
         """Get the logo image name for this scan type.
-        
+
         Args:
             dark: Whether to use dark variant of logo.
-            
+
         Returns:
             Logo image filename.
         """
-        ...
 
     @abstractmethod
     def get_report_title(self) -> str:
         """Get the report title for the cover page.
-        
+
         Returns:
             Report title string.
         """
-        ...
 
 
 class PDFCreator:
     """PDF document generator for security scan reports.
-    
+
     Coordinates the creation of PDF reports using printing strategies
     for different scan types. Handles cover page, content, consent page,
     and footer generation.
-    
+
     Attributes:
         config_reader: Configuration reader for directory paths.
         directory: Output directory for PDF files.
@@ -686,7 +681,7 @@ class PDFCreator:
 
     def _set_pdf_metadata(self, doc) -> None:
         """Set PDF document metadata.
-        
+
         Args:
             doc: SimpleDocTemplate instance.
         """
@@ -700,7 +695,7 @@ class PDFCreator:
 
     def _on_page(self, canv, doc):
         """Callback for rendering page elements (header, footer, sidebar).
-        
+
         Args:
             canv: Canvas instance.
             doc: Document instance.
@@ -741,7 +736,7 @@ class PDFCreator:
         date: Optional[datetime] = None,
     ) -> None:
         """Append cover page to the document.
-        
+
         Args:
             elements: List of flowable elements.
             theme: Report theme for styling.
@@ -838,13 +833,13 @@ class PDFCreator:
 
     def append_logo(self, elements: list, is_cover: bool = False) -> None:
         """Append logo image to the document.
-        
+
         Args:
             elements: List of flowable elements.
             is_cover: Whether this is for the cover page (larger logo).
         """
 
-        
+
         directory_type = CR.DirectoryType.RESOURCE
         resource_directory = CR.get_directory_of(directory_type)
         picture_name = self.printing_strategy.get_picture_name()
@@ -867,7 +862,7 @@ class PDFCreator:
 
     def append_consent(self, elements: list, theme: ReportTheme) -> None:
         """Append consent declaration page to the document.
-        
+
         Args:
             elements: List of flowable elements.
             theme: Report theme for styling.
@@ -931,7 +926,7 @@ class PDFCreator:
 
     def append_footer(self, elements: list, theme: ReportTheme) -> None:
         """Append footer text to the document.
-        
+
         Args:
             elements: List of flowable elements.
             theme: Report theme for styling.
@@ -941,16 +936,16 @@ class PDFCreator:
         elements.append(Spacer(1, 0.2 * inch))
         elements.append(Paragraph(footer_text, theme.footer))
 
-    def print_pdf(self, 
-        ai_report: bool = False, 
+    def print_pdf(self,
+        ai_report: bool = False,
         client_name: Optional[str] = None
     ) -> str:
         """Generate the complete PDF report.
-        
+
         Args:
             ai_report: Whether to include AI-generated analysis.
             client_name: Optional client name for the cover page.
-            
+
         Returns:
             Path to the generated PDF file.
         """
@@ -995,12 +990,12 @@ class PDFCreator:
 
 class NmapPrintingStrategy(_PrintingStrategy):
     """Printing strategy for Nmap scan reports.
-    
+
     Generates PDF reports for Nmap network scans including host information,
     open ports table, and optional AI-powered security analysis.
-    
+
     Color palette: Blue theme for network security reports.
-    
+
     Attributes:
         writer: NmapAIWriter instance for AI analysis.
         color_palette: Blue color palette for the report.
@@ -1008,15 +1003,15 @@ class NmapPrintingStrategy(_PrintingStrategy):
 
     def __init__(self, scan: NmapScan) -> None:
         """Initialize Nmap printing strategy.
-        
+
         Args:
             scan: NmapScan instance to generate report from.
         """
         super().__init__(scan)
         self.writer = NmapAIWriter()
-        
+
         palette_config = CR.get_tool_color_palette(SentinelTool.NMAP)
-        
+
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#121212"),
             ColorType.DARK: palette_config.get("dark", "#01375A"),
@@ -1028,7 +1023,7 @@ class NmapPrintingStrategy(_PrintingStrategy):
 
     def append_body(self, theme: ReportTheme, elements: list, ai_report: bool = False) -> None:
         """Generate the report body for Nmap scans.
-        
+
         Args:
             theme: Report theme for styling.
             elements: List of flowable elements to append to.
@@ -1127,7 +1122,7 @@ class NmapPrintingStrategy(_PrintingStrategy):
 
     def get_filename_suffix(self) -> str:
         """Get the PDF filename suffix.
-        
+
         Returns:
             Filename suffix: "_Nmap.pdf"
         """
@@ -1135,10 +1130,10 @@ class NmapPrintingStrategy(_PrintingStrategy):
 
     def get_picture_name(self, dark: bool = False) -> str:
         """Get the logo image name for Nmap reports.
-        
+
         Args:
             dark: Whether to use dark variant.
-            
+
         Returns:
             Logo filename.
         """
@@ -1147,7 +1142,7 @@ class NmapPrintingStrategy(_PrintingStrategy):
 
     def get_report_title(self) -> str:
         """Get the report title for the cover page.
-        
+
         Returns:
             Report title: "Análisis de Seguridad de Red"
         """
@@ -1156,27 +1151,27 @@ class NmapPrintingStrategy(_PrintingStrategy):
 
 class OpenVASPrintingStrategy(_PrintingStrategy):
     """Printing strategy for OpenVAS vulnerability scan reports.
-    
+
     Generates PDF reports for OpenVAS scans including vulnerability summary,
     detailed vulnerability cards with CVSS scores, and optional AI analysis.
-    
+
     Color palette: Green theme for vulnerability management reports.
-    
+
     Attributes:
         color_palette: Green color palette for the report.
     """
 
     def __init__(self, scan) -> None:
         """Initialize OpenVAS printing strategy.
-        
+
         Args:
             scan: OpenVASScan instance to generate report from.
         """
         super().__init__(scan)
         self.writer = OpenVASAIWriter()
-        
+
         palette_config = CR_UTILS.get_tool_color_palette(SentinelTool.OPENVAS)
-        
+
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#0D2818"),
             ColorType.DARK: palette_config.get("dark", "#1B5E20"),
@@ -1188,7 +1183,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
 
     def append_body(self, theme: "ReportTheme", elements: list, ai_report: bool = False) -> None:
         """Generate the report body for OpenVAS scans.
-        
+
         Args:
             theme: Report theme for styling.
             elements: List of flowable elements to append to.
@@ -1483,7 +1478,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
 
     def get_filename_suffix(self) -> str:
         """Get the PDF filename suffix.
-        
+
         Returns:
             Filename suffix: "_OpenVAS.pdf"
         """
@@ -1491,10 +1486,10 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
 
     def get_picture_name(self, dark: bool = False) -> str:
         """Get the logo image name for OpenVAS reports.
-        
+
         Args:
             dark: Whether to use dark variant.
-            
+
         Returns:
             Logo filename.
         """
@@ -1503,7 +1498,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
 
     def get_report_title(self) -> str:
         """Get the report title for the cover page.
-        
+
         Returns:
             Report title: "Análisis de Vulnerabilidades OpenVAS"
         """
@@ -1512,12 +1507,12 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
 
 class NiktoPrintingStrategy(_PrintingStrategy):
     """Printing strategy for Nikto web vulnerability scan reports.
-    
+
     Generates PDF reports for Nikto scans including incident summary,
     detailed security incident cards, and optional AI analysis.
-    
+
     Color palette: Orange/Salmon theme for web security reports.
-    
+
     Attributes:
         writer: NiktoAIWriter instance for AI analysis.
         color_palette: Orange color palette for the report.
@@ -1525,15 +1520,15 @@ class NiktoPrintingStrategy(_PrintingStrategy):
 
     def __init__(self, scan: NiktoScan) -> None:
         """Initialize Nikto printing strategy.
-        
+
         Args:
             scan: NiktoScan instance to generate report from.
         """
         super().__init__(scan)
         self.writer = NiktoAIWriter()
-        
+
         palette_config = CR.get_tool_color_palette(SentinelTool.NIKTO)
-        
+
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#4B2500"),
             ColorType.DARK: palette_config.get("dark", "#8E3D0A"),

@@ -51,28 +51,30 @@ curl -X PUT https://api.example.com/users/change-password \
 ────────────────────────────────────────────────────────────────────────────────
 """
 
+from typing import Any
+
 from flask import Blueprint, jsonify, request
-from contextlib import contextmanager
-from werkzeug.exceptions import BadRequest
 
 from src.modules.shared._exceptions import (
+    handle_exceptions,
     DatabaseError,
     MissingParameterError,
-    ExceptionHandler,
-    create_error_response,
+    IllegalStateError,
 )
-from src.modules.users.exceptions import (
+from src.modules.system.logging import SecOpsLogger
+from src.modules.shared._endpoints import _get_limiter, require_json
+limiter = _get_limiter()
+from .services import Role, require_attributes, require_oauth_token, require_role
+from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
+from .exceptions import (
     ExistingUserError,
     InvalidCredentialsError,
     UserBindingError,
     ProfileUpdateError,
+    AuthorizationError,
+    PermissionsError
 )
-from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token
-from src.modules.shared import limiter
-from src.modules.shared._endpoints import get_current_user_id, get_current_username
-
-from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
+from .model import User
 
 
 oauth_bp = Blueprint("oauth", __name__)
@@ -84,19 +86,7 @@ USER_MANAGER = UserManager()
 OAUTH_MANAGER = OAuthTokenManager()
 
 
-def require_json():
-    """
-    Devuelve el body JSON o una respuesta de error 400 si el Content-Type
-    no es application/json o el body está vacío.
-    """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
-
-def _require_field(data: dict, field: str) -> str:
+def _require_field(data: dict[str, Any], field: str) -> str:
     """Extrae un campo requerido del body o lanza MissingParameterError."""
     value = data.get(field)
     if not value:
@@ -104,80 +94,40 @@ def _require_field(data: dict, field: str) -> str:
     return value
 
 
+# =========================================================================
+# HELPERS
+# =========================================================================
 
-@users_bp.post("/sign-up")
-@limiter.limit("10 per hour; 20 per day")
-def sign_up_user():
-    """Registra un nuevo Usuario vinculándolo a una Persona existente.
+def get_current_user() -> "User":
+    """
+    Get the current authenticated user object from the database.
 
-    Args (JSON body):
-        username    (str): Nombre de usuario único.
-        first_name  (str): Nombre real del usuario.
-        last_name   (str): Apellido del usuario.
-        password    (str): Contraseña del usuario.
-        email       (str): Correo electrónico válido.
+    Uses request-level caching to avoid repeated database queries.
 
     Returns:
-        201 — Usuario creado exitosamente.
-            {
-                "message": "Usuario registrado exitosamente",
-                "userId": 1,
-                "username": "johnd",
-                "email": "john@example.com"
-            }
-        400 — Error de validación (campos faltantes o inválidos).
-        409 — El username o email ya existe.
+        User: The fully-loaded User object with all attributes.
 
-    Example:
-        curl -X POST https://api.example.com/users/sign-up \\
-            -H "Content-Type: application/json" \\
-            -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd"}'
+    Raises:
+        AttributeError: If no user is authenticated (token not parsed).
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
+    if not hasattr(request, 'current_user'):
+        user_id = request.current_user_id # type: ignore
+        user = UserManager().get_user_by_id(user_id)
+        if user is None:
+            raise IllegalStateError("'user' detectado como None")
 
-    try:
-        username    = _require_field(data, "username")
-        email       = _require_field(data, "email")
-        first_name  = _require_field(data, "first_name")
-        last_name   = _require_field(data, "last_name")
-        password    = _require_field(data, "password")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
+    return user
 
-    try:
-        user = USER_MANAGER.sign_in_user(
-            username = username,
-            email = email,
-            first_name = first_name,
-            last_name = last_name,
-            password = password
-        )
-        _logger.info(f"Usuario registrado: {username} (ID: {user.id})")
-        return jsonify({
-            "message":  "Usuario registrado exitosamente",
-            "userId":   user.id,
-            "username": user.username,
-            "email":    email,
-        }), 201
-
-    except DatabaseError as exc:
-        return jsonify({"code": exc.status_code, "message": "Revisa tus credenciales e inténtalo de nuevo."}), exc.status_code
-    except (MissingParameterError, ExistingUserError, UserBindingError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en sign-up: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+# =========================================================================
+# SELF-APPLIED ENDPOINTS
+# =========================================================================
 
 
 @users_bp.post("/check-credentials")
 @limiter.limit("10 per minute; 30 per hour")
-def check_credentials():
+@require_json(["username", "password"])
+@handle_exceptions(default_exception=InvalidCredentialsError, logger=_logger)
+def check_credentials(data: dict[str, Any]):
     """Valida credenciales de usuario (endpoint legacy).
 
     En producción, usar /oauth/token para autenticación OAuth2.
@@ -201,39 +151,23 @@ def check_credentials():
                 -H "Content-Type: application/json" \\
                 -d '{"username": "johnd", "password": "password123"}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
+    username = data["username"]
+    password = data["password"]
 
-    try:
-        username = _require_field(data, "username")
-        password = _require_field(data, "password")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
+    is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
+    if not is_valid:
+        raise InvalidCredentialsError()
 
-    try:
-        is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
-        if not is_valid:
-            raise InvalidCredentialsError()
-
-        _logger.info(f"Credenciales válidas para: {username} (ID: {user_id})")
-        return jsonify({"message": "Credenciales válidas", "isValid": True, "userId": user_id, "username": username}), 200
-
-    except (MissingParameterError, InvalidCredentialsError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en check-credentials: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    _logger.info(f"Credenciales válidas para: {username} (ID: {user_id})")
+    return jsonify({"message": "Credenciales válidas", "isValid": True, "userId": user_id, "username": username}), 200
 
 
 @users_bp.put("/change-password")
 @require_oauth_token
 @limiter.limit("5 per hour; 10 per day")
-def change_password():
+@require_json(required_fields=["newPassword"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+def change_password(data: dict[str, Any]):
     """Cambia la contraseña del usuario autenticado e invalida todos sus tokens.
 
     Args (JSON body):
@@ -258,52 +192,37 @@ def change_password():
              -H "Content-Type: application/json" \\
              -d '{"newPassword": "newpassword123"}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
 
-    try:
-        new_password = _require_field(data, "newPassword")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
+    new_password = data["newPassword"]
 
-    try:
-        user_id  = get_current_user_id()
-        username = get_current_username()
+    user = get_current_user()
+    user_id  = user.id
+    username = user.username
 
-        USER_MANAGER.update_user_password(user_id, new_password)
-        OAUTH_MANAGER.revoke_all_user_tokens(user_id)
+    USER_MANAGER.update_user_password(user_id, new_password) # type: ignore
+    OAUTH_MANAGER.revoke_all_user_tokens(user_id) # type: ignore
 
-        _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
-        return jsonify({
-            "message":  "Contraseña cambiada exitosamente. Por favor, inicia sesión de nuevo.",
-            "userId":   user_id,
-            "username": username,
-        }), 200
-
-    except (MissingParameterError, InvalidCredentialsError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en change-password: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
+    return jsonify({
+        "message":  "Contraseña cambiada exitosamente. Por favor, inicia sesión de nuevo.",
+        "userId":   user_id,
+        "username": username,
+    }), 200
 
 
 @oauth_bp.post("/token")
 @limiter.limit("20 per hour; 100 per day")
-def oauth_token():
+@require_json(["grantType"])
+def oauth_token(data: dict[str, Any]):
     """Emite tokens OAuth 2.0.
 
     Args (JSON body):
         grantType (str): "password" o "refresh_token"
-        
+
         Para password grant:
             username (str): Nombre de usuario
             password (str): Contraseña
-            
+
         Para refresh_token grant:
             refresh_token (str): Token de renovación
 
@@ -335,10 +254,6 @@ def oauth_token():
              -H "Content-Type: application/json" \\
              -d '{"grantType": "refresh_token", "refresh_token": "eyJ..."}'
     """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-
-    data = request.get_json(silent=True) or {}
     grant_type = data.get("grantType")
 
     if grant_type == "password":
@@ -346,16 +261,33 @@ def oauth_token():
         password = data.get("password")
 
         if not username or not password:
-            return jsonify({"error": "invalid_request", "error_description": "username and password are required"}), 400
+            return jsonify(
+                {
+                    "error": "invalid_request",
+                    "error_description": f"username and password are required for grant type {grant_type}"
+                }
+            ), 400
 
         is_valid, uid = UserManager().verify_credentials(username, password)
 
-        if not is_valid:
+        if not is_valid or uid is None:
             _logger.warning(f"Login fallido para: {username}")
-            return jsonify({"error": "invalid_grant", "error_description": "Invalid username or password"}), 401
+            return jsonify(
+                {
+                    "error": "invalid_grant",
+                    "error_description":
+                    "Invalid username or password"
+                }
+            ), 401
 
-        access_token  = OAUTH_MANAGER.create_access_token(uid, username)   # type: ignore[arg-type]
+        user = USER_MANAGER.get_user_by_id(uid)
+        access_token  = OAUTH_MANAGER.create_access_token(
+            user_id     = uid,
+            username    = username,
+            role        = user.role if user else "role_user" # type: ignore
+        )   # type: ignore[arg-type]
         refresh_token = OAUTH_MANAGER.create_refresh_token(uid)            # type: ignore[arg-type]
+        user_attrs = USER_MANAGER.get_user_attributes(uid)
 
         _logger.info(f"Tokens emitidos para: {username}")
         return jsonify({
@@ -363,6 +295,8 @@ def oauth_token():
             "token_type":    "Bearer",
             "expires_in":    ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             "refresh_token": refresh_token,
+            "role":         user.role if user else "role_user",
+            "attributes":   user_attrs,
         }), 200
 
     if grant_type == "refresh_token":
@@ -381,13 +315,16 @@ def oauth_token():
         if not user:
             return jsonify({"error": "invalid_grant", "error_description": "User not found"}), 401
 
-        access_token = OAUTH_MANAGER.create_access_token(uid, user.username)  # type: ignore[arg-type]
+        access_token = OAUTH_MANAGER.create_access_token(uid, user.username, user.role)  # type: ignore[arg-type]
+        user_attrs = USER_MANAGER.get_user_attributes(uid)
 
         _logger.info(f"Access token renovado para usuario ID: {uid}")
         return jsonify({
             "access_token": access_token,
             "token_type":   "Bearer",
             "expires_in":   ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "role":      user.role,
+            "attributes":  user_attrs,
         }), 200
 
     return jsonify({"error": "unsupported_grant_type", "error_description": "Supported: password, refresh_token"}), 400
@@ -410,7 +347,7 @@ def oauth_revoke():
     """
     token = request.headers["Authorization"].split()[1]
     OAUTH_MANAGER.revoke_access_token(token)
-    _logger.info(f"Token revocado para: {get_current_username()}")
+    _logger.info(f"Token revocado para: {get_current_user().username}")
     return jsonify({"message": "Token revoked successfully"}), 200
 
 
@@ -433,15 +370,15 @@ def oauth_revoke_all():
     curl -X POST https://api.example.com/oauth/revoke-all \\
     -H "Authorization: Bearer <token>"
     """
-    uid = get_current_user_id()
-    OAUTH_MANAGER.revoke_all_user_tokens(uid)
-    _logger.info(f"Todos los tokens revocados para usuario ID: {uid}")
+    user = get_current_user()
+    OAUTH_MANAGER.revoke_all_user_tokens(user.id) # type: ignore
     return jsonify({"message": "All tokens revoked successfully"}), 200
 
 
 @users_bp.get("/me")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def get_current_profile():
     """Obtiene el perfil del usuario autenticado.
 
@@ -460,35 +397,155 @@ def get_current_profile():
     curl -X GET https://api.example.com/users/me \\
     -H "Authorization: Bearer <token>"
     """
-    try:
-        user_id = get_current_user_id()
-        username = get_current_username()
+    user = get_current_user()
 
-        user = USER_MANAGER.get_user_by_id(user_id)
+    return jsonify({
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": user.role,
+        "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
+    }), 200
 
-        if not user:
-            return jsonify({"error": "user_not_found", "error_description": "Usuario no encontrado"}), 404
 
-        return jsonify({
+# =========================================================================
+# USER managing ENDPOINTS (require role_admin or role_root)
+# =========================================================================
+
+@users_bp.post("/sign-up")
+@limiter.limit("10 per hour; 20 per day")
+@require_oauth_token
+@require_role(Role.ADMIN)
+@require_json(["username", "email", "first_name", "last_name", "password"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+def sign_up_user(data: dict[str, Any]):
+    """Registra un nuevo usuario.
+
+    Solo usuarios con role_root o role_admin pueden crear nuevos usuarios.
+
+    Args (JSON body):
+        username    (str): Nombre de usuario único.
+        first_name  (str): Nombre real del usuario.
+        last_name   (str): Apellido del usuario.
+        password    (str): Contraseña del usuario.
+        email       (str): Correo electrónico válido.
+
+    Returns:
+        201 — Usuario creado exitosamente.
+            {
+                "message": "Usuario registrado exitosamente",
+                "userId": 1,
+                "username": "johnd",
+                "email": "john@example.com"
+            }
+        400 — Error de validación (campos faltantes o inválidos).
+        409 — El username o email ya existe.
+
+    Example:
+        curl -X POST https://api.example.com/users/sign-up \
+            -H "Content-Type: application/json" \
+            -d '{"username": "johnd", "password": "secure123", "email": "john@example.com", "alias": "johnd", "role": "role_user"}'
+    """
+    username        = data["username"]
+    email           = data["email"]
+    first_name      = data["first_name"]
+    last_name       = data["last_name"]
+    password        = data["password"]
+
+    requested_role = data.get("role") or "role_user"
+    current_user_id = get_current_user().id
+
+    user = USER_MANAGER.sign_in_user(
+        username = username,
+        email = email,
+        first_name = first_name,
+        last_name = last_name,
+        password = password,
+        role = requested_role,
+        actor_id = current_user_id
+    )
+    _logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
+    return jsonify({
+        "message":  "Usuario registrado exitosamente",
+        "userId":   user.id,
+        "username": user.username,
+        "email":    email,
+        "role":     requested_role,
+    }), 201
+
+
+@users_bp.get("")
+@require_oauth_token
+@require_role(Role.ADMIN)
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+def list_all_users():
+    """Lista todos los usuarios del sistema con sus atributos.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Returns:
+        200 — Lista de usuarios con atributos.
+            [{"id": 1, "username": "admin", "email": "admin@secops.local",
+              "role": "role_root", "created_at": "...", "attributes": ["role_root"]}]
+    """
+    users = USER_MANAGER.get_all_users()
+    result = []
+    for user in users:
+        result.append({
             "id": user.id,
             "username": user.username,
             "email": user.email,
             "first_name": user.first_name,
             "last_name": user.last_name,
-            "created_at": user.created_at.isoformat() if user.created_at else None
-        }), 200
+            "role": user.role,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "attributes": [a.attribute_name for a in user.attributes]
+        })
+    return jsonify(result), 200
 
-    except Exception as exc:
-        _logger.error(f"Error obteniendo perfil: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+
+@users_bp.get("/<int:target_user_id>/attributes")
+@require_oauth_token
+@require_role(Role.ADMIN)
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+def list_user_attributes(target_user_id: int):
+    """Lista los atributos de un usuario específico.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Returns:
+        200 — Lista de atributos.
+            {"attributes": ["role_user", "aegis_read"]}
+        403 — Sin permisos.
+
+    Example:
+        curl -X GET https://api.example.com/users/5/attributes \\
+        -H "Authorization: Bearer <token>"
+    """
+    user = get_current_user()
+    uid = user.id
+
+    if not USER_MANAGER.can_manage_user(uid, target_user_id): # type: ignore
+        _logger.warning(f"Usuario {uid} intentó ver atributos de {target_user_id} sin permiso")
+        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para ver atributos de este usuario"}), 403
+
+    target_user = USER_MANAGER.get_user_by_id(target_user_id)
+
+    return jsonify({
+        "user_id": target_user_id,
+        "attributes": [a.attribute_name for a in target_user.attributes],
+        "role": target_user.role if target_user else "role_user"
+    }), 200
 
 
 @users_bp.put("/me")
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
-def update_current_profile():
+@require_json(["first_name", "last_name"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+def update_current_profile(data: dict[str, Any]):
     """Actualiza el perfil del usuario autenticado (nombre y apellidos).
 
     El username y email NO se pueden modificar (solo lectura).
@@ -500,12 +557,12 @@ def update_current_profile():
     Returns:
     200 — Perfil actualizado.
     {
-    "id": 1,
-    "username": "admin",
-    "email": "admin@secops.local",
-    "first_name": "NuevoNombre",
-    "last_name": "NuevosApellidos",
-    "created_at": "2024-01-01T00:00:00Z"
+        "id": 1,
+        "username": "admin",
+        "email": "admin@secops.local",
+        "first_name": "NuevoNombre",
+        "last_name": "NuevosApellidos",
+        "created_at": "2024-01-01T00:00:00Z"
     }
 
     Example:
@@ -514,37 +571,123 @@ def update_current_profile():
     -H "Content-Type: application/json" \\
     -d '{"first_name": "NuevoNombre", "last_name": "NuevosApellidos"}'
     """
-    data = require_json()
-    if isinstance(data, tuple):
-        return data
+    first_name = data["first_name"]
+    last_name = data["last_name"]
 
-    try:
-        first_name = _require_field(data, "first_name")
-        last_name = _require_field(data, "last_name")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
+    user = get_current_user()
+    user = USER_MANAGER.update_user_profile(user.id, first_name, last_name) # type: ignore
 
-    try:
-        user_id = get_current_user_id()
-        username = get_current_username()
+    return jsonify({
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": user.role,
+        "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
+    }), 200
 
-        user = USER_MANAGER.update_user_profile(user_id, first_name, last_name)
 
-        return jsonify({
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "created_at": user.created_at.isoformat() if user.created_at else None
-        }), 200
+@users_bp.put("/<int:target_user_id>/attributes")
+@require_oauth_token
+@require_role(Role.ADMIN)
+@require_json(["attributes"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+def add_user_attribute(data: dict[str, Any], target_user_id: int):
+    """Añade uno o más atributos a un usuario.
 
-    except ProfileUpdateError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error actualizando perfil: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Args (JSON body):
+        attributes (list): Lista de nombres de atributos.
+            ["sentinel_read", "aegis_create"]
+
+    Returns:
+        200 — Atributos añadidos.
+            {"message": "Attributes added", "attributes": ["sentinel_read"]}
+        400 — Error de validación.
+        403 — Sin permisos.
+
+    Example:
+        curl -X POST https://api.example.com/users/5/attributes \\
+        -H "Authorization: Bearer <token>" \\
+        -H "Content-Type: application/json" \\
+        -d '{"attributes": ["sentinel_read"]}'
+    """
+    current_user_id = get_current_user().id
+
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id): # type: ignore
+        _logger.warning(f"Usuario {current_user_id} intentó añadir atributos a {target_user_id} sin permiso")
+        return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
+
+    attrs_to_add = data.get("attributes")
+    if not attrs_to_add or not isinstance(attrs_to_add, list):
+        return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
+
+    added_attrs = USER_MANAGER.add_user_attributes(
+        user_id=target_user_id, attribute_names=attrs_to_add
+    )
+
+    _logger.info(f"Atributos {added_attrs} añadidos al usuario {target_user_id}")
+    return jsonify({"message": "Attributes added", "attributes": added_attrs}), 200
+
+
+@users_bp.delete("/<int:target_user_id>/attributes")
+@require_oauth_token
+@require_role(Role.ADMIN)
+@require_json(["attributes"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+def remove_user_attribute(data: dict[str, Any], target_user_id: int):
+    """Elimina uno o más atributos de un usuario.
+
+    Solo usuarios con role_root o role_admin pueden acceder.
+
+    Args (JSON body):
+        attributes (list): Lista de nombres de atributos a eliminar.
+            ["sentinel_read", "aegis_create"]
+
+    Returns:
+        200 — Atributos eliminados.
+            {"message": "Attributes removed", "attributes": ["sentinel_read"]}
+        400 — Error de validación.
+        403 — Sin permisos.
+
+    Example:
+        curl -X DELETE https://api.example.com/users/5/attributes \\
+        -H "Authorization: Bearer <token>" \\
+        -H "Content-Type: application/json" \\
+        -d '{"attributes": ["sentinel_read"]}'
+    """
+    current_user_id = get_current_user().id
+
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id): # type: ignore
+        _logger.warning(
+            f"Usuario {current_user_id} intentó eliminar atributos de {target_user_id} sin permiso"
+        )
+        return jsonify(
+            {
+                "error": "forbidden",
+                "error_description": "No tienes permiso para gestionar atributos de este usuario"
+            }
+        ), 403
+
+    attrs_to_remove = data.get("attributes")
+    if not attrs_to_remove or not isinstance(attrs_to_remove, list):
+        return jsonify(
+            {
+                "error": "invalid_request",
+                "error_description": "attributes array required"
+            }
+        ), 400
+
+    USER_MANAGER.remove_user_attributes(
+        user_id=target_user_id, attribute_names=attrs_to_remove
+    )
+
+    _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
+    return jsonify(
+        {
+            "message": "Attributes removed",
+            "attributes": attrs_to_remove
+        }
+    ), 200

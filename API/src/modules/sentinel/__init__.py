@@ -35,7 +35,7 @@ from .managers import (
 
 from .repositories import (
     ScanRepository,
-    SentinelDocumentRepository,
+    SentinelReportRepository,
 )
 
 from .services import (
@@ -70,7 +70,7 @@ __all__ = [
     "ScanManager",
     # Repositories
     "ScanRepository",
-    "SentinelDocumentRepository",
+    "SentinelReportRepository",
     # Endpoints
     "sentinel_bp",
     # Reports
