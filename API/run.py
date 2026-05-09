@@ -16,81 +16,118 @@ los endpoints de la API siempre tengan prioridad.
 
 import os
 import signal
-import sys
 
-from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
-from sqlalchemy import create_engine, text
-from urllib.parse import quote_plus
+from flask                  import Flask, jsonify, request, send_from_directory
+from flask_cors             import CORS
+from sqlalchemy             import create_engine, text
+from urllib.parse           import quote_plus
 
-from src.modules.shared import BaseManager, Base, Document, limiter
-from src.modules.system.logging import SecOpsLogger
-from src.modules.users import (
-    AccessToken, 
-    User, 
-    RefreshToken, 
-    oauth_bp, 
+from src.modules.shared     import BaseManager, Base
+from src.modules.shared._endpoints import _get_limiter
+from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, create_error_response
+from src.modules.system     import SecOpsLogger, config_reading
+from src.modules.users      import (
+    UserManager,
+    oauth_bp,
     users_bp
 )
-from src.modules.sentinel import sentinel_bp
-from src.modules.acheron import acheron_bp
-from src.modules.aegis import aegis_bp
-from src.modules.system.endpoints import system_bp
-from src.modules.pages import pages_bp
+from src.modules.sentinel   import sentinel_bp
+from src.modules.acheron    import acheron_bp
+from src.modules.aegis      import aegis_bp
+from src.modules.system     import system_bp
+from src.modules.pages      import pages_bp
 
 import src.modules.system.config_reading as CR
+
+
+
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
 SHUTDOWN_TIMEOUT = 30
+CREATE_DATABASE = True
+DEBUG = True
+HOST = '0.0.0.0'
+PORT = 5000
 
 _UI_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
 )
 
 
-def register_blueprints(app: Flask) -> None:
-    """Registra todos los blueprints en la aplicación Flask."""
-    app.register_blueprint(system_bp, url_prefix="/system")
-    app.register_blueprint(oauth_bp, url_prefix="/oauth")
-    app.register_blueprint(users_bp, url_prefix="/users")
-    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
-    app.register_blueprint(acheron_bp, url_prefix="/acheron")
-    app.register_blueprint(aegis_bp, url_prefix="/aegis")
-    app.register_blueprint(pages_bp, url_prefix="/pages")
 
 
-def _graceful_shutdown(signum, frame) -> None:
+def _graceful_shutdown(signum, *args) -> None:
+    """
+    Manejador de señales para shutdown graceful de la aplicación.
+
+    Cancela todas las tareas de escaneo en ejecución antes de terminar
+    el proceso, asegurando que los escaneos no queden huérfanos.
+
+    Args:
+        signum: Número de señal recibida (SIGTERM o SIGINT).
+        *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
+
+    Behavior:
+        1. Registra la señal recibida.
+        2. Importa ScanManager y cancela todas las tareas en ejecución.
+        3. Espera hasta SHUTDOWN_TIMEOUT segundos a que terminen.
+        4. Finaliza el proceso con SIGKILL para asegurar terminación.
+
+    Note:
+        Este manejador se registra para SIGTERM y SIGINT al inicio del módulo.
+    """
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-    _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
+    _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
     try:
         from src.modules.sentinel import ScanManager
-        _logger.info(
-            f"[Shutdown] Cancelando {len(ScanManager._running_tasks)} tarea(s) activa(s)..."
-        )
+        _logger.info("Cancelando tarea(s) activa(s)...")
         ScanManager.cancel_all_running(timeout=SHUTDOWN_TIMEOUT)
-        _logger.info("[Shutdown] Todas las tareas finalizadas.")
+        _logger.info("Todas las tareas finalizadas.")
     except Exception as e:
-        _logger.error(f"[Shutdown] Error durante el apagado: {e}")
+        _logger.error(f"Error durante el apagado: {e}")
 
     _logger.info("[Shutdown] Proceso terminado.")
-    sys.exit(0)
+    import os as _os
+    _os.kill(_os.getpid(), signal.SIGTERM)
 
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT,  _graceful_shutdown)
 
-def create_app(fresh_db_init = False) -> Flask:
+def create_app(fresh_db_init: bool = False) -> Flask:
+    """
+    Factory de la aplicación Flask SeQ.
+
+    Configura todos los componentes necesarios para servir la API REST
+    y la interfaz web estática:
+
+    Args:
+        fresh_db_init: Si True, reinicializa la base de datos completamente
+                        (destructivo). Por defecto False.
+
+    Returns:
+        Flask: Aplicación completamente configurada y lista para servir.
+    """
     app = Flask(__name__)
 
     _logger.info("Inicializando la aplicación SeQ...")
     _logger.info("Inicializando CORS...")
-    _configure_cors(app)
+    raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    origins.append("http://127.0.0.1:3000")
+    CORS(app, origins=origins, supports_credentials=True)
 
     _logger.info("Inicializando rate limiting...")
-    _configure_rate_limiting(app)
+    _get_limiter().init_app(app)
 
     _logger.info("Añadiendo endpoints...")
-    register_blueprints(app)
+    app.register_blueprint(system_bp,   url_prefix="/system")
+    app.register_blueprint(oauth_bp,    url_prefix="/oauth")
+    app.register_blueprint(users_bp,    url_prefix="/users")
+    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
+    app.register_blueprint(acheron_bp,  url_prefix="/acheron")
+    app.register_blueprint(aegis_bp,    url_prefix="/aegis")
+    app.register_blueprint(pages_bp,    url_prefix="/pages")
     _register_ui_route(app)
 
     _logger.info("Registrando manejadores de error globales...")
@@ -105,18 +142,6 @@ def create_app(fresh_db_init = False) -> Flask:
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
 
-def _configure_cors(app: Flask) -> None:
-    raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
-    origins = [o.strip() for o in raw.split(",") if o.strip()]
-    origins.append("http://127.0.0.1:3000")
-    CORS(app, origins=origins, supports_credentials=True)
-
-def _configure_rate_limiting(app: Flask) -> None:
-    """
-    Asocia el único Limiter de la aplicación (definido en _shared.py)
-    a esta instancia de Flask.
-    """ 
-    limiter.init_app(app)
 
 def _register_ui_route(app: Flask) -> None:
     """
@@ -147,42 +172,111 @@ def _register_ui_route(app: Flask) -> None:
         return send_from_directory(_UI_DIR, "pages/hub.html")
 
 def _register_error_handlers(app: Flask) -> None:
+    """
+    Registra manejadores de errores HTTP globales para la aplicación.
+
+    Configura respuestas JSON consistentes para los códigos de estado
+    más comunes, incluyendo logging de advertencias para debugging.
+
+    Args:
+        app: Instancia de la aplicación Flask.
+
+    Handlers:
+        - 404 Not Found: Rutas que no coinciden con ningún blueprint.
+        - 405 Method Not Allowed: Métodos HTTP no permitidos.
+        - 429 Too Many Requests: Rate limit superado.
+        - 500 Internal Server Error: Errores inesperados.
+    """
     @app.errorhandler(404)
     def not_found(error):
         _logger.warning(f"Ruta no encontrada: {request.method} {request.url}")
         return jsonify({
-            "error":   "not_found",
-            "message": "La ruta solicitada no existe",
-            "path":    request.path,
+            "error": "not_found",
+            "error_description": "La ruta solicitada no existe",
+            "path": request.path,
         }), 404
 
     @app.errorhandler(405)
     def method_not_allowed(error):
-        _logger.warning(f"Método no permitido: {request.method} {request.url}")
+        _logger.warning(
+            f"Método no permitido: {request.method} {request.url}"
+        )
         return jsonify({
-            "error":          "method_not_allowed",
-            "message":        f"El método {request.method} no está permitido en esta ruta",
+            "error": "method_not_allowed",
+            "error_description": f"El método {request.method} no está permitido en esta ruta",
             "allowedMethods": list(error.valid_methods) if hasattr(error, "valid_methods") else [],
         }), 405
 
-    @app.errorhandler(429)
-    def too_many_requests(error):
+    @app.errorhandler(429) # type: ignore
+    def too_many_requests():
         _logger.warning("Rate limit superado: %s", request.remote_addr)
         return jsonify({
-            "error":   "too_many_requests",
-            "message": "Has superado el límite de peticiones. Espera un momento e inténtalo de nuevo.",
+            "error": "too_many_requests",
+            "error_description": "Has superado el límite de peticiones. Espera un momento e inténtalo de nuevo.",
         }), 429
+
+    @app.errorhandler(SecOpsException)
+    def handle_secops_exception(error):
+        if error.traceback:
+            _logger.error(f"[{error.code.name}] {error.message}\n{error.traceback}")
+        else:
+            _logger.error(f"[{error.code.name}] {error.message}")
+        include_debug = config_reading.is_development()
+        err, code = create_error_response(error, include_debug_info=include_debug)
+        return jsonify(err), code
+
+    @app.errorhandler(MissingParameterError)
+    def handle_missing_parameter(error):
+        _logger.warning(f"Parámetro faltante: {error}")
+        return jsonify({
+            "error": "missing_parameter",
+            "error_description": str(error),
+        }), 400
+
+    @app.errorhandler(MissingJsonBodyError)
+    def handle_missing_json_body(error):
+        _logger.warning(f"Body JSON inválido: {error}")
+        return jsonify({
+            "error": "invalid_json",
+            "error_description": str(error),
+        }), 400
 
     @app.errorhandler(500)
     def internal_error(error):
-        _logger.error(f"Error interno del servidor: {error}", exc_info=True)
+        _logger.error(
+            f"Error interno del servidor: {error}",
+            exc_info=True
+        )
         return jsonify({
-            "error":   "internal_server_error",
-            "message": "Ha ocurrido un error inesperado en el servidor.",
+            "error": "internal_server_error",
+            "error_description": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
 
 def _init_db() -> None:
-    """Inicializa la base de datos y tabla"""
+    """
+    Inicializa la base de datos completa de SeQ desde cero.
+
+    Este proceso destructivo elimina cualquier base de datos existente
+    y la recrea con la estructura y datos iniciales:
+
+    1. Conexión a PostgreSQL con AUTOCOMMIT.
+    2. Eliminación de conexiones activas a la DB.
+    3. DROP DATABASE IF EXISTS + CREATE DATABASE.
+    4. Conexión a la nueva DB y creación de tablas via SQLAlchemy.
+    5. Inserción de usuario root por defecto.
+    6. Inserción de temas iniciales de concienciación (Topics).
+
+    Warning:
+        Esta función elimina TODOS los datos existentes. Usar solo en
+        desarrollo o cuando se requiera un reset completo.
+
+    Raises:
+        SQLAlchemy Error: Si falla la conexión o ejecución de SQL.
+
+    Example:
+    >>> from run import create_app
+    >>> app = create_app(fresh_db_init=True)  # Crea DB limpia
+    """
     db_creds = CR.get_db_credentials()
 
     username = db_creds["username"]
@@ -192,14 +286,11 @@ def _init_db() -> None:
     dialect = db_creds["dialect"]
     port = db_creds["port"]
 
-    # 1. Conexión a la base de datos 'postgres' por defecto para recrear 'SeQ'
     default_db_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/postgres"
     print(f"[*] Conectando a la base de datos por defecto para configurar '{dbname}'...")
-    # Es necesario AUTOCOMMIT para crear y eliminar bases de datos en PostgreSQL
     engine_postgres = create_engine(default_db_url, isolation_level="AUTOCOMMIT")
 
     with engine_postgres.connect() as conn:
-        # Cerrar conexiones activas de otros usuarios a la base de datos antes de eliminarla
         print(f"[*] Terminando conexiones activas a la base de datos '{dbname}'...")
         conn.execute(text(f"""
             SELECT pg_terminate_backend(pg_stat_activity.pid)
@@ -207,20 +298,19 @@ def _init_db() -> None:
             WHERE pg_stat_activity.datname = '{dbname}'
             AND pid <> pg_backend_pid();
         """))
-        
+
         # Eliminar y recrear la base de datos
         print(f"[*] Eliminando la base de datos '{dbname}' si existe...")
         conn.execute(text(f'DROP DATABASE IF EXISTS "{dbname}";'))
-        
+
         print(f"[*] Creando la base de datos '{dbname}'...")
         conn.execute(text(f'CREATE DATABASE "{dbname}";'))
 
     engine_postgres.dispose()
 
-    # 2. Conexión a la base de datos recién creada 'SeQ'
-    DATABASE_URL = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
+    database_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
     print(f"[*] Conectando a: {dialect}://{username}:***@{host}:{port}/{dbname}")
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(database_url)
 
     # 1. Eliminar las tablas si ya existen (en lugar de borrar toda la DB)
     print("[*] Eliminando tablas existentes (si las hay)...")
@@ -233,19 +323,28 @@ def _init_db() -> None:
 
     # 3. Inserción de los datos iniciales
     print("[*] Insertando datos de prueba (User)...")
-    with engine.connect() as conn:        
+    with engine.connect() as conn:
         conn.execute(text("""
-            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at)
+            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at, role)
             VALUES (
             'root',
-            'Gabriel', 
-            'Musteata',
+            'Gabe',
+            'Joe',
             '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
             'c167837c1c2a860031d861164d69bd79',
-            'gmiganescu@gmail.com',
-            CURRENT_DATE
+            'gjoe@seq.com',
+            CURRENT_DATE,
+            'role_root'
             );
         """))
+
+        print("[*] Insertando atributos al usuario root...")
+        root_attributes = UserManager.get_all_available_attributes()
+        for attr in root_attributes:
+            conn.execute(text(f'''
+                INSERT INTO "UserAttribute" (user_id, attribute_name)
+                VALUES (1, '{attr}');
+            '''))
 
         conn.execute(text(("""
         INSERT INTO "Topic" (title) VALUES
@@ -339,11 +438,14 @@ def _init_db() -> None:
             ('El factor humano en ciberseguridad'),
             ('Cultura de seguridad en la empresa');"""
         )))
-        conn.commit() 
+        conn.commit()
 
     print("[+] ¡Datos iniciales insertados con éxito!")
 
 
 if __name__ == "__main__":
-    app = create_app(False)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    create_app(CREATE_DATABASE).run(
+        debug=DEBUG,
+        host=HOST,
+        port=PORT
+    )

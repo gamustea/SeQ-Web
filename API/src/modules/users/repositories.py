@@ -27,10 +27,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from .model import AccessToken, RefreshToken, User
+from sqlalchemy.orm import joinedload, selectinload
+
+from .model import AccessToken, RefreshToken, User, UserAttribute
 
 from src.modules.infrastructure.base_repository import BaseRepository, UnitOfWork
-
 
 
 class UserRepository(BaseRepository[User]):
@@ -43,9 +44,9 @@ class UserRepository(BaseRepository[User]):
     logged, serialised, or exposed beyond it.
 
     Example:
-        >>> with UnitOfWork() as uow:
-        ...     repo = UserRepository(uow)
-        ...     user = repo.get_by_username("johnd")
+    >>> with UnitOfWork() as uow:
+    ...     repo = UserRepository(uow)
+    ...     user = repo.get_by_username("johnd")
     """
 
     def __init__(self, uow: UnitOfWork) -> None:
@@ -65,7 +66,12 @@ class UserRepository(BaseRepository[User]):
         Returns:
             User instance, or None if not found.
         """
-        return self._session.get(User, user_id)
+        return (
+            self._session.query(User)
+            .options(selectinload(User.attributes))
+            .filter(User.id == user_id)
+            .first()
+        )
 
     def get_by_username(self, username: str) -> Optional[User]:
         """
@@ -77,7 +83,12 @@ class UserRepository(BaseRepository[User]):
         Returns:
             User instance, or None if not found.
         """
-        return self.get_by_field("username", username)
+        return (
+            self._session.query(User)
+            .options(selectinload(User.attributes))
+            .filter(User.username == username)
+            .first()
+        )
 
     def get_by_email(self, email: str) -> Optional[User]:
         """
@@ -89,7 +100,12 @@ class UserRepository(BaseRepository[User]):
         Returns:
             User instance, or None if not found.
         """
-        return self.get_by_field("email", email)
+        return (
+            self._session.query(User)
+            .options(selectinload(User.attributes))
+            .filter(User.email == email)
+            .first()
+        )
 
     def username_exists(self, username: str) -> bool:
         """
@@ -122,7 +138,12 @@ class UserRepository(BaseRepository[User]):
         Returns:
             List of all User instances.
         """
-        return self._session.query(User).all()
+        return (
+            self._session.query(User)
+            .options(joinedload(User.attributes))
+            .distinct()
+            .all()
+        )
 
 
 class TokenRepository(BaseRepository[AccessToken]):
@@ -317,3 +338,157 @@ class TokenRepository(BaseRepository[AccessToken]):
         access_deleted  = self.delete_expired_access_tokens(now)
         refresh_deleted = self.delete_expired_refresh_tokens(now)
         return access_deleted, refresh_deleted
+
+
+class AttributeRepository(BaseRepository[UserAttribute]):
+    """
+    Repository for UserAttribute entity persistence.
+
+    Manages attribute assignments between users and permission attributes.
+
+    Example:
+        >>> with UnitOfWork() as uow:
+        ...     repo = AttributeRepository(uow)
+        ...     attrs = repo.get_by_user(5)
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        super().__init__(UserAttribute, uow)
+
+    def get_by_user(self, user_id: int) -> List[UserAttribute]:
+        """
+        Retrieve all attributes assigned to a user.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of UserAttribute instances.
+        """
+        return (
+            self._session.query(UserAttribute)
+            .filter(UserAttribute.user_id == user_id)
+            .all()
+        )
+
+    def get_by_user_and_attribute(
+        self,
+        user_id: int,
+        attribute_name: str,
+    ) -> Optional[UserAttribute]:
+        """
+        Check if a specific attribute is assigned to a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_name: Attribute name string.
+
+        Returns:
+            UserAttribute instance if found, None otherwise.
+        """
+        return (
+            self._session.query(UserAttribute)
+            .filter(
+                UserAttribute.user_id == user_id,
+                UserAttribute.attribute_name == attribute_name,
+            )
+            .one_or_none()
+        )
+
+    def add_attribute(self, user_id: int, attribute_name: str) -> UserAttribute:
+        """
+        Assign an attribute to a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_name: Attribute name to assign.
+
+        Returns:
+            The created UserAttribute instance.
+
+        Raises:
+            exc: If the attribute already exists (constraint violation).
+        """
+        ua = UserAttribute(
+            user_id=user_id,
+            attribute_name=attribute_name,
+        )
+        self._session.add(ua)
+        self._session.flush()
+        return ua
+
+    def add_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> List[UserAttribute]:
+        """
+        Assign multiple attributes to a user (skip existing ones).
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to assign.
+
+        Returns:
+            List of created UserAttribute instances.
+        """
+        created = []
+        for attr_name in attribute_names:
+            existing = self.get_by_user_and_attribute(user_id, attr_name)
+            if existing is None:
+                ua = UserAttribute(
+                    user_id=user_id,
+                    attribute_name=attr_name,
+                )
+                self._session.add(ua)
+                created.append(ua)
+        self._session.flush()
+        return created
+
+    def remove_attribute(self, user_id: int, attribute_name: str) -> bool:
+        """
+        Remove an attribute from a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_name: Attribute name to remove.
+
+        Returns:
+            True if an attribute was deleted, False if it didn't exist.
+        """
+        deleted = (
+            self._session.query(UserAttribute)
+            .filter(
+                UserAttribute.user_id == user_id,
+                UserAttribute.attribute_name == attribute_name,
+            )
+            .delete(synchronize_session=False)
+        )
+        self._session.flush()
+        return deleted > 0
+
+    def remove_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> int:
+        """
+        Remove multiple attributes from a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to remove.
+
+        Returns:
+            Number of attributes deleted.
+        """
+        deleted = (
+            self._session.query(UserAttribute)
+            .filter(
+                UserAttribute.user_id == user_id,
+                UserAttribute.attribute_name.in_(attribute_names),
+            )
+            .delete(synchronize_session=False)
+        )
+        self._session.flush()
+        return deleted

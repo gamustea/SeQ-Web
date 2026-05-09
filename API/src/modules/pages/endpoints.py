@@ -60,5 +60,5 @@ def serve_page(page_name: str):
         return serve_login()
     target = os.path.join(_PAGES_DIR, filename)
     if not os.path.isfile(target):
-        return jsonify({"error": "not_found", "message": f"La página '{filename}' no existe."}), 404
+        return jsonify({"error": "not_found", "error_description": f"La página '{filename}' no existe."}), 404
     return send_from_directory(_PAGES_DIR, filename)

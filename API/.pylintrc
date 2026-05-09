@@ -1,0 +1,5 @@
+[MASTER]
+extension-pkg-allow-list=lxml,gvm,xml.etree,xml.dom,ollama
+
+[MESSAGES CONTROL]
+disable=C0114,C0115,C0116,arguments-differ

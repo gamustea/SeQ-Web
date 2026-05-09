@@ -15,15 +15,15 @@ Module Variables:
 
 from __future__ import annotations
 
-import os
 import ipaddress
 import socket
-from contextlib import contextmanager
 from functools import wraps
-from typing import Optional, Tuple, Any
 from urllib.parse import urlparse
+from typing import Tuple, Optional
 
-from flask import request, jsonify
+from flask import request
+
+from ._exceptions import MissingParameterError, MissingJsonBodyError
 
 
 limiter = None
@@ -35,40 +35,35 @@ _DNS_TIMEOUT = 3.0
 # HELPERS
 # =========================================================================
 
-def _gethostbyaddr_with_timeout(ip: str, timeout: float = _DNS_TIMEOUT) -> Optional[str]:
-    """
-    Wrapper de socket.gethostbyaddr con timeout explícito.
-    Devuelve el hostname o None si falla o supera el tiempo límite.
-    """
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(socket.gethostbyaddr, ip)
-        try:
-            return future.result(timeout=timeout)[0]
-        except TimeoutError:
-            return None
-        except (socket.herror, socket.gaierror):
-            return None
-
 def normalize_target(
     user_input: str,
-    resolve_hostname: bool = False,
-    dns_timeout: float = _DNS_TIMEOUT,
+    resolve_hostname: bool = False
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Normaliza el target del usuario a IP + hostname.
     Acepta IPs, dominios o URLs completas (http://, https://).
 
     Args:
-        user_input:        IP, dominio o URL completa.
-        resolve_hostname:  Si es True y el input es una IP, intenta resolver
-                           el hostname vía reverse DNS (con timeout acotado).
-                           Si es False, el hostname se omite (se devuelve la IP
-                           también en esa posición). Por defecto False.
-        dns_timeout:       Segundos máximos para la resolución DNS inversa.
+        user_input:         IP, dominio o URL completa.
+        resolve_hostname:   Si es True y el input es una IP, intenta resolver
+                            el hostname vía reverse DNS (con timeout acotado).
+                            Si es False, el hostname se omite (se devuelve la IP
+                            también en esa posición). Por defecto False.
+        dns_timeout:        Segundos máximos para la resolución DNS inversa.
 
     Returns:
         (ip, hostname): hostname == ip cuando no se resuelve o resolve_hostname=False.
     """
+
+    def _gethostbyaddr_with_timeout(ip: str) -> Optional[str]:
+        """
+        Wrapper de socket.gethostbyaddr para resolución DNS inversa.
+        Devuelve el hostname o None si falla.
+        """
+        try:
+            return socket.gethostbyaddr(ip)[0]
+        except (socket.herror, socket.gaierror, OSError):
+            return None
     cleaned_input = user_input.strip()
 
     if "://" in cleaned_input:
@@ -88,7 +83,7 @@ def normalize_target(
         ip = str(ip_obj)
 
         if resolve_hostname:
-            hostname = _gethostbyaddr_with_timeout(ip, dns_timeout) or ip
+            hostname = _gethostbyaddr_with_timeout(ip) or ip
         else:
             hostname = ip
 
@@ -97,7 +92,7 @@ def normalize_target(
         try:
             ip = socket.gethostbyname(hostname)
         except socket.gaierror as e:
-            raise ValueError(f"No se pudo resolver '{user_input}': {e}")
+            raise ValueError(f"No se pudo resolver '{user_input}': {e}") from e
 
     return ip, hostname
 
@@ -129,56 +124,53 @@ def _get_limiter():
     return limiter
 
 
-
-# =========================================================================
-# USER CONTEXT
-# =========================================================================
-
-def get_current_user_id() -> int:
-    """
-    Get the current authenticated user's ID from the request context.
-
-    Returns:
-        int: ID of the currently authenticated user.
-
-    Raises:
-        AttributeError: If no user is authenticated (token not parsed).
-    """
-    return request.current_user_id
-
-def get_current_username() -> str:
-    """
-    Get the current authenticated username from the request context.
-
-    Returns:
-        str: Username of the currently authenticated user.
-
-    Raises:
-        AttributeError: If no user is authenticated (token not parsed).
-    """
-    return request.current_username
-
-
-
 # =========================================================================
 # DATA PARSING
 # =========================================================================
 
-def require_json() -> dict:
-    """Extrae y valida el cuerpo de la petición como JSON.
+def require_json(required_fields: list):
+    """Decorador que valida y extrae el cuerpo JSON del request.
 
-    Returns:
-        dict: Datos JSON parseados.
+    Pasa los datos validados como argumento 'data' a la función decorada.
+    Lanza MissingJsonBodyError si el Content-Type no es application/json
+    o el JSON es inválido.
 
-    Raises:
-        400: Si el Content-Type no es application/json o el JSON es inválido.
+    Args:
+        required_fields: Lista opcional de campos requeridos. Si se especifica,
+                        valida que todos existan y no estén vacíos antes de llamar
+                        al endpoint. Lanza MissingParameterError si falta alguno.
+
+    Usage:
+    >>> @require_json
+    >>> def create_user(data):
+    ...    username = require_str(data, "username")
+
+    >>> @require_json(["target", "ports"])
+    >>> def start_scan(data):
+    ...    # data ya tiene "target" y "ports" validados
     """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if not request.is_json:
+                raise MissingJsonBodyError("Content-Type must be application/json")
+            data = request.get_json(silent=True)
+            if not data or not isinstance(data, dict):
+                raise MissingJsonBodyError("Request body must be a JSON object")
+
+            if required_fields:
+                for field in required_fields:
+                    value = data.get(field)
+                    if value is None or (isinstance(value, str) and not value.strip()):
+                        raise MissingParameterError(field)
+
+            return f(data, *args, **kwargs)
+        return wrapper
+
+    if callable(required_fields):
+        return decorator(required_fields)
+
+    return decorator
 
 def require_str(data: dict, field: str) -> str:
     """Extrae un campo obligatorio del JSON y lo valida como string no vacío.
@@ -206,10 +198,10 @@ def require_arg(arg: str) -> str:
 
     Raises:
         MissingParameterError: Si el parámetro no existe.
-    
+
     """
     value = request.args.get(arg)
     if not value:
         raise MissingParameterError(arg)
-    
+
     return value

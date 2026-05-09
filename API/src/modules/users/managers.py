@@ -6,7 +6,7 @@ to UserRepository and TokenRepository via explicit UnitOfWork scopes.
 
 Security invariants enforced here:
   - password_hash and password_salt never leave this module.
-  - Credential verification uses constant-time comparison (via Encoder).
+  - Credential verification uses constant-time comparison.
   - Token verification validates both JWT signature and database record state.
   - Password changes atomically revoke all existing tokens in one transaction.
   - Returned User objects are always expunged from the session before leaving
@@ -28,15 +28,20 @@ import src.modules.system.config_reading as CR
 from src.modules.users.exceptions import (
     DatabaseError,
     ExistingUserError,
+    PermissionsError,
     ProfileUpdateError,
     UserBindingError,
 )
 from src.modules.infrastructure import UnitOfWork
 from src.modules.system.logging import SecOpsLogger
 
-from .model import AccessToken, RefreshToken, User
-from .secrets import Encoder
-from .repositories import TokenRepository, UserRepository
+from .model import AccessToken, RefreshToken, User, UserAttribute
+from .repositories import TokenRepository, UserRepository, AttributeRepository
+from .services import (
+    generate_salt,
+    hash_password_with_salt,
+    verify_password
+)
 
 (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -89,11 +94,11 @@ class UserManager:
                 if user is None:
                     # Perform a dummy comparison to prevent username enumeration
                     # via timing differences.
-                    Encoder.verify_password("dummy", password, "dummy_salt")
+                    verify_password("dummy", password, "dummy_salt")
                     self.logger.info(f"Usuario '{username}' no encontrado")
                     return False, None
 
-                is_valid = Encoder.verify_password(
+                is_valid = verify_password(
                     stored_hash = user.password_hash,
                     password    = password,
                     salt        = user.password_salt,
@@ -111,19 +116,6 @@ class UserManager:
             self.logger.error(f"Error verificando credenciales: {e}")
             raise
 
-    def validate_credentials_simple(self, username: str, password: str) -> bool:
-        """
-        Simplified credential check returning only a boolean.
-
-        Args:
-            username: Username to authenticate.
-            password: Plaintext password to verify.
-
-        Returns:
-            True if credentials are valid.
-        """
-        is_valid, _ = self.verify_credentials(username, password)
-        return is_valid
 
     # =========================================================================
     # USER REGISTRATION
@@ -131,11 +123,13 @@ class UserManager:
 
     def sign_in_user(
         self,
-        username:   str,
-        email:      str,
-        first_name: str,
-        last_name:  str,
+        username:    str,
+        email:       str,
+        first_name:  str,
+        last_name:   str,
         password:   str,
+        role:        Optional[str] = None,
+        actor_id:   Optional[int] = None,
     ) -> User:
         """
         Register a new user.
@@ -149,26 +143,56 @@ class UserManager:
             first_name: User's first name.
             last_name:  User's last name.
             password:   Plaintext password (hashed before storage).
+            role:       Optional role to assign: "role_user" (default), "role_admin".
+                        Requires actor_id with appropriate permissions.
+            actor_id:   ID of user creating this account. Required if role is specified.
 
         Returns:
             The newly created User instance (credential fields excluded
             from the returned object via session expunge).
 
-        Raises:
+Raises:
             ExistingUserError: If username or email is already registered.
-            DatabaseError:     On unexpected persistence failures.
+            PermissionsError: If actor_id lacks permissions to assign the requested role.
+            DatabaseError:    On unexpected persistence failures.
         """
+        valid_roles = {"role_user", "role_admin"}
+        default_role = "role_user"
+
+        if role is not None and role not in valid_roles:
+            raise PermissionsError(f"Invalid role: {role}. Valid roles: {valid_roles}")
+
+        if role and not actor_id:
+            raise PermissionsError("actor_id required when specifying a role")
+
+        if role == "role_admin" and actor_id:
+            if not self.can_create_admin(actor_id):
+                self.logger.error(f"El administrador con id {actor_id} ha intentado crear un usuario con rol {role}")
+                raise PermissionsError("Solo el administrador raíz puede crear administradores")
+
+        if role and actor_id:
+            actor = self.get_user_by_id(actor_id)
+            if actor:
+                actor_rank = self._get_role_rank(actor.role)
+                target_rank = self._get_role_rank(role)
+                if target_rank >= actor_rank:
+                    raise PermissionsError("No puedes crear usuarios con rol igual o superior al tuyo")
+
+        assigned_role = role if role else default_role
+
         try:
             with UnitOfWork() as uow:
                 repo = UserRepository(uow)
 
                 if repo.username_exists(username):
+                    self.logger.error(f"Se intentó crear un usuario con un username ({username}) repetido")
                     raise ExistingUserError(username, None)
                 if repo.email_exists(email):
+                    self.logger.error(f"Se intentó crear un usuario con un email ({email}) repetido")
                     raise ExistingUserError(None, email)
 
-                salt            = Encoder.generate_salt()
-                hashed_password = Encoder.hash_password_with_salt(password, salt)
+                salt            = generate_salt()
+                hashed_password = hash_password_with_salt(password, salt)
 
                 new_user = User(
                     username      = username,
@@ -177,11 +201,11 @@ class UserManager:
                     last_name     = last_name,
                     password_hash = hashed_password,
                     password_salt = salt,
+                    role          = assigned_role,
                 )
                 repo.save(new_user)
-                # UoW commits and expunges on __exit__
 
-            self.logger.info(f"Usuario '{username}' registrado exitosamente (ID: {new_user.id})")
+            self.logger.info(f"Usuario '{username}' registrado con rol '{assigned_role}' (ID: {new_user.id})")
             return new_user
 
         except ExistingUserError:
@@ -208,6 +232,16 @@ class UserManager:
         with UnitOfWork() as uow:
             return UserRepository(uow).get_by_id(user_id)
 
+    def get_all_users(self) -> List[User]:
+        """
+        Retrieve all registered users.
+
+        Returns:
+            List of user dictionaries (public info only).
+        """
+        with UnitOfWork() as uow:
+            return UserRepository(uow).get_all()
+
     def get_user_by_username(self, username: str) -> Optional[User]:
         """
         Retrieve a user by username.
@@ -221,15 +255,6 @@ class UserManager:
         with UnitOfWork() as uow:
             return UserRepository(uow).get_by_username(username)
 
-    def get_all_users(self) -> List[User]:
-        """
-        Retrieve all registered users.
-
-        Returns:
-            List of User instances.
-        """
-        with UnitOfWork() as uow:
-            return UserRepository(uow).get_all()
 
     # =========================================================================
     # PROFILE & PASSWORD UPDATES
@@ -256,10 +281,9 @@ class UserManager:
             if user is None:
                 raise UserBindingError(username=str(user_id))
 
-            new_salt = Encoder.generate_salt()
-            user.password_hash = Encoder.hash_password_with_salt(new_password, new_salt)
+            new_salt = generate_salt()
+            user.password_hash = hash_password_with_salt(new_password, new_salt)
             user.password_salt = new_salt
-            # UoW flushes and commits on __exit__
 
         self.logger.info(f"Contraseña actualizada para usuario {user_id}")
 
@@ -318,6 +342,144 @@ class UserManager:
 
         self.logger.info(f"Usuario {user_id} eliminado")
 
+# =========================================================================
+# ATTRIBUTE MANAGEMENT
+# =========================================================================
+
+    def can_manage_user(self, actor_id: int, target_id: int) -> bool:
+        """
+        Verifica si el actor puede gestionar al usuario objetivo.
+
+        Jerarquía:
+        - role_root: puede gestionar TODO (root, admin, users)
+        - role_admin: solo puede gestionar role_user
+        - role_user: NO puede gestionar nadie
+
+        El rol se lee del modelo User.
+
+        Args:
+            actor_id: ID del usuario que hace la acción.
+            target_id: ID del usuario objetivo.
+
+        Returns:
+            True si tiene permiso, False en caso contrario.
+        """
+
+        if actor_id == target_id:
+            return True
+
+        actor_user = self.get_user_by_id(actor_id)
+        target_user = self.get_user_by_id(target_id)
+
+        if not actor_user or not target_user:
+            return False
+
+        actor_role = actor_user.role
+        target_role = target_user.role
+
+        is_actor_root = actor_role == "role_root"
+        is_actor_admin = actor_role == "role_admin"
+        is_target_root = target_role == "role_root"
+        is_target_admin = target_role == "role_admin"
+
+        if is_actor_root:
+            return True
+
+        if is_actor_admin:
+            return not is_target_root and not is_target_admin
+
+        return False
+
+    def can_create_admin(self, actor_id: int) -> bool:
+        """
+        Verifica si el actor puede crear usuarios con rol admin.
+
+        Solo role_root puede crear administradores.
+        Los admin no pueden crear otros admin.
+
+        Args:
+            actor_id: ID del usuario creando.
+
+        Returns:
+            True si tiene permiso, False en caso contrario.
+        """
+        actor_user = self.get_user_by_id(actor_id)
+        return actor_user and actor_user.role == "role_root"
+
+    def _get_role_rank(self, role: str) -> int:
+        ranks = {"role_user": 0, "role_admin": 1, "role_root": 2}
+        return ranks.get(role, 0)
+
+    def get_user_attributes(self, user_id: int) -> List[str]:
+        """
+        Retrieve all attribute names assigned to a user.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of attribute name strings.
+        """
+        with UnitOfWork() as uow:
+            attrs = AttributeRepository(uow).get_by_user(user_id)
+            return [a.attribute_name for a in attrs]
+
+    def add_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> List[str]:
+        """
+        Add one or more attributes to a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to add.
+
+        Returns:
+            List of added attribute names.
+        """
+        with UnitOfWork() as uow:
+            created = AttributeRepository(uow).add_attributes(
+                user_id, attribute_names
+            )
+            return [c.attribute_name for c in created]
+
+    def remove_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> int:
+        """
+        Remove one or more attributes from a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to remove.
+
+        Returns:
+            Number of attributes removed.
+        """
+        with UnitOfWork() as uow:
+            deleted = AttributeRepository(uow).remove_attributes(
+                user_id, attribute_names
+            )
+            return deleted
+
+    @staticmethod
+    def get_all_available_attributes() -> List[str]:
+        """
+        Return a list of all available attributes that can be assigned to users.
+
+        These attributes correspond to the AttributeType enum values and represent
+        fine-grained ABAC capabilities across modules (Aegis, Sentinel, Acheron).
+
+        Returns:
+            List of attribute name strings (e.g. ["aegis_create", "sentinel_read", ...]).
+        """
+        from .services.permissions import AttributeType
+        return [attr.value for attr in AttributeType.__members__.values() if isinstance(attr.value, str)]
+
 
 class OAuthTokenManager:
     """
@@ -335,9 +497,9 @@ class OAuthTokenManager:
         in a single transaction, used for password-change and logout-everywhere.
 
     Example:
-        >>> manager = OAuthTokenManager()
-        >>> access_token = manager.create_access_token(user_id=1, username="johnd")
-        >>> payload = manager.verify_access_token(access_token)
+    >>> manager = OAuthTokenManager()
+    >>> access_token = manager.create_access_token(user_id=1, username="johnd")
+    >>> payload = manager.verify_access_token(access_token)
     """
 
     def __init__(self) -> None:
@@ -347,13 +509,14 @@ class OAuthTokenManager:
     # TOKEN CREATION
     # =========================================================================
 
-    def create_access_token(self, user_id: int, username: str) -> str:
+    def create_access_token(self, user_id: int, username: str, role: str = "role_user") -> str:
         """
         Create and persist a signed JWT access token.
 
         Args:
             user_id:  User primary key to embed in the token payload.
             username: Username to embed in the token payload.
+            role:     Role to embed in the token payload.
 
         Returns:
             Signed JWT string.
@@ -366,6 +529,7 @@ class OAuthTokenManager:
             "exp":      expires_at,
             "iat":      datetime.utcnow(),
             "type":     "access",
+            "role":     role,
         }
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
