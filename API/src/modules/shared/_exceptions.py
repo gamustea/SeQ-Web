@@ -1,10 +1,9 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Type
 from datetime import datetime
 from enum import Enum
+from functools import wraps
 import traceback
 import sys
-
-from typing import Any, Optional, Type
 
 
 class ErrorCode(Enum):
@@ -56,6 +55,7 @@ class ErrorCode(Enum):
     PARSING_ERROR = 1700
     XML_PARSING_ERROR = 1701
     JSON_PARSING_ERROR = 1702
+    VAULT_ERROR = 1703
 
 
 class ErrorSeverity(Enum):
@@ -387,7 +387,40 @@ def handle_exceptions(
     logger=None,
     re_raise: bool = True
 ):
+    """
+    Decorador para manejo automático de excepciones en funciones/métodos.
+
+    Envuelve una función para capturar excepciones que no sean SecOpsException
+    y convertirlas automáticamente al formato de la aplicación.
+
+    Args:
+        default_exception: Clase de excepción SecOpsException a usar como base
+                          cuando se envuelve una excepción unknown. Por defecto
+                          SecOpsException.
+        logger: Logger opcional para registrar las excepciones envueltas.
+        re_raise: Si True, relanza la excepción envuelta. Si False, la retorna
+                  sin relanzar. Por defecto True.
+
+    Returns:
+        Función decorada con manejo automático de excepciones.
+
+    Example:
+    >>> from src.modules.shared import handle_exceptions
+    >>> from src.modules.sentinel.exceptions import ScanError
+    >>> import logging
+    >>> _logger = logging.getLogger(__name__)
+    >>>
+    >>> @handle_exceptions(default_exception=ScanError, logger=_logger)
+    ... def scan_operation(target):
+    ...     # código que puede lanzar excepciones
+    ...     pass
+
+    Note:
+        Las excepciones que ya heredan de SecOpsException se propagan directamente
+        sin conversión.
+    """
     def decorator(func):
+        @wraps(func)
         def wrapper(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
@@ -405,9 +438,23 @@ def handle_exceptions(
         return wrapper
     return decorator
 
+
 def create_error_response(
     exception: SecOpsException,
     include_debug_info: bool = False
 ) -> tuple[Dict[str, Any], int]:
-    error_dict = exception.to_dict(include_traceback=include_debug_info)
-    return error_dict, exception.status_code
+    response = {
+        "error": exception.__class__.__name__,
+        "error_description": exception.user_message,
+        "code": exception.code.value,
+    }
+
+    if include_debug_info:
+        response["technical_message"] = exception.message
+        response["traceback"] = exception.traceback
+        if exception.original_exception:
+            response["original_error"] = str(exception.original_exception)
+        if exception.details:
+            response["details"] = exception.details
+
+    return response, exception.status_code

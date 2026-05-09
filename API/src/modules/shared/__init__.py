@@ -14,6 +14,7 @@ ni managers concretos. Esas responsabilidades viven en sus módulos respectivos.
 from ._model        import Base, Document
 from ._managers     import BaseManager
 from ._documents    import AIWriter
+from ._exceptions   import handle_exceptions, ExceptionHandler
 from ._endpoints    import (
     normalize_target,
     require_json,
@@ -26,6 +27,8 @@ __all__ = [
     "Document",
     "BaseManager",
     "AIWriter",
+    "handle_exceptions",
+    "ExceptionHandler",
     "normalize_target",
     "require_json",
     "require_str",

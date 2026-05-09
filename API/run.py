@@ -16,7 +16,6 @@ los endpoints de la API siempre tengan prioridad.
 
 import os
 import signal
-import sys
 
 from flask                  import Flask, jsonify, request, send_from_directory
 from flask_cors             import CORS
@@ -25,8 +24,8 @@ from urllib.parse           import quote_plus
 
 from src.modules.shared     import BaseManager, Base
 from src.modules.shared._endpoints import _get_limiter
-from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError
-from src.modules.system     import SecOpsLogger
+from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, create_error_response
+from src.modules.system     import SecOpsLogger, config_reading
 from src.modules.users      import (
     UserManager,
     oauth_bp,
@@ -192,9 +191,9 @@ def _register_error_handlers(app: Flask) -> None:
     def not_found(error):
         _logger.warning(f"Ruta no encontrada: {request.method} {request.url}")
         return jsonify({
-            "error":   "not_found",
-            "message": "La ruta solicitada no existe",
-            "path":    request.path,
+            "error": "not_found",
+            "error_description": "La ruta solicitada no existe",
+            "path": request.path,
         }), 404
 
     @app.errorhandler(405)
@@ -203,8 +202,8 @@ def _register_error_handlers(app: Flask) -> None:
             f"Método no permitido: {request.method} {request.url}"
         )
         return jsonify({
-            "error":          "method_not_allowed",
-            "message":        f"El método {request.method} no está permitido en esta ruta",
+            "error": "method_not_allowed",
+            "error_description": f"El método {request.method} no está permitido en esta ruta",
             "allowedMethods": list(error.valid_methods) if hasattr(error, "valid_methods") else [],
         }), 405
 
@@ -212,25 +211,34 @@ def _register_error_handlers(app: Flask) -> None:
     def too_many_requests():
         _logger.warning("Rate limit superado: %s", request.remote_addr)
         return jsonify({
-            "error":   "too_many_requests",
-            "message": "Has superado el límite de peticiones.\
-                        Espera un momento e inténtalo de nuevo.",
+            "error": "too_many_requests",
+            "error_description": "Has superado el límite de peticiones. Espera un momento e inténtalo de nuevo.",
         }), 429
+
+    @app.errorhandler(SecOpsException)
+    def handle_secops_exception(error):
+        if error.traceback:
+            _logger.error(f"[{error.code.name}] {error.message}\n{error.traceback}")
+        else:
+            _logger.error(f"[{error.code.name}] {error.message}")
+        include_debug = config_reading.is_development()
+        err, code = create_error_response(error, include_debug_info=include_debug)
+        return jsonify(err), code
 
     @app.errorhandler(MissingParameterError)
     def handle_missing_parameter(error):
         _logger.warning(f"Parámetro faltante: {error}")
         return jsonify({
-            "error":   "missing_parameter",
-            "message": str(error),
+            "error": "missing_parameter",
+            "error_description": str(error),
         }), 400
 
     @app.errorhandler(MissingJsonBodyError)
     def handle_missing_json_body(error):
         _logger.warning(f"Body JSON inválido: {error}")
         return jsonify({
-            "error":   "invalid_json",
-            "message": str(error),
+            "error": "invalid_json",
+            "error_description": str(error),
         }), 400
 
     @app.errorhandler(500)
@@ -240,8 +248,8 @@ def _register_error_handlers(app: Flask) -> None:
             exc_info=True
         )
         return jsonify({
-            "error":   "internal_server_error",
-            "message": "Ha ocurrido un error inesperado en el servidor.",
+            "error": "internal_server_error",
+            "error_description": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
 
 def _init_db() -> None:

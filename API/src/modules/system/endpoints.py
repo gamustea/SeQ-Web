@@ -12,8 +12,8 @@ Autenticación: Bearer token requerido.
 from flask import Blueprint, jsonify, request
 
 from src.modules.shared._exceptions import (
-    ExceptionHandler,
-    create_error_response,
+    handle_exceptions,
+    IllegalStateError,
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
@@ -121,6 +121,7 @@ def status():
 @system_bp.get("")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=IllegalStateError, logger=_logger)
 def get_config():
     """Obtiene toda la configuración de SecOpsConfig.json.
 
@@ -136,22 +137,14 @@ def get_config():
         curl -X GET https://api.example.com/config \\
         -H "Authorization: Bearer <token>"
     """
-    try:
-        config = CR.get_full_config()
-        return jsonify(config), 200
-
-    except FileNotFoundError as exc:
-        return jsonify({"error": "config_not_found", "error_description": str(exc)}), 404
-    except Exception as exc:
-        _logger.error(f"Error obteniendo configuración: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    config = CR.get_full_config()
+    return jsonify(config), 200
 
 
 @system_bp.put("")
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
+@handle_exceptions(default_exception=IllegalStateError, logger=_logger)
 def update_config():
     """Actualiza la configuración de SecOpsConfig.json.
 
@@ -175,13 +168,6 @@ def update_config():
     if not new_config:
         return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
 
-    try:
-        config = CR.save_full_config(new_config)
-        _logger.info("Configuración actualizada correctamente")
-        return jsonify(config), 200
-
-    except Exception as exc:
-        _logger.error(f"Error actualizando configuración: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    config = CR.save_full_config(new_config)
+    _logger.info("Configuración actualizada correctamente")
+    return jsonify(config), 200

@@ -56,14 +56,13 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from src.modules.shared._exceptions import (
+    handle_exceptions,
     DatabaseError,
     MissingParameterError,
-    ExceptionHandler,
-    create_error_response,
+    IllegalStateError,
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.shared._endpoints import _get_limiter, require_json
-from src.modules.shared._exceptions import IllegalStateError
 limiter = _get_limiter()
 from .services import Role, require_attributes, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
@@ -127,6 +126,7 @@ def get_current_user() -> "User":
 @users_bp.post("/check-credentials")
 @limiter.limit("10 per minute; 30 per hour")
 @require_json(["username", "password"])
+@handle_exceptions(default_exception=InvalidCredentialsError, logger=_logger)
 def check_credentials(data: dict[str, Any]):
     """Valida credenciales de usuario (endpoint legacy).
 
@@ -154,28 +154,19 @@ def check_credentials(data: dict[str, Any]):
     username = data["username"]
     password = data["password"]
 
-    try:
-        is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
-        if not is_valid:
-            raise InvalidCredentialsError()
+    is_valid, user_id = USER_MANAGER.verify_credentials(username, password)
+    if not is_valid:
+        raise InvalidCredentialsError()
 
-        _logger.info(f"Credenciales válidas para: {username} (ID: {user_id})")
-        return jsonify({"message": "Credenciales válidas", "isValid": True, "userId": user_id, "username": username}), 200
-
-    except (MissingParameterError, InvalidCredentialsError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en check-credentials: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    _logger.info(f"Credenciales válidas para: {username} (ID: {user_id})")
+    return jsonify({"message": "Credenciales válidas", "isValid": True, "userId": user_id, "username": username}), 200
 
 
 @users_bp.put("/change-password")
 @require_oauth_token
 @limiter.limit("5 per hour; 10 per day")
 @require_json(required_fields=["newPassword"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def change_password(data: dict[str, Any]):
     """Cambia la contraseña del usuario autenticado e invalida todos sus tokens.
 
@@ -204,29 +195,19 @@ def change_password(data: dict[str, Any]):
 
     new_password = data["newPassword"]
 
-    try:
-        user = get_current_user()
-        user_id  = user.id
-        username = user.username
+    user = get_current_user()
+    user_id  = user.id
+    username = user.username
 
-        USER_MANAGER.update_user_password(user_id, new_password) # type: ignore
-        OAUTH_MANAGER.revoke_all_user_tokens(user_id) # type: ignore
+    USER_MANAGER.update_user_password(user_id, new_password) # type: ignore
+    OAUTH_MANAGER.revoke_all_user_tokens(user_id) # type: ignore
 
-        _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
-        return jsonify({
-            "message":  "Contraseña cambiada exitosamente. Por favor, inicia sesión de nuevo.",
-            "userId":   user_id,
-            "username": username,
-        }), 200
-
-    except (MissingParameterError, InvalidCredentialsError) as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en change-password: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
+    return jsonify({
+        "message":  "Contraseña cambiada exitosamente. Por favor, inicia sesión de nuevo.",
+        "userId":   user_id,
+        "username": username,
+    }), 200
 
 
 @oauth_bp.post("/token")
@@ -397,6 +378,7 @@ def oauth_revoke_all():
 @users_bp.get("/me")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def get_current_profile():
     """Obtiene el perfil del usuario autenticado.
 
@@ -415,24 +397,17 @@ def get_current_profile():
     curl -X GET https://api.example.com/users/me \\
     -H "Authorization: Bearer <token>"
     """
-    try:
-        user = get_current_user()
+    user = get_current_user()
 
-        return jsonify({
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "role": user.role,
-            "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
-        }), 200
-
-    except Exception as exc:
-        _logger.error(f"Error obteniendo perfil: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    return jsonify({
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": user.role,
+        "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
+    }), 200
 
 
 # =========================================================================
@@ -444,6 +419,7 @@ def get_current_profile():
 @require_oauth_token
 @require_role(Role.ADMIN)
 @require_json(["username", "email", "first_name", "last_name", "password"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def sign_up_user(data: dict[str, Any]):
     """Registra un nuevo usuario.
 
@@ -481,48 +457,29 @@ def sign_up_user(data: dict[str, Any]):
     requested_role = data.get("role") or "role_user"
     current_user_id = get_current_user().id
 
-    try:
-        user = USER_MANAGER.sign_in_user(
-            username = username,
-            email = email,
-            first_name = first_name,
-            last_name = last_name,
-            password = password,
-            role = requested_role,
-            actor_id = current_user_id
-        )
-        _logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
-        return jsonify({
-            "message":  "Usuario registrado exitosamente",
-            "userId":   user.id,
-            "username": user.username,
-            "email":    email,
-            "role":     requested_role,
-        }), 201
-
-    except DatabaseError as exc:
-        return jsonify({"code": exc.status_code, "message": "Revisa tus credenciales e inténtalo de nuevo."}), exc.status_code
-    except (
-        AuthorizationError,
-        MissingParameterError,
-        ExistingUserError,
-        UserBindingError,
-        PermissionsError
-    ) as exc:
-        _logger.error(f"Error en sign-up: {exc}", exc_info=True)
-        err, code = create_error_response(exc, include_debug_info=False)
-        err["error_description"] = err.get("message", "")
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error en sign-up: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    user = USER_MANAGER.sign_in_user(
+        username = username,
+        email = email,
+        first_name = first_name,
+        last_name = last_name,
+        password = password,
+        role = requested_role,
+        actor_id = current_user_id
+    )
+    _logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
+    return jsonify({
+        "message":  "Usuario registrado exitosamente",
+        "userId":   user.id,
+        "username": user.username,
+        "email":    email,
+        "role":     requested_role,
+    }), 201
 
 
 @users_bp.get("")
 @require_oauth_token
 @require_role(Role.ADMIN)
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def list_all_users():
     """Lista todos los usuarios del sistema con sus atributos.
 
@@ -533,30 +490,26 @@ def list_all_users():
             [{"id": 1, "username": "admin", "email": "admin@secops.local",
               "role": "role_root", "created_at": "...", "attributes": ["role_root"]}]
     """
-    try:
-        users = USER_MANAGER.get_all_users()
-        result = []
-        for user in users:
-            result.append({
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "role": user.role,
-                "created_at": user.created_at.isoformat() if user.created_at else None,
-                "attributes": [a.attribute_name for a in user.attributes]
-            })
-        return jsonify(result), 200
-
-    except Exception as exc:
-        _logger.error(f"Error listando usuarios: {exc}", exc_info=True)
-        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+    users = USER_MANAGER.get_all_users()
+    result = []
+    for user in users:
+        result.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "attributes": [a.attribute_name for a in user.attributes]
+        })
+    return jsonify(result), 200
 
 
 @users_bp.get("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_role(Role.ADMIN)
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def list_user_attributes(target_user_id: int):
     """Lista los atributos de un usuario específico.
 
@@ -578,25 +531,20 @@ def list_user_attributes(target_user_id: int):
         _logger.warning(f"Usuario {uid} intentó ver atributos de {target_user_id} sin permiso")
         return jsonify({"error": "forbidden", "error_description": "No tienes permiso para ver atributos de este usuario"}), 403
 
-    try:
-        target_user = USER_MANAGER.get_user_by_id(target_user_id)
+    target_user = USER_MANAGER.get_user_by_id(target_user_id)
 
-
-        return jsonify({
-            "user_id": target_user_id,
-            "attributes": [a.attribute_name for a in target_user.attributes],
-            "role": target_user.role if target_user else "role_user"
-        }), 200
-
-    except Exception as exc:
-        _logger.error(f"Error listando atributos: {exc}", exc_info=True)
-        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+    return jsonify({
+        "user_id": target_user_id,
+        "attributes": [a.attribute_name for a in target_user.attributes],
+        "role": target_user.role if target_user else "role_user"
+    }), 200
 
 
 @users_bp.put("/me")
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
 @require_json(["first_name", "last_name"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def update_current_profile(data: dict[str, Any]):
     """Actualiza el perfil del usuario autenticado (nombre y apellidos).
 
@@ -626,34 +574,25 @@ def update_current_profile(data: dict[str, Any]):
     first_name = data["first_name"]
     last_name = data["last_name"]
 
-    try:
-        user = get_current_user()
-        user = USER_MANAGER.update_user_profile(user.id, first_name, last_name) # type: ignore
+    user = get_current_user()
+    user = USER_MANAGER.update_user_profile(user.id, first_name, last_name) # type: ignore
 
-        return jsonify({
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "role": user.role,
-            "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
-        }), 200
-
-    except ProfileUpdateError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
-    except Exception as exc:
-        _logger.error(f"Error actualizando perfil: {exc}", exc_info=True)
-        sec_exc = ExceptionHandler.wrap_exception(exc, logger=_logger)
-        err, code = create_error_response(sec_exc, include_debug_info=False)
-        return jsonify(err), code
+    return jsonify({
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": user.role,
+        "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
+    }), 200
 
 
 @users_bp.put("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_role(Role.ADMIN)
 @require_json(["attributes"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def add_user_attribute(data: dict[str, Any], target_user_id: int):
     """Añade uno o más atributos a un usuario.
 
@@ -685,23 +624,19 @@ def add_user_attribute(data: dict[str, Any], target_user_id: int):
     if not attrs_to_add or not isinstance(attrs_to_add, list):
         return jsonify({"error": "invalid_request", "error_description": "attributes array required"}), 400
 
-    try:
-        added_attrs = USER_MANAGER.add_user_attributes(
-            user_id=target_user_id, attribute_names=attrs_to_add
-        )
+    added_attrs = USER_MANAGER.add_user_attributes(
+        user_id=target_user_id, attribute_names=attrs_to_add
+    )
 
-        _logger.info(f"Atributos {added_attrs} añadidos al usuario {target_user_id}")
-        return jsonify({"message": "Attributes added", "attributes": added_attrs}), 200
-
-    except Exception as exc:
-        _logger.error(f"Error añadiendo atributos: {exc}", exc_info=True)
-        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+    _logger.info(f"Atributos {added_attrs} añadidos al usuario {target_user_id}")
+    return jsonify({"message": "Attributes added", "attributes": added_attrs}), 200
 
 
 @users_bp.delete("/<int:target_user_id>/attributes")
 @require_oauth_token
 @require_role(Role.ADMIN)
 @require_json(["attributes"])
+@handle_exceptions(default_exception=DatabaseError, logger=_logger)
 def remove_user_attribute(data: dict[str, Any], target_user_id: int):
     """Elimina uno o más atributos de un usuario.
 
@@ -745,19 +680,14 @@ def remove_user_attribute(data: dict[str, Any], target_user_id: int):
             }
         ), 400
 
-    try:
-        USER_MANAGER.remove_user_attributes(
-            user_id=target_user_id, attribute_names=attrs_to_remove
-        )
+    USER_MANAGER.remove_user_attributes(
+        user_id=target_user_id, attribute_names=attrs_to_remove
+    )
 
-        _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
-        return jsonify(
-            {
-                "message": "Attributes removed",
-                "attributes": attrs_to_remove
-            }
-        ), 200
-
-    except Exception as exc:
-        _logger.error(f"Error eliminando atributos: {exc}", exc_info=True)
-        return jsonify({"error": "server_error", "error_description": str(exc)}), 500
+    _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
+    return jsonify(
+        {
+            "message": "Attributes removed",
+            "attributes": attrs_to_remove
+        }
+    ), 200

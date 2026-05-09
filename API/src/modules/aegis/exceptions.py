@@ -53,6 +53,31 @@ class DocumentError(SecOpsException):
     default_severity = ErrorSeverity.MEDIUM
 
 
+class DocumentNotFoundError(DocumentError):
+    default_code = ErrorCode.REPORT_NOT_FOUND
+    default_status_code = 404
+    default_severity = ErrorSeverity.LOW
+
+    def __init__(self, doc_id: int):
+        super().__init__(
+            message=f"Documento {doc_id} no encontrado",
+            details={"document_id": doc_id},
+            user_message=f"Documento {doc_id} no encontrado."
+        )
+
+
+class DocumentNotReadyError(DocumentError):
+    default_code = ErrorCode.SCAN_NOT_FINISHED
+    default_status_code = 409
+
+    def __init__(self, doc_id: int, status: str):
+        super().__init__(
+            message=f"Documento {doc_id} no disponible (estado: {status})",
+            details={"document_id": doc_id, "status": status},
+            user_message="El documento aún no está listo."
+        )
+
+
 class DocumentGenerationError(DocumentError):
     default_code = ErrorCode.REPORT_GENERATION_ERROR
 

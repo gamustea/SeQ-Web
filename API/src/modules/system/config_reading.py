@@ -359,3 +359,12 @@ def save_full_config(new_config: dict) -> dict:
         json.dump(new_config, f, indent=2, ensure_ascii=False)
     _configs = new_config
     return new_config
+
+
+# =============================================================================
+# ENTORNO
+# =============================================================================
+
+def is_development() -> bool:
+    """Indica si la aplicación está en modo desarrollo."""
+    return os.environ.get("FLASK_ENV", "production") == "development"
