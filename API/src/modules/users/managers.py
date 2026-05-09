@@ -38,7 +38,6 @@ from src.modules.system.logging import SecOpsLogger
 from .model import AccessToken, RefreshToken, User, UserAttribute
 from .repositories import TokenRepository, UserRepository, AttributeRepository
 from .services import (
-    encode_sha256,
     generate_salt,
     hash_password_with_salt,
     verify_password

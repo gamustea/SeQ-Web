@@ -138,9 +138,6 @@ def get_scan_status():
     try:
         scan_id = int(require_arg("id"))
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
-
         manager = ScanManager.resolve_manager(scan_id, user)
         scan = manager.get_scan_by_id(scan_id)
         if not scan:
@@ -180,8 +177,6 @@ def cancel_scan(scan_id: int):
     """Cancela un escaneo en curso."""
     try:
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         manager = ScanManager.resolve_manager(scan_id, user)
         scan = manager.get_scan_by_id(scan_id)
@@ -242,8 +237,6 @@ def start_nmap_scan(data: dict[str, str]):
     host  = data["target"]
     ports = data["ports"]
     user = get_current_user()
-    if not user:
-        raise IllegalStateError("'user' se detectó como None")
 
     try:
         timeout = int(data.get("timeout", 300))
@@ -317,8 +310,6 @@ def start_nikto_scan(data):
     """Lanza un escaneo Nikto."""
     target = data["target"]
     user = get_current_user()
-    if not user:
-        raise IllegalStateError("'user' detectado como None")
 
     try:
         timeout = int(data.get("timeout", 900))
@@ -447,8 +438,6 @@ def retrieve_all_scans():
         per_page = min(max(1, per_page), 100)
 
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         nmap_mgr = NmapScanManager(user)
         nikto_mgr = NiktoScanManager(user)
@@ -510,8 +499,6 @@ def retrieve_scan_by_id(scan_id: int):
     """Devuelve el detalle completo de un escaneo específico."""
     try:
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         manager = ScanManager.resolve_manager(scan_id, user)
         scan = manager.get_scan_by_id(scan_id)
@@ -576,12 +563,8 @@ def is_scan_finished():
              -H "Authorization: Bearer <token>"
     """
     try:
-        scan_id = int(require_arg("id"))
-
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
-
+        scan_id = int(require_arg("id"))
         manager = ScanManager.resolve_manager(scan_id, user)
         scan = manager.get_scan_by_id(scan_id)
         if not scan:
@@ -617,8 +600,6 @@ def generate_pdf():
         ai_report = ai_report_str == "true"
 
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         manager = ScanManager.resolve_manager(scan_id, user)
         manager.assert_scan_ownership(scan_id)
@@ -689,8 +670,6 @@ def delete_scan(scan_id: int):
     """
     try:
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         manager = ScanManager.resolve_manager(scan_id, user)
         scan = manager.get_scan_by_id(scan_id)
@@ -738,8 +717,6 @@ def get_document_status():
     """Consulta el estado de generación de un documento."""
     try:
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         document_id = request.args.get("document_id", type=int)
         scan_id = request.args.get("scan_id", type=int)
@@ -858,8 +835,6 @@ def get_documents_by_scan(scan_id: int):
     """
     try:
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         doc_mgr = SentinelReportManager(user)
         scan_mgr = ScanManager.resolve_manager(scan_id, user)
@@ -920,8 +895,6 @@ def download_document(document_id: int):
     """
     try:
         user = get_current_user()
-        if not user:
-            raise IllegalStateError("'user' detectado como None")
 
         uid = user.id
         _logger.info(f"Download request for document {document_id} by user {uid}")
@@ -964,8 +937,6 @@ def delete_document(document_id: int):
         403 — Sin permisos.
     """
     user = get_current_user()
-    if not user:
-            raise IllegalStateError("'user' detectado como None")
     uid = user.id
 
     doc_mgr = SentinelReportManager(user)

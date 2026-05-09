@@ -51,9 +51,9 @@ curl -X PUT https://api.example.com/users/change-password \
 ────────────────────────────────────────────────────────────────────────────────
 """
 
+from typing import Any
+
 from flask import Blueprint, jsonify, request
-from contextlib import contextmanager
-from werkzeug.exceptions import BadRequest
 
 from src.modules.shared._exceptions import (
     DatabaseError,
@@ -63,6 +63,7 @@ from src.modules.shared._exceptions import (
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.shared._endpoints import _get_limiter, require_json
+from src.modules.shared._exceptions import IllegalStateError
 limiter = _get_limiter()
 from .services import Role, require_attributes, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
@@ -74,6 +75,7 @@ from .exceptions import (
     AuthorizationError,
     PermissionsError
 )
+from .model import User
 
 
 oauth_bp = Blueprint("oauth", __name__)
@@ -85,7 +87,7 @@ USER_MANAGER = UserManager()
 OAUTH_MANAGER = OAuthTokenManager()
 
 
-def _require_field(data: dict, field: str) -> str:
+def _require_field(data: dict[str, Any], field: str) -> str:
     """Extrae un campo requerido del body o lanza MissingParameterError."""
     value = data.get(field)
     if not value:
@@ -97,7 +99,7 @@ def _require_field(data: dict, field: str) -> str:
 # HELPERS
 # =========================================================================
 
-def get_current_user():
+def get_current_user() -> "User":
     """
     Get the current authenticated user object from the database.
 
@@ -110,9 +112,12 @@ def get_current_user():
         AttributeError: If no user is authenticated (token not parsed).
     """
     if not hasattr(request, 'current_user'):
-        user_id = request.current_user_id
-        request.current_user = UserManager().get_user_by_id(user_id)
-    return request.current_user
+        user_id = request.current_user_id # type: ignore
+        user = UserManager().get_user_by_id(user_id)
+        if user is None:
+            raise IllegalStateError("'user' detectado como None")
+
+    return user
 
 # =========================================================================
 # SELF-APPLIED ENDPOINTS
@@ -122,7 +127,7 @@ def get_current_user():
 @users_bp.post("/check-credentials")
 @limiter.limit("10 per minute; 30 per hour")
 @require_json(["username", "password"])
-def check_credentials(data):
+def check_credentials(data: dict[str, Any]):
     """Valida credenciales de usuario (endpoint legacy).
 
     En producción, usar /oauth/token para autenticación OAuth2.
@@ -170,8 +175,8 @@ def check_credentials(data):
 @users_bp.put("/change-password")
 @require_oauth_token
 @limiter.limit("5 per hour; 10 per day")
-@require_json
-def change_password(data):
+@require_json(required_fields=["newPassword"])
+def change_password(data: dict[str, Any]):
     """Cambia la contraseña del usuario autenticado e invalida todos sus tokens.
 
     Args (JSON body):
@@ -196,18 +201,16 @@ def change_password(data):
              -H "Content-Type: application/json" \\
              -d '{"newPassword": "newpassword123"}'
     """
-    try:
-        new_password = _require_field(data, "newPassword")
-    except MissingParameterError as exc:
-        err, code = create_error_response(exc, include_debug_info=False)
-        return jsonify(err), code
+
+    new_password = data["newPassword"]
 
     try:
-        user_id  = get_current_user().id
-        username = get_current_user().username
+        user = get_current_user()
+        user_id  = user.id
+        username = user.username
 
-        USER_MANAGER.update_user_password(user_id, new_password)
-        OAUTH_MANAGER.revoke_all_user_tokens(user_id)
+        USER_MANAGER.update_user_password(user_id, new_password) # type: ignore
+        OAUTH_MANAGER.revoke_all_user_tokens(user_id) # type: ignore
 
         _logger.info(f"Contraseña cambiada para: {username} (ID: {user_id})")
         return jsonify({
@@ -228,7 +231,8 @@ def change_password(data):
 
 @oauth_bp.post("/token")
 @limiter.limit("20 per hour; 100 per day")
-def oauth_token():
+@require_json(["grantType"])
+def oauth_token(data: dict[str, Any]):
     """Emite tokens OAuth 2.0.
 
     Args (JSON body):
@@ -269,10 +273,6 @@ def oauth_token():
              -H "Content-Type: application/json" \\
              -d '{"grantType": "refresh_token", "refresh_token": "eyJ..."}'
     """
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-
-    data = request.get_json(silent=True) or {}
     grant_type = data.get("grantType")
 
     if grant_type == "password":
@@ -283,13 +283,13 @@ def oauth_token():
             return jsonify(
                 {
                     "error": "invalid_request",
-                    "error_description": "username and password are required"
+                    "error_description": f"username and password are required for grant type {grant_type}"
                 }
             ), 400
 
         is_valid, uid = UserManager().verify_credentials(username, password)
 
-        if not is_valid:
+        if not is_valid or uid is None:
             _logger.warning(f"Login fallido para: {username}")
             return jsonify(
                 {
@@ -303,7 +303,7 @@ def oauth_token():
         access_token  = OAUTH_MANAGER.create_access_token(
             user_id     = uid,
             username    = username,
-            role        = user.role if user else "role_user"
+            role        = user.role if user else "role_user" # type: ignore
         )   # type: ignore[arg-type]
         refresh_token = OAUTH_MANAGER.create_refresh_token(uid)            # type: ignore[arg-type]
         user_attrs = USER_MANAGER.get_user_attributes(uid)
@@ -389,8 +389,8 @@ def oauth_revoke_all():
     curl -X POST https://api.example.com/oauth/revoke-all \\
     -H "Authorization: Bearer <token>"
     """
-    uid = get_current_user().id
-    OAUTH_MANAGER.revoke_all_user_tokens(uid)
+    user = get_current_user()
+    OAUTH_MANAGER.revoke_all_user_tokens(user.id) # type: ignore
     return jsonify({"message": "All tokens revoked successfully"}), 200
 
 
@@ -416,13 +416,7 @@ def get_current_profile():
     -H "Authorization: Bearer <token>"
     """
     try:
-        user_id = get_current_user().id
-        username = get_current_user().username
-
-        user = USER_MANAGER.get_user_by_id(user_id)
-
-        if not user:
-            return jsonify({"error": "user_not_found", "error_description": "Usuario no encontrado"}), 404
+        user = get_current_user()
 
         return jsonify({
             "id": user.id,
@@ -431,7 +425,7 @@ def get_current_profile():
             "first_name": user.first_name,
             "last_name": user.last_name,
             "role": user.role,
-            "created_at": user.created_at.isoformat() if user.created_at else None
+            "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
         }), 200
 
     except Exception as exc:
@@ -446,11 +440,11 @@ def get_current_profile():
 # =========================================================================
 
 @users_bp.post("/sign-up")
+@limiter.limit("10 per hour; 20 per day")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@limiter.limit("10 per hour; 20 per day")
 @require_json(["username", "email", "first_name", "last_name", "password"])
-def sign_up_user(data):
+def sign_up_user(data: dict[str, Any]):
     """Registra un nuevo usuario.
 
     Solo usuarios con role_root o role_admin pueden crear nuevos usuarios.
@@ -577,14 +571,17 @@ def list_user_attributes(target_user_id: int):
         curl -X GET https://api.example.com/users/5/attributes \\
         -H "Authorization: Bearer <token>"
     """
-    current_user_id = get_current_user().id
+    user = get_current_user()
+    uid = user.id
 
-    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
-        _logger.warning(f"Usuario {current_user_id} intentó ver atributos de {target_user_id} sin permiso")
+    if not USER_MANAGER.can_manage_user(uid, target_user_id): # type: ignore
+        _logger.warning(f"Usuario {uid} intentó ver atributos de {target_user_id} sin permiso")
         return jsonify({"error": "forbidden", "error_description": "No tienes permiso para ver atributos de este usuario"}), 403
 
     try:
         target_user = USER_MANAGER.get_user_by_id(target_user_id)
+
+
         return jsonify({
             "user_id": target_user_id,
             "attributes": [a.attribute_name for a in target_user.attributes],
@@ -600,7 +597,7 @@ def list_user_attributes(target_user_id: int):
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
 @require_json(["first_name", "last_name"])
-def update_current_profile(data):
+def update_current_profile(data: dict[str, Any]):
     """Actualiza el perfil del usuario autenticado (nombre y apellidos).
 
     El username y email NO se pueden modificar (solo lectura).
@@ -612,12 +609,12 @@ def update_current_profile(data):
     Returns:
     200 — Perfil actualizado.
     {
-    "id": 1,
-    "username": "admin",
-    "email": "admin@secops.local",
-    "first_name": "NuevoNombre",
-    "last_name": "NuevosApellidos",
-    "created_at": "2024-01-01T00:00:00Z"
+        "id": 1,
+        "username": "admin",
+        "email": "admin@secops.local",
+        "first_name": "NuevoNombre",
+        "last_name": "NuevosApellidos",
+        "created_at": "2024-01-01T00:00:00Z"
     }
 
     Example:
@@ -630,10 +627,8 @@ def update_current_profile(data):
     last_name = data["last_name"]
 
     try:
-        user_id = get_current_user().id
-        username = get_current_user().username
-
-        user = USER_MANAGER.update_user_profile(user_id, first_name, last_name)
+        user = get_current_user()
+        user = USER_MANAGER.update_user_profile(user.id, first_name, last_name) # type: ignore
 
         return jsonify({
             "id": user.id,
@@ -642,7 +637,7 @@ def update_current_profile(data):
             "first_name": user.first_name,
             "last_name": user.last_name,
             "role": user.role,
-            "created_at": user.created_at.isoformat() if user.created_at else None
+            "created_at": user.created_at.isoformat() if user.created_at else None # type: ignore
         }), 200
 
     except ProfileUpdateError as exc:
@@ -659,7 +654,7 @@ def update_current_profile(data):
 @require_oauth_token
 @require_role(Role.ADMIN)
 @require_json(["attributes"])
-def add_user_attribute(data, target_user_id: int):
+def add_user_attribute(data: dict[str, Any], target_user_id: int):
     """Añade uno o más atributos a un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.
@@ -682,7 +677,7 @@ def add_user_attribute(data, target_user_id: int):
     """
     current_user_id = get_current_user().id
 
-    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id): # type: ignore
         _logger.warning(f"Usuario {current_user_id} intentó añadir atributos a {target_user_id} sin permiso")
         return jsonify({"error": "forbidden", "error_description": "No tienes permiso para gestionar atributos de este usuario"}), 403
 
@@ -707,7 +702,7 @@ def add_user_attribute(data, target_user_id: int):
 @require_oauth_token
 @require_role(Role.ADMIN)
 @require_json(["attributes"])
-def remove_user_attribute(data, target_user_id: int):
+def remove_user_attribute(data: dict[str, Any], target_user_id: int):
     """Elimina uno o más atributos de un usuario.
 
     Solo usuarios con role_root o role_admin pueden acceder.
@@ -730,7 +725,7 @@ def remove_user_attribute(data, target_user_id: int):
     """
     current_user_id = get_current_user().id
 
-    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
+    if not USER_MANAGER.can_manage_user(current_user_id, target_user_id): # type: ignore
         _logger.warning(
             f"Usuario {current_user_id} intentó eliminar atributos de {target_user_id} sin permiso"
         )
