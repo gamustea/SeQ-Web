@@ -88,7 +88,7 @@ from src.modules.shared._endpoints import _get_limiter, require_arg, require_jso
 
 limiter = _get_limiter()
 from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token, UserManager, get_current_user
+from src.modules.users import require_oauth_token, require_attributes, AttributeType, UserManager, get_current_user
 
 from .managers import AegisManager
 
@@ -142,6 +142,7 @@ def _get_document_checked(manager, doc_id: int, user_id: int) -> dict:
 @aegis_bp.post("/generate")
 @limiter.limit("10 per hour; 30 per day")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_CREATE])
 @require_json(["topicId"])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_generate(data: dict):
@@ -191,6 +192,7 @@ def aegis_generate(data: dict):
 @aegis_bp.get("/status")
 @limiter.limit("120 per hour; 500 per day")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_status():
     """Devuelve el estado de generación de un documento.
@@ -234,6 +236,7 @@ def aegis_status():
 @aegis_bp.get("/document")
 @limiter.limit("60 per hour; 300 per day")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_get_document():
     """Devuelve el contenido estructurado de un documento 'done'.
@@ -269,6 +272,7 @@ def aegis_get_document():
 @aegis_bp.get("/download")
 @limiter.limit("30 per hour; 100 per day")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_download():
     """Descarga el archivo original generado (.json o .md).
@@ -319,6 +323,7 @@ def aegis_download():
 @aegis_bp.delete("/document")
 @limiter.limit("30 per hour; 100 per day")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_DELETE])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_delete_document():
     """Elimina un documento Aegis (BD + archivo en disco).
@@ -353,6 +358,7 @@ def aegis_delete_document():
 @aegis_bp.get("/documents")
 @limiter.limit("60 per hour; 300 per day")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def aegis_list_user_documents():
     """Lista todos los documentos Aegis del usuario autenticado.
@@ -450,6 +456,7 @@ def aegis_get_brands():
 
 @aegis_bp.get("/export/formats")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 def list_export_formats():
     """Lista todos los formatos de exportación disponibles.
 
@@ -512,6 +519,7 @@ def list_export_formats():
 @limiter.limit("20 per hour; 100 per day")
 @require_json([])
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def export_document(data: dict, doc_id: int):
     """Exporta un documento Aegis al formato solicitado.
@@ -578,6 +586,7 @@ def export_document(data: dict, doc_id: int):
 
 @aegis_bp.get("/export/<int:doc_id>/download")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @limiter.limit("30 per hour; 150 per day")
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def download_export(doc_id: int):
@@ -638,6 +647,7 @@ def download_export(doc_id: int):
 
 @aegis_bp.get("/export/md/<int:doc_id>")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @limiter.limit("30 per hour; 150 per day")
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def quick_export_markdown(doc_id: int):

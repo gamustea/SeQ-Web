@@ -79,7 +79,7 @@ from src.modules.shared._exceptions import (
 from src.modules.acheron.exceptions import VaultError, VaultNotFoundError, StorableConflictError
 from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token, get_current_user
+from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
 from src.modules.shared._endpoints import _get_limiter, require_json
 from .managers import VaultManager
 
@@ -103,6 +103,7 @@ def get_vault_manager():
 
 @acheron_bp.get("/acheron/vault")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ACHERON_READ])
 @limiter.limit("120 per hour; 500 per day")
 @handle_exceptions(default_exception=VaultNotFoundError, logger=_logger)
 def get_vault():
@@ -145,6 +146,7 @@ def get_vault():
 
 @acheron_bp.post("/acheron/vault")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ACHERON_CREATE])
 @limiter.limit("60 per hour; 300 per day")
 @require_json
 @handle_exceptions(default_exception=VaultError, logger=_logger)
@@ -182,6 +184,7 @@ def upsert_vault(data):
 
 @acheron_bp.patch("/acheron/storables")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ACHERON_UPDATE])
 @limiter.limit("60 per hour; 300 per day")
 @handle_exceptions(default_exception=VaultError, logger=_logger)
 def patch_vault_storables():
@@ -225,6 +228,7 @@ def patch_vault_storables():
 
 @acheron_bp.post("/vaults/storables")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ACHERON_CREATE])
 @limiter.limit("60 per hour; 300 per day")
 @require_json(["kind"])
 @handle_exceptions(default_exception=VaultError, logger=_logger)
@@ -299,6 +303,7 @@ def add_vault_storable(data):
 
 @acheron_bp.delete("/vaults/storables")
 @require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ACHERON_DELETE])
 @limiter.limit("60 per hour; 200 per day")
 @handle_exceptions(default_exception=VaultError, logger=_logger)
 def delete_vault_storable():
