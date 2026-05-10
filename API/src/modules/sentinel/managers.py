@@ -366,7 +366,7 @@ class ScanManager(ABC):
             return False
 
     @classmethod
-    def cancel_all_running(cls, timeout: int = 30) -> None:
+    def cancel_all_running(cls, logger, timeout: int = 30) -> None:
         """
         Cancel all running scans and wait for tasks to finish.
 
@@ -381,10 +381,10 @@ class ScanManager(ABC):
             task_ids = list(cls._running_tasks.keys())
 
         if not task_ids:
-            cls.logger.info("No hay tareas activas que cancelar") # type: ignore
+            logger.info("No hay tareas activas que cancelar") # type: ignore
             return
 
-        cls.logger.info(f"Cancelando {len(task_ids)} tarea(s) activa(s)...") # type: ignore
+        logger.info(f"Cancelando {len(task_ids)} tarea(s) activa(s)...") # type: ignore
 
         for scan_id in task_ids:
             task = cls._get_task(scan_id)
@@ -392,9 +392,9 @@ class ScanManager(ABC):
                 try:
                     task.cancel()
                 except (OSError, RuntimeError) as e:
-                    cls.logger.warning(f"Error cancelando tarea {scan_id}: {e}") # type: ignore
+                    logger.warning(f"Error cancelando tarea {scan_id}: {e}") # type: ignore
 
-        cls.logger.info("Esperando a que las tareas finalicen...") # type: ignore
+        logger.info("Esperando a que las tareas finalicen...") # type: ignore
         start_time = time.monotonic()
         remaining = timeout
 
@@ -404,12 +404,12 @@ class ScanManager(ABC):
             remaining = timeout - elapsed
 
         if cls._running_tasks:
-            cls.logger.warning( # type: ignore
+            logger.warning( # type: ignore
                 f"{len(cls._running_tasks)} tarea(s) no respondieron al cancel "
                 "— forzada la terminación"
             )
 
-        cls.logger.info("Todas las tareas finalizadas") # type: ignore
+        logger.info("Todas las tareas finalizadas") # type: ignore
 
 
     # =========================================================================

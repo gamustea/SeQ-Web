@@ -40,22 +40,12 @@ from src.modules.pages      import pages_bp
 import src.modules.system.config_reading as CR
 
 
-
-
+APP_CONTEXT = CR.get_app_context()
 _logger = SecOpsLogger(name="APIMain").get_logger()
-
-SHUTDOWN_TIMEOUT = 30
-CREATE_DATABASE = True
-DEBUG = True
-HOST = '0.0.0.0'
-PORT = 5000
 
 _UI_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
 )
-
-
-
 
 def _graceful_shutdown(signum, *args) -> None:
     """
@@ -66,6 +56,7 @@ def _graceful_shutdown(signum, *args) -> None:
 
     Args:
         signum: Número de señal recibida (SIGTERM o SIGINT).
+        shutdown_time: Tiempo en el que se ha de matar el proceso
         *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
 
     Behavior:
@@ -82,7 +73,10 @@ def _graceful_shutdown(signum, *args) -> None:
     try:
         from src.modules.sentinel import ScanManager
         _logger.info("Cancelando tarea(s) activa(s)...")
-        ScanManager.cancel_all_running(timeout=SHUTDOWN_TIMEOUT)
+        ScanManager.cancel_all_running(
+            logger=_logger,
+            timeout=APP_CONTEXT.shutdown_time
+        )
         _logger.info("Todas las tareas finalizadas.")
     except Exception as e:
         _logger.error(f"Error durante el apagado: {e}")
@@ -91,8 +85,6 @@ def _graceful_shutdown(signum, *args) -> None:
     import os as _os
     _os.kill(_os.getpid(), signal.SIGTERM)
 
-signal.signal(signal.SIGTERM, _graceful_shutdown)
-signal.signal(signal.SIGINT,  _graceful_shutdown)
 
 def create_app(fresh_db_init: bool = False) -> Flask:
     """
@@ -444,8 +436,18 @@ def _init_db() -> None:
 
 
 if __name__ == "__main__":
-    create_app(CREATE_DATABASE).run(
-        debug=DEBUG,
-        host=HOST,
-        port=PORT
+    signal.signal(
+        signal.SIGTERM,
+        _graceful_shutdown
+    )
+    signal.signal(
+        signal.SIGINT,
+        _graceful_shutdown
+    )
+
+    app = create_app(APP_CONTEXT.create_database)
+    app.run(
+        debug=APP_CONTEXT.debug,
+        host=APP_CONTEXT.host,
+        port=APP_CONTEXT.port
     )

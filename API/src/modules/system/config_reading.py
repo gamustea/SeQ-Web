@@ -11,6 +11,7 @@ from enum import Enum
 from functools import wraps
 from pathlib import Path
 from dotenv import load_dotenv
+from dataclasses import dataclass
 
 from typing import Optional
 
@@ -39,6 +40,20 @@ class DirectoryType(Enum):
     OUTPUT_AEGIS    = "aegis.output"
 
     OUTPUT_SENTINEL = "sentinel.output"
+
+
+# =============================================================================
+# CLASES ÚTILES
+# =============================================================================
+
+@dataclass(frozen=True)
+class AppContext():
+    shutdown_time: int
+    create_database: bool
+    debug: bool
+    host: str
+    port: int
+
 
 # =============================================================================
 # DECORADOR LAZY LOAD
@@ -91,7 +106,7 @@ def is_loaded() -> bool:
 
 
 # =============================================================================
-# CONFIGURACIÓN DE ENTORNO (sin fallback a JSON)
+# CONFIGURACIÓN DE ENTORNO
 # =============================================================================
 
 def get_ollama_config() -> tuple[str, str]:
@@ -116,13 +131,12 @@ def get_oauth_config() -> tuple[float, float, Optional[str], Optional[str]]:
     return (float(access), float(refresh), secret, algorithm)
 
 
-
 def get_openvas_config() -> dict[str, str]:
     """Solo variables de entorno."""
-    hostname = os.getenv("OPENVAS_HOST")
-    port = os.getenv("OPENVAS_PORT")
-    user = os.getenv("OPENVAS_USERNAME")
-    password = os.getenv("OPENVAS_PASSWORD")
+    hostname    = os.getenv("OPENVAS_HOST")
+    port        = os.getenv("OPENVAS_PORT")
+    user        = os.getenv("OPENVAS_USERNAME")
+    password    = os.getenv("OPENVAS_PASSWORD")
 
     if all([hostname, port, user, password]):
         return {
@@ -130,12 +144,30 @@ def get_openvas_config() -> dict[str, str]:
             "port": port,
             "username": user,
             "password": password
-        } # pyright: ignore[reportReturnType]
+        } # type: ignore
 
     raise ValueError("Faltan variables de entorno para OpenVAS. "
                 "Asegúrate de definir OPENVAS_HOST, OPENVAS_PORT, "
                 "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
 
+
+def get_app_context() -> AppContext:
+    shutdown_time   = os.getenv("SHUTDOWN_TIMEOUT", 30)
+    create_database = os.getenv("CREATE_DATABASE", False)
+    debug           = os.getenv("DEBUG", False)
+    host            = os.getenv("HOST", "0.0.0.0")
+    port            = os.getenv("PORT", 5000)
+
+    if not all([shutdown_time, create_database, debug, host, port]):
+        raise ValueError([shutdown_time, create_database, debug, host, port])
+
+    return AppContext(
+        shutdown_time = int(shutdown_time),
+        create_database = bool(create_database),
+        debug = bool(debug),
+        host = host,
+        port = int(port)
+    )
 
 # =============================================================================
 # CONFIGURACIÓN DE BASE DE DATOS
