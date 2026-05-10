@@ -94,9 +94,9 @@ from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared._endpoints import (
     require_json,
     require_arg,
-    _get_limiter
+    limiter
 )
-limiter = _get_limiter()
+
 from src.modules.system import SecOpsLogger
 
 from .managers import (

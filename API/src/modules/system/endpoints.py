@@ -17,8 +17,7 @@ from src.modules.shared._exceptions import (
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
-from src.modules.shared._endpoints import _get_limiter
-limiter = _get_limiter()
+from src.modules.shared._endpoints import limiter
 
 import src.modules.system.config_reading as CR
 
@@ -87,9 +86,9 @@ def status():
         curl https://api.example.com/status
     """
     _logger.info("GET /status")
-    
+
     cpu_percent = psutil.cpu_percent(interval=1)
-    
+
     memory = psutil.virtual_memory()
     memory_info = {
         "total": memory.total,
@@ -98,7 +97,7 @@ def status():
         "used": memory.used,
         "free": memory.free
     }
-    
+
     # Obtener información de disco
     disk = psutil.disk_usage('/')
     disk_info = {
@@ -107,7 +106,7 @@ def status():
         "free": disk.free,
         "percent": disk.percent
     }
-    
+
     return jsonify({
         "cpu": {
             "percent": cpu_percent

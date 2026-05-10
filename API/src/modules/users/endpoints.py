@@ -62,8 +62,7 @@ from src.modules.shared._exceptions import (
     IllegalStateError,
 )
 from src.modules.system.logging import SecOpsLogger
-from src.modules.shared._endpoints import _get_limiter, require_json
-limiter = _get_limiter()
+from src.modules.shared._endpoints import limiter, require_json
 from .services import Role, require_attributes, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
 from .exceptions import (

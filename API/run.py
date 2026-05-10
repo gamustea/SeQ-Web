@@ -23,7 +23,7 @@ from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
 from src.modules.shared     import BaseManager, Base
-from src.modules.shared._endpoints import _get_limiter
+from src.modules.shared._endpoints import limiter
 from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, create_error_response
 from src.modules.system     import SecOpsLogger, config_reading
 from src.modules.users      import (
@@ -110,7 +110,7 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     CORS(app, origins=origins, supports_credentials=True)
 
     _logger.info("Inicializando rate limiting...")
-    _get_limiter().init_app(app)
+    limiter.init_app(app)
 
     _logger.info("Añadiendo endpoints...")
     app.register_blueprint(system_bp,   url_prefix="/system")

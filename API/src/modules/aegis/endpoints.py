@@ -84,9 +84,8 @@ from flask import Blueprint, jsonify, request, send_file, Response
 import src.modules.system.config_reading as CR
 from src.modules.shared import handle_exceptions
 from src.modules.shared._exceptions import ValidationError
-from src.modules.shared._endpoints import _get_limiter, require_arg, require_json
+from src.modules.shared._endpoints import limiter, require_arg, require_json
 
-limiter = _get_limiter()
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, UserManager, get_current_user
 

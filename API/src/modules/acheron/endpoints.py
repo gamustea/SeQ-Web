@@ -80,10 +80,9 @@ from src.modules.acheron.exceptions import VaultError, VaultNotFoundError, Stora
 from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
-from src.modules.shared._endpoints import _get_limiter, require_json
+from src.modules.shared._endpoints import require_json, limiter
 from .managers import VaultManager
 
-limiter = _get_limiter()
 
 acheron_bp = Blueprint("acheron", __name__)
 _logger    = SecOpsLogger("acheron").get_logger()
@@ -152,7 +151,7 @@ def get_vault():
 @handle_exceptions(default_exception=VaultError, logger=_logger)
 def upsert_vault(data):
     """Crea o reemplaza completamente el vault del usuario.
-  
+
     Args (query params):
         recovery (bool, optional): Si true, opera sobre el vault de recuperación.
 
@@ -239,13 +238,13 @@ def add_vault_storable(data):
         kind (str): "account" o "creditcard"
         title (str): Título del storable
         isRecovery (bool, optional): Si true, añade al vault de recuperación.
-        
+
         Para account:
             username (str): Nombre de usuario
             domain (str): Dominio del servicio
             password (str): Contraseña
             internalId (str, optional): ID interno único
-        
+
         Para creditcard:
             cardHolderName (str): Nombre del titular
             cardNumber (str): Número de tarjeta
@@ -356,15 +355,6 @@ def delete_vault_storable():
 
 
 # ── Helpers privados ──────────────────────────────────────────────────────────
-
-def require_json():
-    """Extrae y valida el body JSON de la petición."""
-    if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
-    return data
 
 
 def _parse_is_recovery() -> bool:
