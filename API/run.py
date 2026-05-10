@@ -22,8 +22,7 @@ from flask_cors             import CORS
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
-from src.modules.shared     import BaseManager, Base
-from src.modules.shared._endpoints import limiter
+from src.modules.shared     import BaseManager, Base, limiter
 from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, create_error_response
 from src.modules.system     import SecOpsLogger, config_reading
 from src.modules.users      import (

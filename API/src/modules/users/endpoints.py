@@ -55,23 +55,19 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 
+from src.modules.shared._endpoints import limiter, require_json
 from src.modules.shared._exceptions import (
     handle_exceptions,
     DatabaseError,
     MissingParameterError,
     IllegalStateError,
 )
-from src.modules.system.logging import SecOpsLogger
-from src.modules.shared._endpoints import limiter, require_json
-from .services import Role, require_attributes, require_oauth_token, require_role
+from src.modules.system import SecOpsLogger
+
+from .services import Role, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
 from .exceptions import (
-    ExistingUserError,
     InvalidCredentialsError,
-    UserBindingError,
-    ProfileUpdateError,
-    AuthorizationError,
-    PermissionsError
 )
 from .model import User
 

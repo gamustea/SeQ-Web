@@ -81,22 +81,18 @@ import ipaddress
 from flask import Blueprint, jsonify, request, send_file
 
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
-from src.modules.shared._exceptions import (
+from src.modules.shared import (
     handle_exceptions,
-    SecOpsException,
-    MissingParameterError,
-    ValidationError,
-    IllegalStateError,
-    create_error_response,
-)
-
-from src.modules.aegis.exceptions import DocumentError
-from src.modules.shared._endpoints import (
     require_json,
     require_arg,
     limiter
 )
-
+from src.modules.shared._exceptions import (
+    MissingParameterError,
+    ValidationError,
+    IllegalStateError
+)
+from src.modules.aegis.exceptions import DocumentError
 from src.modules.system import SecOpsLogger
 
 from .managers import (

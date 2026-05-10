@@ -80,7 +80,7 @@ from src.modules.acheron.exceptions import VaultError, VaultNotFoundError, Stora
 from src.modules.users.exceptions import UserNotFoundError
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
-from src.modules.shared._endpoints import require_json, limiter
+from src.modules.shared import require_json, limiter
 from .managers import VaultManager
 
 

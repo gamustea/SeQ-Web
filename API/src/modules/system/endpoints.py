@@ -11,13 +11,13 @@ Autenticación: Bearer token requerido.
 
 from flask import Blueprint, jsonify, request
 
+from src.modules.shared._endpoints import limiter
 from src.modules.shared._exceptions import (
     handle_exceptions,
     IllegalStateError,
 )
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token
-from src.modules.shared._endpoints import limiter
 
 import src.modules.system.config_reading as CR
 
