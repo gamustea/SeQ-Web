@@ -42,6 +42,7 @@ from src.modules.system.logging import SecOpsLogger
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
+from .services.csv_logger import ScanLoggerFactory
 
 from .repositories import ScanRepository, SentinelReportRepository
 from .model import (
@@ -110,6 +111,11 @@ class ScanManager(ABC):
         """
         self.user = user
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+
+    @abstractmethod
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        """Añade datos específicos del tipo de scan al diccionario data para el CSV."""
+        pass
 
     # =========================================================================
     # TASK REGISTRY (class-level, thread-safe)
@@ -459,9 +465,12 @@ class ScanManager(ABC):
 
             thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
 
+            thread_manager._log_to_csv(scan_id, fresh_scan, task)
+
         except (OSError, RuntimeError) as e:
             thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
             thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+            thread_manager._log_to_csv(scan_id, fresh_scan, task)
         finally:
             self._unregister_task(scan_id)
 
@@ -481,6 +490,39 @@ class ScanManager(ABC):
                     repo.update_status(scan, status)
         except (OSError, RuntimeError) as update_err:
             self.logger.error(f"Error actualizando estado de escaneo {scan_id}: {update_err}")
+
+    def _log_to_csv(self, scan_id: int, scan: Scan, task: "_Task") -> None:
+        """
+        Registra el escaneo en el CSV correspondiente.
+        Fallos en logging no interrumpen el flujo del scan.
+
+        Args:
+            scan_id: Primary key del escaneo.
+            scan: Instancia del scan (puede estar detached de la sesión).
+            task: Task que ejecutó el scan.
+        """
+        try:
+            scan_type = scan.scan_type
+            logger = ScanLoggerFactory.get(scan_type) # type: ignore
+
+            with UnitOfWork() as uow:
+                fresh_scan = ScanRepository(uow).get_by_id(scan_id)
+                start = fresh_scan.started_at
+                end = fresh_scan.finished_at
+                status = fresh_scan.status
+                duration = (end - start).total_seconds() if end and start else 0
+
+            data = {
+                "duration_sec": round(duration, 2),
+                "status": status,
+                "concurrent_tasks": len(self._running_tasks),
+            }
+
+            self.append_csv_data(data, scan, task)
+            logger.log(data)
+            self.logger.debug(f"Escaneo {scan_id} registrado en CSV ({scan_type})")
+        except Exception as csv_err:
+            self.logger.warning(f"Error registrando escaneo {scan_id} en CSV: {csv_err}")
 
 
     # =========================================================================
@@ -1001,6 +1043,11 @@ class NmapScanManager(ScanManager):
         self._append_document_info(scan, result, self.user)
         return result
 
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        data["target_host"] = scan.target
+        data["target_ports"] = getattr(task, "target_ports", "")
+        data["timeout_sec"] = task.timeout
+
 
 # =============================================================================
 # NIKTO
@@ -1119,7 +1166,7 @@ class NiktoScanManager(ScanManager):
             "target": scan.target,
             "status": getattr(scan, "status", "unknown"),
             "startedAt": scan.started_at.isoformat(),
-            "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None,
+            "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None, # type: ignore
             "incidents": [
                 {
                     "osvdbId": i.osvdb_id,
@@ -1135,6 +1182,10 @@ class NiktoScanManager(ScanManager):
         }
         self._append_document_info(scan, result, self.user)
         return result
+
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        data["target_domain"] = scan.target
+        data["timeout_sec"] = getattr(scan, "timeout", task.timeout) if hasattr(scan, "timeout") else task.timeout
 
 
 # =============================================================================
@@ -1327,7 +1378,7 @@ class OpenVASScanManager(ScanManager):
             "reportId": scan.report_id,
             "status": getattr(scan, "status", "unknown"),
             "startedAt": scan.started_at.isoformat(),
-            "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None,
+            "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None, # type: ignore
             "vulnerabilities": [
                 {
                     "nvtOid": r.vulnerability.nvt_oid,
@@ -1352,6 +1403,10 @@ class OpenVASScanManager(ScanManager):
         }
         self._append_document_info(scan, result, self.user)
         return result
+
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        data["scan_config"] = getattr(scan, "scan_config_name", "")
+        data["skip_normalize"] = getattr(scan, "skip_normalize", False)
 
 
 # =============================================================================

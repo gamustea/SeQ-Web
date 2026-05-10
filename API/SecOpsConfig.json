@@ -149,7 +149,8 @@
     "enabled": true,
     "areLocalIpsAllowed": false,
     "directories": {
-      "output": "data/sentinel/output"
+      "output": "data/sentinel/output",
+      "csv": "data/sentinel/csv"
     },
     "nikto": {
       "colorPalette": {

@@ -40,6 +40,7 @@ class DirectoryType(Enum):
     OUTPUT_AEGIS    = "aegis.output"
 
     OUTPUT_SENTINEL = "sentinel.output"
+    CSV_SENTINEL    = "sentinel.csv"
 
 
 # =============================================================================
@@ -124,9 +125,11 @@ def get_oauth_config() -> tuple[float, float, Optional[str], Optional[str]]:
     refresh     = os.getenv("REFRESH_TOKEN_EXPIRY_DAYS") or ""
 
     if not all([secret, algorithm, access, refresh]):
-        raise ValueError("Faltan variables de entorno para OAuth. "
-                "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
-                "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS.")
+        raise ValueError(
+            "Faltan variables de entorno para OAuth. "
+            "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
+            "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS."
+        )
 
     return (float(access), float(refresh), secret, algorithm)
 
@@ -229,6 +232,7 @@ def get_directory_of(directory_type) -> str:
         "output": "OUTPUT_DIR",
         "stack": "OUTPUT_DIR",
         "resourcedir": "RESOURCE_DIR",
+        "sentinel.csv": "CSV_SENTINEL_DIR",
     }
 
     env_var = env_mapping.get(dir_key)
@@ -370,6 +374,10 @@ def get_openvas_scan_configs() -> dict[str, str]:
 def get_openvas_port_list() -> dict[str, str]:
     configs = get_sentinel_config()
     return configs["openvas"]["toolConfigs"]["portList"]
+
+@_lazy_load
+def get_sentinel_csv_dir() -> str:
+    return get_directory_of(DirectoryType.CSV_SENTINEL)
 
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)

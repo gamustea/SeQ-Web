@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 from .reports import (
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy,
-    PDFCreator
+    PDFCreator,
 )
 
 from .processors import (
@@ -13,14 +15,23 @@ from .processors import (
 )
 
 from .tasks import (
-    NiktoScanTask, 
-    NmapScanTask, 
-    OpenVASTask, 
-    TaskStatus, 
+    NiktoScanTask,
+    NmapScanTask,
+    OpenVASTask,
+    TaskStatus,
     _Task
 )
 
-__all__ = [   
+from .csv_logger import (
+    ScanLoggerFactory,
+    BaseScanLogger,
+    ScanLogger,
+    NmapScanLogger,
+    NiktoScanLogger,
+    OpenVASScanLogger,
+)
+
+__all__ = [
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy,
@@ -33,5 +44,11 @@ __all__ = [
     NmapScanTask,
     OpenVASTask,
     TaskStatus,
-    _Task
+    _Task,
+    ScanLoggerFactory,
+    BaseScanLogger,
+    ScanLogger,
+    NmapScanLogger,
+    NiktoScanLogger,
+    OpenVASScanLogger,
 ]
