@@ -1157,24 +1157,15 @@ class OpenVASScanManager(ScanManager):
     ... scan_id = manager.run_scan(target="192.168.1.1")
     """
 
-    SCAN_CONFIGS = {
-        "full_fast":     "daba56c8-73ec-11df-a475-002264764cea",
-        "full_deep":     "8715c877-47a0-438d-98a3-27c7a6ab2196",
-        "full_ultimate": "085569ce-73ed-11df-83c3-002264764cea",
-    }
-
-    PORT_LISTS = {
-        "tcp_all":           "33d0cd82-57c6-11e1-8ed1-406186ea4fc5",
-        "tcp_udp_all":       "4a4717fe-57d2-11e1-9a26-406186ea4fc5",
-        "tcp_all_udp_top100":"730ef368-57e2-11e1-a90f-406186ea4fc5",
-    }
+    SCAN_CONFIGS = CR.get_openvas_scan_configs()
+    PORT_LISTS = CR.get_openvas_port_list()
 
     _strategy_class = OpenVASPrintingStrategy
 
     def __init__(self, user: User) -> None:
         super().__init__(user)
 
-        config         = CR.get_openvas_config()
+        config         = CR.get_openvas_environment()
         self.hostname  = config["hostname"]
         self.port      = config["port"]
         self.username  = config["username"]

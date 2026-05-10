@@ -328,7 +328,7 @@ class AegisManager:
         output_dir = Path(CR.get_directory_of(CR.DirectoryType.OUTPUT_AEGIS))
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        ollama_host, ollama_model = CR.get_ollama_config()
+        ollama_host, ollama_model = CR.get_ollama_environment()
         aegis = CR.get_aegis_config() or {}
 
         return {

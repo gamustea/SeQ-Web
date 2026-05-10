@@ -87,7 +87,7 @@ class AIWriter(ABC):
         """
 
         from src.modules.system import config_reading as CR
-        env_host, env_model = CR.get_ollama_config()
+        env_host, env_model = CR.get_ollama_environment()
 
         if host is None or model is None:
             self.host = host or env_host

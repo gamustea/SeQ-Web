@@ -13,7 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from dataclasses import dataclass
 
-from typing import Optional
+from typing import Optional, TypedDict
 
 from src.modules.shared._exceptions import IllegalStateError
 
@@ -109,7 +109,7 @@ def is_loaded() -> bool:
 # CONFIGURACIÓN DE ENTORNO
 # =============================================================================
 
-def get_ollama_config() -> tuple[str, str]:
+def get_ollama_environment() -> tuple[str, str]:
     """Solo variables de entorno."""
     host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     model = os.getenv("OLLAMA_MODEL", "llama3.2")
@@ -131,7 +131,7 @@ def get_oauth_config() -> tuple[float, float, Optional[str], Optional[str]]:
     return (float(access), float(refresh), secret, algorithm)
 
 
-def get_openvas_config() -> dict[str, str]:
+def get_openvas_environment() -> dict[str, str]:
     """Solo variables de entorno."""
     hostname    = os.getenv("OPENVAS_HOST")
     port        = os.getenv("OPENVAS_PORT")
@@ -275,7 +275,6 @@ def get_aegis_config() -> dict:
 
     return _configs.get("aegis", {})
 
-
 @_lazy_load
 def get_aegis_tips_amount() -> int:
     if _configs is None:
@@ -283,7 +282,6 @@ def get_aegis_tips_amount() -> int:
 
     cfg = _configs.get("aegis", {})
     return int(cfg.get("tipsAmount", 7))
-
 
 @_lazy_load
 def get_aegis_vulnerabilities_antiquity() -> int:
@@ -293,7 +291,6 @@ def get_aegis_vulnerabilities_antiquity() -> int:
     cfg = _configs.get("aegis", {})
     return int(cfg.get("vulnerabilitiesAntiquity", 5))
 
-
 @_lazy_load
 def get_aegis_brands() -> list[dict]:
     if _configs is None:
@@ -301,7 +298,6 @@ def get_aegis_brands() -> list[dict]:
 
     cfg = _configs.get("aegis", {})
     return list(cfg.get("brands", []))
-
 
 @_lazy_load
 def get_aegis_prompts() -> dict:
@@ -323,7 +319,6 @@ def get_sentinel_config() -> dict:
 
     return _configs.get("sentinel", {})
 
-
 @_lazy_load
 def get_prompts_config() -> dict:
     if _configs is None:
@@ -337,12 +332,10 @@ def get_prompts_config() -> dict:
         "openvas": sentinel.get("openvas", {}).get("prompts", {}),
     }
 
-
 @_lazy_load
 def get_tool_prompts(tool: str) -> dict:
     prompts = get_prompts_config()
     return prompts.get(tool, {})
-
 
 @_lazy_load
 def get_tool_color_palette(tool: str) -> dict:
@@ -358,7 +351,6 @@ def get_tool_color_palette(tool: str) -> dict:
     tool_config = sentinel[tool_key]
     return tool_config.get("colorPalette", {})
 
-
 @_lazy_load
 def are_local_ips_allowed() -> bool:
     if _configs is None:
@@ -368,6 +360,16 @@ def are_local_ips_allowed() -> bool:
     are_allowed = sentinel.get("areLocalIpsAllowed", None)
 
     return False if are_allowed is None else are_allowed == "true"
+
+@_lazy_load
+def get_openvas_scan_configs() -> dict[str, str]:
+    configs = get_sentinel_config()
+    return configs["openvas"]["toolConfigs"]["scanConfigs"]
+
+@_lazy_load
+def get_openvas_port_list() -> dict[str, str]:
+    configs = get_sentinel_config()
+    return configs["openvas"]["toolConfigs"]["portList"]
 
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
@@ -380,7 +382,6 @@ def get_full_config() -> dict:
         raise IllegalStateError("'_configs' detectado como nulo")
 
     return _configs.copy()
-
 
 def save_full_config(new_config: dict) -> dict:
     """Guarda la configuración completa."""

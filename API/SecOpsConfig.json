@@ -180,6 +180,18 @@
       }
     },
     "openvas": {
+      "toolConfigs": {
+        "scanConfigs": {
+          "full_fast":     "daba56c8-73ec-11df-a475-002264764cea",
+          "full_deep":     "8715c877-47a0-438d-98a3-27c7a6ab2196",
+          "full_ultimate": "085569ce-73ed-11df-83c3-002264764cea"
+        },
+        "portList": {
+            "tcp_all":            "33d0cd82-57c6-11e1-8ed1-406186ea4fc5",
+            "tcp_udp_all":        "4a4717fe-57d2-11e1-9a26-406186ea4fc5",
+            "tcp_all_udp_top100": "730ef368-57e2-11e1-a90f-406186ea4fc5"
+        }
+      },
       "colorPalette": {
         "black":      "#0d2818",
         "dark":       "#1b5e20",
