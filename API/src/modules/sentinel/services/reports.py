@@ -8,7 +8,7 @@ for AI-powered analysis using Ollama.
 Classes:
     ColorType: Enumeration of color palette types.
     ReportTheme: Theme configuration for PDF styling.
-    _PrintingStrategy: Abstract base class for printing strategies.
+    PrintingStrategy: Abstract base class for printing strategies.
     PDFCreator: Main class for PDF document generation.
     NmapPrintingStrategy: Strategy for Nmap scan reports.
     OpenVASPrintingStrategy: Strategy for OpenVAS scan reports.
@@ -50,7 +50,7 @@ from reportlab.platypus import (
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
 
-from ..model import NmapScan, NiktoScan, Scan, Host
+from ..model import NmapScan, NiktoScan, Scan, Host, ScanType
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
 
 
@@ -455,7 +455,7 @@ class ReportTheme:
         return t
 
 
-class _PrintingStrategy(ABC):
+class PrintingStrategy(ABC):
     """Abstract base class for printing strategies.
 
     Defines the interface for generating PDF report content from scan data.
@@ -468,12 +468,62 @@ class _PrintingStrategy(ABC):
         logger: Logger instance for the class.
     """
 
+    _registry: Dict[ScanType, type["PrintingStrategy"]] = {}
+
     def __init__(self, scan: Scan) -> None:
         super().__init__()
         self.scan = scan
         self.writer = None
         self.color_palette: Dict[ColorType, str] = {}
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+
+    @classmethod
+    def register(cls, scan_type: ScanType):
+        def decorator(subclass: type["PrintingStrategy"]):
+            cls._registry[scan_type] = subclass
+            return subclass
+        return decorator
+
+    @classmethod
+    def resolve_printing_strategy(cls, scan_id: int) -> "PrintingStrategy":
+        """Resolve the appropriate printing strategy for a scan.
+
+        Creates a new session to avoid DetachedInstanceError when accessing
+        scan relationships in background threads.
+
+        Args:
+            scan_id: Primary key of the scan.
+
+        Returns:
+            PrintingStrategy instance configured with the scan.
+
+        Raises:
+            ValidationError: If scan type is not registered.
+        """
+        from ..managers import ScanManager
+        from src.modules.shared._exceptions import ValidationError
+
+        raw_type = ScanManager.get_scan_type(scan_id)
+        try:
+            scan_type = ScanType(raw_type)
+        except ValueError:
+            raise ValidationError(
+                field="scan_type",
+                message=f"Tipo de escaneo desconocido: {raw_type}",
+                value=raw_type
+            )
+
+        strategy_class = cls._registry.get(scan_type)
+        if strategy_class is None:
+            raise ValidationError(
+                field="scan_type",
+                message=f"Estrategia de impresión no registrada para: {scan_type.value}",
+                value=scan_type.value
+            )
+
+        scan = ScanManager.get_scan_rich(scan_id)
+
+        return strategy_class(scan=scan)
 
     def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:
         """Append AI-generated security analysis to the report."""
@@ -673,10 +723,10 @@ class PDFCreator:
         scan: Source scan data.
     """
 
-    def __init__(self, printing_strategy: _PrintingStrategy) -> None:
+    def __init__(self, scan_id: int) -> None:
         self.directory = CR.get_directory_of(CR.DirectoryType.OUTPUT_SENTINEL)
-        self.printing_strategy = printing_strategy
-        self.scan = printing_strategy.scan
+        self.printing_strategy = PrintingStrategy.resolve_printing_strategy(scan_id)
+        self.scan = self.printing_strategy.scan
         self.logger = SecOpsLogger().get_logger()
 
     def _set_pdf_metadata(self, doc) -> None:
@@ -988,7 +1038,8 @@ class PDFCreator:
         return filename
 
 
-class NmapPrintingStrategy(_PrintingStrategy):
+@PrintingStrategy.register(ScanType.NMAP)
+class NmapPrintingStrategy(PrintingStrategy):
     """Printing strategy for Nmap scan reports.
 
     Generates PDF reports for Nmap network scans including host information,
@@ -1149,7 +1200,8 @@ class NmapPrintingStrategy(_PrintingStrategy):
         return "Análisis de Seguridad de Red"
 
 
-class OpenVASPrintingStrategy(_PrintingStrategy):
+@PrintingStrategy.register(ScanType.OPENVAS)
+class OpenVASPrintingStrategy(PrintingStrategy):
     """Printing strategy for OpenVAS vulnerability scan reports.
 
     Generates PDF reports for OpenVAS scans including vulnerability summary,
@@ -1505,7 +1557,8 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
         return "Análisis de Vulnerabilidades OpenVAS"
 
 
-class NiktoPrintingStrategy(_PrintingStrategy):
+@PrintingStrategy.register(ScanType.NIKTO)
+class NiktoPrintingStrategy(PrintingStrategy):
     """Printing strategy for Nikto web vulnerability scan reports.
 
     Generates PDF reports for Nikto scans including incident summary,

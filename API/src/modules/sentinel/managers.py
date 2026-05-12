@@ -34,6 +34,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional
 
+import sqlalchemy.orm.exc as orm_exc
+
 import src.modules.system.config_reading as CR
 
 from src.modules.users import User, UserManager
@@ -551,6 +553,35 @@ class ScanManager(ABC):
         if manager_class is None:
             raise ScanNotFoundError(scan_id)
         return manager_class(user)
+
+    @classmethod
+    def get_scan_rich(cls, scan_id: int) -> Scan:
+        """Get scan with relationships eagerly loaded (no DetachedInstanceError).
+
+        Uses registry to resolve correct manager class and its get_scan_by_id method
+        which already handles eager loading of relationships.
+
+        Args:
+            scan_id: Primary key of the scan.
+
+        Returns:
+            Scan instance with all relationships loaded.
+
+        Raises:
+            ScanNotFoundError: If scan_id not found or type not registered.
+        """
+        raw_type = cls.get_scan_type(scan_id)
+        try:
+            scan_type = ScanType(raw_type)
+        except ValueError:
+            raise ScanNotFoundError(scan_id)
+
+        manager_class = cls._registry.get(scan_type)
+        if manager_class is None:
+            raise ScanNotFoundError(scan_id)
+
+        manager = manager_class(user=None)
+        return manager.get_scan_by_id(scan_id)
 
     @staticmethod
     def _require_non_empty(
@@ -1562,26 +1593,6 @@ class SentinelReportManager:
         thread.start()
         return doc_id  # type: ignore
 
-    @staticmethod
-    def build_pdf_creator(scan) -> "PDFCreator":
-        """Build PDFCreator with the correct strategy based on scan type."""
-
-        scan_type = getattr(scan, "scan_type", "").lower()
-        if scan_type == "nmap":
-            strategy = NmapPrintingStrategy(scan=scan)
-        elif scan_type == "nikto":
-            strategy = NiktoPrintingStrategy(scan=scan)
-        elif scan_type == "openvas":
-            strategy = OpenVASPrintingStrategy(scan=scan)
-        else:
-            from src.modules.shared._exceptions import ValidationError
-            raise ValidationError(
-                field="scan_type",
-                message=f"Tipo de escaneo desconocido: {scan_type}",
-                value=scan_type
-            )
-        return PDFCreator(strategy)
-
     def _generate_pdf_async(
         self,
         document_id: int,
@@ -1591,12 +1602,7 @@ class SentinelReportManager:
         """Generate PDF in a background thread and update document status."""
 
         try:
-            scan_manager = ScanManager.resolve_manager(scan_id, self.user)
-            scan = scan_manager.get_scan_by_id(scan_id)
-            if not scan:
-                raise ScanNotFoundError(scan_id)
-
-            pdf_creator = SentinelReportManager.build_pdf_creator(scan)
+            pdf_creator = PDFCreator(scan_id)
             pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
 
             with UnitOfWork() as uow:
@@ -1613,10 +1619,14 @@ class SentinelReportManager:
                 f"Error generando PDF para documento {document_id}: {e}",
                 exc_info=True
             )
-            try:
-                with UnitOfWork() as uow:
-                    doc = SentinelReportRepository(uow).get_by_id(document_id)
-                    if doc:
-                        doc.status = "error"  # type: ignore
-            except (OSError, RuntimeError):
-                pass
+            self._update_document_status(document_id, "error")
+
+    def _update_document_status(self, document_id: int, status: str) -> None:
+        """Update document status in database."""
+        try:
+            with UnitOfWork() as uow:
+                doc = SentinelReportRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.status = status  # type: ignore
+        except (OSError, RuntimeError):
+            pass
