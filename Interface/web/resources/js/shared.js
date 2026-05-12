@@ -120,12 +120,57 @@ const SeqSession = (() => {
         }
     }
 
+    /** Extrae el rol del payload JWT. */
+    function role() {
+        if (!_data?.accessToken) return "role_user";
+        try {
+            const payload = JSON.parse(atob(_data.accessToken.split(".")[1]));
+            return payload.role || "role_user";
+        } catch {
+            return "role_user";
+        }
+    }
+
+    /** Devuelve true si el usuario actual es root. */
+    function isRoot() {
+        return role() === "role_root";
+    }
+
+    /** Devuelve true si el usuario actual es admin o root. */
+    function isAdmin() {
+        const r = role();
+        return r === "role_admin" || r === "role_root";
+    }
+
+    /** Revoca todos los tokens del usuario y redirige al login. */
+    async function revokeAllTokens() {
+        const token = _data?.accessToken;
+        _data = null;
+        sessionStorage.removeItem(STORAGE_KEY);
+        if (token) {
+            try {
+                await fetch(`${SEQ_CONFIG.API_BASE}/oauth/revoke-all`, {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                });
+            } catch { /* ignore */ }
+        }
+        window.location.href = SEQ_CONFIG.LOGIN_URL;
+    }
+
     return {
         load,
         getToken,
         authHeaders,
         logout,
         username,
+        role,
+        isRoot,
+        isAdmin,
+        revokeAllTokens,
         loginUrl: SEQ_CONFIG.LOGIN_URL,
     };
 })();
@@ -274,5 +319,27 @@ const SeqUI = (() => {
         return true;
     }
 
-    return { escHtml, formatDate, statusBadge, initTopbar, requireSession };
+    /**
+     * Genera el efecto de estrellas animado en el contenedor #stars.
+     * @param {number} [count=120] — Número de estrellas a crear.
+     * @param {string} [containerId='stars'] — ID del elemento contenedor.
+     */
+    function initStarfield(count = 120, containerId = "stars") {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        for (let i = 0; i < count; i++) {
+            const star = document.createElement("div");
+            star.className = "star";
+            star.style.left = Math.random() * 100 + "%";
+            star.style.top = Math.random() * 100 + "%";
+            const size = Math.random() * 2 + 1;
+            star.style.width = size + "px";
+            star.style.height = size + "px";
+            star.style.animationDelay = Math.random() * 4 + "s";
+            star.style.animationDuration = Math.random() * 3 + 2 + "s";
+            container.appendChild(star);
+        }
+    }
+
+    return { escHtml, formatDate, statusBadge, initTopbar, requireSession, initStarfield };
 })();
