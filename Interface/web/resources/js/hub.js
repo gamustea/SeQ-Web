@@ -2,57 +2,62 @@
 Depende de: shared.js (SeqSession, SeqToast, SeqUI, apiFetch)
 ===================================================== */
 
-if (!SeqSession.load()) window.location.href = SeqSession.loginUrl;
-SeqUI.initStarfield();
-
 (function () {
-    var tb = document.getElementById("sidebar-toggle");
-    var sb = document.getElementById("profile-sidebar");
-    var lb = document.getElementById("logout-btn");
-    var pe = document.getElementById("profile-name");
-    var mu = document.getElementById("menu-users");
-    var mc = document.getElementById("menu-config");
-    if (!tb || !sb) return;
-
-    function applyMenuVisibility() {
-        if (!SeqSession.isAdmin()) {
-            if (mu) mu.style.display = "none";
-            if (mc) mc.style.display = "none";
+    document.addEventListener("DOMContentLoaded", function () {
+        if (!SeqSession.load()) {
+            window.location.href = SeqSession.loginUrl;
+            return;
         }
-    }
-    applyMenuVisibility();
+        SeqUI.initStarfield();
 
-    tb.addEventListener("click", function (e) {
-        e.stopPropagation();
-        sb.classList.toggle("open");
-    });
+        var tb = document.getElementById("sidebar-toggle");
+        var sb = document.getElementById("profile-sidebar");
+        var lb = document.getElementById("logout-btn");
+        var pe = document.getElementById("profile-name");
+        var mu = document.getElementById("menu-users");
+        var mc = document.getElementById("menu-config");
+        if (!tb || !sb) return;
 
-    document.addEventListener("click", function (e) {
-        if (!sb.contains(e.target) && !tb.contains(e.target)) {
-            sb.classList.remove("open");
+        function applyMenuVisibility() {
+            if (!SeqSession.isAdmin()) {
+                if (mu) mu.style.display = "none";
+                if (mc) mc.style.display = "none";
+            }
         }
-    });
+        applyMenuVisibility();
 
-    lb.addEventListener("click", function () {
-        SeqSession.revokeAllTokens();
-    });
+        tb.addEventListener("click", function (e) {
+            e.stopPropagation();
+            sb.classList.toggle("open");
+        });
 
-    async function loadProfileName() {
-        var res = await apiFetch("/users/me");
-        if (!res?.ok) return;
-        var data = await res.json();
-        if (pe) pe.textContent = data.first_name + " " + data.last_name;
+        document.addEventListener("click", function (e) {
+            if (!sb.contains(e.target) && !tb.contains(e.target)) {
+                sb.classList.remove("open");
+            }
+        });
 
-        if (data.role) {
-            try {
-                var s = JSON.parse(sessionStorage.getItem("seq_session"));
-                s.role = data.role;
-                sessionStorage.setItem("seq_session", JSON.stringify(s));
-                applyMenuVisibility();
-            } catch (e) { /* ignore */ }
+        lb.addEventListener("click", function () {
+            SeqSession.revokeAllTokens();
+        });
+
+        async function loadProfileName() {
+            var res = await apiFetch("/users/me");
+            if (!res?.ok) return;
+            var data = await res.json();
+            if (pe) pe.textContent = data.first_name + " " + data.last_name;
+
+            if (data.role) {
+                try {
+                    var s = JSON.parse(sessionStorage.getItem("seq_session"));
+                    s.role = data.role;
+                    sessionStorage.setItem("seq_session", JSON.stringify(s));
+                    applyMenuVisibility();
+                } catch (e) { /* ignore */ }
+            }
         }
-    }
-    loadProfileName();
+        loadProfileName();
+    });
 })();
 
 (function () {
