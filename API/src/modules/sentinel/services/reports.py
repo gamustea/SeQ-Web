@@ -1170,7 +1170,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = OpenVASAIWriter()
 
-        palette_config = CR_UTILS.get_tool_color_palette(SentinelTool.OPENVAS)
+        palette_config = CR.get_tool_color_palette(SentinelTool.OPENVAS)
 
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#0D2818"),

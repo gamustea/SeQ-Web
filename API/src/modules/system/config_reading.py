@@ -166,8 +166,8 @@ def get_app_context() -> AppContext:
 
     return AppContext(
         shutdown_time = int(shutdown_time),
-        create_database = bool(create_database),
-        debug = bool(debug),
+        create_database = create_database == "True" or create_database == "true",
+        debug = debug == "True" or debug == "true",
         host = host,
         port = int(port)
     )

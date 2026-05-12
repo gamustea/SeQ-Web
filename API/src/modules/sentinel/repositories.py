@@ -112,6 +112,7 @@ class ScanRepository(BaseRepository[Scan]):
             self._session.query(OpenVASScan)
             .filter(OpenVASScan.id == scan_id)
             .options(
+                joinedload(OpenVASScan.host),
                 joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.vulnerability),
                 joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.host),
             )

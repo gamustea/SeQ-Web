@@ -447,8 +447,12 @@ class ScanManager(ABC):
             success = task.wait(timeout=task.timeout + self._scan_timeout_margin)
 
             if not success or task.results is None:
-                thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
-                thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+                if task.status == TaskStatus.CANCELLED:
+                    thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                    thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
+                else:
+                    thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
+                    thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
                 return
 
             thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
@@ -507,10 +511,10 @@ class ScanManager(ABC):
 
             with UnitOfWork() as uow:
                 fresh_scan = ScanRepository(uow).get_by_id(scan_id)
-                start = fresh_scan.started_at
-                end = fresh_scan.finished_at
-                status = fresh_scan.status
-                duration = (end - start).total_seconds() if end and start else 0
+                start = fresh_scan.started_at # type: ignore
+                end = fresh_scan.finished_at # type: ignore
+                status = fresh_scan.status # type: ignore
+                duration = (end - start).total_seconds() if end and start else 0 # type: ignore
 
             data = {
                 "duration_sec": round(duration, 2),
@@ -1462,11 +1466,6 @@ class SentinelReportManager:
         with UnitOfWork() as uow:
             doc = SentinelReportRepository(uow).get_latest_document(scan_id)
 
-        if doc:
-            self.logger.info(f"Último documento para scan {scan_id}: {doc.id}")
-        else:
-            self.logger.warning(f"No hay documentos para scan {scan_id}")
-
         return doc
 
     def get_documents_for_user(self) -> List[SentinelDocument]:
@@ -1596,10 +1595,6 @@ class SentinelReportManager:
             scan = scan_manager.get_scan_by_id(scan_id)
             if not scan:
                 raise ScanNotFoundError(scan_id)
-
-            document = self.get_document_by_id(document_id)
-            if not document:
-                raise DocumentError("Documento no encontrado")
 
             pdf_creator = SentinelReportManager.build_pdf_creator(scan)
             pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
