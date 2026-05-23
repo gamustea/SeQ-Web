@@ -9,15 +9,18 @@ PUT /config    — Actualiza la configuración
 Autenticación: Bearer token requerido.
 """
 
+import psutil
+
 from flask import Blueprint, jsonify, request
 
+from src.modules.users.services.permissions import Role
 from src.modules.shared._endpoints import limiter
 from src.modules.shared._exceptions import (
     handle_exceptions,
     IllegalStateError,
 )
 from src.modules.system.logging import SecOpsLogger
-from src.modules.users import require_oauth_token
+from src.modules.users import require_oauth_token, require_role
 
 import src.modules.system.config_reading as CR
 
@@ -56,6 +59,9 @@ def hello():
 
 
 @system_bp.get("/status")
+@limiter.limit("30 per hour; 100 per day")
+@require_oauth_token
+@require_role(minimum_role=Role.ADMIN)
 def status():
     """Obtiene información de estado del sistema: CPU, memoria y disco.
 
@@ -118,8 +124,9 @@ def status():
 
 
 @system_bp.get("")
-@require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
+@require_oauth_token
+@require_role(minimum_role=Role.ADMIN)
 @handle_exceptions(default_exception=IllegalStateError, logger=_logger)
 def get_config():
     """Obtiene toda la configuración de SecOpsConfig.json.
@@ -141,8 +148,9 @@ def get_config():
 
 
 @system_bp.put("")
-@require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
+@require_oauth_token
+@require_role(minimum_role=Role.ADMIN)
 @handle_exceptions(default_exception=IllegalStateError, logger=_logger)
 def update_config():
     """Actualiza la configuración de SecOpsConfig.json.

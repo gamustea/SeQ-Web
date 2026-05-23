@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import TypeVar, Optional, List, Any
 from sqlalchemy import desc
 
-from src.modules.system import SecOpsLogger
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
 
@@ -86,7 +85,7 @@ class AIWriter(ABC):
                    environment or CR defaults.
         """
 
-        from src.modules.system import config_reading as CR
+        from src.modules.system import SecOpsLogger, config_reading as CR
         env_host, env_model = CR.get_ollama_environment()
 
         if host is None or model is None:

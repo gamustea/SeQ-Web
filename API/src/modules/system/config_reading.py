@@ -13,9 +13,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from dataclasses import dataclass
 
-from typing import Optional, TypedDict
+from typing import Optional
 
-from API.src.modules.sentinel.services.reports import SentinelTool
 from src.modules.shared._exceptions import IllegalStateError
 
 load_dotenv()
@@ -343,7 +342,8 @@ def get_tool_prompts(tool: str) -> dict:
     return prompts.get(tool, {})
 
 @_lazy_load
-def get_tool_color_palette(tool: SentinelTool) -> dict:
+def get_tool_color_palette(tool) -> dict:
+    from src.modules.sentinel.services.reports import SentinelTool
     if _configs is None:
         raise IllegalStateError("'_configs' detectado como nulo")
 
@@ -364,7 +364,9 @@ def are_local_ips_allowed() -> bool:
     sentinel = _configs.get("sentinel", {})
     are_allowed = sentinel.get("areLocalIpsAllowed", None)
 
-    return False if are_allowed is None else are_allowed == "true"
+    if are_allowed is None:
+        return False
+    return are_allowed is True or str(are_allowed).lower() == "true"
 
 @_lazy_load
 def get_openvas_scan_configs() -> dict[str, str]:

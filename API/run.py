@@ -23,7 +23,12 @@ from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
 from src.modules.shared     import BaseManager, Base, limiter
-from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, create_error_response
+from src.modules.shared._exceptions import (
+    MissingParameterError,
+    MissingJsonBodyError,
+    SecOpsException,
+    create_error_response
+)
 from src.modules.system     import SecOpsLogger, config_reading
 from src.modules.users      import (
     UserManager,
@@ -40,11 +45,12 @@ import src.modules.system.config_reading as CR
 
 
 APP_CONTEXT = CR.get_app_context()
-_logger = SecOpsLogger(name="APIMain").get_logger()
-
 _UI_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "web")
 )
+
+_logger = SecOpsLogger(name="APIMain").get_logger()
+
 
 def _graceful_shutdown(signum, *args) -> None:
     """
@@ -83,7 +89,6 @@ def _graceful_shutdown(signum, *args) -> None:
     _logger.info("[Shutdown] Proceso terminado.")
     import os as _os
     _os.kill(_os.getpid(), signal.SIGTERM)
-
 
 def create_app(fresh_db_init: bool = False) -> Flask:
     """
@@ -132,7 +137,6 @@ def create_app(fresh_db_init: bool = False) -> Flask:
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
-
 
 def _register_ui_route(app: Flask) -> None:
     """

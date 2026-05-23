@@ -51,7 +51,6 @@ import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
 from src.modules.shared._exceptions import IllegalStateError, ValidationError
 
-from ..managers import ScanManager
 from ..model import NmapScan, NiktoScan, Scan, Host, ScanType
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
 
@@ -373,6 +372,7 @@ class PrintingStrategy(ABC):
             ValidationError: If scan type is not registered.
         """
 
+        from ..managers import ScanManager
         raw_type = ScanManager.get_scan_type(scan_id)
         try:
             scan_type = ScanType(raw_type)

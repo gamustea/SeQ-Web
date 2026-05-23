@@ -108,6 +108,7 @@ from .exceptions import (
     IPValidationError,
     MaxHostsExceededError,
     PortValidationError,
+    PrivateIPRequested,
 )
 
 
@@ -240,6 +241,12 @@ def start_nmap_scan(data: dict[str, str]):
             "error_description": exc.user_message or str(exc),
             "details": exc.details or {}
         }), 400
+    except PrivateIPRequested as exc:
+        return jsonify({
+            "error": exc.__class__.__name__,
+            "error_description": exc.user_message or str(exc),
+            "details": exc.details or {}
+        }), 403
 
     try:
         ScanManager.validate_port(ports)
@@ -341,6 +348,12 @@ def start_openvas_scan(data):
             "error_description": exc.user_message or str(exc),
             "details": exc.details or {}
         }), 400
+    except PrivateIPRequested as exc:
+        return jsonify({
+            "error": exc.__class__.__name__,
+            "error_description": exc.user_message or str(exc),
+            "details": exc.details or {}
+        }), 403
 
     openvas_manager = OpenVASScanManager()
     target_ip = hosts[0]

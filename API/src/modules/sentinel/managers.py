@@ -32,11 +32,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from src.modules.users.exceptions import UserNotFoundError
-import src.modules.system.config_reading as CR
 
-from src.modules.users import User, UserManager
-from src.modules.shared import normalize_target
+import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
@@ -73,9 +70,8 @@ from .exceptions import (
     IPValidationError,
     MaxHostsExceededError,
     PortValidationError,
+    PrivateIPRequested,
 )
-
-USER_MANAGER = UserManager()
 
 
 class ScanManager(ABC):
@@ -302,6 +298,8 @@ class ScanManager(ABC):
             if not scan:
                 raise ScanNotFoundError(scan_id)
 
+            from src.modules.users.exceptions import UserNotFoundError
+            from src.modules.users import UserManager
             user = UserManager().get_user_by_id(user_id)
             if not user:
                 raise UserNotFoundError(user_id)
@@ -330,7 +328,9 @@ class ScanManager(ABC):
         """
         try:
             scan = self.get_scan_by_id(scan_id)
-            user = USER_MANAGER.get_user_by_id(user_id)
+            from src.modules.users.exceptions import UserNotFoundError
+            from src.modules.users import UserManager
+            user = UserManager().get_user_by_id(user_id)
             self.assert_scan_ownership(scan_id, user_id)
             if not scan:
                 self.logger.warning(f"Escaneo {scan_id} no encontrado, no se puede cancelar")
@@ -775,9 +775,17 @@ class ScanManager(ABC):
 
         if not lista_ips:
             raise IPValidationError(
-                message="No se generaron IPs válidas",
+                message="No se generaron IPs v\u00e1lidas",
                 ip_spec=ips_str
             )
+
+        if not CR.are_local_ips_allowed():
+            private_ips = [
+                ip for ip in lista_ips
+                if ipaddress.ip_address(ip).is_private
+            ]
+            if private_ips:
+                raise PrivateIPRequested(private_ips)
 
         return list(dict.fromkeys(lista_ips))
 
@@ -1191,6 +1199,7 @@ class NiktoScanManager(ScanManager):
         incidents_data = domain_data
         scan_repo = ScanRepository(uow)
 
+        from src.modules.shared._endpoints import normalize_target
         ip, host = normalize_target(scan.target, resolve_hostname=True)
         host = scan_repo.get_or_create_host(
             hostname   = host or ip or scan.target,
@@ -1381,6 +1390,7 @@ class OpenVASScanManager(ScanManager):
             task:           OpenVASTask instance.
             skip_normalize: Skip IP normalization if True.
         """
+        from src.modules.shared._endpoints import normalize_target
         if not skip_normalize:
             target_ip, _ = normalize_target(task.target)
             task.target  = target_ip # type: ignore

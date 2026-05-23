@@ -46,8 +46,7 @@ from src.modules.users import require_oauth_token
 
 pages_bp = Blueprint("pages", __name__)
 
-_PUBLIC_PAGES = {"login.html"}
-_PAGES_DIR = r"C:\Users\gmiga\Documents\GitHub\SecOps\Interface\web\pages"
+_PAGES_DIR = r"C:\Users\gmiga\Documents\GitHub\SecOps\web\pages"
 
 @pages_bp.route("/login")
 def serve_login():

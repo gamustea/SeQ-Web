@@ -8,15 +8,13 @@ Exponente:
     - Endpoints: users_bp, oauth_bp
 """
 
-from contextlib import contextmanager
-
 from .model import (
     User,
     AccessToken,
     RefreshToken,
     UserAttribute,
 )
-from .services import require_oauth_token, require_attributes, AttributeType
+from .services import require_oauth_token, require_attributes, require_role, AttributeType
 from .endpoints import oauth_bp, users_bp, get_current_user
 from .managers import UserManager, OAuthTokenManager
 
@@ -58,6 +56,7 @@ __all__ = [
     "oauth_bp",
     "require_oauth_token",
     "require_attributes",
+    "require_role",
     "AttributeType",
     "get_current_user"
 ]
