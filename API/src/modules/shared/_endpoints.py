@@ -22,13 +22,10 @@ from urllib.parse import urlparse
 from typing import Tuple, Optional
 
 from flask import request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from ._exceptions import MissingParameterError, MissingJsonBodyError
-
-
-limiter = None
-_DNS_TIMEOUT = 3.0
-
 
 
 # =========================================================================
@@ -102,26 +99,11 @@ def normalize_target(
 # RATE LIMITING
 # =========================================================================
 
-def _get_limiter():
-    """
-    Get or create the global rate limiter instance.
-
-    Initializes the Flask-Limiter with memory storage on first access.
-    Used for rate limiting endpoint calls to prevent abuse.
-
-    Returns:
-        Limiter: Configured Flask-Limiter instance.
-    """
-    global limiter
-    if limiter is None:
-        from flask_limiter import Limiter
-        from flask_limiter.util import get_remote_address
-        limiter = Limiter(
-            get_remote_address,
-            default_limits=[],
-            storage_uri="memory://",
-        )
-    return limiter
+limiter = Limiter(
+    get_remote_address,
+    default_limits=[],
+    storage_uri="memory://",
+)
 
 
 # =========================================================================
@@ -205,3 +187,5 @@ def require_arg(arg: str) -> str:
         raise MissingParameterError(arg)
 
     return value
+
+

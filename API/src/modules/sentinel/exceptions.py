@@ -415,6 +415,39 @@ class URLValidationError(ValidationError):
         )
 
 
+class PrivateIPRequested(ScanError):
+    """
+    Excepci\u00f3n lanzada cuando se solicita escanear IPs privadas y la
+    configuraci\u00f3n del sistema no lo permite.
+
+    Se usa cuando el campo 'areLocalIpsAllowed' en la configuraci\u00f3n de sentinel
+    es falso y el usuario intenta escanear IPs en rangos privados (RFC 1918).
+
+    Atributos:
+        default_code: C\u00f3digo de error (PRIVATE_IP_REQUESTED).
+        default_status_code: HTTP 403 (Forbidden).
+        default_severity: LOW.
+
+    Args:
+        private_ips: Lista de IPs privadas detectadas en la petici\u00f3n.
+
+    Ejemplo:
+        >>> raise PrivateIPRequested(private_ips=["192.168.1.1", "10.0.0.5"])
+    """
+
+    default_code = ErrorCode.PRIVATE_IP_REQUESTED
+    default_status_code = 403
+    default_severity = ErrorSeverity.LOW
+
+    def __init__(self, private_ips: list[str]):
+        ips_list = ", ".join(private_ips)
+        super().__init__(
+            message=f"No se permite escanear IPs privadas: {ips_list}",
+            details={"private_ips": private_ips},
+            user_message="El escaneo de IPs locales/privadas est\u00e1 deshabilitado."
+        )
+
+
 class PDFGenerationError(ReportError):
     """
     Excepción lanzada cuando ocurre un error al generar un PDF.

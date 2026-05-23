@@ -5,18 +5,13 @@
 'use strict';
 
 /* ── CONFIG local ── */
-const POLL_INTERVAL_MS  = 60_000;   // 1 minuto
-const POLL_MAX_ATTEMPTS = 30;       // 30 minutos máximo
+/* Status se refresca únicamente desde el historial */
 
 /* ══════════════════════════════════════════════════════════════
    DOM ELEMENTS
 ══════════════════════════════════════════════════════════════ */
 const topicGrid     = document.getElementById('topic-grid');
 const btnGenerate   = document.getElementById('btn-generate');
-const btnRefresh    = document.getElementById('btn-refresh-status');
-const progressBlock = document.getElementById('progress-block');
-const progressBar   = document.getElementById('progress-bar');
-const progressText  = document.getElementById('progress-text');
 const viewerEmpty   = document.getElementById('viewer-empty');
 const viewerContent = document.getElementById('viewer-content');
 const historyList   = document.getElementById('history-list');
@@ -27,114 +22,8 @@ const historyEmpty  = document.getElementById('history-empty');
 ══════════════════════════════════════════════════════════════ */
 let selectedTopicId   = null;
 let currentDocumentId = null;
-let pollTimer         = null;
-let pollAttempts      = 0;
-let isChecking        = false;
 let allDocs           = [];
 let sortMode          = 'date-desc';
-
-/* ══════════════════════════════════════════════════════════════
-   PROGRESS
-══════════════════════════════════════════════════════════════ */
-function showProgress(visible) {
-  if (progressBlock) progressBlock.style.display = visible ? 'flex' : 'none';
-}
-
-function setProgress(pct, msg) {
-  if (progressBar)  progressBar.style.width    = `${pct}%`;
-  if (progressText) progressText.textContent   = msg;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   POLLING
-══════════════════════════════════════════════════════════════ */
-async function checkStatusNow(docId) {
-  if (isChecking || !docId) return;
-  isChecking = true;
-
-  try {
-    const res = await apiFetch(`/aegis/status?id=${docId}`);
-    if (!res?.ok) return;
-    const data = await res.json();
-    await handleStatusUpdate(data, docId);
-  } catch (e) {
-    console.error('[Aegis] Error checking status:', e);
-  } finally {
-    isChecking = false;
-  }
-}
-
-async function handleStatusUpdate(data, docId) {
-  pollAttempts++;
-  const estimatedPercent = Math.min(95, 10 + pollAttempts * 3);
-
-  if (data.status === 'done') {
-    stopPolling();
-    localStorage.removeItem('aegis_pending_doc');
-    setProgress(100, '¡Píldora completada!');
-    SeqToast.show('Píldora generada correctamente', 'success');
-    setTimeout(async () => {
-      showProgress(false);
-      if (btnGenerate) btnGenerate.disabled = false;
-      await loadAndShowDocument(docId);
-      await loadHistory();
-    }, 800);
-
-  } else if (data.status === 'error') {
-    stopPolling();
-    localStorage.removeItem('aegis_pending_doc');
-    setProgress(0, 'Error en la generación');
-    showProgress(false);
-    if (btnGenerate) btnGenerate.disabled = false;
-    SeqToast.show('Error durante la generación', 'error');
-
-  } else {
-    const STAGE_MSG = {
-      researching: '🔍 Investigando alertas de seguridad…',
-      analyzing:   '📊 Analizando vulnerabilidades…',
-      writing:     '✍️ Redactando contenido…',
-      reviewing:   '🔍 Revisando estructura…',
-      finalizing:  '✅ Finalizando documento…',
-    };
-    const msg = (data.stage && STAGE_MSG[data.stage])
-      || data.message
-      || `Generando… (${pollAttempts} min)`;
-    setProgress(estimatedPercent, msg);
-  }
-}
-
-function startPolling(docId) {
-  stopPolling();
-  pollAttempts = 0;
-  pollTimer = setInterval(() => {
-    if (pollAttempts >= POLL_MAX_ATTEMPTS) {
-      stopPolling();
-      SeqToast.show('Tiempo máximo de espera agotado (30 min)', 'warn');
-      if (btnGenerate) btnGenerate.disabled = false;
-      return;
-    }
-    checkStatusNow(docId);
-  }, POLL_INTERVAL_MS);
-}
-
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-/* ── Botón de actualización manual ── */
-if (btnRefresh) {
-  btnRefresh.addEventListener('click', async () => {
-    if (!currentDocumentId || isChecking) return;
-    btnRefresh.classList.add('spinning');
-    progressText.classList.add('updating');
-    progressText.textContent = 'Consultando estado…';
-    await checkStatusNow(currentDocumentId);
-    setTimeout(() => {
-      btnRefresh.classList.remove('spinning');
-      progressText.classList.remove('updating');
-    }, 500);
-  });
-}
 
 /* ══════════════════════════════════════════════════════════════
    TOPICS
@@ -200,9 +89,6 @@ if (btnGenerate) {
     if (!selectedTopicId) { SeqToast.show('Selecciona un tema primero', 'warn'); return; }
 
     btnGenerate.disabled = true;
-    showProgress(true);
-    setProgress(10, 'Generación iniciada…');
-    stopPolling();
 
     try {
       const res = await apiFetch('/aegis/generate', {
@@ -217,47 +103,14 @@ if (btnGenerate) {
 
       const data = await res.json();
       currentDocumentId = data.documentId;
-
-      localStorage.setItem('aegis_pending_doc', JSON.stringify({
-        docId: currentDocumentId, startedAt: Date.now(), topicId: selectedTopicId,
-      }));
-
       SeqToast.show(`Generación iniciada (doc #${currentDocumentId})`, 'success');
-      await checkStatusNow(currentDocumentId);
-      startPolling(currentDocumentId);
 
     } catch (e) {
       console.error('[Aegis] Generation error:', e);
-      showProgress(false);
       btnGenerate.disabled = false;
-      stopPolling();
       SeqToast.show(`Error al generar: ${e.message}`, 'error');
     }
   });
-}
-
-/* ══════════════════════════════════════════════════════════════
-   RECOVERY
-══════════════════════════════════════════════════════════════ */
-async function checkPendingGeneration() {
-  const pending = localStorage.getItem('aegis_pending_doc');
-  if (!pending) return;
-  try {
-    const { docId, startedAt } = JSON.parse(pending);
-    if (Date.now() - startedAt < 30 * 60 * 1000) {
-      currentDocumentId = docId;
-      if (btnGenerate) btnGenerate.disabled = true;
-      showProgress(true);
-      setProgress(10, 'Recuperando generación en curso…');
-      await checkStatusNow(docId);
-      startPolling(docId);
-      SeqToast.show('Generación en curso recuperada', 'info');
-    } else {
-      localStorage.removeItem('aegis_pending_doc');
-    }
-  } catch {
-    localStorage.removeItem('aegis_pending_doc');
-  }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -309,13 +162,39 @@ function renderHistory() {
         badge.className = `history-item__status status--${doc.status}`;
         badge.textContent = statusLabel(doc.status);
       }
+      const titleEl = item.querySelector('.history-item__title');
+      if (titleEl) titleEl.textContent = doc.subtitle || doc.title || 'Sin título';
+      const actionsEl = item.querySelector('.history-item__actions');
+      if (doc.status === 'done' && actionsEl && !actionsEl.querySelector('[data-action="view"]')) {
+        item.innerHTML = `
+          <div class="history-item__header">
+            <span class="history-item__title">${SeqUI.escHtml(doc.subtitle || doc.title || 'Sin título')}</span>
+            <span class="history-item__status status--${doc.status}">${statusLabel(doc.status)}</span>
+          </div>
+          <div class="history-item__meta">
+            <span class="history-item__topic">Tema #${doc.topicId ?? '—'}</span>
+            <span class="history-item__date">${SeqUI.formatDate(doc.generatedAt)}</span>
+          </div>
+          <div class="history-item__actions">
+            <button class="btn btn--sm btn--ghost" data-action="view" data-id="${doc.id}">Ver</button>
+            <select class="export-select-sm" data-id="${doc.id}">
+              <option value="" disabled selected>Export</option>
+              <option value="md">MD</option>
+              <option value="html">HTML</option>
+              <option value="json">JSON</option>
+            </select>
+            <button class="btn btn--sm btn--ghost btn--danger" data-action="delete" data-id="${doc.id}">✕</button>
+          </div>`;
+        item.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', handleHistoryAction));
+        item.querySelectorAll('.export-select-sm').forEach(s => s.addEventListener('change', handleExportSelect));
+      }
     } else {
       item = document.createElement('div');
       item.className = 'history-item';
       item.dataset.docId = doc.id;
       item.innerHTML = `
         <div class="history-item__header">
-          <span class="history-item__title">${SeqUI.escHtml(doc.title || 'Sin título')}</span>
+          <span class="history-item__title">${SeqUI.escHtml(doc.subtitle || doc.title || 'Sin título')}</span>
           <span class="history-item__status status--${doc.status}">${statusLabel(doc.status)}</span>
         </div>
         <div class="history-item__meta">
@@ -359,6 +238,20 @@ function handleExportSelect(e) {
 document.getElementById('sort-select')?.addEventListener('change', e => {
   sortMode = e.target.value;
   renderHistory();
+});
+
+document.getElementById('btn-refresh-history')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-refresh-history');
+  if (!btn || btn.classList.contains('spinning')) return;
+  btn.classList.add('spinning');
+  await loadHistory();
+  if (currentDocumentId) {
+    const doc = allDocs.find(d => d.id === currentDocumentId);
+    if (doc && doc.status === 'done') {
+      await loadAndShowDocument(currentDocumentId);
+    }
+  }
+  setTimeout(() => btn.classList.remove('spinning'), 500);
 });
 
 /* ══════════════════════════════════════════════════════════════
@@ -621,10 +514,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!SeqUI.requireSession()) return;
   SeqUI.initTopbar();
   if (btnGenerate) btnGenerate.disabled = true;
-  showProgress(false);
 
   await Promise.all([loadTopics(), loadHistory(), loadBrands()]);
-  await checkPendingGeneration();
 
   console.log('[Aegis] Initialized');
 });

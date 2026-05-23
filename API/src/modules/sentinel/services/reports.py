@@ -8,7 +8,7 @@ for AI-powered analysis using Ollama.
 Classes:
     ColorType: Enumeration of color palette types.
     ReportTheme: Theme configuration for PDF styling.
-    _PrintingStrategy: Abstract base class for printing strategies.
+    PrintingStrategy: Abstract base class for printing strategies.
     PDFCreator: Main class for PDF document generation.
     NmapPrintingStrategy: Strategy for Nmap scan reports.
     OpenVASPrintingStrategy: Strategy for OpenVAS scan reports.
@@ -49,8 +49,9 @@ from reportlab.platypus import (
 
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
+from src.modules.shared._exceptions import IllegalStateError, ValidationError
 
-from ..model import NmapScan, NiktoScan, Scan, Host
+from ..model import NmapScan, NiktoScan, Scan, Host, ScanType
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
 
 
@@ -212,136 +213,6 @@ class ReportTheme:
         return t
 
     def section_header(self, title_text: str, tag_text: str) -> list:
-        """Create a section header with pill, title, and accent line.
-
-        Args:
-            title_text: The main title text.
-            tag_text: The pill/tag text to display.
-
-        Returns:
-            List of flowable elements: [pill_wrapper, title_wrapper, divider_wrapper].
-        """
-        main = colors.HexColor(self.palette[ColorType.MAIN])
-        accent = self._accent_color
-
-        pill_para = Paragraph(tag_text.upper(), self.pill)
-        pill_table = Table([[pill_para]], colWidths=[1.8 * inch])
-        pill_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), main),
-            ("BOX", (0, 0), (-1, -1), 0.7, main),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-
-        pill_wrapper = Table([[pill_table]], colWidths=[6 * inch])
-        pill_wrapper.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-
-        title_para = Paragraph(title_text, self.title)
-        title_wrapper = Table([[title_para]], colWidths=[6 * inch])
-        title_wrapper.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-
-        divider = Table([[""]], colWidths=[2.5 * inch], rowHeights=[0.035 * inch])
-        divider.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), accent),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-
-        divider_wrapper = Table([[divider]], colWidths=[6 * inch])
-        divider_wrapper.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-
-        return [pill_wrapper, title_wrapper, divider_wrapper]
-
-    def card(self, inner_flowables, severity_color=None):
-        """Create a card container with optional severity color band.
-
-        Args:
-            inner_flowables: Content to put inside the card.
-            severity_color: Optional color for the left severity band.
-
-        Returns:
-            Table representing the card.
-        """
-        white = colors.HexColor(self.palette[ColorType.WHITE])
-        border = colors.HexColor("#DDDDDD")
-        band_color = severity_color or colors.HexColor(self.palette[ColorType.MAIN])
-
-        band = Table([[""]], colWidths=[0.12 * inch])
-        band.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), band_color),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-
-        content_table = Table([[inner_flowables]], colWidths=[5.8 * inch])
-        content_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ]))
-
-        outer = Table([[band, content_table]], colWidths=[0.12 * inch, 5.88 * inch])
-        outer.setStyle(TableStyle([
-            ("BOX", (0, 0), (-1, -1), 0.7, border),
-            ("BACKGROUND", (0, 0), (-1, -1), white),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        return outer
-
-    def severity_header_table(self, left_text: str, right_text: str, bg_color) -> Table:
-        """Create a severity header table with left and right text.
-
-        Args:
-            left_text: Text for the left side.
-            right_text: Text for the right side.
-            bg_color: Background color for the header.
-
-        Returns:
-            Table with severity header styling.
-        """
-        data = [[left_text, right_text]]
-        t = Table(data, colWidths=[3 * inch, 3 * inch])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), bg_color),
-            ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor(self.palette[ColorType.BLACK])),
-            ("ALIGN", (0, 0), (0, -1), "LEFT"),
-            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(self.palette[ColorType.LIGHT])),
-        ]))
-        return t
-
-    def section_header(self, title_text: str, tag_text: str) -> list:
         """
         Devuelve [píldora centrada, título centrado, línea de acento].
         """
@@ -455,7 +326,7 @@ class ReportTheme:
         return t
 
 
-class _PrintingStrategy(ABC):
+class PrintingStrategy(ABC):
     """Abstract base class for printing strategies.
 
     Defines the interface for generating PDF report content from scan data.
@@ -468,12 +339,61 @@ class _PrintingStrategy(ABC):
         logger: Logger instance for the class.
     """
 
+    _registry: Dict[ScanType, type["PrintingStrategy"]] = {}
+
     def __init__(self, scan: Scan) -> None:
         super().__init__()
         self.scan = scan
         self.writer = None
         self.color_palette: Dict[ColorType, str] = {}
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+
+    @classmethod
+    def register(cls, scan_type: ScanType):
+        def decorator(subclass: type["PrintingStrategy"]):
+            cls._registry[scan_type] = subclass
+            return subclass
+        return decorator
+
+    @classmethod
+    def resolve_printing_strategy(cls, scan_id: int) -> "PrintingStrategy":
+        """Resolve the appropriate printing strategy for a scan.
+
+        Creates a new session to avoid DetachedInstanceError when accessing
+        scan relationships in background threads.
+
+        Args:
+            scan_id: Primary key of the scan.
+
+        Returns:
+            PrintingStrategy instance configured with the scan.
+
+        Raises:
+            ValidationError: If scan type is not registered.
+        """
+
+        from ..managers import ScanManager
+        raw_type = ScanManager.get_scan_type(scan_id)
+        try:
+            scan_type = ScanType(raw_type)
+        except ValueError:
+            raise ValidationError(
+                field="scan_type",
+                message=f"Tipo de escaneo desconocido: {raw_type}",
+                value=raw_type
+            )
+
+        strategy_class = cls._registry.get(scan_type)
+        if strategy_class is None:
+            raise ValidationError(
+                field="scan_type",
+                message=f"Estrategia de impresión no registrada para: {scan_type.value}",
+                value=scan_type.value
+            )
+
+        scan = ScanManager.get_scan_rich(scan_id)
+
+        return strategy_class(scan=scan)
 
     def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:
         """Append AI-generated security analysis to the report."""
@@ -495,6 +415,9 @@ class _PrintingStrategy(ABC):
             self.logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
 
         try:
+            if self.writer is None:
+                raise IllegalStateError("Writer detectado como None")
+
             ai_analysis = self.writer.generate(self.scan)
         except Exception as e:
             self.logger.error(f"[IA] Excepción: {e}", exc_info=True)
@@ -673,10 +596,10 @@ class PDFCreator:
         scan: Source scan data.
     """
 
-    def __init__(self, printing_strategy: _PrintingStrategy) -> None:
+    def __init__(self, scan_id: int) -> None:
         self.directory = CR.get_directory_of(CR.DirectoryType.OUTPUT_SENTINEL)
-        self.printing_strategy = printing_strategy
-        self.scan = printing_strategy.scan
+        self.printing_strategy = PrintingStrategy.resolve_printing_strategy(scan_id)
+        self.scan = self.printing_strategy.scan
         self.logger = SecOpsLogger().get_logger()
 
     def _set_pdf_metadata(self, doc) -> None:
@@ -988,7 +911,8 @@ class PDFCreator:
         return filename
 
 
-class NmapPrintingStrategy(_PrintingStrategy):
+@PrintingStrategy.register(ScanType.NMAP)
+class NmapPrintingStrategy(PrintingStrategy):
     """Printing strategy for Nmap scan reports.
 
     Generates PDF reports for Nmap network scans including host information,
@@ -1149,7 +1073,8 @@ class NmapPrintingStrategy(_PrintingStrategy):
         return "Análisis de Seguridad de Red"
 
 
-class OpenVASPrintingStrategy(_PrintingStrategy):
+@PrintingStrategy.register(ScanType.OPENVAS)
+class OpenVASPrintingStrategy(PrintingStrategy):
     """Printing strategy for OpenVAS vulnerability scan reports.
 
     Generates PDF reports for OpenVAS scans including vulnerability summary,
@@ -1170,7 +1095,7 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
         super().__init__(scan)
         self.writer = OpenVASAIWriter()
 
-        palette_config = CR_UTILS.get_tool_color_palette(SentinelTool.OPENVAS)
+        palette_config = CR.get_tool_color_palette(SentinelTool.OPENVAS)
 
         self.color_palette = {
             ColorType.BLACK: palette_config.get("black", "#0D2818"),
@@ -1505,7 +1430,8 @@ class OpenVASPrintingStrategy(_PrintingStrategy):
         return "Análisis de Vulnerabilidades OpenVAS"
 
 
-class NiktoPrintingStrategy(_PrintingStrategy):
+@PrintingStrategy.register(ScanType.NIKTO)
+class NiktoPrintingStrategy(PrintingStrategy):
     """Printing strategy for Nikto web vulnerability scan reports.
 
     Generates PDF reports for Nikto scans including incident summary,

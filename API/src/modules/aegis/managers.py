@@ -27,10 +27,9 @@ from src.modules.system import SecOpsLogger
 from src.modules.infrastructure import UnitOfWork
 from src.modules.shared._documents import (
     get_document_by_id,
-    get_documents_by_user,
-    get_document_path,
     delete_document_file,
     update_document_status,
+    serialize_document_list,
 )
 
 from .model import AegisDocument, Topic
@@ -139,7 +138,29 @@ class AegisManager:
 
     def list_user_documents(self) -> list[dict]:
         """Lista todos los documentos del usuario, ordenados por fecha descendente."""
-        return get_documents_by_user(self.user.id, limit=100, document_type="aegis") # type: ignore
+        with UnitOfWork() as uow:
+            from sqlalchemy import desc
+            from src.modules.shared import Document
+
+            docs = (
+                uow.session.query(Document)
+                .filter(Document.user_id == self.user.id)
+                .filter(Document.document_type == "aegis")
+                .order_by(desc(Document.generated_at))
+                .limit(100)
+                .all()
+            )
+            fields_map = {
+                "id":          "id",
+                "title":       "title",
+                "subtitle":    "subtitle",
+                "filename":    "filename",
+                "format":      "format",
+                "status":      "status",
+                "generated_at": "generatedAt",
+                "topic_id":    "topicId",
+            }
+            return serialize_document_list(docs, fields_map)
 
     def get_topics(self) -> list[dict]:
         """Devuelve todos los temas disponibles ordenados por título."""
@@ -328,7 +349,7 @@ class AegisManager:
         output_dir = Path(CR.get_directory_of(CR.DirectoryType.OUTPUT_AEGIS))
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        ollama_host, ollama_model = CR.get_ollama_config()
+        ollama_host, ollama_model = CR.get_ollama_environment()
         aegis = CR.get_aegis_config() or {}
 
         return {

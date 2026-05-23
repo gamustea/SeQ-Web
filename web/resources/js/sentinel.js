@@ -5,17 +5,12 @@
 'use strict';
 
 const PAGE_SIZE = 10;
-const POLL_INTERVAL_MS = 10_000;
-const POLL_MAX_ATTEMPTS = 180;
 
 const paginationState = {
   nmap:   { page: 1, total: 0 },
   nikto:  { page: 1, total: 0 },
   openvas:{ page: 1, total: 0 }
 };
-
-let pollTimer = null;
-let pollAttempts = 0;
 
 /* ── Guardia + UI inicial ── */
 document.addEventListener('DOMContentLoaded', () => {
@@ -25,17 +20,6 @@ document.addEventListener('DOMContentLoaded', () => {
   loadScans('nmap');
   updateDownloadButtons();
 });
-
-/* ══════════════════════════════════════════════════════════════════════
-    POLLING — Auto-refresh para escaneos en curso (ELIMINADO)
-    ══════════════════════════════════════════════════════════════ */
-function startPolling() {
-  // Polling eliminado - ahora se actualiza manualmente con el botón
-}
-
-function stopPolling() {
-  // Pollingeliminado
-}
 
 async function refreshCurrentTab() {
   const activeTab = document.querySelector('.tab.active')?.dataset?.panel;
@@ -507,7 +491,6 @@ function renderScanPreview(scan, type, documents = []) {
 
 function closeScanPreviewModal() {
   document.getElementById('scan-preview-modal').classList.remove('visible');
-  stopPreviewPolling();
   previewScanId = null;
   previewScanType = null;
   previewCurrentScan = null;
@@ -645,7 +628,6 @@ async function generatePdfFromPreview(scanId, scanType) {
     }
     
 SeqToast.show('Documento en generación...', 'success');
-    startPreviewPolling(scanId, scanType);
   } catch (e) {
     SeqToast.show('Error al generar documento', 'error');
     if (btn) btn.disabled = false;
@@ -701,51 +683,13 @@ async function deletePreviewDocument(docId, scanId, btnElement) {
   }
 }
 
-let previewPollingTimer = null;
 
-function startPreviewPolling(scanId, scanType) {
-  stopPreviewPolling();
-  previewPollingTimer = setInterval(async () => {
-    try {
-      const [docsRes, scanRes] = await Promise.all([
-        apiFetch(`/sentinel/scan/${scanId}/documents`),
-        apiFetch(`/sentinel/results/${scanId}`)
-      ]);
-      
-      if (!docsRes.ok) { stopPreviewPolling(); return; }
-      
-      const docsData = await docsRes.json();
-      const documents = docsData.documents || [];
-      const hasRunning = documents.some(d => d.status === 'running' || d.status === 'pending');
-      
-      if (!hasRunning) {
-        stopPreviewPolling();
-        const scanData = scanRes.ok ? await scanRes.json() : {};
-        renderScanPreview(scanData.result || previewCurrentScan || {id: scanId}, scanType, documents);
-        return;
-      }
-      
-      const scanData = scanRes.ok ? await scanRes.json() : {};
-      renderScanPreview(scanData.result || previewCurrentScan || {id: scanId}, scanType, documents);
-    } catch (e) {
-      stopPreviewPolling();
-    }
-  }, 3000);
-}
-
-function stopPreviewPolling() {
-  if (previewPollingTimer) {
-    clearInterval(previewPollingTimer);
-    previewPollingTimer = null;
-  }
-}
 
 /* ══════════════════════════════════════════════════════════════
     DETALLES DEL ESCANEO + GENERACIÓN DE PDF
     ══════════════════════════════════════════════════════════════ */
 let currentScanId = null;
 let currentScanType = null;
-let documentPollTimer = null;
 
 async function viewScanDetails(scanId, scanType) {
   currentScanId = scanId;
@@ -971,30 +915,8 @@ function getSeverityClass(severity) {
 
 function closeScanDetailsModal() {
   document.getElementById('scan-details-modal').classList.remove('visible');
-  stopDocumentPolling();
-  stopDocumentsPolling();
   currentScanId = null;
   currentScanType = null;
-}
-
-let documentsPollingTimer = null;
-
-function startDocumentsPolling(scanId, scanType) {
-  stopDocumentsPolling();
-  documentsPollingTimer = setInterval(async () => {
-    if (!document.getElementById('scan-details-modal').classList.contains('visible')) {
-      stopDocumentsPolling();
-      return;
-    }
-    await refreshDocumentsInModal(scanId, scanType);
-  }, 5000);
-}
-
-function stopDocumentsPolling() {
-  if (documentsPollingTimer) {
-    clearInterval(documentsPollingTimer);
-    documentsPollingTimer = null;
-  }
 }
 
 async function refreshDocumentsInModal(scanId, scanType) {
@@ -1009,10 +931,6 @@ async function refreshDocumentsInModal(scanId, scanType) {
     if (!docsContainer) return;
     
     const hasPendingDocs = documents.some(d => d.status !== 'done');
-    
-    if (!hasPendingDocs) {
-      stopDocumentsPolling();
-    }
     
     let docsHtml = '';
     if (documents.length > 0) {
@@ -1097,7 +1015,6 @@ async function generatePDF(scanId, scanType, useAi = null) {
     }
 
     SeqToast.show('Documento en generación...', 'success');
-    startDocumentsPolling(scanId, scanType);
     viewScanDetails(scanId, scanType);
   } catch (e) {
     SeqToast.show('Error al generar documento', 'error');
@@ -1105,129 +1022,7 @@ async function generatePDF(scanId, scanType, useAi = null) {
   }
 }
 
-function startDocumentPolling(scanId, docId) {
-  stopDocumentPolling();
-  documentPollTimer = setInterval(() => checkDocumentStatus(scanId, docId), 3000);
-}
 
-async function refreshDocStatusInModal(scanId) {
-  const statusContainer = document.getElementById('document-status-container');
-  if (!statusContainer) return;
-
-  statusContainer.innerHTML = `
-    <div class="doc-progress">
-      <div class="doc-progress-bar">
-        <div class="doc-progress-fill spin"></div>
-      </div>
-      <div class="doc-progress-text">
-        <span class="doc-spinner"></span>
-        Verificando...
-      </div>
-    </div>`;
-
-  await checkDocumentStatus(scanId);
-}
-
-function stopDocumentPolling() {
-  if (documentPollTimer) { clearInterval(documentPollTimer); documentPollTimer = null; }
-}
-
-async function checkDocumentStatus(scanId, docId = null) {
-  const statusContainer = document.getElementById('document-status-container');
-  if (!statusContainer) return;
-
-  try {
-    const url = docId
-      ? `/sentinel/document-status?document_id=${docId}`
-      : `/sentinel/document-status?scan_id=${scanId}`;
-    const res = await apiFetch(url);
-
-    if (!res?.ok) return;
-    const data = await res.json();
-
-    const statusConfig = {
-      pending: {
-        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
-        text: 'Pendiente...',
-        cls: 'pending'
-      },
-      running: {
-        icon: `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`,
-        text: 'Generando documento...',
-        cls: 'processing'
-      },
-      done: {
-        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
-        text: 'Documento listo',
-        cls: 'success'
-      },
-      error: {
-        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
-        text: 'Error en generación',
-        cls: 'error'
-      }
-    };
-
-    const status = statusConfig[data.status] || statusConfig.pending;
-
-    if (data.status === 'done' && data.downloadUrl) {
-      stopDocumentPolling();
-      currentDocumentId = docId || data.documentId;
-      const downloadBtn = document.getElementById(`download-btn-${scanId}`);
-      if (downloadBtn) {
-        downloadBtn.disabled = false;
-        downloadBtn.style.opacity = '1';
-        downloadBtn.style.cursor = 'pointer';
-      }
-
-      statusContainer.innerHTML = `
-        <div class="doc-result success">
-          <div class="doc-result-icon">${status.icon}</div>
-          <div class="doc-result-text">
-            <span class="doc-result-title">${status.text}</span>
-            <button class="doc-download-btn" onclick="downloadDocument(${currentDocumentId})">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              Descargar PDF
-            </button>
-          </div>
-        </div>`;
-      return;
-    }
-
-    if (data.status === 'error') {
-      stopDocumentPolling();
-      statusContainer.innerHTML = `
-        <div class="doc-result error">
-          <div class="doc-result-icon">${status.icon}</div>
-          <div class="doc-result-text">
-            <span class="doc-result-title">${status.text}</span>
-            <button class="doc-retry-btn" onclick="generatePDF(${scanId}, '${docId ? '' : ''}')">Reintentar</button>
-          </div>
-        </div>`;
-      return;
-    }
-
-    statusContainer.innerHTML = `
-      <div class="doc-progress">
-        <div class="doc-progress-bar">
-          <div class="doc-progress-fill ${data.status === 'running' ? 'spin' : ''}"></div>
-        </div>
-        <div class="doc-progress-text">
-          ${status.icon}
-          ${status.text}
-        </div>
-      </div>`;
-
-  } catch (e) {
-    console.error('Error checking document status:', e);
-  }
-}
-
-let currentDocumentId = null;
 
 async function downloadLatestDocument(scanId, scanType) {
   try {

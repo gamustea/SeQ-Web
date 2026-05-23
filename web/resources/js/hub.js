@@ -1,109 +1,63 @@
-/* hub.js */
-(function () {
-    var r = sessionStorage.getItem("seq_session");
-    if (!r) {
-        window.location.href = "/pages/login.html";
-        return;
-    }
-    try {
-        var s = JSON.parse(r);
-        if (!s.accessToken || Date.now() > s.expiresAt) {
-            sessionStorage.removeItem("seq_session");
-            window.location.href = "/pages/login.html";
-        }
-    } catch (e) {
-        window.location.href = "/pages/login.html";
-    }
-})();
+/* hub.js — Dashboard principal
+Depende de: shared.js (SeqSession, SeqToast, SeqUI, apiFetch)
+===================================================== */
 
 (function () {
-    var tb = document.getElementById("sidebar-toggle");
-    var sb = document.getElementById("profile-sidebar");
-    var lb = document.getElementById("logout-btn");
-    var pe = document.getElementById("profile-name");
-    var mu = document.getElementById("menu-users");
-    var mc = document.getElementById("menu-config");
-    if (!tb || !sb) return;
-
-    function getRole() {
-        try {
-            return JSON.parse(sessionStorage.getItem("seq_session")).role || "role_user";
-        } catch (e) {
-            return "role_user";
+    document.addEventListener("DOMContentLoaded", function () {
+        if (!SeqSession.load()) {
+            window.location.href = SeqSession.loginUrl;
+            return;
         }
-    }
+        SeqUI.initStarfield();
 
-    function applyMenuVisibility() {
-        var role = getRole();
-        var isPrivileged = role === "role_admin" || role === "role_root";
-        if (!isPrivileged) {
-            if (mu) mu.style.display = "none";
-            if (mc) mc.style.display = "none";
+        var tb = document.getElementById("sidebar-toggle");
+        var sb = document.getElementById("profile-sidebar");
+        var lb = document.getElementById("logout-btn");
+        var pe = document.getElementById("profile-name");
+        var mu = document.getElementById("menu-users");
+        var mc = document.getElementById("menu-config");
+        if (!tb || !sb) return;
+
+        function applyMenuVisibility() {
+            if (!SeqSession.isAdmin()) {
+                if (mu) mu.style.display = "none";
+                if (mc) mc.style.display = "none";
+            }
         }
-    }
-    applyMenuVisibility();
+        applyMenuVisibility();
 
-    tb.addEventListener("click", function (e) {
-        e.stopPropagation();
-        sb.classList.toggle("open");
-    });
-
-    document.addEventListener("click", function (e) {
-        if (!sb.contains(e.target) && !tb.contains(e.target)) {
-            sb.classList.remove("open");
-        }
-    });
-
-    lb.addEventListener("click", function () {
-        var ss = JSON.parse(sessionStorage.getItem("seq_session"));
-        if (ss && ss.accessToken) {
-            fetch("/oauth/revoke-all", {
-                method: "POST",
-                headers: { Authorization: "Bearer " + ss.accessToken },
-            });
-        }
-        sessionStorage.removeItem("seq_session");
-        window.location.href = "/pages/login.html";
-    });
-
-    function loadProfileName() {
-        var ss = JSON.parse(sessionStorage.getItem("seq_session"));
-        if (!ss || !pe) return;
-        fetch("/users/me", {
-            headers: { Authorization: "Bearer " + ss.accessToken },
-        }).then(function (r) {
-            if (r.ok)
-                r.json().then(function (d) {
-                    pe.textContent = d.first_name + " " + d.last_name;
-                    // Actualiza el rol en sesión si el endpoint lo devuelve
-                    if (d.role) {
-                        try {
-                            var s = JSON.parse(sessionStorage.getItem("seq_session"));
-                            s.role = d.role;
-                            sessionStorage.setItem("seq_session", JSON.stringify(s));
-                            applyMenuVisibility();
-                        } catch (e) {}
-                    }
-                });
+        tb.addEventListener("click", function (e) {
+            e.stopPropagation();
+            sb.classList.toggle("open");
         });
-    }
-    loadProfileName();
-})();
 
-(function () {
-    var c = document.getElementById("stars");
-    if (!c) return;
-    for (var i = 0; i < 120; i++) {
-        var s = document.createElement("div");
-        s.className = "star";
-        s.style.left = Math.random() * 100 + "%";
-        s.style.top = Math.random() * 100 + "%";
-        s.style.width = Math.random() * 2 + 1 + "px";
-        s.style.height = s.style.width;
-        s.style.animationDelay = Math.random() * 4 + "s";
-        s.style.animationDuration = Math.random() * 3 + 2 + "s";
-        c.appendChild(s);
-    }
+        document.addEventListener("click", function (e) {
+            if (!sb.contains(e.target) && !tb.contains(e.target)) {
+                sb.classList.remove("open");
+            }
+        });
+
+        lb.addEventListener("click", function () {
+            SeqSession.revokeAllTokens();
+        });
+
+        async function loadProfileName() {
+            var res = await apiFetch("/users/me");
+            if (!res?.ok) return;
+            var data = await res.json();
+            if (pe) pe.textContent = data.first_name + " " + data.last_name;
+
+            if (data.role) {
+                try {
+                    var s = JSON.parse(sessionStorage.getItem("seq_session"));
+                    s.role = data.role;
+                    sessionStorage.setItem("seq_session", JSON.stringify(s));
+                    applyMenuVisibility();
+                } catch (e) { /* ignore */ }
+            }
+        }
+        loadProfileName();
+    });
 })();
 
 (function () {

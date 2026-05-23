@@ -312,13 +312,12 @@ class NiktoScanTask(_Task):
         )
 
         nikto_cmd = [
-            "nikto", 
+            "nikto",
             "-h", host,
             "-port", str(port),
             "-output", output_path,
             "-Format", "xml",
-            "-Tuning", "1234569b",
-            "-timeout", "10",
+            "-timeout", "30",
             "-nointeractive",
         ]
 
@@ -331,12 +330,12 @@ class NiktoScanTask(_Task):
     def _process_results(self) -> None:
         try:
             if not self.temp_path.exists():
-                self.logger.error(f"Archivo XML no existe: {self.temp_path}")
-                self.results = None
+                self.logger.warning(f"Archivo XML no existe: {self.temp_path}")
+                self.results = [] if self._cancel_event.is_set() else None
                 return
             if self.temp_path.stat().st_size == 0:
-                self.logger.error(f"Archivo XML está vacío: {self.temp_path}")
-                self.results = None
+                self.logger.warning(f"Archivo XML está vacío: {self.temp_path}")
+                self.results = [] if self._cancel_event.is_set() else None
                 return
 
             self.results = str(self.temp_path)

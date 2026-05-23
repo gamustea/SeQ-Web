@@ -22,9 +22,13 @@ from flask_cors             import CORS
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
-from src.modules.shared     import BaseManager, Base
-from src.modules.shared._endpoints import _get_limiter
-from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, create_error_response
+from src.modules.shared     import BaseManager, Base, limiter
+from src.modules.shared._exceptions import (
+    MissingParameterError,
+    MissingJsonBodyError,
+    SecOpsException,
+    create_error_response
+)
 from src.modules.system     import SecOpsLogger, config_reading
 from src.modules.users      import (
     UserManager,
@@ -41,11 +45,12 @@ import src.modules.system.config_reading as CR
 
 
 APP_CONTEXT = CR.get_app_context()
+_UI_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "web")
+)
+
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
-_UI_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
-)
 
 def _graceful_shutdown(signum, *args) -> None:
     """
@@ -85,7 +90,6 @@ def _graceful_shutdown(signum, *args) -> None:
     import os as _os
     _os.kill(_os.getpid(), signal.SIGTERM)
 
-
 def create_app(fresh_db_init: bool = False) -> Flask:
     """
     Factory de la aplicación Flask SeQ.
@@ -110,7 +114,7 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     CORS(app, origins=origins, supports_credentials=True)
 
     _logger.info("Inicializando rate limiting...")
-    _get_limiter().init_app(app)
+    limiter.init_app(app)
 
     _logger.info("Añadiendo endpoints...")
     app.register_blueprint(system_bp,   url_prefix="/system")
@@ -133,7 +137,6 @@ def create_app(fresh_db_init: bool = False) -> Flask:
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
-
 
 def _register_ui_route(app: Flask) -> None:
     """

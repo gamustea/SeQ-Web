@@ -8,7 +8,7 @@ from src.modules.system.logging import SecOpsLogger
 from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError
 
 from ..managers import OAuthTokenManager
-from ..model import UserAttribute
+from ..repositories import AttributeRepository
 from src.modules.infrastructure import UnitOfWork
 
 
@@ -40,7 +40,7 @@ class Role(Enum):
 
     @property
     def db_name(self) -> str:
-        return self.value
+        return self.value # type: ignore
 
     @classmethod
     def hierarchy(cls) -> List[str]:
@@ -49,7 +49,7 @@ class Role(Enum):
 
     def rank(self) -> int:
         """Return the privilege rank of this role (higher = more privileged)."""
-        return self.hierarchy().index(self.value)
+        return self.hierarchy().index(self.value) # type: ignore
 
 
 # =========================================================================
@@ -103,11 +103,11 @@ class AttributeType(Enum):
 
     @property
     def db_name(self) -> str:
-        return self.value
+        return self.value # type: ignore
 
     @property
     def db_description(self) -> str:
-        return self._DESCRIPTIONS.get(self.value, "")
+        return self._DESCRIPTIONS.get(self.value, "") # type: ignore
 
 
 # =========================================================================
@@ -138,39 +138,6 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
         AttributeType.ACHERON_READ,
     },
 }
-
-
-def _get_effective_permissions(user_id: int, user_role: str) -> Set[str]:
-    """
-    TODO: Eliminar uso de UnitOfWork fuera del repositorio
-    Return the effective AttributeType set for a user as a set of db_name strings.
-
-    Combines role-baseline permissions with any explicit UserAttribute rows.
-    Root users are handled upstream (they bypass this function entirely).
-
-    Args:
-        user_id:   User primary key.
-        user_role: Role string from User.role (e.g. "role_admin").
-
-    Returns:
-        Set of AttributeType db_name strings effective for this user.
-    """
-    try:
-        role_enum = Role(user_role)
-    except ValueError:
-        role_enum = Role.USER
-
-    baseline: Set[str] = {p.db_name for p in ROLE_PERMISSIONS.get(role_enum, set())}
-
-    with UnitOfWork() as uow:
-        extra_attrs = (
-            uow.session.query(UserAttribute.attribute_name)
-            .filter(UserAttribute.user_id == user_id)
-            .all()
-        )
-    extra: Set[str] = {ua.attribute_name for ua in extra_attrs}
-
-    return baseline | extra
 
 
 # =========================================================================
@@ -324,7 +291,17 @@ def require_attributes(
                 return f(*args, **kwargs)
 
             try:
-                effective = _get_effective_permissions(user_id, user_role_str)
+                # Calcular permisos efectivos usando el repositorio
+                try:
+                    role_enum = Role(user_role_str)
+                except ValueError:
+                    role_enum = Role.USER
+                baseline = {p.db_name for p in ROLE_PERMISSIONS.get(role_enum, set())}
+
+                with UnitOfWork() as uow:
+                    repo = AttributeRepository(uow)
+                    extra_attrs = {attr.attribute_name for attr in repo.get_by_user(user_id)}
+                effective = baseline | extra_attrs
 
                 missing_at_least_one: List[AttributeType] = []
                 if at_least_one:

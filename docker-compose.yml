@@ -93,7 +93,7 @@ services:
     environment:
       USERNAME: ${OPENVAS_USERNAME}
       PASSWORD: ${OPENVAS_PASSWORD}
-      FEED_SYNC: "false"
+      FEED_SYNC: "true"
     volumes:
       - openvas_data:/data
     shm_size: "1gb"
