@@ -42,7 +42,6 @@ Los archivos HTML debe existir previamente en el sistema de archivos.
 
 import os
 from flask import Blueprint, send_from_directory, jsonify
-from src.modules.users import require_oauth_token
 
 pages_bp = Blueprint("pages", __name__)
 

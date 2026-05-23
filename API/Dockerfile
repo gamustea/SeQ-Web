@@ -20,17 +20,12 @@ ENV PATH="/nikto/program:${PATH}"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY docker/entrypoint.sh .
-RUN chmod +x entrypoint.sh
-
 COPY src/ ./src/
 COPY run.py .
-COPY init_db.py .
 COPY SecOpsConfig.json .
 
 RUN mkdir -p /app/data/sentinel/output /app/data/aegis/output /app/data/aegis/stack /app/temp /app/logs
 
 EXPOSE 5000
 
-ENTRYPOINT ["./entrypoint.sh"]
 CMD ["python", "run.py"]

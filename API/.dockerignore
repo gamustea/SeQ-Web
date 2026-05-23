@@ -1,0 +1,13 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.log
+.vscode
+*.md
+AGENTS.md
+.env
+.env.local
+docker/
+secops.log
