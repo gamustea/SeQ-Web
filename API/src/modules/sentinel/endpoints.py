@@ -9,7 +9,7 @@ de seguridad utilizando tres motores de escaneo:
 
     • Nmap      — Escaneo de puertos y detección de servicios
     • Nikto     — Escaneo de vulnerabilidades web
-    • OpenVAS   — Escaneo completo de vulnerabilidades (GMP)
+    • OpenVAS   — Escaneo completo de vulnerabilidades (GMP)f
 
 ────────────────────────────────────────────────────────────────────────────────
 ENDPOINTS DISPONIBLES
@@ -136,11 +136,11 @@ def get_scan_status():
     """Estado y progreso de un escaneo."""
     scan_id = int(require_arg("id"))
     user = get_current_user()
-    manager = ScanManager.resolve_manager(scan_id, user)
+    manager = ScanManager.resolve_manager(scan_id)
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    manager.assert_scan_ownership(scan_id) # type: ignore
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     status      = manager.get_scan_status(scan_id)
     progress    = manager.get_scan_progress(scan_id)
@@ -168,11 +168,11 @@ def cancel_scan(scan_id: int):
     """Cancela un escaneo en curso."""
     user = get_current_user()
 
-    manager = ScanManager.resolve_manager(scan_id, user)
+    manager = ScanManager.resolve_manager(scan_id)
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    manager.assert_scan_ownership(scan_id) # type: ignore
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     if scan.status not in CANCELLABLE_STATES:
         return jsonify({
@@ -183,7 +183,7 @@ def cancel_scan(scan_id: int):
             "cancellableStates": sorted(CANCELLABLE_STATES),
         }), 400
 
-    if not manager.cancel_scan(scan_id):
+    if not manager.cancel_scan(scan_id, user.id): # type: ignore
         return jsonify(
             {
                 "error": "cancellation_failed",
@@ -229,7 +229,7 @@ def start_nmap_scan(data: dict[str, str]):
             value=timeout
         )
 
-    nmap_manager = NmapScanManager(user)
+    nmap_manager = NmapScanManager()
     try:
         hosts = ScanManager.validate_ip(host)
     except IPValidationError as exc:
@@ -251,6 +251,7 @@ def start_nmap_scan(data: dict[str, str]):
         scan_id = nmap_manager.run_scan(
             target_host=target_host,
             target_ports=ports,
+            user_id=user.id,
             timeout=timeout
         )
         scan_ids.append(scan_id)
@@ -287,8 +288,12 @@ def start_nikto_scan(data):
             value=timeout
         )
 
-    nikto_manager = NiktoScanManager(user)
-    scan_id = nikto_manager.run_scan(target, timeout=timeout)
+    nikto_manager = NiktoScanManager()
+    scan_id = nikto_manager.run_scan(
+        target,
+        user_id=user.id,
+        timeout=timeout
+    ) # type: ignore
     _logger.info(
         f"Nikto lanzado: ID={scan_id} target={target}\
         timeout={timeout} user={user.username}"
@@ -337,13 +342,14 @@ def start_openvas_scan(data):
             "details": exc.details or {}
         }), 400
 
-    openvas_manager = OpenVASScanManager(user)
+    openvas_manager = OpenVASScanManager()
     target_ip = hosts[0]
     ipaddress.ip_address(target_ip)
 
     scan_id = openvas_manager.run_scan(
         target=target_ip,
         scan_config=scan_config,
+        user_id=user.id,
         skip_normalize=True
     )
     _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={user.username}")
@@ -382,29 +388,30 @@ def retrieve_all_scans():
     per_page = min(max(1, per_page), 100)
 
     user = get_current_user()
+    uid = user.id
 
-    nmap_mgr = NmapScanManager(user)
-    nikto_mgr = NiktoScanManager(user)
-    openvas_mgr = OpenVASScanManager(user)
+    nmap_mgr = NmapScanManager()
+    nikto_mgr = NiktoScanManager()
+    openvas_mgr = OpenVASScanManager()
     all_results = []
 
     if scan_type in ("nmap", "all"):
         try:
-            for scan in nmap_mgr.get_scans_for_user():
+            for scan in nmap_mgr.get_scans_for_user(uid): # type: ignore
                 all_results.append(nmap_mgr.format_scan(scan.id)) # type: ignore
         except (OSError, RuntimeError) as exc:
             _logger.error(f"Error obteniendo Nmap scans: {exc}")
 
     if scan_type in ("nikto", "all"):
         try:
-            for scan in nikto_mgr.get_scans_for_user():
+            for scan in nikto_mgr.get_scans_for_user(uid): # type: ignore
                 all_results.append(nikto_mgr.format_scan(scan.id)) # type: ignore
         except (OSError, RuntimeError) as exc:
             _logger.error(f"Error obteniendo Nikto scans: {exc}")
 
     if scan_type in ("openvas", "all"):
         try:
-            for scan in openvas_mgr.get_scans_for_user():
+            for scan in openvas_mgr.get_scans_for_user(uid): # type: ignore
                 all_results.append(openvas_mgr.format_scan(scan.id)) # type: ignore
         except (OSError, RuntimeError) as exc:
             _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
@@ -436,11 +443,11 @@ def retrieve_scan_by_id(scan_id: int):
     """Devuelve el detalle completo de un escaneo específico."""
     user = get_current_user()
 
-    manager = ScanManager.resolve_manager(scan_id, user)
+    manager = ScanManager.resolve_manager(scan_id)
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    manager.assert_scan_ownership(scan_id) # type: ignore
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     _logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan.scan_type} por usuario {user.username}")
     result = manager.format_scan(scan_id)
@@ -493,11 +500,11 @@ def is_scan_finished():
     """
     user = get_current_user()
     scan_id = int(require_arg("id"))
-    manager = ScanManager.resolve_manager(scan_id, user)
+    manager = ScanManager.resolve_manager(scan_id)
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    manager.assert_scan_ownership(scan_id) # type: ignore
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     finished = manager.is_scan_finished(scan.id) # type: ignore
 
@@ -525,9 +532,10 @@ def generate_pdf():
     ai_report = ai_report_str == "true"
 
     user = get_current_user()
+    uid = user.id
 
-    manager = ScanManager.resolve_manager(scan_id, user)
-    manager.assert_scan_ownership(scan_id)
+    manager = ScanManager.resolve_manager(scan_id)
+    ScanManager.assert_scan_ownership(scan_id, uid) # type: ignore
 
     if not manager.is_scan_finished(scan_id):
         raise ValidationError(
@@ -536,7 +544,7 @@ def generate_pdf():
             value=scan_id
         )
 
-    doc_mgr = SentinelReportManager(user)
+    doc_mgr = SentinelReportManager()
     doc_id = doc_mgr.generate_report(
         scan_id=scan_id,
         ai_report=ai_report,
@@ -588,15 +596,15 @@ def delete_scan(scan_id: int):
     """
     user = get_current_user()
 
-    manager = ScanManager.resolve_manager(scan_id, user)
+    manager = ScanManager.resolve_manager(scan_id)
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    manager.assert_scan_ownership(scan_id) # type: ignore
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     if scan.status in CANCELLABLE_STATES:
         _logger.info(f"Cancelando escaneo {scan_id} antes de eliminar")
-        manager.cancel_scan(scan_id)
+        manager.cancel_scan(scan_id, user.id) # type: ignore
 
     if not manager.delete_scan(scan_id):
         return jsonify(
@@ -630,7 +638,7 @@ def get_document_status():
     document_id = request.args.get("document_id", type=int)
     scan_id = request.args.get("scan_id", type=int)
 
-    doc_mgr = SentinelReportManager(user)
+    doc_mgr = SentinelReportManager()
 
     if not document_id and not scan_id:
         raise MissingParameterError("document_id o scan_id")
@@ -642,7 +650,7 @@ def get_document_status():
     if not doc:
         raise ScanNotFoundError(document_id or scan_id)  # type: ignore
 
-    doc_mgr.assert_document_ownership(document_id) if document_id else None
+    doc_mgr.assert_document_ownership(document_id, user.id) if document_id else None # type: ignore
 
     download_url = None
     if doc.status == "done" and doc.filename:  # type: ignore
@@ -682,8 +690,8 @@ def get_all_documents():
             }
         ), 400
 
-    doc_mgr = SentinelReportManager(user)
-    documents = doc_mgr.get_documents_for_user()
+    doc_mgr = SentinelReportManager()
+    documents = doc_mgr.get_documents_for_user(user.id) # type: ignore
 
     if scan_type_filter != "all":
         documents = [d for d in documents if d.scan_type == scan_type_filter] # type: ignore
@@ -729,8 +737,8 @@ def get_documents_by_scan(scan_id: int):
     """
     user = get_current_user()
 
-    doc_mgr = SentinelReportManager(user)
-    scan_mgr = ScanManager.resolve_manager(scan_id, user)
+    doc_mgr = SentinelReportManager()
+    scan_mgr = ScanManager.resolve_manager(scan_id)
 
     scan = scan_mgr.get_scan_by_id(scan_id)
     if not scan:
@@ -787,15 +795,15 @@ def download_document(document_id: int):
     uid = user.id
     _logger.info(f"Download request for document {document_id} by user {uid}")
 
-    doc_mgr = SentinelReportManager(user)
-    doc_mgr.assert_document_ownership(document_id)
+    doc_mgr = SentinelReportManager()
+    doc_mgr.assert_document_ownership(document_id, uid) # type: ignore
 
     doc = doc_mgr.get_document_by_id(document_id)
     if not doc:
         _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
         return jsonify({"error": "not_found", "error_description": "Documento no encontrado o acceso denegado"}), 404
 
-    if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
+    if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename): # type: ignore
         _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
         return jsonify({"error": "not_ready", "error_description": f"El documento {document_id} aún no está disponible para descarga"}), 400
 
@@ -827,8 +835,8 @@ def delete_document(document_id: int):
     user = get_current_user()
     uid = user.id
 
-    doc_mgr = SentinelReportManager(user)
-    doc_mgr.assert_document_ownership(document_id)
+    doc_mgr = SentinelReportManager()
+    doc_mgr.assert_document_ownership(document_id, uid) # type: ignore
     doc_mgr.delete_document(document_id)
     _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
     return jsonify({"message": "Documento eliminado correctamente", "documentId": document_id}), 200

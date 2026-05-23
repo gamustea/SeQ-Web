@@ -49,7 +49,9 @@ from reportlab.platypus import (
 
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
+from src.modules.shared._exceptions import IllegalStateError, ValidationError
 
+from ..managers import ScanManager
 from ..model import NmapScan, NiktoScan, Scan, Host, ScanType
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
 
@@ -212,136 +214,6 @@ class ReportTheme:
         return t
 
     def section_header(self, title_text: str, tag_text: str) -> list:
-        """Create a section header with pill, title, and accent line.
-
-        Args:
-            title_text: The main title text.
-            tag_text: The pill/tag text to display.
-
-        Returns:
-            List of flowable elements: [pill_wrapper, title_wrapper, divider_wrapper].
-        """
-        main = colors.HexColor(self.palette[ColorType.MAIN])
-        accent = self._accent_color
-
-        pill_para = Paragraph(tag_text.upper(), self.pill)
-        pill_table = Table([[pill_para]], colWidths=[1.8 * inch])
-        pill_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), main),
-            ("BOX", (0, 0), (-1, -1), 0.7, main),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-
-        pill_wrapper = Table([[pill_table]], colWidths=[6 * inch])
-        pill_wrapper.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-
-        title_para = Paragraph(title_text, self.title)
-        title_wrapper = Table([[title_para]], colWidths=[6 * inch])
-        title_wrapper.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-
-        divider = Table([[""]], colWidths=[2.5 * inch], rowHeights=[0.035 * inch])
-        divider.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), accent),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-
-        divider_wrapper = Table([[divider]], colWidths=[6 * inch])
-        divider_wrapper.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-
-        return [pill_wrapper, title_wrapper, divider_wrapper]
-
-    def card(self, inner_flowables, severity_color=None):
-        """Create a card container with optional severity color band.
-
-        Args:
-            inner_flowables: Content to put inside the card.
-            severity_color: Optional color for the left severity band.
-
-        Returns:
-            Table representing the card.
-        """
-        white = colors.HexColor(self.palette[ColorType.WHITE])
-        border = colors.HexColor("#DDDDDD")
-        band_color = severity_color or colors.HexColor(self.palette[ColorType.MAIN])
-
-        band = Table([[""]], colWidths=[0.12 * inch])
-        band.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), band_color),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-
-        content_table = Table([[inner_flowables]], colWidths=[5.8 * inch])
-        content_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ]))
-
-        outer = Table([[band, content_table]], colWidths=[0.12 * inch, 5.88 * inch])
-        outer.setStyle(TableStyle([
-            ("BOX", (0, 0), (-1, -1), 0.7, border),
-            ("BACKGROUND", (0, 0), (-1, -1), white),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        return outer
-
-    def severity_header_table(self, left_text: str, right_text: str, bg_color) -> Table:
-        """Create a severity header table with left and right text.
-
-        Args:
-            left_text: Text for the left side.
-            right_text: Text for the right side.
-            bg_color: Background color for the header.
-
-        Returns:
-            Table with severity header styling.
-        """
-        data = [[left_text, right_text]]
-        t = Table(data, colWidths=[3 * inch, 3 * inch])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), bg_color),
-            ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor(self.palette[ColorType.BLACK])),
-            ("ALIGN", (0, 0), (0, -1), "LEFT"),
-            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(self.palette[ColorType.LIGHT])),
-        ]))
-        return t
-
-    def section_header(self, title_text: str, tag_text: str) -> list:
         """
         Devuelve [píldora centrada, título centrado, línea de acento].
         """
@@ -500,8 +372,6 @@ class PrintingStrategy(ABC):
         Raises:
             ValidationError: If scan type is not registered.
         """
-        from ..managers import ScanManager
-        from src.modules.shared._exceptions import ValidationError
 
         raw_type = ScanManager.get_scan_type(scan_id)
         try:
@@ -545,6 +415,9 @@ class PrintingStrategy(ABC):
             self.logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
 
         try:
+            if self.writer is None:
+                raise IllegalStateError("Writer detectado como None")
+
             ai_analysis = self.writer.generate(self.scan)
         except Exception as e:
             self.logger.error(f"[IA] Excepción: {e}", exc_info=True)

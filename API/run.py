@@ -43,7 +43,7 @@ APP_CONTEXT = CR.get_app_context()
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
 _UI_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
+    os.path.join(os.path.dirname(__file__), "..", "web")
 )
 
 def _graceful_shutdown(signum, *args) -> None:

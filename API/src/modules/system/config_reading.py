@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from typing import Optional, TypedDict
 
+from API.src.modules.sentinel.services.reports import SentinelTool
 from src.modules.shared._exceptions import IllegalStateError
 
 load_dotenv()
@@ -342,7 +343,7 @@ def get_tool_prompts(tool: str) -> dict:
     return prompts.get(tool, {})
 
 @_lazy_load
-def get_tool_color_palette(tool: str) -> dict:
+def get_tool_color_palette(tool: SentinelTool) -> dict:
     if _configs is None:
         raise IllegalStateError("'_configs' detectado como nulo")
 

@@ -28,14 +28,11 @@ import threading
 import time
 import uuid
 
-
-
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional
 
-import sqlalchemy.orm.exc as orm_exc
-
+from src.modules.users.exceptions import UserNotFoundError
 import src.modules.system.config_reading as CR
 
 from src.modules.users import User, UserManager
@@ -78,6 +75,8 @@ from .exceptions import (
     PortValidationError,
 )
 
+USER_MANAGER = UserManager()
+
 
 class ScanManager(ABC):
     """
@@ -104,14 +103,13 @@ class ScanManager(ABC):
     _scan_timeout_margin: int = 30
     _registry: Dict[ScanType, type["ScanManager"]] = {}
 
-    def __init__(self, user: User) -> None:
+    def __init__(self) -> None:
         """
         Initialize the scan manager.
 
         Args:
             user: User performing the scan operations.
         """
-        self.user = user
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
     @abstractmethod
@@ -166,14 +164,12 @@ class ScanManager(ABC):
         with UnitOfWork() as uow:
             scan = ScanRepository(uow).get_by_id(scan_id)
 
-        if scan:
-            self.logger.info(f"Escaneo {scan_id} encontrado")
-        else:
+        if not scan:
             self.logger.warning(f"Escaneo {scan_id} no encontrado")
 
         return scan
 
-    def get_scans_for_user(self) -> List[Scan]:
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
         """
         Retrieve all scans belonging to the active user.
 
@@ -184,10 +180,10 @@ class ScanManager(ABC):
             List of Scan instances ordered by start time descending.
         """
         with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_by_user(self.user.id) # pyright: ignore[reportArgumentType]
+            scans = ScanRepository(uow).get_by_user(user_id) # pyright: ignore[reportArgumentType]
 
         self.logger.info(
-            f"Se obtuvieron {len(scans)} escaneos para el usuario {self.user.id}"
+            f"Se obtuvieron {len(scans)} escaneos para el usuario {user_id}"
         )
         return scans
 
@@ -288,7 +284,8 @@ class ScanManager(ABC):
     # OWNERSHIP ASSERTIONS
     # =========================================================================
 
-    def assert_scan_ownership(self, scan_id: int) -> Scan:
+    @classmethod
+    def assert_scan_ownership(cls, scan_id: int, user_id: int) -> Scan:
         """
         Verifica que el escaneo pertenece al usuario. Lanza ScanNotFoundError
         si no pertenece para evitar enumerar IDs ajenos.
@@ -305,7 +302,11 @@ class ScanManager(ABC):
             if not scan:
                 raise ScanNotFoundError(scan_id)
 
-            if scan.user_id != self.user.id: # type: ignore
+            user = UserManager().get_user_by_id(user_id)
+            if not user:
+                raise UserNotFoundError(user_id)
+
+            if scan.user_id != user_id: # type: ignore
                 raise ScanNotFoundError(scan_id)
 
         return scan
@@ -314,7 +315,7 @@ class ScanManager(ABC):
     # LIFECYCLE OPERATIONS
     # =========================================================================
 
-    def cancel_scan(self, scan_id: int) -> bool:
+    def cancel_scan(self, scan_id: int, user_id: int) -> bool:
         """
         Cancel a running scan.
 
@@ -329,13 +330,19 @@ class ScanManager(ABC):
         """
         try:
             scan = self.get_scan_by_id(scan_id)
+            user = USER_MANAGER.get_user_by_id(user_id)
+            self.assert_scan_ownership(scan_id, user_id)
             if not scan:
                 self.logger.warning(f"Escaneo {scan_id} no encontrado, no se puede cancelar")
                 return False
 
-            if scan.user_id != self.user.id: # type: ignore
+            if not user:
+                self.logger.warning(f"El usuario con id {user_id} no existe")
+                raise UserNotFoundError(user_id)
+
+            if scan.user_id != user.id: # type: ignore
                 self.logger.warning(
-                    f"El usuario {self.user.username} no tiene permisos "
+                    f"El usuario {user.username} no tiene permisos "
                     f"para cancelar el escaneo {scan_id}"
                 )
                 return False
@@ -435,7 +442,7 @@ class ScanManager(ABC):
             scan_id: Primary key of the scan being executed.
             task:    Task instance that drives the actual scanning.
         """
-        thread_manager = self.__class__(self.user)
+        thread_manager = self.__class__()
 
         try:
             scan = thread_manager.get_scan_by_id(scan_id)
@@ -543,7 +550,7 @@ class ScanManager(ABC):
         return decorator
 
     @classmethod
-    def resolve_manager(cls, scan_id: int, user: User) -> "ScanManager":
+    def resolve_manager(cls, scan_id: int) -> "ScanManager":
         raw_type = cls.get_scan_type(scan_id)
         try:
             scan_type = ScanType(raw_type)
@@ -552,7 +559,7 @@ class ScanManager(ABC):
         manager_class = cls._registry.get(scan_type)
         if manager_class is None:
             raise ScanNotFoundError(scan_id)
-        return manager_class(user)
+        return manager_class()
 
     @classmethod
     def get_scan_rich(cls, scan_id: int) -> Scan:
@@ -580,7 +587,7 @@ class ScanManager(ABC):
         if manager_class is None:
             raise ScanNotFoundError(scan_id)
 
-        manager = manager_class(user=None)
+        manager = manager_class()
         return manager.get_scan_by_id(scan_id)
 
     @staticmethod
@@ -629,9 +636,9 @@ class ScanManager(ABC):
             return scan_type # pyright: ignore[reportReturnType]
 
     @classmethod
-    def _append_document_info(cls, scan, result: dict, user: User) -> None:
+    def _append_document_info(cls, scan, result: dict) -> None:
         """Append the latest document ID and status to a scan result dict."""
-        inst = SentinelReportManager(user)
+        inst = SentinelReportManager()
         doc = inst.get_latest_document_by_scan_id(scan.id)
         if doc:
             result["documentId"] = doc.id
@@ -963,7 +970,7 @@ class NmapScanManager(ScanManager):
     >>> scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
     """
 
-    def run_scan(self, target_host: str, target_ports: str, timeout: int = 300) -> int:  # pylint: disable=arguments-differ
+    def run_scan(self, target_host: str, target_ports: str, user_id: int, timeout: int = 300) -> int:  # pylint: disable=arguments-differ
         """
         Start an Nmap scan in a background thread.
 
@@ -976,7 +983,10 @@ class NmapScanManager(ScanManager):
             Primary key of the created NmapScan record.
         """
         try:
-            scan    = self._create_scan_record(target=target_host)
+            scan    = self._create_scan_record(
+                target=target_host,
+                user_id=user_id
+            )
             scan_id = scan.id
 
             task = NmapScanTask(
@@ -1002,9 +1012,9 @@ class NmapScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str) -> NmapScan: # pylint: disable=arguments-differ
+    def _create_scan_record(self, target: str, user_id: int) -> NmapScan: # pylint: disable=arguments-differ
         """Create and persist an NmapScan row."""
-        scan = NmapScan(target=target, user_id=self.user.id, started_at=datetime.now())
+        scan = NmapScan(target=target, user_id=user_id, started_at=datetime.now())
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
@@ -1025,14 +1035,12 @@ class NmapScanManager(ScanManager):
         with UnitOfWork() as uow:
             scan = ScanRepository(uow).get_nmap_rich(scan_id)
 
-        if scan:
-            self.logger.info(f"Escaneo Nmap {scan_id} encontrado")
-        else:
+        if not scan:
             self.logger.warning(f"Escaneo Nmap {scan_id} no encontrado")
 
         return scan
 
-    def get_scans_for_user(self) -> List[NmapScan]:
+    def get_scans_for_user(self, user_id: int) -> List[NmapScan]:
         """
         Retrieve all NmapScans for the active user with relationships eagerly loaded.
 
@@ -1040,7 +1048,7 @@ class NmapScanManager(ScanManager):
             List of NmapScan instances.
         """
         with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_nmap_by_user(self.user.id) # type: ignore
+            scans = ScanRepository(uow).get_nmap_by_user(user_id) # type: ignore
 
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
         return scans
@@ -1075,7 +1083,7 @@ class NmapScanManager(ScanManager):
             ],
             "totalOpenPorts": len(scan.open_ports_relation),
         }
-        self._append_document_info(scan, result, self.user)
+        self._append_document_info(scan, result)
         return result
 
     def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
@@ -1100,7 +1108,7 @@ class NiktoScanManager(ScanManager):
     >>> scan_id = manager.run_scan(target_domain="example.com")
     """
 
-    def run_scan(self, target_domain: str, timeout: int = 60) -> int:  # pylint: disable=arguments-differ
+    def run_scan(self, target_domain: str, user_id: int, timeout: int = 60) -> int:  # pylint: disable=arguments-differ
         """
         Start a Nikto scan in a background thread.
 
@@ -1112,7 +1120,10 @@ class NiktoScanManager(ScanManager):
             Primary key of the created NiktoScan record.
         """
         try:
-            scan    = self._create_scan_record(target=target_domain)
+            scan    = self._create_scan_record(
+                target=target_domain,
+                user_id=user_id,
+            )
             scan_id = scan.id
 
             task = NiktoScanTask(target_domain=target_domain, timeout=timeout)
@@ -1134,9 +1145,9 @@ class NiktoScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str) -> NiktoScan: # pylint: disable=arguments-differ
+    def _create_scan_record(self, target: str, user_id: int) -> NiktoScan: # pylint: disable=arguments-differ
         """Create and persist a NiktoScan row."""
-        scan = NiktoScan(target=target, user_id=self.user.id, started_at=datetime.now())
+        scan = NiktoScan(target=target, user_id=user_id, started_at=datetime.now())
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
@@ -1157,14 +1168,12 @@ class NiktoScanManager(ScanManager):
         with UnitOfWork() as uow:
             scan = ScanRepository(uow).get_nikto_rich(scan_id)
 
-        if scan:
-            self.logger.info(f"Escaneo Nikto {scan_id} encontrado")
-        else:
+        if not scan:
             self.logger.warning(f"Escaneo Nikto {scan_id} no encontrado")
 
         return scan
 
-    def get_scans_for_user(self) -> List[NiktoScan]:
+    def get_scans_for_user(self, user_id: int) -> List[NiktoScan]:
         """
         Retrieve all NiktoScans for the active user with incidents eagerly loaded.
 
@@ -1172,7 +1181,7 @@ class NiktoScanManager(ScanManager):
             List of NiktoScan instances.
         """
         with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_nikto_by_user(self.user.id) # type: ignore
+            scans = ScanRepository(uow).get_nikto_by_user(user_id)
 
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
         return scans
@@ -1215,7 +1224,7 @@ class NiktoScanManager(ScanManager):
             ],
             "totalIncidents": len(scan.incidents),
         }
-        self._append_document_info(scan, result, self.user)
+        self._append_document_info(scan, result)
         return result
 
     def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
@@ -1248,8 +1257,8 @@ class OpenVASScanManager(ScanManager):
 
     _strategy_class = OpenVASPrintingStrategy
 
-    def __init__(self, user: User) -> None:
-        super().__init__(user)
+    def __init__(self) -> None:
+        super().__init__()
 
         config         = CR.get_openvas_environment()
         self.hostname  = config["hostname"]
@@ -1260,6 +1269,7 @@ class OpenVASScanManager(ScanManager):
     def run_scan(               # pylint: disable=arguments-differ
         self,
         target: str,
+        user_id: int,
         scan_config: str = "full_fast",
         skip_normalize: bool = False
     ) -> int:
@@ -1276,7 +1286,10 @@ class OpenVASScanManager(ScanManager):
         """
         try:
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS["full_fast"])
-            scan      = self._create_scan_record(target=target)
+            scan      = self._create_scan_record(
+                target=target,
+                user_id=user_id
+            )
             scan_id   = scan.id
 
             task = OpenVASTask(
@@ -1305,12 +1318,12 @@ class OpenVASScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str) -> OpenVASScan: # pylint: disable=arguments-differ
+    def _create_scan_record(self, target: str, user_id: int) -> OpenVASScan: # pylint: disable=arguments-differ
         """Create and persist an OpenVASScan row with placeholder task/report IDs."""
         placeholder = f"PENDING_{uuid.uuid4()}"
         scan = OpenVASScan(
             target    = target,
-            user_id   = self.user.id,
+            user_id   = user_id,
             task_id   = placeholder,
             report_id = placeholder,
         )
@@ -1334,14 +1347,12 @@ class OpenVASScanManager(ScanManager):
         with UnitOfWork() as uow:
             scan = ScanRepository(uow).get_openvas_rich(scan_id)
 
-        if scan:
-            self.logger.info(f"Escaneo OpenVAS {scan_id} encontrado")
-        else:
+        if not scan:
             self.logger.warning(f"Escaneo OpenVAS {scan_id} no encontrado")
 
         return scan
 
-    def get_scans_for_user(self) -> List[OpenVASScan]:
+    def get_scans_for_user(self, user_id: int) -> List[OpenVASScan]:
         """
         Retrieve all OpenVASScans for the active user with relationships eagerly loaded.
 
@@ -1349,7 +1360,7 @@ class OpenVASScanManager(ScanManager):
             List of OpenVASScan instances.
         """
         with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_openvas_by_user(self.user.id) # type: ignore
+            scans = ScanRepository(uow).get_openvas_by_user(user_id)
 
         self.logger.info(
             f"Se obtuvieron {len(scans)} escaneos OpenVAS"
@@ -1436,7 +1447,7 @@ class OpenVASScanManager(ScanManager):
             "criticalCount": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
             "highCount": sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
         }
-        self._append_document_info(scan, result, self.user)
+        self._append_document_info(scan, result)
         return result
 
     def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
@@ -1460,8 +1471,7 @@ class SentinelReportManager:
         logger:      Logger instance.
     """
 
-    def __init__(self, user: User) -> None:
-        self.user = user
+    def __init__(self) -> None:
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
     @staticmethod
@@ -1499,10 +1509,10 @@ class SentinelReportManager:
 
         return doc
 
-    def get_documents_for_user(self) -> List[SentinelDocument]:
+    def get_documents_for_user(self, user_id: int) -> List[SentinelDocument]:
         """Retrieve all documents belonging to the active user."""
         with UnitOfWork() as uow:
-            docs = SentinelReportRepository(uow).get_documents_by_user(self.user.id)  # type: ignore
+            docs = SentinelReportRepository(uow).get_documents_by_user(user_id)  # type: ignore
 
         self.logger.info(f"Se obtuvieron {len(docs)} documentos")
         return docs
@@ -1542,7 +1552,7 @@ class SentinelReportManager:
 
         return True
 
-    def assert_document_ownership(self, document_id: int) -> Document:
+    def assert_document_ownership(self, document_id: int, user_id: int) -> Document:
         """
         Verify document ownership and return the document.
 
@@ -1560,7 +1570,8 @@ class SentinelReportManager:
             doc = doc_repo.get_by_id(document_id)
             if not doc:
                 raise DocumentError(f"Documento {document_id} no encontrado")
-            if doc.user_id != self.user.id:  # type: ignore
+
+            if doc.user_id != user_id: # type: ignore
                 raise DocumentError(f"Documento {document_id} no encontrado")
 
         return doc
@@ -1577,7 +1588,7 @@ class SentinelReportManager:
         Returns:
             Primary key of the created SentinelDocument.
         """
-        scan_manager = ScanManager.resolve_manager(scan_id, self.user)
+        scan_manager = ScanManager.resolve_manager(scan_id)
         scan = scan_manager.get_scan_by_id(scan_id)
         if not scan:
             raise ValueError(f"Escaneo {scan_id} no encontrado")
