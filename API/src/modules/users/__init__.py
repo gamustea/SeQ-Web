@@ -17,6 +17,7 @@ from .model import (
 from .services import require_oauth_token, require_attributes, require_role, AttributeType
 from .endpoints import oauth_bp, users_bp, get_current_user
 from .managers import UserManager, OAuthTokenManager
+from src.modules.acheron.model import Vault  # noqa: F401
 
 
 class _LazyLoader:

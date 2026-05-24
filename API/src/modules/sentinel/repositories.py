@@ -40,10 +40,11 @@ from .model import (
     OpenVASScan,
     OpenVASScanResult,
     Port,
+    ProgramedScan,
     Scan,
     ScanStatus,
+    ScanType,
     SentinelDocument,
-    ProgramedScan
 )
 
 
@@ -165,7 +166,7 @@ class ScanRepository(BaseRepository[Scan]):
             .all()
         )
 
-    def get_by_user_and_type(self, user_id: int, scan_type: str) -> List[Scan]:
+    def get_by_user_and_type(self, user_id: int, scan_type: ScanType) -> List[Scan]:
         return (
             self._session.query(Scan)
             .filter(Scan.user_id == user_id, Scan.scan_type == scan_type)
@@ -483,7 +484,7 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
             .all()
         )
 
-    def get_by_user_and_type(self, user_id: int, scan_type: str) -> List[ProgramedScan]:
+    def get_by_user_and_type(self, user_id: int, scan_type: ScanType) -> List[ProgramedScan]:
         """
         Retrieve programed scans for a user filtered by scan type.
 
@@ -544,10 +545,18 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
         ps.last_run_at = datetime.utcnow()  # type: ignore
         return self.update(ps)
 
+    def update_next_run(
+        self,
+        ps: ProgramedScan,
+        next_run_at: datetime
+    ) -> ProgramedScan:
+        ps.next_run_at = next_run_at   # type: ignore
+        return self.update(ps)
+
     def create(
         self,
         user_id: int,
-        scan_type: str,
+        scan_type: ScanType,
         arguments: dict,
         schedule_type: str,
         schedule_config: dict,

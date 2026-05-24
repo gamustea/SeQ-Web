@@ -133,6 +133,8 @@ def create_app(fresh_db_init: bool = False) -> Flask:
         _init_db()
 
     _logger.info("Inicializando base de datos...")
+    engine = BaseManager._initialize_engine()
+    Base.metadata.create_all(engine)
     BaseManager.warmup_connection()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
@@ -448,7 +450,7 @@ if __name__ == "__main__":
         _graceful_shutdown
     )
 
-    app = create_app(APP_CONTEXT.create_database)
+    app = create_app(True)
     app.run(
         debug=APP_CONTEXT.debug,
         host=APP_CONTEXT.host,

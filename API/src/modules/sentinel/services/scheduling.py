@@ -1,7 +1,9 @@
 
 
-from typing import Any, Callable
+from datetime import datetime, timedelta
+from typing import Any, Callable, Optional
 
+from croniter import croniter
 
 from src.modules.infrastructure import UnitOfWork
 
@@ -22,7 +24,6 @@ def _require_args(
         if arguments.get(field) is None:
             raise InvalidProgramedTaskArgumentError(scan_type, field)
 
-
 def _run_nmap_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target_host", "target_ports"], "nmap")
 
@@ -35,7 +36,6 @@ def _run_nmap_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
         user_id=ps.user_id,
     )
 
-
 def _run_nikto_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target_domain"], "nikto")
 
@@ -46,7 +46,6 @@ def _run_nikto_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
         target_domain=arguments["target_domain"],
         user_id=ps.user_id,
     )
-
 
 def _run_openvas_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target"], "openvas")
@@ -85,3 +84,35 @@ class Scheduler:
 
             handler(ps, arguments) # type: ignore
             repo.update_last_run(ps)
+
+    @classmethod
+    def calculate_next_run(
+        cls,
+        schedule_type: str,
+        schedule_config: dict,
+        last_run: Optional[datetime] = None,
+    ) -> datetime:
+        reference = last_run if last_run is not None else datetime.utcnow()
+
+        if schedule_type == "interval":
+            every = int(schedule_config["every"])
+            unit = schedule_config["unit"]
+
+            if unit == "minutes":
+                delta = timedelta(minutes=every)
+            elif unit == "hours":
+                delta = timedelta(hours=every)
+            elif unit == "days":
+                delta = timedelta(days=every)
+            else:
+                raise ValueError(f"Unknown interval unit: {unit}")
+
+            return reference + delta
+
+        elif schedule_type == "cron":
+            cron_expr = schedule_config["cron"]
+            iter_ = croniter(cron_expr, reference)
+            return iter_.get_next(datetime)
+
+        else:
+            raise ValueError(f"Unknown schedule_type: {schedule_type}")

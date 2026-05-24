@@ -189,6 +189,7 @@ class Scan(Base):
     host = relationship("Host", back_populates="scans")
 
     programed_scan_id = Column(Integer, ForeignKey("ProgramedScan.id"), nullable=True)
+    programed_scan = relationship("ProgramedScan", back_populates="scans")
 
     sentinel_document = relationship(
         "SentinelDocument",
@@ -227,6 +228,8 @@ class Scan(Base):
 # =========================================================================
 
 class ProgramedScan(Base):
+    __tablename__ = "ProgramedScan"
+
     id              = Column(Integer, primary_key=True)
     user_id         = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type       = Column(String(20), nullable=False)  # "nmap" | "nikto" | "openvas"
@@ -235,7 +238,7 @@ class ProgramedScan(Base):
     # Schedule
     schedule_type    = Column(String(10), nullable=False)   # "interval" | "cron"
     schedule_config  = Column(JSONB, nullable=False)        # {"every": 60, "unit": "minutes"}
-                                                            # o {"cron": "0 2 * * *"}
+                                                             # o {"cron": "0 2 * * *"}
     # Estado
     is_active       = Column(Boolean, default=True)
     last_run_at     = Column(DateTime, nullable=True)
@@ -245,7 +248,6 @@ class ProgramedScan(Base):
     # Relación
     scans = relationship("Scan", back_populates="programed_scan")
     user  = relationship("User")
-    host  = relationship("Host")
 
 
 # =========================================================================

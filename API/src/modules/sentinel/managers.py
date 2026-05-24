@@ -40,7 +40,10 @@ from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
 from .services.csv_logger import ScanLoggerFactory
 
-from .repositories import ScanRepository, SentinelReportRepository
+from .repositories import (
+    ScanRepository,
+    SentinelReportRepository,
+    ProgramedScanRepository)
 from .model import (
     NiktoScan,
     NmapScan,
@@ -63,7 +66,8 @@ from .services import (
     NmapScanTask,
     OpenVASTask,
     TaskStatus,
-    _Task
+    _Task,
+    Scheduler
 )
 from .exceptions import (
     ScanNotFoundError,
@@ -71,6 +75,7 @@ from .exceptions import (
     MaxHostsExceededError,
     PortValidationError,
     PrivateIPRequested,
+    InvalidProgramedTaskArgumentError
 )
 
 
@@ -961,9 +966,49 @@ class ScanManager(ABC):
 
 class ProgramedScanManager():
 
+    _REQUIRED_ARGS: dict[ScanType, List[str]] = {
+        ScanType.NMAP:      ["target_host", "target_ports"],
+        ScanType.NIKTO:     ["target_domain"],
+        ScanType.OPENVAS:   ["target"]
+    }
+
     @classmethod
-    def register(cls):
-        ...
+    def register(
+        cls,
+        user_id: int,
+        scan_type: ScanType,
+        arguments: dict[str, str],
+        schedule_type: str,
+        schedule_config: dict
+    ):
+        cls._assert_valid_arguments(
+            scan_type=scan_type,
+            arguments=arguments
+        )
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.create(
+                user_id=user_id,
+                scan_type=scan_type,
+                arguments=arguments,
+                schedule_type=schedule_type,
+                schedule_config=schedule_config
+            )
+            repo.update_last_run(ps)
+            next_run = Scheduler.calculate_next_run(
+                schedule_config=schedule_config,
+                schedule_type=schedule_type,
+                last_run=ps.last_run_at # type: ignore
+            )
+            repo.update_next_run(ps, next_run)
+
+    @classmethod
+    def _assert_valid_arguments(cls, scan_type: ScanType, arguments: dict[str, str]):
+        required_list = cls._REQUIRED_ARGS[scan_type]
+
+        for field in required_list:
+            if arguments.get(field) is None:
+                raise InvalidProgramedTaskArgumentError(scan_type, field)
 
 
 # =============================================================================
