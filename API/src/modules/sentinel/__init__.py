@@ -19,6 +19,7 @@ from .model import (
     OpenVASScanResult,
     OpenVASVulnerability,
     Port,
+    ProgramedScan,
     Scan,
     ScanIncident,
     ScanStatus,
@@ -30,10 +31,12 @@ from .managers import (
     NmapScanManager,
     NiktoScanManager,
     OpenVASScanManager,
+    ProgramedScanManager,
     ScanManager,
 )
 
 from .repositories import (
+    ProgramedScanRepository,
     ScanRepository,
     SentinelReportRepository,
 )
@@ -42,7 +45,8 @@ from .services import (
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy,
-    PDFCreator
+    PDFCreator,
+    Scheduler,
 )
 
 from .endpoints import sentinel_bp
@@ -58,6 +62,7 @@ __all__ = [
     "OpenVASScanResult",
     "OpenVASVulnerability",
     "Port",
+    "ProgramedScan",
     "Scan",
     "ScanIncident",
     "ScanStatus",
@@ -67,8 +72,10 @@ __all__ = [
     "NmapScanManager",
     "NiktoScanManager",
     "OpenVASScanManager",
+    "ProgramedScanManager",
     "ScanManager",
     # Repositories
+    "ProgramedScanRepository",
     "ScanRepository",
     "SentinelReportRepository",
     # Endpoints
@@ -78,4 +85,6 @@ __all__ = [
     "NmapPrintingStrategy",
     "NiktoPrintingStrategy",
     "OpenVASPrintingStrategy",
+    # Scheduling
+    "Scheduler",
 ]

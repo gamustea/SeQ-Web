@@ -525,6 +525,23 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
             .all()
         )
 
+    def get_all_active(self) -> List[ProgramedScan]:
+        """
+        Retrieve all active programed scans regardless of user.
+
+        Used on scheduler startup to restore all scheduled jobs from the
+        database after a restart.
+
+        Returns:
+            List of active ProgramedScan instances.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(ProgramedScan.is_active.is_(True))
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
+        )
+
     # =========================================================================
     # MUTATION METHODS
     # =========================================================================

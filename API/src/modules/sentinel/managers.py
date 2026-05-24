@@ -985,6 +985,10 @@ class ProgramedScanManager():
             scan_type=scan_type,
             arguments=arguments
         )
+        cls._assert_valid_scheduling_config(
+            schedule_type=schedule_type,
+            schedule_config=schedule_config
+        )
         with UnitOfWork() as uow:
             repo = ProgramedScanRepository(uow)
             ps = repo.create(
@@ -994,13 +998,14 @@ class ProgramedScanManager():
                 schedule_type=schedule_type,
                 schedule_config=schedule_config
             )
-            repo.update_last_run(ps)
             next_run = Scheduler.calculate_next_run(
                 schedule_config=schedule_config,
                 schedule_type=schedule_type,
                 last_run=ps.last_run_at # type: ignore
             )
             repo.update_next_run(ps, next_run)
+
+        Scheduler.schedule(ps)
 
     @classmethod
     def _assert_valid_arguments(cls, scan_type: ScanType, arguments: dict[str, str]):
@@ -1009,6 +1014,43 @@ class ProgramedScanManager():
         for field in required_list:
             if arguments.get(field) is None:
                 raise InvalidProgramedTaskArgumentError(scan_type, field)
+
+    @classmethod
+    def _assert_valid_scheduling_config(
+        cls,
+        schedule_type: str,
+        schedule_config: dict
+    ):
+        if schedule_type == "interval":
+            every = schedule_config.get("every")
+            if not isinstance(every, (int, float)) or every <= 0:
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, f"interval every must be > 0, got: {every}"
+                )
+            unit = schedule_config.get("unit")
+            if unit not in ("minutes", "hours", "days"):
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, f"invalid interval unit: {unit}"
+                )
+
+        elif schedule_type == "cron":
+            cron_expr = schedule_config.get("cron")
+            if not cron_expr:
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, "missing cron expression"
+                )
+            try:
+                from croniter import croniter as _ci
+                _ci(cron_expr, datetime.now())
+            except Exception:
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, f"invalid cron expression: {cron_expr}"
+                )
+
+        else:
+            raise InvalidProgramedTaskArgumentError(
+                schedule_type, f"unknown schedule_type: {schedule_type}"
+            )
 
 
 # =============================================================================
