@@ -76,17 +76,17 @@ class ScanRepository(BaseRepository[Scan]):
     # TYPED GETTERS BY SUBTYPE
     # =========================================================================
 
-    def get_by_id(self, scan_type: type[Scan], scan_id: int):
+    def get_by_id_and_type(self, scan_type: type[Scan], scan_id: int):
         return self._session.get(scan_type, scan_id)
 
     def get_nmap_by_id(self, scan_id: int) -> Optional[NmapScan]:
-        return self.get_by_id(NmapScan, scan_id)
+        return self.get_by_id_and_type(NmapScan, scan_id)
 
     def get_nikto_by_id(self, scan_id: int) -> Optional[NiktoScan]:
-        return self.get_by_id(NiktoScan, scan_id)
+        return self.get_by_id_and_type(NiktoScan, scan_id)
 
     def get_openvas_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
-        return self.get_by_id(OpenVASScan, scan_id)
+        return self.get_by_id_and_type(OpenVASScan, scan_id)
 
     # =========================================================================
     # EAGER-LOADED QUERIES (for detached object usage, e.g. PDF generation)

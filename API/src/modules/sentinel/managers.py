@@ -477,7 +477,6 @@ class ScanManager(ABC):
                 fresh_scan.finished_at  = datetime.now() # type: ignore
 
             thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
-
             thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
         except (OSError, RuntimeError) as e:
@@ -958,6 +957,13 @@ class ScanManager(ABC):
         Returns:
             Diccionario con los datos del escaneo en formato JSON.
         """
+
+
+class ProgramedScanManager():
+
+    @classmethod
+    def register(cls):
+        ...
 
 
 # =============================================================================
