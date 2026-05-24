@@ -188,6 +188,8 @@ class Scan(Base):
     user = relationship("User", back_populates="scans")
     host = relationship("Host", back_populates="scans")
 
+    programed_scan_id = Column(Integer, ForeignKey("ProgramedScan.id"), nullable=True)
+
     sentinel_document = relationship(
         "SentinelDocument",
         back_populates="scan",
@@ -206,7 +208,7 @@ class Scan(Base):
         Returns:
             String with id, type, target, and start time.
         """
-        started = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
+        started = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A" # type: ignore
         return f"Scan(id={self.id}, tipo='{self.scan_type}',\
             target='{self.target}', inicio={started})"
 
@@ -218,6 +220,34 @@ class Scan(Base):
             String with id, type, and target.
         """
         return f"<Scan(id={self.id}, type='{self.scan_type}', target='{self.target}')>"
+
+
+# =========================================================================
+# PROGRAMED SCAN
+# =========================================================================
+
+class ProgramedScan(Base):
+    id              = Column(Integer, primary_key=True)
+    name            = Column(String(100), nullable=False)
+    user_id         = Column(Integer, ForeignKey("User.id"), nullable=False)
+    scan_type       = Column(String(20), nullable=False)  # "nmap" | "nikto" | "openvas"
+    host_id         = Column(Integer, ForeignKey("Host.id"), nullable=False)
+    arguments       = Column(JSONB, nullable=False)       # {"ports": "22,80", "timeout": 300}
+
+    # Schedule
+    schedule_type    = Column(String(10), nullable=False)   # "interval" | "cron"
+    schedule_config  = Column(JSONB, nullable=False)        # {"every": 60, "unit": "minutes"}
+                                                            # o {"cron": "0 2 * * *"}
+    # Estado
+    is_active       = Column(Boolean, default=True)
+    last_run_at     = Column(DateTime, nullable=True)
+    next_run_at     = Column(DateTime, nullable=True)
+    created_at      = Column(DateTime, default=datetime.now)
+
+    # Relación
+    scans = relationship("Scan", back_populates="programed_scan")
+    user  = relationship("User")
+    host  = relationship("Host")
 
 
 # =========================================================================
@@ -318,7 +348,7 @@ class NmapScan(Scan):
         Returns:
             String with id, target, open port count, and start time.
         """
-        started   = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
+        started   = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A" # type: ignore
         num_ports = len(self.open_ports_relation) if self.open_ports_relation else 0
         return f"NmapScan(id={self.id}, target='{self.target}', puertos_abiertos={num_ports}, inicio={started})"
 

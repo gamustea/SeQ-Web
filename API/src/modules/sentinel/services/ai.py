@@ -14,14 +14,11 @@ import json
 import re
 import time
 
-import ollama
-
-from typing import Optional, Dict, Any
+from typing import Optional
 
 import src.modules.system.config_reading as CR
 from src.modules.shared import AIWriter
 from src.modules.aegis.exceptions import (
-    AIConnectionError,
     AIResponseError,
     AIFallbackExhaustedError,
 )

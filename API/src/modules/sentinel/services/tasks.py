@@ -11,7 +11,7 @@ from typing import Optional, Any, List
 from enum import Enum
 from abc import ABC, abstractmethod
 
-from lxml import etree as lxml_etree
+import lxml.etree as lxml_etree
 from gvm.connections import TLSConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeTransform
