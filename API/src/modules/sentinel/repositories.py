@@ -28,8 +28,9 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy.orm import joinedload
+from src.modules.infrastructure import BaseRepository, UnitOfWork
 
-from src.modules.sentinel.model import (
+from .model import (
     Host,
     NiktoIncident,
     NiktoScan,
@@ -42,8 +43,8 @@ from src.modules.sentinel.model import (
     Scan,
     ScanStatus,
     SentinelDocument,
+    ProgramedScan
 )
-from src.modules.infrastructure import BaseRepository, UnitOfWork
 
 
 class ScanRepository(BaseRepository[Scan]):
@@ -75,14 +76,17 @@ class ScanRepository(BaseRepository[Scan]):
     # TYPED GETTERS BY SUBTYPE
     # =========================================================================
 
+    def get_by_id(self, scan_type: type[Scan], scan_id: int):
+        return self._session.get(scan_type, scan_id)
+
     def get_nmap_by_id(self, scan_id: int) -> Optional[NmapScan]:
-        return self._session.get(NmapScan, scan_id)
+        return self.get_by_id(NmapScan, scan_id)
 
     def get_nikto_by_id(self, scan_id: int) -> Optional[NiktoScan]:
-        return self._session.get(NiktoScan, scan_id)
+        return self.get_by_id(NiktoScan, scan_id)
 
     def get_openvas_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
-        return self._session.get(OpenVASScan, scan_id)
+        return self.get_by_id(OpenVASScan, scan_id)
 
     # =========================================================================
     # EAGER-LOADED QUERIES (for detached object usage, e.g. PDF generation)
@@ -414,3 +418,174 @@ class SentinelReportRepository(BaseRepository[SentinelDocument]):
         if status == "done":
             doc.generated_at = _dt.utcnow() # type: ignore
         return doc
+
+
+class ProgramedScanRepository(BaseRepository[ProgramedScan]):
+    """
+    Repository for the ProgramedScan entity (scheduled/recurring scans).
+
+    Manages programed scan lifecycle: querying by user and type,
+    finding due executions for the scheduler, and recording run timestamps.
+
+    Attributes:
+        _model:  ProgramedScan (inherited from BaseRepository).
+        _uow:    Active Unit of Work (inherited from BaseRepository).
+
+    Example:
+    >>> with UnitOfWork() as uow:
+    ...     repo = ProgramedScanRepository(uow)
+    ...     due_scans = repo.get_due()
+    ...     for ps in due_scans:
+    ...         repo.update_last_run(ps)
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        super().__init__(ProgramedScan, uow)
+
+    # =========================================================================
+    # QUERY METHODS
+    # =========================================================================
+
+    def get_by_user(self, user_id: int) -> List[ProgramedScan]:
+        """
+        Retrieve all programed scans for a user, ordered by creation date.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of ProgramedScan instances sorted newest‑first.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(ProgramedScan.user_id == user_id)
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
+        )
+
+    def get_active_by_user(self, user_id: int) -> List[ProgramedScan]:
+        """
+        Retrieve active programed scans for a user.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of active ProgramedScan instances.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(
+                ProgramedScan.user_id == user_id,
+                ProgramedScan.is_active.is_(True),
+            )
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
+        )
+
+    def get_by_user_and_type(self, user_id: int, scan_type: str) -> List[ProgramedScan]:
+        """
+        Retrieve programed scans for a user filtered by scan type.
+
+        Args:
+            user_id:    User primary key.
+            scan_type:  Scan type discriminator ("nmap", "nikto", "openvas").
+
+        Returns:
+            List of matching ProgramedScan instances.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(
+                ProgramedScan.user_id == user_id,
+                ProgramedScan.scan_type == scan_type,
+            )
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
+        )
+
+    def get_due(self) -> List[ProgramedScan]:
+        """
+        Retrieve all active programed scans whose next_run_at is in the past.
+
+        Used by the scheduler to find scans that are due for execution. Only
+        returns scans that have both is_active=True and next_run_at populated.
+
+        Returns:
+            List of ProgramedScan instances that need to run.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(
+                ProgramedScan.is_active.is_(True),
+                ProgramedScan.next_run_at.isnot(None),
+                ProgramedScan.next_run_at <= datetime.utcnow(),  # type: ignore
+            )
+            .all()
+        )
+
+    # =========================================================================
+    # MUTATION METHODS
+    # =========================================================================
+
+    def update_last_run(self, ps: ProgramedScan) -> ProgramedScan:
+        """
+        Record that a programed scan has just executed.
+
+        Sets last_run_at to the current UTC time and persists the change
+        so the scheduler can track execution history.
+
+        Args:
+            ps: The ProgramedScan that executed.
+
+        Returns:
+            The same ProgramedScan instance after flush.
+        """
+        ps.last_run_at = datetime.utcnow()  # type: ignore
+        return self.update(ps)
+
+    def create(
+        self,
+        user_id: int,
+        scan_type: str,
+        arguments: dict,
+        schedule_type: str,
+        schedule_config: dict,
+    ) -> ProgramedScan:
+        """
+        Create and persist a new programed scan.
+
+        Args:
+            user_id:         Owner user primary key.
+            scan_type:       Scan discriminator ("nmap", "nikto", "openvas").
+            arguments:       Scan parameters (e.g. {"ports": "22,80"}).
+            schedule_type:   "interval" or "cron".
+            schedule_config: Schedule definition (e.g. {"every": 60, "unit": "minutes"}).
+
+        Returns:
+            The newly persisted ProgramedScan instance.
+        """
+        ps = ProgramedScan(
+            user_id=user_id,
+            scan_type=scan_type,
+            arguments=arguments,
+            schedule_type=schedule_type,
+            schedule_config=schedule_config,
+        )
+        return self.save(ps)
+
+    def delete_by_id(self, pk: int) -> bool:
+        """
+        Delete a programed scan by primary key.
+
+        Args:
+            pk: ProgramedScan primary key.
+
+        Returns:
+            True if a row was deleted, False if no row matched.
+        """
+        ps = self.get_by_id(pk)
+        if ps is None:
+            return False
+        self.delete(ps)
+        return True

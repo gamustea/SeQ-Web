@@ -228,10 +228,8 @@ class Scan(Base):
 
 class ProgramedScan(Base):
     id              = Column(Integer, primary_key=True)
-    name            = Column(String(100), nullable=False)
     user_id         = Column(Integer, ForeignKey("User.id"), nullable=False)
     scan_type       = Column(String(20), nullable=False)  # "nmap" | "nikto" | "openvas"
-    host_id         = Column(Integer, ForeignKey("Host.id"), nullable=False)
     arguments       = Column(JSONB, nullable=False)       # {"ports": "22,80", "timeout": 300}
 
     # Schedule
