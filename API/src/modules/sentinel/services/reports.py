@@ -386,7 +386,6 @@ class PrintingStrategy(ABC):
             )
 
         scan = ScanManager.get_scan_rich(scan_id)
-
         return strategy_class(scan=scan)
 
     def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:

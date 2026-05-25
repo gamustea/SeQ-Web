@@ -576,14 +576,11 @@ class ScanManager(ABC):
 
     @classmethod
     def get_scan_rich(cls, scan_id: int) -> Scan:
-        """Get scan with relationships eagerly loaded (no DetachedInstanceError).
+        """Get scan with relationships eagerly loaded for background threads.
 
-        Uses registry to resolve correct manager class and its get_scan_by_id method
-        which already handles eager loading of relationships.
-
-        NOTE: This method uses UnitOfWork directly because it is called from
-        background threads (PDF generation) that do not have a Flask request
-        context. Foreground/endpoint callers should use get_scan_by_id() directly.
+        Uses UnitOfWork with eager-loading repository methods so that the
+        returned scan is fully populated before the session closes. Only
+        needed when lazy loading is unavailable (e.g. PDF generation thread).
 
         Args:
             scan_id: Primary key of the scan.
@@ -595,28 +592,25 @@ class ScanManager(ABC):
             ScanNotFoundError: If scan_id not found or type not registered.
         """
         with UnitOfWork() as uow:
-            scan = ScanRepository(uow).get_by_id(scan_id)
+            repo = ScanRepository(uow)
+            scan = repo.get_by_id(scan_id)
             if scan is None:
                 raise ScanNotFoundError(scan_id)
             scan_type_raw = scan.scan_type
 
-        try:
-            scan_type = ScanType(scan_type_raw)
-        except ValueError:
-            raise ScanNotFoundError(scan_id)
+            try:
+                scan_type = ScanType(scan_type_raw)
+            except ValueError:
+                raise ScanNotFoundError(scan_id)
 
-        manager_class = cls._registry.get(scan_type)
-        if manager_class is None:
-            raise ScanNotFoundError(scan_id)
-
-        manager = manager_class()
-        with UnitOfWork() as uow:
             if scan_type == ScanType.NMAP:
-                return ScanRepository(uow).get_nmap_rich(scan_id)
+                scan =  repo.get_nmap_rich(scan_id)
             elif scan_type == ScanType.NIKTO:
-                return ScanRepository(uow).get_nikto_rich(scan_id)
+                scan = repo.get_nikto_rich(scan_id)
             else:
-                return ScanRepository(uow).get_openvas_rich(scan_id)
+                scan = repo.get_openvas_rich(scan_id)
+
+        return scan
 
     @staticmethod
     def _require_non_empty(
