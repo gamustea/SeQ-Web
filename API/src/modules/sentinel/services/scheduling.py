@@ -15,7 +15,9 @@ from ..exceptions import (
     ProgramedScanNotFoundError,
 )
 from ..repositories import ProgramedScanRepository
-from ..model import ProgramedScan, ScanType
+from ..model import ProgramedScan, Scan, ScanStatus, ScanType
+
+_logger = SecOpsLogger("Scheduling").get_logger()
 
 
 def _require_args(
@@ -30,35 +32,68 @@ def _require_args(
 def _run_nmap_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target_host", "target_ports"], "nmap")
 
+    _logger.info(
+        "Nmap scheduled scan #%d: %s ports %s",
+        ps.id, arguments["target_host"], arguments["target_ports"],
+    )
+
     from ..managers import NmapScanManager
 
     manager = NmapScanManager()
-    manager.run_scan(
+    scan_id = manager.run_scan(
         target_host=arguments["target_host"],
         target_ports=arguments["target_ports"],
         user_id=ps.user_id,
+        programed_scan_id=ps.id,
+    )
+
+    _logger.info(
+        "Nmap scheduled scan #%d completed (scan_id=%d)",
+        ps.id, scan_id,
     )
 
 def _run_nikto_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target_domain"], "nikto")
 
+    _logger.info(
+        "Nikto scheduled scan #%d: %s",
+        ps.id, arguments["target_domain"],
+    )
+
     from ..managers import NiktoScanManager
 
     manager = NiktoScanManager()
-    manager.run_scan(
+    scan_id = manager.run_scan(
         target_domain=arguments["target_domain"],
         user_id=ps.user_id,
+        programed_scan_id=ps.id,
+    )
+
+    _logger.info(
+        "Nikto scheduled scan #%d completed (scan_id=%d)",
+        ps.id, scan_id,
     )
 
 def _run_openvas_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target"], "openvas")
 
+    _logger.info(
+        "OpenVAS scheduled scan #%d: %s",
+        ps.id, arguments["target"],
+    )
+
     from ..managers import OpenVASScanManager
 
     manager = OpenVASScanManager()
-    manager.run_scan(
+    scan_id = manager.run_scan(
         target=arguments["target"],
         user_id=ps.user_id,
+        programed_scan_id=ps.id,
+    )
+
+    _logger.info(
+        "OpenVAS scheduled scan #%d completed (scan_id=%d)",
+        ps.id, scan_id,
     )
 
 
@@ -170,29 +205,57 @@ class Scheduler:
 
     @classmethod
     def execute(cls, ps_id: int) -> None:
-        cls._logger.info(f"Triggered scan {ps_id}")
-        with UnitOfWork() as uow:
-            repo = ProgramedScanRepository(uow)
-            ps = repo.get_by_id(ps_id)
+        cls._logger.info("Triggered scan %d", ps_id)
+        try:
+            with UnitOfWork() as uow:
+                repo = ProgramedScanRepository(uow)
+                ps = repo.get_by_id(ps_id)
 
-            if ps is None:
-                raise ProgramedScanNotFoundError(ps_id)
+                if ps is None:
+                    raise ProgramedScanNotFoundError(ps_id)
 
-            run_scan = cls._TASK_MAPPING.get(ScanType(ps.scan_type))
-            if run_scan is None:
-                raise ValueError(f"Unknown scan type: {ps.scan_type}")
+                run_scan = cls._TASK_MAPPING.get(ScanType(ps.scan_type))
+                if run_scan is None:
+                    raise ValueError(f"Unknown scan type: {ps.scan_type}")
 
-            run_scan(
-                ps,
-                ps.arguments # type: ignore
+                active = (
+                    uow.session.query(Scan)
+                    .filter(
+                        Scan.programed_scan_id == ps.id,
+                        Scan.status.in_([
+                            ScanStatus.PENDING.value,
+                            ScanStatus.RUNNING.value,
+                        ]),
+                    )
+                    .first()
+                )
+                if active is not None:
+                    cls._logger.info(
+                        "Scan %d already active (status=%s) for programed scan %d, skipping",
+                        active.id, active.status, ps.id,
+                    )
+                    return
+
+                run_scan(
+                    ps,
+                    ps.arguments # type: ignore
+                )
+                repo.update_last_run(ps)
+                next_run = cls.calculate_next_run(
+                    schedule_type=ps.schedule_type, # type: ignore
+                    schedule_config=ps.schedule_config, # type: ignore
+                    last_run=ps.last_run_at, # type: ignore
+                )
+                repo.update_next_run(ps, next_run)
+
+            cls._logger.info(
+                "Completed scan %d, next run at %s",
+                ps_id, next_run.isoformat() if next_run else "N/A",
             )
-            repo.update_last_run(ps)
-            next_run = cls.calculate_next_run(
-                schedule_type=ps.schedule_type, # type: ignore
-                schedule_config=ps.schedule_config, # type: ignore
-                last_run=ps.last_run_at, # type: ignore
-            )
-            repo.update_next_run(ps, next_run)
+
+        except Exception:
+            cls._logger.exception("Scheduled scan %d failed", ps_id)
+            raise
 
     @classmethod
     def calculate_next_run(

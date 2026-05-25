@@ -32,6 +32,8 @@ class PlatformDetector:
             cls._instance = super().__new__(cls)
             cls._instance._platform = cls._detect_platform()
             cls._instance._wsl_available = cls._check_wsl()
+        elif not hasattr(cls._instance, '_wsl_available'):
+            cls._instance._wsl_available = cls._check_wsl()
         return cls._instance
 
     @staticmethod
@@ -69,13 +71,15 @@ class PlatformDetector:
 
     @property
     def wsl_available(self) -> bool:
-        return self._instance._wsl_available if hasattr(self, '_instance') else self._wsl_available
+        if not hasattr(self, '_wsl_available'):
+            return False
+        return self._wsl_available
 
     def wrap_wsl_command(self, cmd: List[str], wsl_distro: str = "Ubuntu", wsl_user: str = "gmiga") -> List[str]:
         """
         Envuelve un comando Linux para ejecutarlo a través de WSL en Windows.
         """
-        if not self.is_windows or not self._wsl_available:
+        if not self.is_windows or not self.wsl_available:
             return cmd
         return ["wsl", "-d", wsl_distro, "-u", wsl_user] + cmd
 

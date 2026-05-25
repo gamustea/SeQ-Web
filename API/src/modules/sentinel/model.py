@@ -243,7 +243,7 @@ class ProgramedScan(Base):
     is_active       = Column(Boolean, default=True)
     last_run_at     = Column(DateTime, nullable=True)
     next_run_at     = Column(DateTime, nullable=True)
-    created_at      = Column(DateTime, default=datetime.now)
+    created_at      = Column(DateTime, default=datetime.utcnow)
 
     # Relación
     scans = relationship("Scan", back_populates="programed_scan")

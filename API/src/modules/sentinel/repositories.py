@@ -24,7 +24,7 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from sqlalchemy.orm import Session, joinedload
@@ -527,8 +527,9 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
         """
         Record that a programed scan has just executed.
 
-        Sets last_run_at to the current UTC time and persists the change
-        so the scheduler can track execution history.
+        Sets last_run_at to the current UTC time and advances next_run_at
+        by the configured interval so the scheduler picks up the next
+        occurrence automatically.
 
         Args:
             ps: The ProgramedScan that executed.
@@ -537,6 +538,9 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
             The same ProgramedScan instance after flush.
         """
         ps.last_run_at = datetime.utcnow()  # type: ignore
+        ps.next_run_at = self._compute_next_run(
+            ps.schedule_type, ps.schedule_config
+        )  # type: ignore
         return self.update(ps)
 
     def update_next_run(
@@ -558,6 +562,9 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
         """
         Create and persist a new programed scan.
 
+        Computes an initial next_run_at from schedule_config so the
+        scheduler can pick it up immediately.
+
         Args:
             user_id:         Owner user primary key.
             scan_type:       Scan discriminator ("nmap", "nikto", "openvas").
@@ -568,14 +575,30 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
         Returns:
             The newly persisted ProgramedScan instance.
         """
+        next_run = self._compute_next_run(schedule_type, schedule_config)
+
         ps = ProgramedScan(
             user_id=user_id,
             scan_type=scan_type,
             arguments=arguments,
             schedule_type=schedule_type,
             schedule_config=schedule_config,
+            next_run_at=next_run,
         )
         return self.save(ps)
+
+    @staticmethod
+    def _compute_next_run(
+        schedule_type: str,
+        schedule_config: dict,
+    ) -> datetime:
+        if schedule_type == "interval":
+            every = schedule_config.get("every", 60)
+            unit = schedule_config.get("unit", "minutes")
+            kwargs = {unit: every}
+            return datetime.utcnow() + timedelta(**kwargs)
+        # "cron" or unknown: run immediately
+        return datetime.utcnow()
 
     def delete_by_id(self, pk: int) -> bool:
         """

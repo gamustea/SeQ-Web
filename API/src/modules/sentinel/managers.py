@@ -449,6 +449,7 @@ class ScanManager(ABC):
             task:    Task instance that drives the actual scanning.
         """
         thread_manager = self.__class__()
+        fresh_scan = None
 
         try:
             with UnitOfWork() as uow:
@@ -457,6 +458,7 @@ class ScanManager(ABC):
                 thread_manager.logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
                 return
 
+            thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
             thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
 
             task.scan()
@@ -487,8 +489,12 @@ class ScanManager(ABC):
             thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
         except (OSError, RuntimeError) as e:
-            thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
-            thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+            if task.status == TaskStatus.CANCELLED:
+                thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
+            else:
+                thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
+                thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
             thread_manager._log_to_csv(scan_id, fresh_scan, task)
         finally:
             self._unregister_task(scan_id)
@@ -1091,7 +1097,7 @@ class NmapScanManager(ScanManager):
     >>> scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
     """
 
-    def run_scan(self, target_host: str, target_ports: str, user_id: int, timeout: int = 300) -> int:  # pylint: disable=arguments-differ
+    def run_scan(self, target_host: str, target_ports: str, user_id: int, timeout: int = 300, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
         """
         Start an Nmap scan in a background thread.
 
@@ -1106,7 +1112,8 @@ class NmapScanManager(ScanManager):
         try:
             scan    = self._create_scan_record(
                 target=target_host,
-                user_id=user_id
+                user_id=user_id,
+                programed_scan_id=programed_scan_id,
             )
             scan_id = scan.id
 
@@ -1133,9 +1140,9 @@ class NmapScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str, user_id: int) -> NmapScan: # pylint: disable=arguments-differ
+    def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NmapScan: # pylint: disable=arguments-differ
         """Create and persist an NmapScan row."""
-        scan = NmapScan(target=target, user_id=user_id, started_at=datetime.now())
+        scan = NmapScan(target=target, user_id=user_id, started_at=datetime.now(), programed_scan_id=programed_scan_id)
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
@@ -1232,7 +1239,7 @@ class NiktoScanManager(ScanManager):
     >>> scan_id = manager.run_scan(target_domain="example.com")
     """
 
-    def run_scan(self, target_domain: str, user_id: int, timeout: int = 60) -> int:  # pylint: disable=arguments-differ
+    def run_scan(self, target_domain: str, user_id: int, timeout: int = 6000, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
         """
         Start a Nikto scan in a background thread.
 
@@ -1247,6 +1254,7 @@ class NiktoScanManager(ScanManager):
             scan    = self._create_scan_record(
                 target=target_domain,
                 user_id=user_id,
+                programed_scan_id=programed_scan_id,
             )
             scan_id = scan.id
 
@@ -1269,9 +1277,9 @@ class NiktoScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str, user_id: int) -> NiktoScan: # pylint: disable=arguments-differ
+    def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NiktoScan: # pylint: disable=arguments-differ
         """Create and persist a NiktoScan row."""
-        scan = NiktoScan(target=target, user_id=user_id, started_at=datetime.now())
+        scan = NiktoScan(target=target, user_id=user_id, started_at=datetime.now(), programed_scan_id=programed_scan_id)
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
@@ -1399,7 +1407,8 @@ class OpenVASScanManager(ScanManager):
         target: str,
         user_id: int,
         scan_config: str = "full_fast",
-        skip_normalize: bool = False
+        skip_normalize: bool = False,
+        programed_scan_id: Optional[int] = None,
     ) -> int:
         """
         Start an OpenVAS scan in a background thread.
@@ -1416,7 +1425,8 @@ class OpenVASScanManager(ScanManager):
             config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS["full_fast"])
             scan      = self._create_scan_record(
                 target=target,
-                user_id=user_id
+                user_id=user_id,
+                programed_scan_id=programed_scan_id,
             )
             scan_id   = scan.id
 
@@ -1446,7 +1456,7 @@ class OpenVASScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
-    def _create_scan_record(self, target: str, user_id: int) -> OpenVASScan: # pylint: disable=arguments-differ
+    def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> OpenVASScan: # pylint: disable=arguments-differ
         """Create and persist an OpenVASScan row with placeholder task/report IDs."""
         placeholder = f"PENDING_{uuid.uuid4()}"
         scan = OpenVASScan(
@@ -1454,6 +1464,7 @@ class OpenVASScanManager(ScanManager):
             user_id   = user_id,
             task_id   = placeholder,
             report_id = placeholder,
+            programed_scan_id = programed_scan_id,
         )
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
