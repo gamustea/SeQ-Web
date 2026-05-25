@@ -113,6 +113,7 @@ class ScanManager(ABC):
             user: User performing the scan operations.
         """
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+        self.scan_type = None
 
     @abstractmethod
     def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
@@ -1086,6 +1087,7 @@ class ProgramedScanManager():
 @ScanManager.register(ScanType.NMAP)
 class NmapScanManager(ScanManager):
     _strategy_class = NmapPrintingStrategy
+    _scan_type: type[Scan] = NmapScan
 
     """
     Manager for Nmap network security scans.
@@ -1096,6 +1098,10 @@ class NmapScanManager(ScanManager):
     >>> manager = NmapScanManager(user)
     >>> scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
     """
+
+    def __init__(self):
+        super().__init__()
+        self.scan_type = NmapScan
 
     def run_scan(self, target_host: str, target_ports: str, user_id: int, timeout: int = 300, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
         """
@@ -1171,7 +1177,7 @@ class NmapScanManager(ScanManager):
 
         return scan
 
-    def get_scans_for_user(self, user_id: int) -> List[NmapScan]:
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
         """
         Retrieve all NmapScans for the active user with relationships eagerly loaded.
 
@@ -1179,7 +1185,7 @@ class NmapScanManager(ScanManager):
             List of NmapScan instances.
         """
         session = get_db_session()
-        scans = ScanRepository(session=session).get_nmap_by_user(user_id) # type: ignore
+        scans = ScanRepository(session=session).get_by_type_and_user(NmapScan, user_id) # type: ignore
 
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
         return scans
@@ -1230,6 +1236,7 @@ class NmapScanManager(ScanManager):
 @ScanManager.register(ScanType.NIKTO)
 class NiktoScanManager(ScanManager):
     _strategy_class = NiktoPrintingStrategy
+    _scan_type: type[Scan] = NiktoScan
 
     """
     Manager for Nikto web vulnerability scans.
@@ -1238,6 +1245,10 @@ class NiktoScanManager(ScanManager):
     >>> manager = NiktoScanManager(user)
     >>> scan_id = manager.run_scan(target_domain="example.com")
     """
+
+    def __init__(self):
+        super().__init__()
+        self.scan_type = NiktoScan
 
     def run_scan(self, target_domain: str, user_id: int, timeout: int = 6000, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
         """
@@ -1308,7 +1319,7 @@ class NiktoScanManager(ScanManager):
 
         return scan
 
-    def get_scans_for_user(self, user_id: int) -> List[NiktoScan]:
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
         """
         Retrieve all NiktoScans for the active user with incidents eagerly loaded.
 
@@ -1316,7 +1327,8 @@ class NiktoScanManager(ScanManager):
             List of NiktoScan instances.
         """
         session = get_db_session()
-        scans = ScanRepository(session=session).get_nikto_by_user(user_id)
+        repo    = ScanRepository(session=session)
+        scans   = repo.get_by_type_and_user(NiktoScan, user_id)
 
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
         return scans
@@ -1395,6 +1407,8 @@ class OpenVASScanManager(ScanManager):
 
     def __init__(self) -> None:
         super().__init__()
+
+        self.scan_type = NmapScan
 
         config         = CR.get_openvas_environment()
         self.hostname  = config["hostname"]
@@ -1494,7 +1508,7 @@ class OpenVASScanManager(ScanManager):
 
         return scan
 
-    def get_scans_for_user(self, user_id: int) -> List[OpenVASScan]:
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
         """
         Retrieve all OpenVASScans for the active user with relationships eagerly loaded.
 
@@ -1502,7 +1516,7 @@ class OpenVASScanManager(ScanManager):
             List of OpenVASScan instances.
         """
         session = get_db_session()
-        scans = ScanRepository(session=session).get_openvas_by_user(user_id)
+        scans = ScanRepository(session=session).get_by_type_and_user(OpenVASScan, user_id)
 
         self.logger.info(
             f"Se obtuvieron {len(scans)} escaneos OpenVAS"

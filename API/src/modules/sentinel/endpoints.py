@@ -297,7 +297,7 @@ def start_nikto_scan(data):
 
     nikto_manager = NiktoScanManager()
     scan_id = nikto_manager.run_scan(
-        target,
+        target, # type: ignore
         user_id=user.id,
         timeout=timeout
     ) # type: ignore

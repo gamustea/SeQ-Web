@@ -80,15 +80,6 @@ class ScanRepository(BaseRepository[Scan]):
     def get_by_id_and_type(self, scan_type: type[Scan], scan_id: int):
         return self._session.get(scan_type, scan_id)
 
-    def get_nmap_by_id(self, scan_id: int) -> Optional[NmapScan]:
-        return self.get_by_id_and_type(NmapScan, scan_id)
-
-    def get_nikto_by_id(self, scan_id: int) -> Optional[NiktoScan]:
-        return self.get_by_id_and_type(NiktoScan, scan_id)
-
-    def get_openvas_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
-        return self.get_by_id_and_type(OpenVASScan, scan_id)
-
     # =========================================================================
     # EAGER-LOADED QUERIES (background-thread use only)
     # ─────────────────────────────────────────────────────────────────────────
@@ -133,27 +124,17 @@ class ScanRepository(BaseRepository[Scan]):
             .one_or_none()
         )
 
-    def get_nmap_by_user(self, user_id: int) -> List[NmapScan]:
+    def get_by_type_and_user(
+        self,
+        scan_type: type[Scan],
+        user_id: int
+    ) -> List[Scan]:
         return (
-            self._session.query(NmapScan)
-            .filter(NmapScan.user_id == user_id)
+            self._session.query(scan_type)
+            .filter(scan_type.user_id == user_id)
             .all()
         )
-
-    def get_nikto_by_user(self, user_id: int) -> List[NiktoScan]:
-        return (
-            self._session.query(NiktoScan)
-            .filter(NiktoScan.user_id == user_id)
-            .all()
-        )
-
-    def get_openvas_by_user(self, user_id: int) -> List[OpenVASScan]:
-        return (
-            self._session.query(OpenVASScan)
-            .filter(OpenVASScan.user_id == user_id)
-            .all()
-        )
-
+    
     # =========================================================================
     # DOMAIN QUERIES
     # =========================================================================
@@ -384,19 +365,6 @@ class SentinelReportRepository(BaseRepository[SentinelDocument]):
             .all()
         )
 
-    def update_status(self, document_id: int, status: str, filename: Optional[str] = None) -> Optional[SentinelDocument]:
-        doc = self._session.get(SentinelDocument, document_id)
-        if doc is None:
-            return None
-
-        from datetime import datetime as _dt
-        doc.status = status # type: ignore
-        if filename is not None:
-            doc.filename = filename # type: ignore
-        if status == "done":
-            doc.generated_at = _dt.utcnow() # type: ignore
-        return doc
-
 
 class ProgramedScanRepository(BaseRepository[ProgramedScan]):
     """
@@ -599,19 +567,3 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
             return datetime.utcnow() + timedelta(**kwargs)
         # "cron" or unknown: run immediately
         return datetime.utcnow()
-
-    def delete_by_id(self, pk: int) -> bool:
-        """
-        Delete a programed scan by primary key.
-
-        Args:
-            pk: ProgramedScan primary key.
-
-        Returns:
-            True if a row was deleted, False if no row matched.
-        """
-        ps = self.get_by_id(pk)
-        if ps is None:
-            return False
-        self.delete(ps)
-        return True
