@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any, Generic, List, Optional, Type, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from .unit_of_work import UnitOfWork
 
@@ -53,16 +54,27 @@ class BaseRepository(Generic[T]):
     ...     user = repo.get_by_id(42)
     """
 
-    def __init__(self, model: Type[T], uow: UnitOfWork) -> None:
+    def __init__(self, model: Type[T], uow: Optional[UnitOfWork] = None, session: Optional[Session] = None) -> None:
         """
         Initialize the repository.
 
+        Accepts either a UnitOfWork (for explicit transaction control) or a
+        plain Session (for request-scoped access where the session is managed
+        by Flask middleware).
+
         Args:
-            model:  SQLAlchemy model class to manage.
-            uow:    Active Unit of Work providing the session.
+            model:    SQLAlchemy model class to manage.
+            uow:      Active Unit of Work providing the session (write path).
+            session:  Direct SQLAlchemy Session (read path, request-scoped).
         """
         self._model = model
-        self._uow   = uow
+        if session is not None:
+            self.__session = session
+            self._uow = None
+        elif uow is not None:
+            self._uow = uow
+        else:
+            raise ValueError("Debe proporcionar uow o session")
 
     # =========================================================================
     # INTERNAL HELPERS
@@ -70,12 +82,14 @@ class BaseRepository(Generic[T]):
 
     @property
     def _session(self):
-        """Return the current session from the Unit of Work."""
-        if self._uow.session is None:
-            raise RuntimeError(
-                f"{self.__class__.__name__}: No active session in UnitOfWork."
-            )
-        return self._uow.session
+        """Return the current session, whether from UnitOfWork or direct."""
+        if self._uow is not None:
+            if self._uow.session is None:
+                raise RuntimeError(
+                    f"{self.__class__.__name__}: No active session in UnitOfWork."
+                )
+            return self._uow.session
+        return self.__session
 
     # =========================================================================
     # QUERY METHODS

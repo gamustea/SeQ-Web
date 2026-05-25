@@ -1,0 +1,95 @@
+"""
+Request-scoped session management for Flask.
+
+Provides a session that lives for the duration of a single HTTP request,
+eliminating the need for eager-loading workarounds. Within a request,
+lazy loading of SQLAlchemy relationships works transparently because
+the session is not closed until the response is sent.
+
+Functions:
+    get_db_session:             Return (or create) the request-scoped session.
+    init_request_session:       Flask before_request hook that opens the session.
+    shutdown_request_session:   Flask teardown_request hook that commits/rolls
+                                back and closes the session.
+
+Usage:
+    Add the following to your Flask app factory::
+
+        from src.modules.infrastructure.session import (
+            init_request_session, shutdown_request_session
+        )
+        app.before_request(init_request_session)
+        app.teardown_request(shutdown_request_session)
+
+    In repositories or managers::
+
+        from src.modules.infrastructure.session import get_db_session
+
+        repo = ScanRepository(session=get_db_session())
+        scan = repo.get_by_id(42)
+        print(scan.host.hostname)  # lazy load works
+"""
+
+from __future__ import annotations
+
+from flask import g
+
+from .unit_of_work import get_session, close_all
+
+
+def get_db_session():
+    """
+    Return the database session for the current Flask request.
+
+    Creates a new session on first call within a request and caches it
+    in Flask's ``g`` object. Subsequent calls return the same session.
+    Safe to call from any manager or repository during request processing.
+
+    Returns:
+        SQLAlchemy Session bound to the current request/thread.
+    """
+    if "db_session" not in g:
+        g.db_session = get_session()
+    return g.db_session
+
+
+def init_request_session() -> None:
+    """
+    Flask ``before_request`` hook — eagerly open the DB session.
+
+    Calling ``get_db_session()`` ensures the session is created before
+    any endpoint handler runs, so that ``g.db_session`` is always
+    available.
+    """
+    get_db_session()
+
+
+def shutdown_request_session(exception=None) -> None:
+    """
+    Flask ``teardown_request`` hook — finalize the DB session.
+
+    - If an exception was raised during the request, performs a rollback.
+    - Otherwise, attempts to commit the transaction.
+    - Always closes the session and removes the scoped session from the
+      registry, preventing session leaks.
+
+    Args:
+        exception: The exception raised during the request, if any.
+                   Supplied automatically by Flask.
+    """
+    session = g.pop("db_session", None)
+    if session is None:
+        return
+
+    try:
+        if exception is not None:
+            session.rollback()
+        else:
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+    finally:
+        session.close()
+        close_all()

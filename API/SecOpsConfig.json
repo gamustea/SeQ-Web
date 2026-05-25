@@ -147,7 +147,7 @@
   },
   "sentinel": {
     "enabled": true,
-    "areLocalIpsAllowed": false,
+    "areLocalIpsAllowed": true,
     "directories": {
       "output": "data/sentinel/output",
       "csv": "data/sentinel/csv"

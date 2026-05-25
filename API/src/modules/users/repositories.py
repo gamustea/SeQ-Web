@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .model import AccessToken, RefreshToken, User, UserAttribute
 
@@ -49,8 +49,8 @@ class UserRepository(BaseRepository[User]):
     ...     user = repo.get_by_username("johnd")
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(User, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(User, uow=uow, session=session)
 
     # =========================================================================
     # LOOKUPS
@@ -162,9 +162,9 @@ class TokenRepository(BaseRepository[AccessToken]):
         ...         ...
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
         # Primary model is AccessToken; RefreshToken queries use _session directly.
-        super().__init__(AccessToken, uow)
+        super().__init__(AccessToken, uow=uow, session=session)
 
     # =========================================================================
     # ACCESS TOKEN
@@ -352,8 +352,8 @@ class AttributeRepository(BaseRepository[UserAttribute]):
         ...     attrs = repo.get_by_user(5)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(UserAttribute, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(UserAttribute, uow=uow, session=session)
 
     def get_by_user(self, user_id: int) -> List[UserAttribute]:
         """

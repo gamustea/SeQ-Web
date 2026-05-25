@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session
 
 from src.modules.aegis.model import AegisDocument, AegisDocumentAlert, AegisTip, Topic
 from src.modules.infrastructure import BaseRepository, UnitOfWork
@@ -43,53 +43,8 @@ class AegisDocumentRepository(BaseRepository[AegisDocument]):
     ...     repo.delete(doc)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(AegisDocument, uow)
-
-    # =========================================================================
-    # EAGER-LOADED QUERIES (for detached object usage)
-    # =========================================================================
-
-    def get_by_id_with_details(self, doc_id: int) -> Optional[AegisDocument]:
-        """
-        Retrieve a document with all its relationships eager-loaded.
-
-        Loads: user, topic, tips (ordered by position), alerts (ordered by position).
-
-        Args:
-            doc_id: Primary key of the document.
-
-        Returns:
-            AegisDocument with all relationships loaded, or None if not found.
-        """
-        return (
-            self._session.query(AegisDocument)
-            .filter(AegisDocument.id == doc_id)
-            .options(
-                joinedload(AegisDocument.user),
-                joinedload(AegisDocument.topic),
-                joinedload(AegisDocument.tips),
-                joinedload(AegisDocument.alerts),
-            )
-            .one_or_none()
-        )
-
-    def get_by_id_with_tips(self, doc_id: int) -> Optional[AegisDocument]:
-        """
-        Retrieve a document with tips eager-loaded.
-
-        Args:
-            doc_id: Primary key of the document.
-
-        Returns:
-            AegisDocument with tips loaded, or None if not found.
-        """
-        return (
-            self._session.query(AegisDocument)
-            .filter(AegisDocument.id == doc_id)
-            .options(joinedload(AegisDocument.tips))
-            .one_or_none()
-        )
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(AegisDocument, uow=uow, session=session)
 
     # =========================================================================
     # DOMAIN QUERIES

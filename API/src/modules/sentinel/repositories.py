@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session, joinedload
 from src.modules.infrastructure import BaseRepository, UnitOfWork
 
 from .model import (
@@ -70,8 +70,8 @@ class ScanRepository(BaseRepository[Scan]):
     ...     repo.save(scan)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(Scan, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(Scan, uow=uow, session=session)
 
     # =========================================================================
     # TYPED GETTERS BY SUBTYPE
@@ -90,10 +90,17 @@ class ScanRepository(BaseRepository[Scan]):
         return self.get_by_id_and_type(OpenVASScan, scan_id)
 
     # =========================================================================
-    # EAGER-LOADED QUERIES (for detached object usage, e.g. PDF generation)
+    # EAGER-LOADED QUERIES (background-thread use only)
+    # ─────────────────────────────────────────────────────────────────────────
+    # These methods eagerly load relationships via joinedload so that objects
+    # survive UnitOfWork.close() in background threads where lazy loading
+    # is unavailable. Foreground (request-context) code should use
+    # get_by_id_and_type() instead — lazy loading works with request-scoped
+    # sessions.
     # =========================================================================
 
     def get_nmap_rich(self, scan_id: int) -> Optional[NmapScan]:
+        """[Background thread] Retrieve NmapScan with relationships eagerly loaded."""
         return (
             self._session.query(NmapScan)
             .filter(NmapScan.id == scan_id)
@@ -105,6 +112,7 @@ class ScanRepository(BaseRepository[Scan]):
         )
 
     def get_nikto_rich(self, scan_id: int) -> Optional[NiktoScan]:
+        """[Background thread] Retrieve NiktoScan with relationships eagerly loaded."""
         return (
             self._session.query(NiktoScan)
             .filter(NiktoScan.id == scan_id)
@@ -113,6 +121,7 @@ class ScanRepository(BaseRepository[Scan]):
         )
 
     def get_openvas_rich(self, scan_id: int) -> Optional[OpenVASScan]:
+        """[Background thread] Retrieve OpenVASScan with relationships eagerly loaded."""
         return (
             self._session.query(OpenVASScan)
             .filter(OpenVASScan.id == scan_id)
@@ -128,10 +137,6 @@ class ScanRepository(BaseRepository[Scan]):
         return (
             self._session.query(NmapScan)
             .filter(NmapScan.user_id == user_id)
-            .options(
-                joinedload(NmapScan.open_ports_relation).joinedload(OpenPort.port),
-                joinedload(NmapScan.host),
-            )
             .all()
         )
 
@@ -139,7 +144,6 @@ class ScanRepository(BaseRepository[Scan]):
         return (
             self._session.query(NiktoScan)
             .filter(NiktoScan.user_id == user_id)
-            .options(joinedload(NiktoScan.incidents), joinedload(NiktoScan.host))
             .all()
         )
 
@@ -147,10 +151,6 @@ class ScanRepository(BaseRepository[Scan]):
         return (
             self._session.query(OpenVASScan)
             .filter(OpenVASScan.user_id == user_id)
-            .options(
-                joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.vulnerability),
-                joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.host),
-            )
             .all()
         )
 
@@ -170,7 +170,6 @@ class ScanRepository(BaseRepository[Scan]):
         return (
             self._session.query(Scan)
             .filter(Scan.user_id == user_id, Scan.scan_type == scan_type)
-            .options(joinedload(Scan.host))
             .order_by(Scan.started_at.desc())
             .all()
         )
@@ -351,8 +350,8 @@ class SentinelReportRepository(BaseRepository[SentinelDocument]):
     ...     repo.delete(doc)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(SentinelDocument, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(SentinelDocument, uow=uow, session=session)
 
     def get_document(self, scan_id: int) -> Optional[SentinelDocument]:
         return (
@@ -383,28 +382,6 @@ class SentinelReportRepository(BaseRepository[SentinelDocument]):
             .filter(SentinelDocument.scan_id == scan_id)
             .order_by(SentinelDocument.created_at.desc())
             .all()
-        )
-
-    def get_by_id_with_details(self, doc_id: int) -> Optional[SentinelDocument]:
-        """
-        Retrieve a document with all its relationships eager-loaded.
-
-        Loads: user, scan.
-
-        Args:
-            doc_id: Primary key of the document.
-
-        Returns:
-            SentinelDocument with relationships loaded, or None if not found.
-        """
-        return (
-            self._session.query(SentinelDocument)
-            .filter(SentinelDocument.id == doc_id)
-            .options(
-                joinedload(SentinelDocument.user),
-                joinedload(SentinelDocument.scan),
-            )
-            .one_or_none()
         )
 
     def update_status(self, document_id: int, status: str, filename: Optional[str] = None) -> Optional[SentinelDocument]:
@@ -440,8 +417,8 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
     ...         repo.update_last_run(ps)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(ProgramedScan, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(ProgramedScan, uow=uow, session=session)
 
     # =========================================================================
     # QUERY METHODS

@@ -33,6 +33,7 @@ from src.modules.users.exceptions import (
     UserBindingError,
 )
 from src.modules.infrastructure import UnitOfWork
+from src.modules.infrastructure.session import get_db_session
 from src.modules.system.logging import SecOpsLogger
 
 from .model import AccessToken, RefreshToken, User, UserAttribute
@@ -88,22 +89,22 @@ class UserManager:
             Exception: On unexpected database errors.
         """
         try:
-            with UnitOfWork() as uow:
-                user = UserRepository(uow).get_by_username(username)
+            session = get_db_session()
+            user = UserRepository(session=session).get_by_username(username)
 
-                if user is None:
-                    # Perform a dummy comparison to prevent username enumeration
-                    # via timing differences.
-                    verify_password("dummy", password, "dummy_salt")
-                    self.logger.info(f"Usuario '{username}' no encontrado")
-                    return False, None
+            if user is None:
+                # Perform a dummy comparison to prevent username enumeration
+                # via timing differences.
+                verify_password("dummy", password, "dummy_salt")
+                self.logger.info(f"Usuario '{username}' no encontrado")
+                return False, None
 
-                is_valid = verify_password(
-                    stored_hash = user.password_hash,
-                    password    = password,
-                    salt        = user.password_salt,
-                )
-                user_id = user.id if is_valid else None
+            is_valid = verify_password(
+                stored_hash = user.password_hash,
+                password    = password,
+                salt        = user.password_salt,
+            )
+            user_id = user.id if is_valid else None
 
             if not is_valid:
                 self.logger.warning(f"Contraseña incorrecta para '{username}'")
@@ -229,8 +230,8 @@ Raises:
             User instance (without credential fields accessible to caller),
             or None if not found.
         """
-        with UnitOfWork() as uow:
-            return UserRepository(uow).get_by_id(user_id)
+        session = get_db_session()
+        return UserRepository(session=session).get_by_id(user_id)
 
     def get_all_users(self) -> List[User]:
         """
@@ -239,8 +240,8 @@ Raises:
         Returns:
             List of user dictionaries (public info only).
         """
-        with UnitOfWork() as uow:
-            return UserRepository(uow).get_all()
+        session = get_db_session()
+        return UserRepository(session=session).get_all()
 
     def get_user_by_username(self, username: str) -> Optional[User]:
         """
@@ -252,8 +253,8 @@ Raises:
         Returns:
             User instance, or None if not found.
         """
-        with UnitOfWork() as uow:
-            return UserRepository(uow).get_by_username(username)
+        session = get_db_session()
+        return UserRepository(session=session).get_by_username(username)
 
 
     # =========================================================================
@@ -420,9 +421,9 @@ Raises:
         Returns:
             List of attribute name strings.
         """
-        with UnitOfWork() as uow:
-            attrs = AttributeRepository(uow).get_by_user(user_id)
-            return [a.attribute_name for a in attrs]
+        session = get_db_session()
+        attrs = AttributeRepository(session=session).get_by_user(user_id)
+        return [a.attribute_name for a in attrs]
 
     def add_user_attributes(
         self,
@@ -588,9 +589,9 @@ class OAuthTokenManager:
                 return None
 
             # Step 2: check database record for revocation.
-            with UnitOfWork() as uow:
-                record = TokenRepository(uow).get_access_token(token)
-                is_valid = record is not None and record.is_valid()
+            session = get_db_session()
+            record = TokenRepository(session=session).get_access_token(token)
+            is_valid = record is not None and record.is_valid()
 
             return payload if is_valid else None
 
@@ -613,11 +614,11 @@ class OAuthTokenManager:
             User primary key if the token is valid, None otherwise.
         """
         try:
-            with UnitOfWork() as uow:
-                record = TokenRepository(uow).get_refresh_token(token)
-                if record is None or not record.is_valid():
-                    return None
-                return record.user_id
+            session = get_db_session()
+            record = TokenRepository(session=session).get_refresh_token(token)
+            if record is None or not record.is_valid():
+                return None
+            return record.user_id
 
         except Exception as e:
             self.logger.error(f"Error verificando refresh token: {e}")

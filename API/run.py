@@ -146,6 +146,10 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     Base.metadata.create_all(engine)
     BaseManager.warmup_connection()
 
+    _logger.info("Configurando sesión por-request...")
+    from src.modules.infrastructure.session import shutdown_request_session
+    app.teardown_request(shutdown_request_session)
+
     _logger.info("Arrancando scheduler de tareas programadas...")
     Scheduler.start()
 

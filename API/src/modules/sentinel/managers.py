@@ -38,6 +38,7 @@ from src.modules.system.logging import SecOpsLogger
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
+from src.modules.infrastructure.session import get_db_session
 from .services.csv_logger import ScanLoggerFactory
 
 from .repositories import (
@@ -162,8 +163,8 @@ class ScanManager(ABC):
         Returns:
             Scan instance (polymorphic subtype), or None if not found.
         """
-        with UnitOfWork() as uow:
-            scan = ScanRepository(uow).get_by_id(scan_id)
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id(scan_id)
 
         if not scan:
             self.logger.warning(f"Escaneo {scan_id} no encontrado")
@@ -180,8 +181,8 @@ class ScanManager(ABC):
         Returns:
             List of Scan instances ordered by start time descending.
         """
-        with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_by_user(user_id) # pyright: ignore[reportArgumentType]
+        session = get_db_session()
+        scans = ScanRepository(session=session).get_by_user(user_id) # pyright: ignore[reportArgumentType]
 
         self.logger.info(
             f"Se obtuvieron {len(scans)} escaneos para el usuario {user_id}"
@@ -298,19 +299,19 @@ class ScanManager(ABC):
         Raises:
             ScanNotFoundError: Si el escaneo no pertenece al usuario.
         """
-        with UnitOfWork() as uow:
-            scan = ScanRepository(uow).get_by_id(scan_id)
-            if not scan:
-                raise ScanNotFoundError(scan_id)
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id(scan_id)
+        if not scan:
+            raise ScanNotFoundError(scan_id)
 
-            from src.modules.users.exceptions import UserNotFoundError
-            from src.modules.users import UserManager
-            user = UserManager().get_user_by_id(user_id)
-            if not user:
-                raise UserNotFoundError(user_id)
+        from src.modules.users.exceptions import UserNotFoundError
+        from src.modules.users import UserManager
+        user = UserManager().get_user_by_id(user_id)
+        if not user:
+            raise UserNotFoundError(user_id)
 
-            if scan.user_id != user_id: # type: ignore
-                raise ScanNotFoundError(scan_id)
+        if scan.user_id != user_id: # type: ignore
+            raise ScanNotFoundError(scan_id)
 
         return scan
 
@@ -450,7 +451,8 @@ class ScanManager(ABC):
         thread_manager = self.__class__()
 
         try:
-            scan = thread_manager.get_scan_by_id(scan_id)
+            with UnitOfWork() as uow:
+                scan = ScanRepository(uow).get_by_id(scan_id)
             if not scan:
                 thread_manager.logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
                 return
@@ -572,6 +574,10 @@ class ScanManager(ABC):
         Uses registry to resolve correct manager class and its get_scan_by_id method
         which already handles eager loading of relationships.
 
+        NOTE: This method uses UnitOfWork directly because it is called from
+        background threads (PDF generation) that do not have a Flask request
+        context. Foreground/endpoint callers should use get_scan_by_id() directly.
+
         Args:
             scan_id: Primary key of the scan.
 
@@ -581,9 +587,14 @@ class ScanManager(ABC):
         Raises:
             ScanNotFoundError: If scan_id not found or type not registered.
         """
-        raw_type = cls.get_scan_type(scan_id)
+        with UnitOfWork() as uow:
+            scan = ScanRepository(uow).get_by_id(scan_id)
+            if scan is None:
+                raise ScanNotFoundError(scan_id)
+            scan_type_raw = scan.scan_type
+
         try:
-            scan_type = ScanType(raw_type)
+            scan_type = ScanType(scan_type_raw)
         except ValueError:
             raise ScanNotFoundError(scan_id)
 
@@ -592,7 +603,13 @@ class ScanManager(ABC):
             raise ScanNotFoundError(scan_id)
 
         manager = manager_class()
-        return manager.get_scan_by_id(scan_id)
+        with UnitOfWork() as uow:
+            if scan_type == ScanType.NMAP:
+                return ScanRepository(uow).get_nmap_rich(scan_id)
+            elif scan_type == ScanType.NIKTO:
+                return ScanRepository(uow).get_nikto_rich(scan_id)
+            else:
+                return ScanRepository(uow).get_openvas_rich(scan_id)
 
     @staticmethod
     def _require_non_empty(
@@ -618,7 +635,10 @@ class ScanManager(ABC):
     @classmethod
     def get_scan_type(cls, scan_id: int) -> Optional[str]:
         """
-        Devuelve el tipo del escaneo en función de su id
+        Devuelve el tipo del escaneo en función de su id.
+
+        Uses UnitOfWork because it is called from both request context
+        (resolve_manager) and background threads (resolve_printing_strategy).
 
         Args:
             scan_id: Id del escaneo a revisar
@@ -1125,16 +1145,19 @@ class NmapScanManager(ScanManager):
 
     def get_scan_by_id(self, scan_id: int) -> Optional[NmapScan]:
         """
-        Retrieve an NmapScan by its primary key with relationships eagerly loaded.
+        Retrieve an NmapScan by its primary key.
+
+        With request-scoped sessions, lazy loading of relationships
+        (host, open_ports_relation) works transparently.
 
         Args:
             scan_id: Primary key of the scan.
 
         Returns:
-            NmapScan instance with open_ports_relation and port loaded, or None.
+            NmapScan instance, or None.
         """
-        with UnitOfWork() as uow:
-            scan = ScanRepository(uow).get_nmap_rich(scan_id)
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id_and_type(NmapScan, scan_id)
 
         if not scan:
             self.logger.warning(f"Escaneo Nmap {scan_id} no encontrado")
@@ -1148,8 +1171,8 @@ class NmapScanManager(ScanManager):
         Returns:
             List of NmapScan instances.
         """
-        with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_nmap_by_user(user_id) # type: ignore
+        session = get_db_session()
+        scans = ScanRepository(session=session).get_nmap_by_user(user_id) # type: ignore
 
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
         return scans
@@ -1258,16 +1281,19 @@ class NiktoScanManager(ScanManager):
 
     def get_scan_by_id(self, scan_id: int) -> Optional[NiktoScan]:
         """
-        Retrieve a NiktoScan by its primary key with incidents eagerly loaded.
+        Retrieve a NiktoScan by its primary key.
+
+        With request-scoped sessions, lazy loading of relationships
+        (incidents, host) works transparently.
 
         Args:
             scan_id: Primary key of the scan.
 
         Returns:
-            NiktoScan instance with incidents loaded, or None.
+            NiktoScan instance, or None.
         """
-        with UnitOfWork() as uow:
-            scan = ScanRepository(uow).get_nikto_rich(scan_id)
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id_and_type(NiktoScan, scan_id)
 
         if not scan:
             self.logger.warning(f"Escaneo Nikto {scan_id} no encontrado")
@@ -1281,8 +1307,8 @@ class NiktoScanManager(ScanManager):
         Returns:
             List of NiktoScan instances.
         """
-        with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_nikto_by_user(user_id)
+        session = get_db_session()
+        scans = ScanRepository(session=session).get_nikto_by_user(user_id)
 
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
         return scans
@@ -1438,16 +1464,19 @@ class OpenVASScanManager(ScanManager):
 
     def get_scan_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
         """
-        Retrieve an OpenVASScan by its primary key with relationships eagerly loaded.
+        Retrieve an OpenVASScan by its primary key.
+
+        With request-scoped sessions, lazy loading of relationships
+        (results, vulnerabilities, hosts) works transparently.
 
         Args:
             scan_id: Primary key of the scan.
 
         Returns:
-            OpenVASScan instance with results, vulnerabilities and hosts loaded, or None.
+            OpenVASScan instance, or None.
         """
-        with UnitOfWork() as uow:
-            scan = ScanRepository(uow).get_openvas_rich(scan_id)
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id_and_type(OpenVASScan, scan_id)
 
         if not scan:
             self.logger.warning(f"Escaneo OpenVAS {scan_id} no encontrado")
@@ -1461,8 +1490,8 @@ class OpenVASScanManager(ScanManager):
         Returns:
             List of OpenVASScan instances.
         """
-        with UnitOfWork() as uow:
-            scans = ScanRepository(uow).get_openvas_by_user(user_id)
+        session = get_db_session()
+        scans = ScanRepository(session=session).get_openvas_by_user(user_id)
 
         self.logger.info(
             f"Se obtuvieron {len(scans)} escaneos OpenVAS"
@@ -1597,8 +1626,8 @@ class SentinelReportManager:
 
     def get_document_by_id(self, document_id: int) -> Optional[SentinelDocument]:
         """Retrieve a SentinelDocument by its primary key."""
-        with UnitOfWork() as uow:
-            doc = SentinelReportRepository(uow).get_by_id(document_id)
+        session = get_db_session()
+        doc = SentinelReportRepository(session=session).get_by_id(document_id)
 
         if not doc:
             self.logger.warning(f"Documento {document_id} no encontrado")
@@ -1607,23 +1636,23 @@ class SentinelReportManager:
 
     def get_latest_document_by_scan_id(self, scan_id: int) -> Optional[SentinelDocument]:
         """Retrieve the most recently created document for a scan."""
-        with UnitOfWork() as uow:
-            doc = SentinelReportRepository(uow).get_latest_document(scan_id)
+        session = get_db_session()
+        doc = SentinelReportRepository(session=session).get_latest_document(scan_id)
 
         return doc
 
     def get_documents_for_user(self, user_id: int) -> List[SentinelDocument]:
         """Retrieve all documents belonging to the active user."""
-        with UnitOfWork() as uow:
-            docs = SentinelReportRepository(uow).get_documents_by_user(user_id)  # type: ignore
+        session = get_db_session()
+        docs = SentinelReportRepository(session=session).get_documents_by_user(user_id)  # type: ignore
 
         self.logger.info(f"Se obtuvieron {len(docs)} documentos")
         return docs
 
     def get_documents_by_scan_id(self, scan_id: int) -> List[SentinelDocument]:
         """Retrieve all documents associated with a specific scan."""
-        with UnitOfWork() as uow:
-            docs = SentinelReportRepository(uow).get_documents_by_scan(scan_id)
+        session = get_db_session()
+        docs = SentinelReportRepository(session=session).get_documents_by_scan(scan_id)
 
         self.logger.info(f"Se obtuvieron {len(docs)} documentos para scan {scan_id}")
         return docs
@@ -1668,14 +1697,14 @@ class SentinelReportManager:
         Raises:
             DocumentError: If document not found or not owned by user.
         """
-        with UnitOfWork() as uow:
-            doc_repo = SentinelReportRepository(uow)
-            doc = doc_repo.get_by_id(document_id)
-            if not doc:
-                raise DocumentError(f"Documento {document_id} no encontrado")
+        session = get_db_session()
+        doc_repo = SentinelReportRepository(session=session)
+        doc = doc_repo.get_by_id(document_id)
+        if not doc:
+            raise DocumentError(f"Documento {document_id} no encontrado")
 
-            if doc.user_id != user_id: # type: ignore
-                raise DocumentError(f"Documento {document_id} no encontrado")
+        if doc.user_id != user_id: # type: ignore
+            raise DocumentError(f"Documento {document_id} no encontrado")
 
         return doc
 
