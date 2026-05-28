@@ -38,6 +38,11 @@ PDF y Documentos
 Eliminación
     DELETE /sentinel/<scan_id> — Eliminar un escaneo
 
+Escaneos Programados
+    POST   /sentinel/scheduled-scans                — Crear un escaneo programado
+    GET    /sentinel/scheduled-scans                — Listar escaneos programados del usuario
+    DELETE /sentinel/scheduled-scans/<ps_id>        — Revocar un escaneo programado
+
 ────────────────────────────────────────────────────────────────────────────────
 AUTENTICACIÓN
 ────────────────────────────────────────────────────────────────────────────────
@@ -100,8 +105,10 @@ from .managers import (
     NmapScanManager,
     NiktoScanManager,
     OpenVASScanManager,
+    ProgramedScanManager,
     SentinelReportManager,
 )
+from .model import ScanType
 from .exceptions import (
     ScanExecutionError,
     ScanNotFoundError,
@@ -109,6 +116,9 @@ from .exceptions import (
     MaxHostsExceededError,
     PortValidationError,
     PrivateIPRequested,
+    ProgramedScanError,
+    ProgramedScanNotFoundError,
+    InvalidProgramedTaskArgumentError,
 )
 
 
@@ -385,7 +395,7 @@ def start_openvas_scan(data):
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
 def retrieve_all_scans():
-    """Lista todos los escaneos del usuario con soporte de paginación."""
+    """Lista todos los escaneos del usuario."""
     scan_type = request.args.get("type", "all").lower()
     if scan_type not in VALID_SCAN_TYPES:
         raise ValidationError(
@@ -394,11 +404,6 @@ def retrieve_all_scans():
             value=scan_type,
             expected="nmap, nikto, openvas o all"
         )
-
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
-    page = max(1, page)
-    per_page = min(max(1, per_page), 100)
 
     user = get_current_user()
     uid = user.id
@@ -429,20 +434,11 @@ def retrieve_all_scans():
         except (OSError, RuntimeError) as exc:
             _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
 
-    total_results = len(all_results)
-    start = (page - 1) * per_page
-    end = start + per_page
-    paginated_results = all_results[start:end]
-
     return jsonify({
         "message": "Escaneos obtenidos correctamente",
         "filter": scan_type,
-        "count": len(paginated_results),
-        "total": total_results,
-        "page": page,
-        "perPage": per_page,
-        "totalPages": (total_results + per_page - 1) // per_page,
-        "results": paginated_results,
+        "count": len(all_results),
+        "results": all_results,
         "user": user.username
     }), 200
 
@@ -853,3 +849,92 @@ def delete_document(document_id: int):
     doc_mgr.delete_document(document_id)
     _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
     return jsonify({"message": "Documento eliminado correctamente", "documentId": document_id}), 200
+
+
+# =========================================================================
+# SCHEDULED SCAN ENDPOINTS
+# =========================================================================
+
+@sentinel_bp.post("/scheduled-scans")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_CREATE])
+@limiter.limit("30 per hour; 100 per day")
+@require_json(["scan_type", "arguments", "schedule_type", "schedule_config"])
+@handle_exceptions(default_exception=ProgramedScanError, logger=_logger)
+def schedule_scan(data):
+    scan_type_str = data["scan_type"].lower()
+    valid_types = {t.value for t in ScanType}
+    if scan_type_str not in valid_types:
+        raise ValidationError(
+            field="scan_type",
+            message="Tipo de escaneo inv\u00e1lido",
+            value=scan_type_str,
+            expected=", ".join(sorted(valid_types)),
+        )
+    user = get_current_user()
+    ps = ProgramedScanManager.register(
+        user_id=user.id, # type: ignore
+        scan_type=ScanType(scan_type_str),
+        arguments=data["arguments"],
+        schedule_type=data["schedule_type"],
+        schedule_config=data["schedule_config"],
+    )
+    _logger.info(
+        f"Escaneo programado {ps.id} creado: tipo={scan_type_str} "
+        f"programacion={data['schedule_type']} usuario={user.username}"
+    )
+    return jsonify({
+        "message": "Escaneo programado creado correctamente",
+        "programedScanId": ps.id,
+        "scanType": scan_type_str,
+        "scheduleType": data["schedule_type"],
+        "scheduleConfig": data["schedule_config"],
+        "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
+        "user": user.username,
+    }), 201
+
+@sentinel_bp.delete("/scheduled-scans/<int:ps_id>")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_DELETE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=_logger)
+def revoke_scheduled_scan(ps_id: int):
+    user = get_current_user()
+    ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
+    ProgramedScanManager.revoke(ps_id, user.id) # type: ignore
+    _logger.info(f"Escaneo programado {ps_id} revocado por {user.username}")
+    return jsonify({
+        "message": "Escaneo programado revocado correctamente",
+        "programedScanId": ps_id,
+        "scanType": ps.scan_type,
+        "user": user.username,
+    }), 200
+
+@sentinel_bp.get("/scheduled-scans")
+@limiter.limit("300 per hour; 2000 per day")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_READ])
+@handle_exceptions(default_exception=ProgramedScanError, logger=_logger)
+def list_scheduled_scans():
+    user = get_current_user()
+    scans = ProgramedScanManager.get_scans_for_user(user.id) # type: ignore
+    results = [
+        {
+            "id": ps.id,
+            "scanType": ps.scan_type,
+            "arguments": ps.arguments,
+            "scheduleType": ps.schedule_type,
+            "scheduleConfig": ps.schedule_config,
+            "isActive": ps.is_active,
+            "lastRunAt": ps.last_run_at.isoformat() if ps.last_run_at else None, # type: ignore
+            "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
+            "createdAt": ps.created_at.isoformat() if ps.created_at else None, # type: ignore
+        }
+        for ps in scans
+    ]
+    return jsonify({
+        "message": "Escaneos programados obtenidos correctamente",
+        "count": len(results),
+        "scheduledScans": results,
+        "user": user.username,
+    }), 200

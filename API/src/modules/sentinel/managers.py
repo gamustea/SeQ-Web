@@ -49,6 +49,7 @@ from .model import (
     NiktoScan,
     NmapScan,
     OpenVASScan,
+    ProgramedScan,
     Scan,
     ScanStatus,
     ScanType,
@@ -76,7 +77,8 @@ from .exceptions import (
     MaxHostsExceededError,
     PortValidationError,
     PrivateIPRequested,
-    InvalidProgramedTaskArgumentError
+    InvalidProgramedTaskArgumentError,
+    ProgramedScanNotFoundError,
 )
 
 
@@ -1027,6 +1029,7 @@ class ProgramedScanManager():
             repo.update_next_run(ps, next_run)
 
         Scheduler.schedule(ps)
+        return ps
 
     @classmethod
     def _assert_valid_arguments(cls, scan_type: ScanType, arguments: dict[str, str]):
@@ -1072,6 +1075,36 @@ class ProgramedScanManager():
             raise InvalidProgramedTaskArgumentError(
                 schedule_type, f"unknown schedule_type: {schedule_type}"
             )
+
+    @classmethod
+    def assert_ownership(cls, ps_id: int, user_id: int) -> ProgramedScan:
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            if not ps:
+                raise ProgramedScanNotFoundError(ps_id)
+            if ps.user_id != user_id:
+                raise ProgramedScanNotFoundError(ps_id)
+            return ps
+
+    @classmethod
+    def get_scans_for_user(cls, user_id: int) -> List[ProgramedScan]:
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            return repo.get_by_user(user_id)
+
+    @classmethod
+    def revoke(cls, ps_id: int, user_id: int) -> None:
+        Scheduler.unschedule(ps_id)
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            if ps is None:
+                raise ProgramedScanNotFoundError(ps_id)
+            if ps.user_id != user_id:
+                raise ProgramedScanNotFoundError(ps_id)
+            ps.is_active = False
+            repo.update(ps)
 
 
 # =============================================================================
