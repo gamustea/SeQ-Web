@@ -86,6 +86,10 @@ class AttributeType(Enum):
     ACHERON_UPDATE  = "acheron_update"
     ACHERON_DELETE  = "acheron_delete"
 
+    SENTINEL_SCHEDULE_CREATE = "sentinel_schedule_create"
+    SENTINEL_SCHEDULE_READ   = "sentinel_schedule_read"
+    SENTINEL_SCHEDULE_DELETE = "sentinel_schedule_delete"
+
     _DESCRIPTIONS = {
         "aegis_create":    "Create access for Aegis awareness pills",
         "aegis_read":      "Read access for Aegis awareness pills",
@@ -99,6 +103,9 @@ class AttributeType(Enum):
         "acheron_read":    "Read access for Acheron vault secrets",
         "acheron_update":  "Update access for Acheron vault secrets",
         "acheron_delete":  "Delete access for Acheron vault secrets",
+        "sentinel_schedule_create": "Create access for scheduled scans",
+        "sentinel_schedule_read":   "Read access for scheduled scans",
+        "sentinel_schedule_delete": "Delete access for scheduled scans",
     }
 
     @property
@@ -125,6 +132,7 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
         AttributeType.AEGIS_READ,
         AttributeType.SENTINEL_READ,
         AttributeType.ACHERON_READ,
+        AttributeType.SENTINEL_SCHEDULE_READ,
     },
     Role.ADMIN: {
         AttributeType.AEGIS_CREATE,
@@ -136,6 +144,9 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
         AttributeType.SENTINEL_UPDATE,
         AttributeType.SENTINEL_DELETE,
         AttributeType.ACHERON_READ,
+        AttributeType.SENTINEL_SCHEDULE_CREATE,
+        AttributeType.SENTINEL_SCHEDULE_READ,
+        AttributeType.SENTINEL_SCHEDULE_DELETE,
     },
 }
 

@@ -31,6 +31,8 @@ from .csv_logger import (
     OpenVASScanLogger,
 )
 
+from .scheduling import Scheduler
+
 __all__ = [
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
@@ -51,4 +53,5 @@ __all__ = [
     NmapScanLogger,
     NiktoScanLogger,
     OpenVASScanLogger,
+    Scheduler
 ]

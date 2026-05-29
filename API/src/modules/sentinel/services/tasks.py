@@ -11,7 +11,7 @@ from typing import Optional, Any, List
 from enum import Enum
 from abc import ABC, abstractmethod
 
-from lxml import etree as lxml_etree
+import lxml.etree as lxml_etree
 from gvm.connections import TLSConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeTransform
@@ -111,6 +111,12 @@ class _Task(ABC):
 
     def scan(self) -> None:
         """Inicia el escaneo de forma ASÍNCRONA."""
+        if self._cancel_event.is_set():
+            self.status = TaskStatus.CANCELLED
+            self._finished.set()
+            self.logger.warning("Escaneo cancelado antes de iniciar")
+            return
+
         if self._proc and self._proc.poll() is None:
             self.logger.warning("El escaneo ya está en ejecución")
             return
@@ -132,7 +138,8 @@ class _Task(ABC):
             returncode = self._proc.poll()
 
             if returncode is not None and returncode != 0:
-                self.status = TaskStatus.FAILED
+                if self.status != TaskStatus.CANCELLED:
+                    self.status = TaskStatus.FAILED
                 raise RuntimeError(f"Proceso falló al iniciar (código {returncode})")
 
             if returncode == 0:
@@ -145,7 +152,8 @@ class _Task(ABC):
                 raise RuntimeError("Thread de lectura no inició")
 
         except (OSError, IOError, RuntimeError) as e:
-            self.status = TaskStatus.FAILED
+            if self.status != TaskStatus.CANCELLED:
+                self.status = TaskStatus.FAILED
             self.logger.error(f"Error iniciando escaneo: {e}")
             raise
 
@@ -165,19 +173,26 @@ class _Task(ABC):
                     self._proc.wait()
                 return False
 
+            if self._cancel_event.is_set():
+                self.status = TaskStatus.CANCELLED
+                self.logger.info("wait() detecta cancelación vía _cancel_event")
+                return False
+
             if self.status in (TaskStatus.CANCELLED, TaskStatus.TIMEOUT, TaskStatus.FAILED):
                 self.logger.info(f"wait() termina con estado {self.status.value}")
                 return False
 
             if self._proc and self._proc.returncode != 0:
-                self.status = TaskStatus.FAILED
+                if self.status != TaskStatus.CANCELLED:
+                    self.status = TaskStatus.FAILED
                 self.logger.error(f"Proceso terminó con error: código {self._proc.returncode}")
                 return False
 
             self._process_results()
 
             if self.results is None:
-                self.status = TaskStatus.FAILED
+                if self.status != TaskStatus.CANCELLED:
+                    self.status = TaskStatus.FAILED
                 self.logger.error("No se pudieron procesar los resultados")
                 return False
 
@@ -194,6 +209,8 @@ class _Task(ABC):
     def cancel(self) -> None:
         """Cancela el escaneo."""
         self._cancel_event.set()
+        self.status = TaskStatus.CANCELLED
+        self._finished.set()
 
         if self._proc and self._proc.poll() is None:
             try:
@@ -204,8 +221,6 @@ class _Task(ABC):
                 self._proc.kill()
                 self._proc.wait()
 
-        self.status = TaskStatus.CANCELLED
-        self._finished.set()
         self.logger.info("Escaneo cancelado")
 
 

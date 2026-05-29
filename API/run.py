@@ -86,6 +86,13 @@ def _graceful_shutdown(signum, *args) -> None:
     except Exception as e:
         _logger.error(f"Error durante el apagado: {e}")
 
+    _logger.info("[Shutdown] Deteniendo scheduler...")
+    try:
+        from src.modules.sentinel.services.scheduling import Scheduler
+        Scheduler.stop()
+    except Exception as e:
+        _logger.error(f"Error deteniendo scheduler: {e}")
+
     _logger.info("[Shutdown] Proceso terminado.")
     import os as _os
     _os.kill(_os.getpid(), signal.SIGTERM)
@@ -104,6 +111,8 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     Returns:
         Flask: Aplicación completamente configurada y lista para servir.
     """
+    from src.modules.sentinel.services.scheduling import Scheduler
+
     app = Flask(__name__)
 
     _logger.info("Inicializando la aplicación SeQ...")
@@ -133,7 +142,16 @@ def create_app(fresh_db_init: bool = False) -> Flask:
         _init_db()
 
     _logger.info("Inicializando base de datos...")
+    engine = BaseManager._initialize_engine()
+    Base.metadata.create_all(engine)
     BaseManager.warmup_connection()
+
+    _logger.info("Configurando sesión por-request...")
+    from src.modules.infrastructure.session import shutdown_request_session
+    app.teardown_request(shutdown_request_session)
+
+    _logger.info("Arrancando scheduler de tareas programadas...")
+    Scheduler.start()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app

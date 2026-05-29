@@ -15,6 +15,7 @@ from .model import (
 from src.modules.users import User
 from src.modules.system.logging import SecOpsLogger
 from src.modules.infrastructure.unit_of_work import UnitOfWork
+from src.modules.infrastructure.session import get_db_session
 
 from .repositories import (
     VaultRepository,
@@ -52,20 +53,20 @@ class VaultManager:
             )
 
     def get_vault_by_id(self, vault_id: int) -> Optional[Vault]:
-        with UnitOfWork() as uow:
-            repo = VaultRepository(uow)
-            vault = repo.get_by_id_with_user(vault_id)
-            if vault is None:
-                self.logger.warning(f"Vault {vault_id} no encontrado")
-                return None
-            self._ensure_vault_ownership(vault)
-            return vault
+        session = get_db_session()
+        repo = VaultRepository(session=session)
+        vault = repo.get_by_id(vault_id)
+        if vault is None:
+            self.logger.warning(f"Vault {vault_id} no encontrado")
+            return None
+        self._ensure_vault_ownership(vault)
+        return vault
 
     def get_vault_for_user(self, is_recovery: bool = False) -> Optional[Vault]:
-        with UnitOfWork() as uow:
-            repo = VaultRepository(uow)
-            vault = repo.get_by_user(self.active_user.id, is_recovery)
-            return vault
+        session = get_db_session()
+        repo = VaultRepository(session=session)
+        vault = repo.get_by_user(self.active_user.id, is_recovery)
+        return vault
 
     def upsert_vault_from_json(
         self,
@@ -175,58 +176,58 @@ class VaultManager:
         )
 
     def export_vault_to_json(self, vault_id: int) -> Dict[str, Any]:
-        with UnitOfWork() as uow:
-            repo = VaultRepository(uow)
-            vault = repo.get_with_storables(vault_id)
-            if vault is None:
-                raise ValueError(f"Vault {vault_id} no encontrado")
-            self._ensure_vault_ownership(vault)
+        session = get_db_session()
+        repo = VaultRepository(session=session)
+        vault = repo.get_by_id(vault_id)
+        if vault is None:
+            raise ValueError(f"Vault {vault_id} no encontrado")
+        self._ensure_vault_ownership(vault)
 
-            algorithm = {
-                "transformation": vault.transformation,
-                "kdf": vault.kdf,
-                "kdfIterations": str(vault.kdf_iterations),
-                "kdfMemoryKiB": str(vault.kdf_memory),
-                "kdfParallelism": str(vault.kdf_parallelism),
-                "salt": vault.salt,
+        algorithm = {
+            "transformation": vault.transformation,
+            "kdf": vault.kdf,
+            "kdfIterations": str(vault.kdf_iterations),
+            "kdfMemoryKiB": str(vault.kdf_memory),
+            "kdfParallelism": str(vault.kdf_parallelism),
+            "salt": vault.salt,
+        }
+
+        accounts_json: List[Dict[str, Any]] = []
+        cards_json: List[Dict[str, Any]] = []
+
+        for st in vault.storables:
+            base = {
+                "id": st.internal_id,
+                "title": st.title,
+                "createdAt": st.created_at.isoformat() if st.created_at else None,
+                "updatedAt": st.updated_at.isoformat() if st.updated_at else None,
+                "allowedUsers": [],
             }
 
-            accounts_json: List[Dict[str, Any]] = []
-            cards_json: List[Dict[str, Any]] = []
+            if isinstance(st, Account):
+                accounts_json.append({
+                    **base,
+                    "username": st.username,
+                    "domain": st.domain,
+                    "password": st.password,
+                })
+            elif isinstance(st, CreditCard):
+                cards_json.append({
+                    **base,
+                    "cardHolderName": st.cardholder_name,
+                    "cardNumber": st.card_number,
+                    "expirationDate": st.expiration_date,
+                    "postalCode": st.postal_code,
+                    "cvv": st.cvv,
+                })
 
-            for st in vault.storables:
-                base = {
-                    "id": st.internal_id,
-                    "title": st.title,
-                    "createdAt": st.created_at.isoformat() if st.created_at else None,
-                    "updatedAt": st.updated_at.isoformat() if st.updated_at else None,
-                    "allowedUsers": [],
-                }
-
-                if isinstance(st, Account):
-                    accounts_json.append({
-                        **base,
-                        "username": st.username,
-                        "domain": st.domain,
-                        "password": st.password,
-                    })
-                elif isinstance(st, CreditCard):
-                    cards_json.append({
-                        **base,
-                        "cardHolderName": st.cardholder_name,
-                        "cardNumber": st.card_number,
-                        "expirationDate": st.expiration_date,
-                        "postalCode": st.postal_code,
-                        "cvv": st.cvv,
-                    })
-
-            return {
-                "checker": vault.checker,
-                "vaultKey": vault.vault_key,
-                "algorithm": algorithm,
-                "accounts": accounts_json,
-                "creditcards": cards_json,
-            }
+        return {
+            "checker": vault.checker,
+            "vaultKey": vault.vault_key,
+            "algorithm": algorithm,
+            "accounts": accounts_json,
+            "creditcards": cards_json,
+        }
 
     def export_vault_to_json_string(self, vault_id: int) -> str:
         return str(self.export_vault_to_json(vault_id))
@@ -238,24 +239,24 @@ class VaultManager:
             limit: Optional[int] = None,
             **filters: Any,
         ) -> List[Storable]:
-        with UnitOfWork() as uow:
-            repo = StorableRepository(uow)
+        session = get_db_session()
+        repo = StorableRepository(session=session)
 
-            if vault_id is not None:
-                vault = self.get_vault_by_id(vault_id)
-                if vault is None:
-                    return []
-                storables = repo.get_by_vault(vault_id)
-            else:
-                storables = repo.get_by_user(self.active_user.id, limit or 100)
+        if vault_id is not None:
+            vault = self.get_vault_by_id(vault_id)
+            if vault is None:
+                return []
+            storables = repo.get_by_vault(vault_id)
+        else:
+            storables = repo.get_by_user(self.active_user.id, limit or 100)
 
-            result = storables
-            for field, value in filters.items():
-                if not hasattr(Storable, field):
-                    raise ValueError(f"Campo inválido para Storable: {field}")
-                result = [s for s in result if getattr(s, field, None) == value]
+        result = storables
+        for field, value in filters.items():
+            if not hasattr(Storable, field):
+                raise ValueError(f"Campo inválido para Storable: {field}")
+            result = [s for s in result if getattr(s, field, None) == value]
 
-            return result
+        return result
 
     def get_storable_by(self, **filters: Any) -> Optional[Storable]:
         results = self.find_storables(limit=2, **filters)
@@ -351,7 +352,7 @@ class VaultManager:
     ) -> Storable:
         with UnitOfWork() as uow:
             repo = StorableRepository(uow)
-            st = repo.get_by_id_with_storable(storable_id)
+            st = repo.get_by_id(storable_id)
             if st is None:
                 raise ValueError(f"Storable {storable_id} no encontrado")
 

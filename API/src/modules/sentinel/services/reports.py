@@ -19,20 +19,14 @@ Classes:
 """
 
 import os
-import json
-import random
-import re
-import time
-import textwrap
 
 from enum import Enum
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from datetime import datetime
+from typing import Optional, Dict
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -392,7 +386,6 @@ class PrintingStrategy(ABC):
             )
 
         scan = ScanManager.get_scan_rich(scan_id)
-
         return strategy_class(scan=scan)
 
     def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:
