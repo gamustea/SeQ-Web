@@ -25,12 +25,12 @@ import src.modules.system.config_reading as CR
 from src.modules.users import User
 from src.modules.system import SecOpsLogger
 from src.modules.infrastructure import UnitOfWork
+from src.modules.infrastructure.session import get_db_session
 from src.modules.shared._documents import (
     get_document_by_id,
-    get_documents_by_user,
-    get_document_path,
     delete_document_file,
     update_document_status,
+    serialize_document_list,
 )
 
 from .model import AegisDocument, Topic
@@ -78,35 +78,35 @@ class AegisManager:
         return document_id
 
     def get_document(self, doc_id: int) -> dict | None:
-        with UnitOfWork() as uow:
-            repo = AegisDocumentRepository(uow)
-            doc = repo.get_by_id_with_details(doc_id)
-            if not doc:
-                return None
+        session = get_db_session()
+        repo = AegisDocumentRepository(session=session)
+        doc = repo.get_by_id(doc_id)
+        if not doc:
+            return None
 
-            result = {
-                "id": doc.id,
-                "internalName": doc.title,
-                "title": doc.subtitle or "Sin título",
-                "userId": doc.user.id,
-                "topicId": doc.topic_id,
-                "topicTitle": doc.topic.title if doc.topic else "Tema desconocido",
-                "status": doc.status,
-                "pill": {
-                    "subtitle": doc.subtitle,
-                    "intro": doc.intro,
-                    "closing": doc.closing,
-                    "company": doc.company,
-                    "contactEmail": doc.contact_email,
-                    "tips": [t.to_dict() for t in doc.tips],
-                },
-                "alerts": [a.to_dict() for a in doc.alerts],
-                "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
-            }
+        result = {
+            "id": doc.id,
+            "internalName": doc.title,
+            "title": doc.subtitle or "Sin título",
+            "userId": doc.user.id,
+            "topicId": doc.topic_id,
+            "topicTitle": doc.topic.title if doc.topic else "Tema desconocido",
+            "status": doc.status,
+            "pill": {
+                "subtitle": doc.subtitle,
+                "intro": doc.intro,
+                "closing": doc.closing,
+                "company": doc.company,
+                "contactEmail": doc.contact_email,
+                "tips": [t.to_dict() for t in doc.tips],
+            },
+            "alerts": [a.to_dict() for a in doc.alerts],
+            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+        }
 
-            if doc.status == "done": # type: ignore
-                result["pill"] = doc.pill_to_dict()
-                result["alerts"] = [a.to_dict() for a in sorted(doc.alerts, key=lambda a: a.position)]
+        if doc.status == "done": # type: ignore
+            result["pill"] = doc.pill_to_dict()
+            result["alerts"] = [a.to_dict() for a in sorted(doc.alerts, key=lambda a: a.position)]
 
         return result
 
@@ -139,14 +139,36 @@ class AegisManager:
 
     def list_user_documents(self) -> list[dict]:
         """Lista todos los documentos del usuario, ordenados por fecha descendente."""
-        return get_documents_by_user(self.user.id, limit=100, document_type="aegis") # type: ignore
+        from sqlalchemy import desc
+        from src.modules.shared import Document
+
+        session = get_db_session()
+        docs = (
+            session.query(Document)
+            .filter(Document.user_id == self.user.id)
+            .filter(Document.document_type == "aegis")
+            .order_by(desc(Document.generated_at))
+            .limit(100)
+            .all()
+        )
+        fields_map = {
+            "id":          "id",
+            "title":       "title",
+            "subtitle":    "subtitle",
+            "filename":    "filename",
+            "format":      "format",
+            "status":      "status",
+            "generated_at": "generatedAt",
+            "topic_id":    "topicId",
+        }
+        return serialize_document_list(docs, fields_map)
 
     def get_topics(self) -> list[dict]:
         """Devuelve todos los temas disponibles ordenados por título."""
-        with UnitOfWork() as uow:
-            repo = AegisDocumentRepository(uow)
+        session = get_db_session()
+        repo = AegisDocumentRepository(session=session)
 
-            topics = repo.get_topics()
+        topics = repo.get_topics()
         return [{"id": t.id, "title": t.title} for t in topics]
 
     def assert_document_ownership(self, document_id: int) -> AegisDocument:
@@ -165,13 +187,13 @@ class AegisManager:
         Raises:
             DocumentError if the document was not found
         """
-        with UnitOfWork() as uow:
-            doc_repo = AegisDocumentRepository(uow)
-            doc = doc_repo.get_by_id(document_id)
-            if not doc:
-                raise DocumentError(f"Documento {document_id} no encontrado")
-            if doc.user_id != self.user.id: # type: ignore
-                raise DocumentError(f"Documento {document_id} no encontrado")
+        session = get_db_session()
+        doc_repo = AegisDocumentRepository(session=session)
+        doc = doc_repo.get_by_id(document_id)
+        if not doc:
+            raise DocumentError(f"Documento {document_id} no encontrado")
+        if doc.user_id != self.user.id: # type: ignore
+            raise DocumentError(f"Documento {document_id} no encontrado")
 
         return doc
 
@@ -328,7 +350,7 @@ class AegisManager:
         output_dir = Path(CR.get_directory_of(CR.DirectoryType.OUTPUT_AEGIS))
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        ollama_host, ollama_model = CR.get_ollama_config()
+        ollama_host, ollama_model = CR.get_ollama_environment()
         aegis = CR.get_aegis_config() or {}
 
         return {

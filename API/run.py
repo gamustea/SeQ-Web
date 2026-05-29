@@ -6,25 +6,29 @@ Responsabilidades de este fiche:
     2. Configurar CORS y rate limiting.
     3. Registrar los blueprints.
     4. Instalar manejadores de error globales.
-    5. Servir la interfaz web estática.
-    6. Gestionar el apagado graceful.
-    7. Arrancar el servidor de desarrollo si se ejecuta directamente.
+    5. Gestionar el apagado graceful.
+    6. Arrancar el servidor de desarrollo si se ejecuta directamente.
 
-La ruta comodín de la UI se registra DESPUÉS de los blueprints para que
-los endpoints de la API siempre tengan prioridad.
+En producción, Nginx sirve el frontend Vue. En desarrollo, Vite sirve
+el frontend con proxy inverso al backend. La API no sirve contenido
+estático.
 """
 
 import os
 import signal
 
-from flask                  import Flask, jsonify, request, send_from_directory
+from flask                  import Flask, jsonify, request
 from flask_cors             import CORS
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
-from src.modules.shared     import BaseManager, Base
-from src.modules.shared._endpoints import _get_limiter
-from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, create_error_response
+from src.modules.shared     import BaseManager, Base, limiter
+from src.modules.shared._exceptions import (
+    MissingParameterError,
+    MissingJsonBodyError,
+    SecOpsException,
+    create_error_response
+)
 from src.modules.system     import SecOpsLogger, config_reading
 from src.modules.users      import (
     UserManager,
@@ -40,21 +44,9 @@ from src.modules.pages      import pages_bp
 import src.modules.system.config_reading as CR
 
 
-
+APP_CONTEXT = CR.get_app_context()
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
-
-SHUTDOWN_TIMEOUT = 30
-CREATE_DATABASE = True
-DEBUG = True
-HOST = '0.0.0.0'
-PORT = 5000
-
-_UI_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
-)
-
-
 
 
 def _graceful_shutdown(signum, *args) -> None:
@@ -66,6 +58,7 @@ def _graceful_shutdown(signum, *args) -> None:
 
     Args:
         signum: Número de señal recibida (SIGTERM o SIGINT).
+        shutdown_time: Tiempo en el que se ha de matar el proceso
         *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
 
     Behavior:
@@ -82,24 +75,30 @@ def _graceful_shutdown(signum, *args) -> None:
     try:
         from src.modules.sentinel import ScanManager
         _logger.info("Cancelando tarea(s) activa(s)...")
-        ScanManager.cancel_all_running(timeout=SHUTDOWN_TIMEOUT)
+        ScanManager.cancel_all_running(
+            logger=_logger,
+            timeout=APP_CONTEXT.shutdown_time
+        )
         _logger.info("Todas las tareas finalizadas.")
     except Exception as e:
         _logger.error(f"Error durante el apagado: {e}")
+
+    _logger.info("[Shutdown] Deteniendo scheduler...")
+    try:
+        from src.modules.sentinel.services.scheduling import Scheduler
+        Scheduler.stop()
+    except Exception as e:
+        _logger.error(f"Error deteniendo scheduler: {e}")
 
     _logger.info("[Shutdown] Proceso terminado.")
     import os as _os
     _os.kill(_os.getpid(), signal.SIGTERM)
 
-signal.signal(signal.SIGTERM, _graceful_shutdown)
-signal.signal(signal.SIGINT,  _graceful_shutdown)
-
 def create_app(fresh_db_init: bool = False) -> Flask:
     """
     Factory de la aplicación Flask SeQ.
 
-    Configura todos los componentes necesarios para servir la API REST
-    y la interfaz web estática:
+    Configura todos los componentes necesarios para servir la API REST.
 
     Args:
         fresh_db_init: Si True, reinicializa la base de datos completamente
@@ -108,6 +107,8 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     Returns:
         Flask: Aplicación completamente configurada y lista para servir.
     """
+    from src.modules.sentinel.services.scheduling import Scheduler
+
     app = Flask(__name__)
 
     _logger.info("Inicializando la aplicación SeQ...")
@@ -118,7 +119,7 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     CORS(app, origins=origins, supports_credentials=True)
 
     _logger.info("Inicializando rate limiting...")
-    _get_limiter().init_app(app)
+    limiter.init_app(app)
 
     _logger.info("Añadiendo endpoints...")
     app.register_blueprint(system_bp,   url_prefix="/system")
@@ -128,7 +129,6 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     app.register_blueprint(acheron_bp,  url_prefix="/acheron")
     app.register_blueprint(aegis_bp,    url_prefix="/aegis")
     app.register_blueprint(pages_bp,    url_prefix="/pages")
-    _register_ui_route(app)
 
     _logger.info("Registrando manejadores de error globales...")
     _register_error_handlers(app)
@@ -137,39 +137,19 @@ def create_app(fresh_db_init: bool = False) -> Flask:
         _init_db()
 
     _logger.info("Inicializando base de datos...")
+    engine = BaseManager._initialize_engine()
+    Base.metadata.create_all(engine)
     BaseManager.warmup_connection()
+
+    _logger.info("Configurando sesión por-request...")
+    from src.modules.infrastructure.session import shutdown_request_session
+    app.teardown_request(shutdown_request_session)
+
+    _logger.info("Arrancando scheduler de tareas programadas...")
+    Scheduler.start()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
-
-
-def _register_ui_route(app: Flask) -> None:
-    """
-    Sirve la interfaz web estática (Interface/web/) bajo la ruta raíz.
-
-    Reglas de resolución:
-      - Si la ruta coincide con un fichero existente dentro de _UI_DIR,
-        se sirve directamente (CSS, JS, imágenes, etc.).
-      - Cualquier otra ruta desconocida redirige al hub principal
-        (hub/index.html), lo que permite navegación client-side.
-
-    IMPORTANTE: esta función debe llamarse DESPUÉS de register_blueprints()
-    para que los endpoints de la API (/oauth/*, /sentinel/*, etc.) tengan
-    prioridad sobre el comodín.
-    """
-    @app.route("/", defaults={"path": ""})
-    @app.route("/<path:path>")
-    def serve_ui(path: str):
-        # No interceptar rutas de la API ni del blueprint /pages
-        if path.startswith(("pages/", "oauth/", "sentinel/", "aegis/", "users/", "acheron/")):
-            from flask import abort
-            abort(404)
-
-        target = os.path.join(_UI_DIR, path)
-        if path and os.path.isfile(target):
-            return send_from_directory(_UI_DIR, path)
-
-        return send_from_directory(_UI_DIR, "pages/hub.html")
 
 def _register_error_handlers(app: Flask) -> None:
     """
@@ -444,8 +424,18 @@ def _init_db() -> None:
 
 
 if __name__ == "__main__":
-    create_app(CREATE_DATABASE).run(
-        debug=DEBUG,
-        host=HOST,
-        port=PORT
+    signal.signal(
+        signal.SIGTERM,
+        _graceful_shutdown
+    )
+    signal.signal(
+        signal.SIGINT,
+        _graceful_shutdown
+    )
+
+    app = create_app(APP_CONTEXT.create_database)
+    app.run(
+        debug=APP_CONTEXT.debug,
+        host=APP_CONTEXT.host,
+        port=APP_CONTEXT.port
     )

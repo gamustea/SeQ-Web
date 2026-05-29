@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session
 
 from src.modules.acheron.model import Account, CreditCard, Storable, Vault
 from src.modules.infrastructure import BaseRepository, UnitOfWork
@@ -42,8 +42,8 @@ class VaultRepository(BaseRepository[Vault]):
     ...     vault = repo.get_by_user(user_id=1, is_recovery=False)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(Vault, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(Vault, uow=uow, session=session)
 
     # =========================================================================
     # DOMAIN QUERIES
@@ -83,40 +83,6 @@ class VaultRepository(BaseRepository[Vault]):
             self._session.query(Vault)
             .filter(Vault.user_id == user_id)
             .all()
-        )
-
-    def get_with_storables(self, vault_id: int) -> Optional[Vault]:
-        """
-        Retrieve a vault with all its storables eager-loaded.
-
-        Args:
-            vault_id: Primary key of the vault.
-
-        Returns:
-            Vault with storables loaded, or None if not found.
-        """
-        return (
-            self._session.query(Vault)
-            .filter(Vault.id == vault_id)
-            .options(joinedload(Vault.storables))
-            .one_or_none()
-        )
-
-    def get_by_id_with_user(self, vault_id: int) -> Optional[Vault]:
-        """
-        Retrieve a vault with its user relationship eager-loaded.
-
-        Args:
-            vault_id: Primary key of the vault.
-
-        Returns:
-            Vault with user loaded, or None if not found.
-        """
-        return (
-            self._session.query(Vault)
-            .filter(Vault.id == vault_id)
-            .options(joinedload(Vault.user))
-            .one_or_none()
         )
 
     # =========================================================================
@@ -202,8 +168,8 @@ class StorableRepository(BaseRepository[Storable]):
     ...     storables = repo.get_by_vault(vault_id=1)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(Storable, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(Storable, uow=uow, session=session)
 
     # =========================================================================
     # DOMAIN QUERIES
@@ -283,32 +249,3 @@ class StorableRepository(BaseRepository[Storable]):
             )
             .all()
         )
-
-    def get_by_id_with_vault(self, storable_id: int) -> Optional[Storable]:
-        """
-        Retrieve a storable with its vault relationship eager-loaded.
-
-        Args:
-            storable_id: Primary key of the storable.
-
-        Returns:
-            Storable with vault loaded, or None if not found.
-        """
-        return (
-            self._session.query(Storable)
-            .filter(Storable.id == storable_id)
-            .options(joinedload(Storable.vault))
-            .one_or_none()
-        )
-
-    def get_by_id_with_storable(self, storable_id: int) -> Optional[Storable]:
-        """
-        Retrieve a storable by ID.
-
-        Args:
-            storable_id: Primary key of the storable.
-
-        Returns:
-            Storable instance, or None if not found.
-        """
-        return self._session.get(Storable, storable_id)

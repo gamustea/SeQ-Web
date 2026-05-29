@@ -177,9 +177,13 @@ class UnitOfWork:
         """
         Initialize the Unit of Work with an optional existing session.
 
+        In a Flask request context, reuses ``g.db_session`` (if present)
+        so that reads and writes share the same request-scoped session.
+        In background threads, creates and owns its own session.
+
         Args:
             session: Optional existing SQLAlchemy session. If not provided,
-                        a new session is obtained from the database module.
+                     behaviour depends on the runtime context.
         """
         if session is not None:
             self.session = session
@@ -187,6 +191,28 @@ class UnitOfWork:
         else:
             self.session = get_session()
             self._owns_session = True
+
+        # If we're in a Flask request that already has a session, reuse it.
+        # This prevents UnitOfWork from closing the request-scoped session
+        # on __exit__, which would break lazy loading for the rest of the
+        # request.
+        self._try_share_request_session()
+
+    def _try_share_request_session(self) -> None:
+        """If running inside a Flask request with an active g.db_session,
+        reuse it and relinquish ownership so close() is a no-op."""
+        try:
+            from flask import g, has_app_context
+        except ImportError:
+            return
+        try:
+            if has_app_context() and "db_session" in g:
+                if not self._owns_session:
+                    return  # externally provided session
+                self.session = g.db_session
+                self._owns_session = False
+        except RuntimeError:
+            pass  # working outside of application context
 
     # =========================================================================
     # CONTEXT MANAGER
@@ -252,18 +278,16 @@ class UnitOfWork:
         """
         Close the session if this UoW owns it.
 
-        expunge_all() is called before closing so that ORM objects returned
-        by queries remain accessible after the UoW exits. Their already-loaded
-        attributes (including eagerly loaded relationships) stay intact, but
-        any subsequent lazy load attempt will raise DetachedInstanceError —
-        which is the correct and expected behaviour outside a session scope.
+        With the session-per-request architecture, the session is no longer
+        expunged or removed from the scoped registry here — that is handled
+        by the Flask teardown_request hook. Objects remain attached to the
+        session for the remainder of the request, allowing lazy loading to
+        work without eager-loading workarounds.
 
         Safe to call multiple times; subsequent calls are no-ops.
         """
         if self._owns_session and self.session is not None:
             try:
-                self.session.expunge_all()
                 self.session.close()
-                close_all()
             finally:
                 self.session = None

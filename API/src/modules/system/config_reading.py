@@ -11,6 +11,7 @@ from enum import Enum
 from functools import wraps
 from pathlib import Path
 from dotenv import load_dotenv
+from dataclasses import dataclass
 
 from typing import Optional
 
@@ -39,6 +40,21 @@ class DirectoryType(Enum):
     OUTPUT_AEGIS    = "aegis.output"
 
     OUTPUT_SENTINEL = "sentinel.output"
+    CSV_SENTINEL    = "sentinel.csv"
+
+
+# =============================================================================
+# CLASES ÚTILES
+# =============================================================================
+
+@dataclass(frozen=True)
+class AppContext():
+    shutdown_time: int
+    create_database: bool
+    debug: bool
+    host: str
+    port: int
+
 
 # =============================================================================
 # DECORADOR LAZY LOAD
@@ -91,10 +107,10 @@ def is_loaded() -> bool:
 
 
 # =============================================================================
-# CONFIGURACIÓN DE ENTORNO (sin fallback a JSON)
+# CONFIGURACIÓN DE ENTORNO
 # =============================================================================
 
-def get_ollama_config() -> tuple[str, str]:
+def get_ollama_environment() -> tuple[str, str]:
     """Solo variables de entorno."""
     host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     model = os.getenv("OLLAMA_MODEL", "llama3.2")
@@ -109,20 +125,21 @@ def get_oauth_config() -> tuple[float, float, Optional[str], Optional[str]]:
     refresh     = os.getenv("REFRESH_TOKEN_EXPIRY_DAYS") or ""
 
     if not all([secret, algorithm, access, refresh]):
-        raise ValueError("Faltan variables de entorno para OAuth. "
-                "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
-                "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS.")
+        raise ValueError(
+            "Faltan variables de entorno para OAuth. "
+            "Asegúrate de definir JWT_SECRET_KEY, JWT_ALGORITHM, "
+            "ACCESS_TOKEN_EXPIRY_MINUTES y REFRESH_TOKEN_EXPIRY_DAYS."
+        )
 
     return (float(access), float(refresh), secret, algorithm)
 
 
-
-def get_openvas_config() -> dict[str, str]:
+def get_openvas_environment() -> dict[str, str]:
     """Solo variables de entorno."""
-    hostname = os.getenv("OPENVAS_HOST")
-    port = os.getenv("OPENVAS_PORT")
-    user = os.getenv("OPENVAS_USERNAME")
-    password = os.getenv("OPENVAS_PASSWORD")
+    hostname    = os.getenv("OPENVAS_HOST")
+    port        = os.getenv("OPENVAS_PORT")
+    user        = os.getenv("OPENVAS_USERNAME")
+    password    = os.getenv("OPENVAS_PASSWORD")
 
     if all([hostname, port, user, password]):
         return {
@@ -130,12 +147,30 @@ def get_openvas_config() -> dict[str, str]:
             "port": port,
             "username": user,
             "password": password
-        } # pyright: ignore[reportReturnType]
+        } # type: ignore
 
     raise ValueError("Faltan variables de entorno para OpenVAS. "
                 "Asegúrate de definir OPENVAS_HOST, OPENVAS_PORT, "
                 "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
 
+
+def get_app_context() -> AppContext:
+    shutdown_time   = os.getenv("SHUTDOWN_TIMEOUT", 30)
+    create_database = os.getenv("CREATE_DATABASE", False)
+    debug           = os.getenv("DEBUG", False)
+    host            = os.getenv("HOST", "0.0.0.0")
+    port            = os.getenv("PORT", 5000)
+
+    if not all([shutdown_time, create_database, debug, host, port]):
+        raise ValueError([shutdown_time, create_database, debug, host, port])
+
+    return AppContext(
+        shutdown_time = int(shutdown_time),
+        create_database = create_database == "True" or create_database == "true",
+        debug = debug == "True" or debug == "true",
+        host = host,
+        port = int(port)
+    )
 
 # =============================================================================
 # CONFIGURACIÓN DE BASE DE DATOS
@@ -197,6 +232,7 @@ def get_directory_of(directory_type) -> str:
         "output": "OUTPUT_DIR",
         "stack": "OUTPUT_DIR",
         "resourcedir": "RESOURCE_DIR",
+        "sentinel.csv": "CSV_SENTINEL_DIR",
     }
 
     env_var = env_mapping.get(dir_key)
@@ -243,7 +279,6 @@ def get_aegis_config() -> dict:
 
     return _configs.get("aegis", {})
 
-
 @_lazy_load
 def get_aegis_tips_amount() -> int:
     if _configs is None:
@@ -251,7 +286,6 @@ def get_aegis_tips_amount() -> int:
 
     cfg = _configs.get("aegis", {})
     return int(cfg.get("tipsAmount", 7))
-
 
 @_lazy_load
 def get_aegis_vulnerabilities_antiquity() -> int:
@@ -261,7 +295,6 @@ def get_aegis_vulnerabilities_antiquity() -> int:
     cfg = _configs.get("aegis", {})
     return int(cfg.get("vulnerabilitiesAntiquity", 5))
 
-
 @_lazy_load
 def get_aegis_brands() -> list[dict]:
     if _configs is None:
@@ -269,7 +302,6 @@ def get_aegis_brands() -> list[dict]:
 
     cfg = _configs.get("aegis", {})
     return list(cfg.get("brands", []))
-
 
 @_lazy_load
 def get_aegis_prompts() -> dict:
@@ -291,7 +323,6 @@ def get_sentinel_config() -> dict:
 
     return _configs.get("sentinel", {})
 
-
 @_lazy_load
 def get_prompts_config() -> dict:
     if _configs is None:
@@ -305,15 +336,14 @@ def get_prompts_config() -> dict:
         "openvas": sentinel.get("openvas", {}).get("prompts", {}),
     }
 
-
 @_lazy_load
 def get_tool_prompts(tool: str) -> dict:
     prompts = get_prompts_config()
     return prompts.get(tool, {})
 
-
 @_lazy_load
-def get_tool_color_palette(tool: str) -> dict:
+def get_tool_color_palette(tool) -> dict:
+    from src.modules.sentinel.services.reports import SentinelTool
     if _configs is None:
         raise IllegalStateError("'_configs' detectado como nulo")
 
@@ -326,7 +356,6 @@ def get_tool_color_palette(tool: str) -> dict:
     tool_config = sentinel[tool_key]
     return tool_config.get("colorPalette", {})
 
-
 @_lazy_load
 def are_local_ips_allowed() -> bool:
     if _configs is None:
@@ -335,7 +364,23 @@ def are_local_ips_allowed() -> bool:
     sentinel = _configs.get("sentinel", {})
     are_allowed = sentinel.get("areLocalIpsAllowed", None)
 
-    return False if are_allowed is None else are_allowed == "true"
+    if are_allowed is None:
+        return False
+    return are_allowed is True or str(are_allowed).lower() == "true"
+
+@_lazy_load
+def get_openvas_scan_configs() -> dict[str, str]:
+    configs = get_sentinel_config()
+    return configs["openvas"]["toolConfigs"]["scanConfigs"]
+
+@_lazy_load
+def get_openvas_port_list() -> dict[str, str]:
+    configs = get_sentinel_config()
+    return configs["openvas"]["toolConfigs"]["portList"]
+
+@_lazy_load
+def get_sentinel_csv_dir() -> str:
+    return get_directory_of(DirectoryType.CSV_SENTINEL)
 
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
@@ -348,7 +393,6 @@ def get_full_config() -> dict:
         raise IllegalStateError("'_configs' detectado como nulo")
 
     return _configs.copy()
-
 
 def save_full_config(new_config: dict) -> dict:
     """Guarda la configuración completa."""

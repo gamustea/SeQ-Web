@@ -1,38 +1,30 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Tuple, Optional, Set
+from typing import List, Dict, Any, Tuple, Set
 import json
 import re
 import xml.etree.ElementTree as ET
-import xmltodict
+import lxml.etree as lxml_etree
 from pathlib import Path
-
-from lxml import etree as lxml_etree
-
-from ..model import (
-    NiktoIncident,
-    OpenVASVulnerability,
-    OpenVASScanResult
-)
 
 
 class ScanResultProcessor(ABC):
     """Procesador base para transformar datos crudos en estructuras de dominio.
-    
-    Responsabilidad única: conversión de formatos externos (XML/JSON) a 
+
+    Responsabilidad única: conversión de formatos externos (XML/JSON) a
     diccionarios/objetos del modelo sin persistencia.
     """
-    
+
     def __init__(self, logger=None):
         self.logger = logger
-    
+
     @abstractmethod
     def process(self, raw_data: Any, **context) -> Any:
         """Transforma datos crudos en estructuras de dominio listas para persistir.
-        
+
         Args:
             raw_data: Datos en formato nativo (XML, JSON, dict)
             **context: Información adicional necesaria (target, etc.)
-            
+
         Returns:
             Estructuras de datos listas para ser persistidas por los managers.
         """
@@ -41,13 +33,13 @@ class ScanResultProcessor(ABC):
 
 class NmapResultProcessor(ScanResultProcessor):
     """Procesa resultados de escaneos Nmap."""
-    
+
     def process(self, raw_data: dict | str, target: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """Extrae información de hosts y puertos de resultados Nmap.
-        
+
         Args:
             raw_data: XML string o dict parseado del resultado Nmap.
-        
+
         Returns:
             Tuple conteniendo:
             - Dict con datos del host (hostname, vendor, ip_address, mac_address)
@@ -55,16 +47,16 @@ class NmapResultProcessor(ScanResultProcessor):
         """
         if isinstance(raw_data, str):
             raw_data = self._parse_nmap_xml(raw_data)
-        
+
         parsed = self._parse_nmap_structure(raw_data, target)
-        
+
         host_data = {
             'hostname': parsed['host']['name'] or parsed['host']['addresses']['ipv4'] or target,
             'vendor': parsed['host']['vendor'],
             'ip_address': parsed['host']['addresses']['ipv4'],
             'mac_address': parsed['host']['addresses']['mac']
         }
-        
+
         ports_data = []
         for port_protocol, state, reason, product, version, given_use in parsed['ports']:
             ports_data.append({
@@ -75,9 +67,9 @@ class NmapResultProcessor(ScanResultProcessor):
                 'version': version,
                 'given_use': given_use
             })
-        
+
         return host_data, ports_data
-    
+
     def _parse_nmap_structure(self, json_data: dict, target: str) -> dict:
         """Parsea la estructura JSON de Nmap."""
         if isinstance(json_data, str):
@@ -89,10 +81,10 @@ class NmapResultProcessor(ScanResultProcessor):
             result = json_data
         else:
             raise TypeError(f"Datos deben ser str o dict, recibido: {type(json_data)}")
-        
+
         if "nmap" not in result or "scan" not in result:
             raise ValueError("Estructura JSON de Nmap inválida")
-        
+
         scan_targets = list(result["scan"].keys())
         if target not in result["scan"] and scan_targets:
             target = scan_targets[0]
@@ -106,20 +98,20 @@ class NmapResultProcessor(ScanResultProcessor):
                 },
                 'ports': []
             }
-        
+
         scan_data = result["scan"][target]
-        
+
         hostnames = scan_data.get("hostnames", [])
         hostname = hostnames[0].get("name", "") if hostnames else ""
         hostname_type = hostnames[0].get("type", "") if hostnames else ""
-        
+
         addresses = scan_data.get("addresses", {})
         ipv4 = addresses.get("ipv4", "")
         mac = addresses.get("mac", "")
-        
+
         vendor_dict = scan_data.get("vendor", {})
         vendor = vendor_dict.get(mac, "") if mac and vendor_dict else ""
-        
+
         tcp_ports = scan_data.get("tcp", {})
         ports = []
         for port_number, port_info in tcp_ports.items():
@@ -132,7 +124,7 @@ class NmapResultProcessor(ScanResultProcessor):
                 port_info.get("name", "")
             )
             ports.append(port_tuple)
-        
+
         return {
             'command': result.get("nmap", {}).get("command_line", ""),
             'host': {
@@ -146,10 +138,10 @@ class NmapResultProcessor(ScanResultProcessor):
             },
             'ports': ports
         }
-    
+
     def _parse_nmap_xml(self, xml_data: str) -> dict:
         import xml.etree.ElementTree as ET
-        
+
         root = ET.fromstring(xml_data)
 
         nmap_meta = {
@@ -255,22 +247,22 @@ class NmapResultProcessor(ScanResultProcessor):
 
 class NiktoResultProcessor(ScanResultProcessor):
     """Procesa resultados de escaneos Nikto."""
-    
+
     def process(self, raw_data: List[dict] | str) -> List[Dict[str, Any]]:
         """Extrae incidentes de seguridad de resultados Nikto.
-        
+
         Args:
             raw_data: Path al archivo XML o lista de dicts parseados.
-        
+
         Returns:
-            Lista de diccionarios con datos para crear NiktoIncident 
+            Lista de diccionarios con datos para crear NiktoIncident
             (description, osvdb_id, method, url, severity)
         """
         if isinstance(raw_data, str):
             raw_data = self._parse_nikto_xml(raw_data)
-        
+
         incidents = []
-        
+
         for block in (raw_data or []):
             block_incidents = self._extract_nikto_items(block)
             for item in block_incidents:
@@ -282,25 +274,28 @@ class NiktoResultProcessor(ScanResultProcessor):
                     'url': item.get('uri', ''),
                     'severity': severity
                 })
-        
+
         return incidents
-    
+
     def _extract_nikto_items(self, json_data: dict) -> List[dict]:
         """Extrae items individuales del XML parseado de Nikto."""
         try:
-            items = json_data['niktoscan']['scandetails']['item']
+            scan_elem = json_data.get('niktoscan') or json_data
+            if 'scandetails' in scan_elem:
+                scan_elem = scan_elem['scandetails']
+            items = scan_elem.get('item', [])
             if isinstance(items, dict):
                 return [{k.lstrip('@'): v for k, v in items.items()}]
             return [{k.lstrip('@'): v for k, v in item.items()} for item in items]
-        except KeyError:
+        except (KeyError, TypeError):
             return []
-    
+
     def _classify_threat_level(self, item: dict) -> str:
         """Clasifica la severidad de un incidente Nikto basado en patrones."""
         desc = item.get('description', '').lower()
         url = item.get('uri', '').lower()
         method = item.get('method', '').upper()
-        
+
         # Patrones críticos
         critical_patterns = [
             ".env", "env.production", "env.local", ".git/", ".git/config",
@@ -314,7 +309,7 @@ class NiktoResultProcessor(ScanResultProcessor):
         for pattern in critical_patterns:
             if pattern in desc or pattern in url:
                 return "CRITICAL"
-        
+
         # Patrones altos
         high_patterns = [
             "outdated", "vulnerable version", "known vulnerability", "cve-",
@@ -327,13 +322,13 @@ class NiktoResultProcessor(ScanResultProcessor):
             "weak cipher", "insecure cipher", "null cipher", "export cipher",
         ]
         dangerous_methods = ["PUT", "DELETE", "TRACE", "CONNECT"]
-        
+
         for pattern in high_patterns:
             if pattern in desc or pattern in url:
                 return "HIGH"
         if method in dangerous_methods and "allowed" in desc:
             return "HIGH"
-        
+
         # Patrones medios
         medium_patterns = [
             "directory indexing", "directory listing", "indexes",
@@ -351,7 +346,7 @@ class NiktoResultProcessor(ScanResultProcessor):
         for pattern in medium_patterns:
             if pattern in desc or pattern in url:
                 return "MEDIUM"
-        
+
         # Patrones bajos
         low_patterns = [
             "server banner", "server header", "x-powered-by", "server version",
@@ -365,7 +360,7 @@ class NiktoResultProcessor(ScanResultProcessor):
         for pattern in low_patterns:
             if pattern in desc or pattern in url:
                 return "LOW"
-        
+
         # Patrones informativos
         info_patterns = [
             "the site uses", "appears to be", "may be", "possibly",
@@ -375,38 +370,68 @@ class NiktoResultProcessor(ScanResultProcessor):
         for pattern in info_patterns:
             if pattern in desc:
                 return "INFO"
-        
-        return "MEDIUM"
-    
-    def _parse_nikto_xml(self, xml_path: str) -> List[Dict]:
-        import xmltodict
 
+        return "LOW"
+
+    def _parse_nikto_xml(self, xml_path: str) -> List[Dict]:
         xml_file = Path(xml_path)
         if not xml_file.is_file():
             return []
 
         try:
             content = xml_file.read_text(encoding='utf-8')
-            pattern = re.compile(r'(<niktoscan.*?>.*?</niktoscan>)', re.DOTALL)
-            matches = pattern.findall(content)
-            if not matches:
-                return []
-            return [xmltodict.parse(m) for m in matches]
-        except Exception as e:
+            content = re.sub(r'<!DOCTYPE[^>]*>', '', content)
+
+            root = ET.fromstring(content)
+            results = []
+
+            niktoscans = root.findall('.//niktoscan') or ([root] if root.tag == 'niktoscan' else [])
+
+            for niktoscan in niktoscans:
+                scandetails = niktoscan.find('scandetails')
+                container = scandetails if scandetails is not None else niktoscan
+                items = []
+                for item_el in container.findall('item'):
+                    item = {
+                        'osvdbid': item_el.get('id', ''),
+                        'method':  item_el.get('method', ''),
+                    }
+                    for child in item_el:
+                        item[child.tag] = (child.text or '').strip()
+                    items.append(item)
+                if items:
+                    results.append({'niktoscan': {'scandetails': {'item': items}}})
+
+            return results
+
+        except ET.ParseError as e:
             if self.logger:
                 self.logger.error(f"Error parseando XML Nikto: {e}")
             return []
 
+    def _normalize_parsed(self, parsed: dict) -> dict:
+        """Normaliza el dict parseado para que siempre tenga la estructura esperada por _extract_nikto_items."""
+        niktoscan = parsed.get('niktoscan', {})
+        if 'scandetails' not in niktoscan:
+            for key, value in niktoscan.items():
+                if isinstance(value, dict) and 'item' in value:
+                    return {'niktoscan': {**niktoscan, 'scandetails': value}}
+                if isinstance(value, list) and value and isinstance(value[0], dict):
+                    first = value[0]
+                    if 'item' in first or 'scandetails' in first:
+                        return {'niktoscan': {**niktoscan, 'scandetails': {**niktoscan, key: value}}}
+        return parsed
+
 
 class OpenVASResultProcessor(ScanResultProcessor):
     """Procesa resultados de escaneos OpenVAS/GVM."""
-    
+
     def process(self, raw_data: Any) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Set[str]]:
         """Procesa datos de OpenVAS (ya parseados por OpenVASTask).
-        
+
         Args:
             raw_data: XML string o dict con estructura {'vulnerabilities': [], 'scan_results': [], 'hosts': []}
-            
+
         Returns:
             Tuple conteniendo:
             - Lista de dicts con datos de vulnerabilidades (OpenVASVulnerability)
@@ -415,13 +440,13 @@ class OpenVASResultProcessor(ScanResultProcessor):
         """
         if isinstance(raw_data, str):
             raw_data = self._parse_openvas_structure(raw_data)
-        
+
         vulnerabilities = raw_data.get('vulnerabilities', [])
         scan_results = raw_data.get('scan_results', [])
         hosts = set(raw_data.get('hosts', []))
-        
+
         return vulnerabilities, scan_results, hosts
-    
+
     def _parse_openvas_structure(self, report_xml: str) -> dict:
         """Extrae estructura de datos del XML de OpenVAS."""
         if isinstance(report_xml, str):
@@ -432,39 +457,39 @@ class OpenVASResultProcessor(ScanResultProcessor):
             import xml.etree.ElementTree as ET
             xml_str = ET.tostring(report_xml, encoding='unicode')
             root = lxml_etree.fromstring(xml_str.encode('utf-8'))
-        
+
         report = root.xpath('//report')[0]
         report_id = report.get('id')
-        
+
         task = root.xpath('//task')[0]
         task_id = task.get('id')
-        
+
         results = root.xpath('//report/results/result')
-        
+
         vulnerabilities = {}
         scan_results = []
         hosts_found = set()
-        
+
         for result in results:
             host_ip = result.xpath('host/text()')[0] if result.xpath('host/text()') else None
             if not host_ip:
                 continue
-            
+
             hosts_found.add(host_ip)
-            
+
             nvt = result.xpath('nvt')[0] if result.xpath('nvt') else None
             if nvt is None:
                 continue
-            
+
             nvt_oid = nvt.get('oid')
             if not nvt_oid:
                 continue
-            
+
             # Procesar vulnerabilidad si es nueva
             if nvt_oid not in vulnerabilities:
                 vuln_data = self._extract_vulnerability_data(nvt, result)
                 vulnerabilities[nvt_oid] = vuln_data
-            
+
             # Agregar resultado de detección
             scan_results.append({
                 'nvt_oid': nvt_oid,
@@ -472,7 +497,7 @@ class OpenVASResultProcessor(ScanResultProcessor):
                 'port': result.xpath('port/text()')[0] if result.xpath('port/text()') else None,
                 'threat': result.xpath('threat/text()')[0] if result.xpath('threat/text()') else None
             })
-        
+
         return {
             'scan_data': {
                 'task_id': task_id,
@@ -482,23 +507,23 @@ class OpenVASResultProcessor(ScanResultProcessor):
             'scan_results': scan_results,
             'hosts': hosts_found
         }
-    
+
     def _extract_vulnerability_data(self, nvt, result) -> dict:
         """Extrae datos completos de una vulnerabilidad NVT."""
         name = nvt.xpath('name/text()')[0] if nvt.xpath('name/text()') else 'Unknown'
         family = nvt.xpath('family/text()')[0] if nvt.xpath('family/text()') else None
-        
+
         severity = result.xpath('severity/text()')[0] if result.xpath('severity/text()') else '0.0'
         severity_score = float(severity) if severity else 0.0
-        
+
         cvss_base = nvt.xpath('cvss_base/text()')[0] if nvt.xpath('cvss_base/text()') else None
         cvss_base_score = float(cvss_base) if cvss_base else severity_score
-        
+
         # Extraer CVSS Vector de tags
         cvss_vector = None
         cvss_tags = nvt.xpath('tags/text()')
         tags_dict = {}
-        
+
         if cvss_tags:
             tags_text = cvss_tags[0]
             for tag in tags_text.split('|'):
@@ -507,16 +532,16 @@ class OpenVASResultProcessor(ScanResultProcessor):
                     tags_dict[key.strip().lower()] = value.strip()
                 if 'cvss_base_vector=' in tag.lower():
                     cvss_vector = tag.split('=', 1)[1].strip()
-        
+
         # Extraer referencias
         refs = nvt.xpath('refs/ref')
         cve_ids, cert_refs, bugtraq_ids, other_refs = self._categorize_references(refs)
-        
+
         # Quality of Detection
         qod = nvt.xpath('qod')[0] if nvt.xpath('qod') else None
         qod_value = int(qod.xpath('value/text()')[0]) if qod and qod.xpath('value/text()') else None
         qod_type = qod.xpath('type/text()')[0] if qod and qod.xpath('type/text()') else None
-        
+
         return {
             'nvt_oid': nvt.get('oid'),
             'name': name,
@@ -540,7 +565,7 @@ class OpenVASResultProcessor(ScanResultProcessor):
             'family': family,
             'category': nvt.xpath('category/text()')[0] if nvt.xpath('category/text()') else None
         }
-    
+
     def _categorize_severity(self, score: float) -> str:
         """Clasifica la severidad según score CVSS."""
         if score == 0.0:
@@ -553,18 +578,18 @@ class OpenVASResultProcessor(ScanResultProcessor):
             return 'High'
         else:
             return 'Critical'
-    
+
     def _categorize_references(self, refs) -> Tuple[List[str], List[str], List[str], List[str]]:
         """Clasifica referencias por tipo."""
         cve_ids = []
         cert_refs = []
         bugtraq_ids = []
         other_refs = []
-        
+
         for ref in refs:
             ref_type = ref.get('type', '').upper()
             ref_id = ref.get('id', '')
-            
+
             if ref_type == 'CVE':
                 cve_ids.append(ref_id)
             elif ref_type in ['CERT-BUND', 'DFN-CERT']:
@@ -573,5 +598,5 @@ class OpenVASResultProcessor(ScanResultProcessor):
                 bugtraq_ids.append(ref_id)
             else:
                 other_refs.append(f"{ref_type}:{ref_id}")
-        
+
         return cve_ids, cert_refs, bugtraq_ids, other_refs

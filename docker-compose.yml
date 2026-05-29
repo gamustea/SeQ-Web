@@ -5,7 +5,7 @@ services:
     container_name: PostgresSeQ
     restart: unless-stopped
     env_file:
-      - API/docker/.env
+      - .env
     ports:
       - "127.0.0.1:15432:5432"
     volumes:
@@ -43,7 +43,7 @@ services:
     image: ollama/ollama:latest
     container_name: OllamaSeQ
     env_file:
-      - API/docker/.env
+      - .env
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
@@ -83,7 +83,7 @@ services:
     container_name: openvas
     restart: unless-stopped
     env_file:
-      - API/docker/.env
+      - .env
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -93,7 +93,7 @@ services:
     environment:
       USERNAME: ${OPENVAS_USERNAME}
       PASSWORD: ${OPENVAS_PASSWORD}
-      FEED_SYNC: "false"
+      FEED_SYNC: "true"
     volumes:
       - openvas_data:/data
     shm_size: "1gb"
@@ -117,16 +117,16 @@ services:
   seq:
     build:
       context: ./API
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
     container_name: SeQ-API
     restart: unless-stopped
-    env_file:
-      - API/.env
     depends_on:
       postgres:
         condition: service_healthy
       ollama:
         condition: service_healthy
+      openvas:
+        condition: service_started
     ports:
       - "127.0.0.1:5000:5000"
     environment:
@@ -154,7 +154,7 @@ services:
 
   web:
     build:
-      context: ./Interface/web
+      context: ./web
       dockerfile: Dockerfile
     container_name: SeQ-Web
     restart: unless-stopped

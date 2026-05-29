@@ -25,14 +25,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from src.modules.system.logging import SecOpsLogger
 from src.modules.aegis.exceptions import (
     ExporterError,
     ExporterFormatError,
     ExporterConfigurationError,
 )
 
-_logger = SecOpsLogger(name="AegisExporters").get_logger()
 
 def get_exporter_for_format(format_type: ExportFormat | str) -> AegisExporter:
     """Devuelve el exportador adecuado para el formato solicitado."""

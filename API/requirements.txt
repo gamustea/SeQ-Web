@@ -46,4 +46,6 @@ psutil
 duckduckgo-search>=6.0
 flask-jwt-extended>=4.6.0
 python-dotenv>=1.2.2
+APScheduler>=3.10
+croniter>=2.0
 

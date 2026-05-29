@@ -1,0 +1,305 @@
+import { defineStore } from 'pinia'
+import { ref, reactive } from 'vue'
+import { useApi } from '@/composables/useApi'
+import { useToastStore } from '@/stores/toastStore'
+
+const PAGE_SIZE = 10
+
+/**
+ * Store de Sentinel — gestiona escaneos, estadísticas, modales y documentos.
+ *
+ * Sustituye al estado disperso en sentinel.js (1,198 líneas de manipulación DOM
+ * directa). Centraliza las listas de resultados por tipo (nmap, nikto, openvas),
+ * la paginación, los modales de vista previa/detalle y los documentos asociados.
+ */
+export const useSentinelStore = defineStore('sentinel', () => {
+  const { apiFetch } = useApi()
+  const toast = useToastStore()
+
+  /* ════════════════════════════════ TABS ═══════════════════════════════ */
+  const activeTab = ref('nmap')
+
+  /* ════════════════════════════════ STATS ══════════════════════════════ */
+  const stats = reactive({ total: 0, nmap: 0, nikto: 0, openvas: 0 })
+  const loadingStats = ref(false)
+
+  /* ════════════════════════════════ SCANS POR TIPO ═════════════════════ */
+  const scans = reactive({
+    nmap:    { results: [], page: 1, total: 0, loading: false },
+    nikto:   { results: [], page: 1, total: 0, loading: false },
+    openvas: { results: [], page: 1, total: 0, loading: false },
+  })
+
+  const launching = ref(false)
+
+  /* ════════════════════════════════ MODALES ════════════════════════════ */
+  const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
+  const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
+
+  /* ── HELPERS ── */
+  /** @param {'nmap'|'nikto'|'openvas'} type */
+  function _scandata(type) { return scans[type] }
+
+  /* ════════════════════════════════ STATS ══════════════════════════════ */
+  /** Carga los contadores de escaneos de cada tipo en paralelo. */
+  async function loadStats() {
+    loadingStats.value = true
+    try {
+      const [nmap, nikto, openvas] = await Promise.all([
+        apiFetch('/sentinel/results?type=nmap&per_page=1'),
+        apiFetch('/sentinel/results?type=nikto&per_page=1'),
+        apiFetch('/sentinel/results?type=openvas&per_page=1'),
+      ])
+      const nmapData    = nmap?.ok    ? (await nmap.json())     : {}
+      const niktoData   = nikto?.ok   ? (await nikto.json())     : {}
+      const openvasData = openvas?.ok ? (await openvas.json())   : {}
+      stats.nmap    = nmapData.count    || 0
+      stats.nikto   = niktoData.count   || 0
+      stats.openvas = openvasData.count || 0
+      stats.total   = stats.nmap + stats.nikto + stats.openvas
+    } catch { /* noop */ }
+    finally { loadingStats.value = false }
+  }
+
+  /* ════════════════════════════════ SCANS ═════════════════════════════ */
+  /** Carga la página de resultados para un tipo de escaneo. */
+  async function loadScans(type, page = 1) {
+    const d = _scandata(type)
+    d.loading = true
+    try {
+      const res = await apiFetch(`/sentinel/results?type=${type}&page=${page}&per_page=${PAGE_SIZE}`)
+      if (!res?.ok) { d.results = []; return }
+      const data = await res.json()
+      d.results = data.results ?? []
+      d.page    = data.page ?? page
+      d.total   = data.count ?? 0
+    } finally { d.loading = false }
+  }
+
+  /** Cambia de pestaña y carga la primera página. */
+  function switchTab(type) {
+    activeTab.value = type
+    _scandata(type).page = 1
+    loadScans(type, 1)
+  }
+
+  /** Refresca la pestaña activa y las estadísticas. */
+  async function refreshCurrent() {
+    await loadScans(activeTab.value, _scandata(activeTab.value).page)
+    await loadStats()
+  }
+
+  /* ════════════════════════════════ LANZAR ════════════════════════════ */
+  /** Lanza un escaneo Nmap y refresca los datos.*/
+  async function launchNmap(payload) {
+    return _launch('/sentinel/nmap', payload, 'nmap')
+  }
+  /** Lanza un escaneo Nikto. */
+  async function launchNikto(payload) {
+    return _launch('/sentinel/nikto', payload, 'nikto')
+  }
+  /** Lanza un escaneo OpenVAS. */
+  async function launchOpenvas(payload) {
+    return _launch('/sentinel/openvas', payload, 'openvas')
+  }
+
+  async function _launch(endpoint, payload, type) {
+    launching.value = true
+    try {
+      const res = await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al lanzar el escaneo.', 'error')
+        return false
+      }
+      const id = data.scanIds ? data.scanIds.join(', ') : data.scanId
+      toast.show(`Escaneo ${type.toUpperCase()} iniciado (ID: ${id})`, 'success')
+      await refreshCurrent()
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    } finally { launching.value = false }
+  }
+
+  /* ════════════════════════════════ ACCIONES DE FILA ══════════════════ */
+  /** Elimina un escaneo por ID y refresca. */
+  async function deleteScan(id) {
+    const res = await apiFetch(`/sentinel/${id}`, { method: 'DELETE' })
+    if (!res?.ok) { toast.show('No se pudo eliminar el escaneo.', 'error'); return false }
+    await refreshCurrent()
+    return true
+  }
+
+  /** Cancela un escaneo en ejecución. */
+  async function cancelScan(id) {
+    const res = await apiFetch(`/sentinel/scans/${id}/cancel`, { method: 'POST' })
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => ({}))
+      toast.show(data.message || 'No se pudo cancelar el escaneo.', 'error')
+      return false
+    }
+    await refreshCurrent()
+    return true
+  }
+
+  /* ════════════════════════════════ VISTA PREVIA ══════════════════════ */
+  /** Abre el modal de vista previa y carga scan + documentos. */
+  async function openPreview(scanId, type) {
+    preview.scanId = scanId
+    preview.type = type
+    preview.show = true
+    preview.scan = null
+    preview.docs = []
+    preview.docsLoading = true
+
+    try {
+      const [scanRes, docsRes] = await Promise.all([
+        apiFetch(`/sentinel/results/${scanId}`),
+        apiFetch(`/sentinel/scan/${scanId}/documents`),
+      ])
+      if (scanRes?.ok) {
+        const data = await scanRes.json()
+        preview.scan = data.result ?? data
+      }
+      if (docsRes?.ok) {
+        const data = await docsRes.json()
+        preview.docs = data.documents ?? []
+      }
+    } catch { /* noop */ }
+    finally { preview.docsLoading = false }
+  }
+
+  /** Cierra el modal de vista previa. */
+  function closePreview() {
+    preview.show = false
+    preview.scanId = null
+    preview.scan = null
+    preview.docs = []
+  }
+
+  /** Refresca los documentos dentro del modal de vista previa. */
+  async function refreshPreviewDocs() {
+    if (!preview.scanId) return
+    preview.docsLoading = true
+    try {
+      const res = await apiFetch(`/sentinel/scan/${preview.scanId}/documents`)
+      if (res?.ok) {
+        const data = await res.json()
+        preview.docs = data.documents ?? []
+      }
+    } finally { preview.docsLoading = false }
+  }
+
+  /* ════════════════════════════════ DETALLES ══════════════════════════ */
+  /** Abre el modal de detalles completos. */
+  async function openDetails(scanId, type) {
+    details.scanId = scanId
+    details.type = type
+    details.show = true
+    details.scan = null
+    details.docs = []
+    details.docsLoading = true
+
+    try {
+      const [scanRes, docsRes] = await Promise.all([
+        apiFetch(`/sentinel/results/${scanId}`),
+        apiFetch(`/sentinel/scan/${scanId}/documents`),
+      ])
+      if (scanRes?.ok) {
+        const data = await scanRes.json()
+        details.scan = data.result ?? data
+      }
+      if (docsRes?.ok) {
+        const data = await docsRes.json()
+        details.docs = data.documents ?? []
+      }
+    } finally { details.docsLoading = false }
+  }
+
+  /** Cierra el modal de detalles. */
+  function closeDetails() {
+    details.show = false
+    details.scanId = null
+    details.scan = null
+    details.docs = []
+  }
+
+  /** Refresca documentos en el modal de detalles. */
+  async function refreshDetailsDocs() {
+    if (!details.scanId) return
+    details.docsLoading = true
+    try {
+      const res = await apiFetch(`/sentinel/scan/${details.scanId}/documents`)
+      if (res?.ok) {
+        const data = await res.json()
+        details.docs = data.documents ?? []
+      }
+    } finally { details.docsLoading = false }
+  }
+
+  /* ════════════════════════════════ DOCUMENTOS PDF ════════════════════ */
+  /** Solicita la generación de un PDF para un escaneo (opcionalmente con IA). */
+  async function generatePdf(scanId, useAi = false) {
+    const url = `/sentinel/generate-pdf?id=${scanId}${useAi ? '&aiReport=true' : ''}`
+    const res = await apiFetch(url)
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => ({}))
+      toast.show(data.message || 'Error al generar documento', 'error')
+      return false
+    }
+    toast.show('Documento en generación...', 'success')
+    return true
+  }
+
+  /** Descarga un documento PDF por ID. */
+  async function downloadDocument(docId) {
+    try {
+      const res = await apiFetch(`/sentinel/document/${docId}/download`)
+      if (!res?.ok) { toast.show('No se pudo descargar el documento.', 'error'); return false }
+      const blob = await res.blob()
+      const cd = res.headers.get('Content-Disposition') ?? ''
+      const name = cd.match(/filename="?([^";\n]+)"?/i)?.[1] ?? `scan_${docId}.pdf`
+      _triggerDownload(blob, name)
+      toast.show('Documento descargado.', 'success')
+      return true
+    } catch (e) {
+      toast.show('Error al descargar: ' + e.message, 'error')
+      return false
+    }
+  }
+
+  /** Elimina un documento por ID. */
+  async function deleteDocument(docId) {
+    const res = await apiFetch(`/sentinel/document/${docId}`, { method: 'DELETE' })
+    if (!res?.ok) {
+      const err = await res?.json().catch(() => ({}))
+      toast.show(err.error || 'No se pudo eliminar el documento.', 'error')
+      return false
+    }
+    toast.show('Documento eliminado.', 'success')
+    return true
+  }
+
+  /* ── UTIL ── */
+  function _triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 1000)
+  }
+
+  return {
+    activeTab, stats, loadingStats, scans, launching,
+    preview, details,
+    loadStats, loadScans, switchTab, refreshCurrent,
+    launchNmap, launchNikto, launchOpenvas,
+    deleteScan, cancelScan,
+    openPreview, closePreview, refreshPreviewDocs,
+    openDetails, closeDetails, refreshDetailsDocs,
+    generatePdf, downloadDocument, deleteDocument,
+  }
+})

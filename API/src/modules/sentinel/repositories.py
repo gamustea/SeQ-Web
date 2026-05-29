@@ -24,12 +24,13 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session, joinedload
+from src.modules.infrastructure import BaseRepository, UnitOfWork
 
-from src.modules.sentinel.model import (
+from .model import (
     Host,
     NiktoIncident,
     NiktoScan,
@@ -39,11 +40,12 @@ from src.modules.sentinel.model import (
     OpenVASScan,
     OpenVASScanResult,
     Port,
+    ProgramedScan,
     Scan,
     ScanStatus,
+    ScanType,
     SentinelDocument,
 )
-from src.modules.infrastructure import BaseRepository, UnitOfWork
 
 
 class ScanRepository(BaseRepository[Scan]):
@@ -68,27 +70,28 @@ class ScanRepository(BaseRepository[Scan]):
     ...     repo.save(scan)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(Scan, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(Scan, uow=uow, session=session)
 
     # =========================================================================
     # TYPED GETTERS BY SUBTYPE
     # =========================================================================
 
-    def get_nmap_by_id(self, scan_id: int) -> Optional[NmapScan]:
-        return self._session.get(NmapScan, scan_id)
-
-    def get_nikto_by_id(self, scan_id: int) -> Optional[NiktoScan]:
-        return self._session.get(NiktoScan, scan_id)
-
-    def get_openvas_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
-        return self._session.get(OpenVASScan, scan_id)
+    def get_by_id_and_type(self, scan_type: type[Scan], scan_id: int):
+        return self._session.get(scan_type, scan_id)
 
     # =========================================================================
-    # EAGER-LOADED QUERIES (for detached object usage, e.g. PDF generation)
+    # EAGER-LOADED QUERIES (background-thread use only)
+    # ─────────────────────────────────────────────────────────────────────────
+    # These methods eagerly load relationships via joinedload so that objects
+    # survive UnitOfWork.close() in background threads where lazy loading
+    # is unavailable. Foreground (request-context) code should use
+    # get_by_id_and_type() instead — lazy loading works with request-scoped
+    # sessions.
     # =========================================================================
 
     def get_nmap_rich(self, scan_id: int) -> Optional[NmapScan]:
+        """[Background thread] Retrieve NmapScan with relationships eagerly loaded."""
         return (
             self._session.query(NmapScan)
             .filter(NmapScan.id == scan_id)
@@ -100,6 +103,7 @@ class ScanRepository(BaseRepository[Scan]):
         )
 
     def get_nikto_rich(self, scan_id: int) -> Optional[NiktoScan]:
+        """[Background thread] Retrieve NiktoScan with relationships eagerly loaded."""
         return (
             self._session.query(NiktoScan)
             .filter(NiktoScan.id == scan_id)
@@ -108,46 +112,29 @@ class ScanRepository(BaseRepository[Scan]):
         )
 
     def get_openvas_rich(self, scan_id: int) -> Optional[OpenVASScan]:
+        """[Background thread] Retrieve OpenVASScan with relationships eagerly loaded."""
         return (
             self._session.query(OpenVASScan)
             .filter(OpenVASScan.id == scan_id)
             .options(
+                joinedload(OpenVASScan.host),
                 joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.vulnerability),
                 joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.host),
             )
             .one_or_none()
         )
 
-    def get_nmap_by_user(self, user_id: int) -> List[NmapScan]:
+    def get_by_type_and_user(
+        self,
+        scan_type: type[Scan],
+        user_id: int
+    ) -> List[Scan]:
         return (
-            self._session.query(NmapScan)
-            .filter(NmapScan.user_id == user_id)
-            .options(
-                joinedload(NmapScan.open_ports_relation).joinedload(OpenPort.port),
-                joinedload(NmapScan.host),
-            )
+            self._session.query(scan_type)
+            .filter(scan_type.user_id == user_id)
             .all()
         )
-
-    def get_nikto_by_user(self, user_id: int) -> List[NiktoScan]:
-        return (
-            self._session.query(NiktoScan)
-            .filter(NiktoScan.user_id == user_id)
-            .options(joinedload(NiktoScan.incidents), joinedload(NiktoScan.host))
-            .all()
-        )
-
-    def get_openvas_by_user(self, user_id: int) -> List[OpenVASScan]:
-        return (
-            self._session.query(OpenVASScan)
-            .filter(OpenVASScan.user_id == user_id)
-            .options(
-                joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.vulnerability),
-                joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.host),
-            )
-            .all()
-        )
-
+    
     # =========================================================================
     # DOMAIN QUERIES
     # =========================================================================
@@ -160,11 +147,10 @@ class ScanRepository(BaseRepository[Scan]):
             .all()
         )
 
-    def get_by_user_and_type(self, user_id: int, scan_type: str) -> List[Scan]:
+    def get_by_user_and_type(self, user_id: int, scan_type: ScanType) -> List[Scan]:
         return (
             self._session.query(Scan)
             .filter(Scan.user_id == user_id, Scan.scan_type == scan_type)
-            .options(joinedload(Scan.host))
             .order_by(Scan.started_at.desc())
             .all()
         )
@@ -345,8 +331,8 @@ class SentinelReportRepository(BaseRepository[SentinelDocument]):
     ...     repo.delete(doc)
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        super().__init__(SentinelDocument, uow)
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(SentinelDocument, uow=uow, session=session)
 
     def get_document(self, scan_id: int) -> Optional[SentinelDocument]:
         return (
@@ -379,37 +365,205 @@ class SentinelReportRepository(BaseRepository[SentinelDocument]):
             .all()
         )
 
-    def get_by_id_with_details(self, doc_id: int) -> Optional[SentinelDocument]:
-        """
-        Retrieve a document with all its relationships eager-loaded.
 
-        Loads: user, scan.
+class ProgramedScanRepository(BaseRepository[ProgramedScan]):
+    """
+    Repository for the ProgramedScan entity (scheduled/recurring scans).
+
+    Manages programed scan lifecycle: querying by user and type,
+    finding due executions for the scheduler, and recording run timestamps.
+
+    Attributes:
+        _model:  ProgramedScan (inherited from BaseRepository).
+        _uow:    Active Unit of Work (inherited from BaseRepository).
+
+    Example:
+    >>> with UnitOfWork() as uow:
+    ...     repo = ProgramedScanRepository(uow)
+    ...     due_scans = repo.get_due()
+    ...     for ps in due_scans:
+    ...         repo.update_last_run(ps)
+    """
+
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(ProgramedScan, uow=uow, session=session)
+
+    # =========================================================================
+    # QUERY METHODS
+    # =========================================================================
+
+    def get_by_user(self, user_id: int) -> List[ProgramedScan]:
+        """
+        Retrieve all programed scans for a user, ordered by creation date.
 
         Args:
-            doc_id: Primary key of the document.
+            user_id: User primary key.
 
         Returns:
-            SentinelDocument with relationships loaded, or None if not found.
+            List of ProgramedScan instances sorted newest‑first.
         """
         return (
-            self._session.query(SentinelDocument)
-            .filter(SentinelDocument.id == doc_id)
-            .options(
-                joinedload(SentinelDocument.user),
-                joinedload(SentinelDocument.scan),
-            )
-            .one_or_none()
+            self._session.query(ProgramedScan)
+            .filter(ProgramedScan.user_id == user_id)
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
         )
 
-    def update_status(self, document_id: int, status: str, filename: Optional[str] = None) -> Optional[SentinelDocument]:
-        doc = self._session.get(SentinelDocument, document_id)
-        if doc is None:
-            return None
+    def get_active_by_user(self, user_id: int) -> List[ProgramedScan]:
+        """
+        Retrieve active programed scans for a user.
 
-        from datetime import datetime as _dt
-        doc.status = status # type: ignore
-        if filename is not None:
-            doc.filename = filename # type: ignore
-        if status == "done":
-            doc.generated_at = _dt.utcnow() # type: ignore
-        return doc
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of active ProgramedScan instances.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(
+                ProgramedScan.user_id == user_id,
+                ProgramedScan.is_active.is_(True),
+            )
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
+        )
+
+    def get_by_user_and_type(self, user_id: int, scan_type: ScanType) -> List[ProgramedScan]:
+        """
+        Retrieve programed scans for a user filtered by scan type.
+
+        Args:
+            user_id:    User primary key.
+            scan_type:  Scan type discriminator ("nmap", "nikto", "openvas").
+
+        Returns:
+            List of matching ProgramedScan instances.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(
+                ProgramedScan.user_id == user_id,
+                ProgramedScan.scan_type == scan_type,
+            )
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
+        )
+
+    def get_due(self) -> List[ProgramedScan]:
+        """
+        Retrieve all active programed scans whose next_run_at is in the past.
+
+        Used by the scheduler to find scans that are due for execution. Only
+        returns scans that have both is_active=True and next_run_at populated.
+
+        Returns:
+            List of ProgramedScan instances that need to run.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(
+                ProgramedScan.is_active.is_(True),
+                ProgramedScan.next_run_at.isnot(None),
+                ProgramedScan.next_run_at <= datetime.utcnow(),  # type: ignore
+            )
+            .all()
+        )
+
+    def get_all_active(self) -> List[ProgramedScan]:
+        """
+        Retrieve all active programed scans regardless of user.
+
+        Used on scheduler startup to restore all scheduled jobs from the
+        database after a restart.
+
+        Returns:
+            List of active ProgramedScan instances.
+        """
+        return (
+            self._session.query(ProgramedScan)
+            .filter(ProgramedScan.is_active.is_(True))
+            .order_by(ProgramedScan.created_at.desc())
+            .all()
+        )
+
+    # =========================================================================
+    # MUTATION METHODS
+    # =========================================================================
+
+    def update_last_run(self, ps: ProgramedScan) -> ProgramedScan:
+        """
+        Record that a programed scan has just executed.
+
+        Sets last_run_at to the current UTC time and advances next_run_at
+        by the configured interval so the scheduler picks up the next
+        occurrence automatically.
+
+        Args:
+            ps: The ProgramedScan that executed.
+
+        Returns:
+            The same ProgramedScan instance after flush.
+        """
+        ps.last_run_at = datetime.utcnow()  # type: ignore
+        ps.next_run_at = self._compute_next_run(
+            ps.schedule_type, ps.schedule_config
+        )  # type: ignore
+        return self.update(ps)
+
+    def update_next_run(
+        self,
+        ps: ProgramedScan,
+        next_run_at: datetime
+    ) -> ProgramedScan:
+        ps.next_run_at = next_run_at   # type: ignore
+        return self.update(ps)
+
+    def create(
+        self,
+        user_id: int,
+        scan_type: ScanType,
+        arguments: dict,
+        schedule_type: str,
+        schedule_config: dict,
+    ) -> ProgramedScan:
+        """
+        Create and persist a new programed scan.
+
+        Computes an initial next_run_at from schedule_config so the
+        scheduler can pick it up immediately.
+
+        Args:
+            user_id:         Owner user primary key.
+            scan_type:       Scan discriminator ("nmap", "nikto", "openvas").
+            arguments:       Scan parameters (e.g. {"ports": "22,80"}).
+            schedule_type:   "interval" or "cron".
+            schedule_config: Schedule definition (e.g. {"every": 60, "unit": "minutes"}).
+
+        Returns:
+            The newly persisted ProgramedScan instance.
+        """
+        next_run = self._compute_next_run(schedule_type, schedule_config)
+
+        ps = ProgramedScan(
+            user_id=user_id,
+            scan_type=scan_type,
+            arguments=arguments,
+            schedule_type=schedule_type,
+            schedule_config=schedule_config,
+            next_run_at=next_run,
+        )
+        return self.save(ps)
+
+    @staticmethod
+    def _compute_next_run(
+        schedule_type: str,
+        schedule_config: dict,
+    ) -> datetime:
+        if schedule_type == "interval":
+            every = schedule_config.get("every", 60)
+            unit = schedule_config.get("unit", "minutes")
+            kwargs = {unit: every}
+            return datetime.utcnow() + timedelta(**kwargs)
+        # "cron" or unknown: run immediately
+        return datetime.utcnow()

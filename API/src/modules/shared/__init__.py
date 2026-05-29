@@ -19,7 +19,8 @@ from ._endpoints    import (
     normalize_target,
     require_json,
     require_str,
-    require_arg
+    require_arg,
+    limiter
 )
 
 __all__ = [
@@ -32,5 +33,6 @@ __all__ = [
     "normalize_target",
     "require_json",
     "require_str",
-    "require_arg"
+    "require_arg",
+    "limiter"
 ]
