@@ -45,7 +45,7 @@ from flask import Blueprint, send_from_directory, jsonify
 
 pages_bp = Blueprint("pages", __name__)
 
-_PAGES_DIR = r"C:\Users\gmiga\Documents\GitHub\SecOps\web\pages"
+_PAGES_DIR = r"C:\Users\gmiga\Documents\GitHub\SecOps\web\legacy"
 
 @pages_bp.route("/login")
 def serve_login():

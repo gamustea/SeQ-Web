@@ -1,10 +1,12 @@
 # SeQ — Security Operations Platform
 
-**SeQ** es una plataforma de operaciones de seguridad compuesta por tres módulos principales:
+**SeQ** es una plataforma de operaciones de seguridad compuesta por tres módulos principales, con interfaces web y móvil:
 
 - **Sentinel** — API REST de escaneo de vulnerabilidades con análisis de IA (operativo).
 - **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (operativo, en expansión).
 - **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades, potenciado por IA local (operativo).
+- **SeQ Web** — Interfaz web SPA (Vue 3 + Vite + Pinia) para interactuar con todos los módulos.
+- **AcheronMobile** — App Android/Kotlin con módulo de cifrado AcheronCore (Java).
 
 ---
 
@@ -67,12 +69,12 @@ Antes de ejecutar el proyecto, asegúrate de tener instalado:
 - Nikto (`sudo apt install nikto`)
 - OpenVAS / Greenbone Vulnerability Manager (GVM)
 - Docker y Docker Compose (para levantar los servicios de infraestructura)
-- (Opcional, para Aegis) **Ollama** con al menos un modelo de lenguaje compatible con tool calling (por ejemplo, `llama3.1`)
+- (Opcional, para Aegis) **Ollama** con al menos un modelo de lenguaje compatible con tool calling (por ejemplo, `llama3.2`)
 
 Instala las dependencias de Python:
 
 ```bash
-pip install -r REQUIREMENTS.txt
+pip install -r requirements.txt
 ```
 
 ---
@@ -82,7 +84,7 @@ pip install -r REQUIREMENTS.txt
 ```bash
 git clone https://github.com/gamustea/SeQ.git
 cd SeQ/API
-python init_db.py   # Inicializa el esquema de la base de datos
+# Configurar CREATE_DATABASE=True en API/.env para inicializar la BD
 python run.py
 ```
 
@@ -541,54 +543,49 @@ Content-Type: application/json
 
 ## Infraestructura Docker
 
-El directorio `API/docker/` contiene los archivos Docker Compose para levantar los servicios de apoyo necesarios.
+El archivo `docker-compose.yml` en la raíz del repositorio orquesta todos los servicios mediante dos perfiles:
+
+- **`dev`**: Infraestructura únicamente (PostgreSQL, Ollama, OpenVAS). Para desarrollo local con la API ejecutándose en Python.
+- **`container`**: Infraestructura + contenedores de la API y frontend web. Para despliegue completo.
 
 ### Servicios principales
 
 | Servicio | Puerto | Descripción |
 |---|---|---|
 | **PostgreSQL** | 15432 | Base de datos principal |
-| **OpenVAS/GVM** | 9390 | Escáner de vulnerabilidades (API Greenbone) |
+| **OpenVAS/GVM** | 9390, 9392 | Escáner de vulnerabilidades (API Greenbone y UI web) |
 | **Ollama** | 11434 | IA local para Sentinel y Aegis |
 
 ### Levantamiento de servicios
 
 ```bash
-# Levantar todos los servicios de infraestructura
-cd API/docker
-docker-compose up -d
+# Solo infraestructura (desarrollo local)
+docker compose --profile dev up -d
 
-# O individualmente por servicio:
-cd API/docker/postgres     # PostgreSQL
-docker-compose up -d
-
-cd API/docker/openvas       # OpenVAS / GVM
-docker-compose up -d
-
-cd API/docker/ollama        # Ollama (IA local)
-docker-compose up -d
+# Despliegue completo (API + frontend web + infraestructura)
+docker compose --profile container up -d
 ```
 
 ### Configuración de Ollama
 
-Para IA en Sentinel y Aegis, se requiere Ollama con un modelo compatible (ej. `llama3.1`):
+Para IA en Sentinel y Aegis, se requiere Ollama con un modelo compatible (por defecto `llama3.2`):
 
 ```bash
 # Desde el contenedor Ollama
-docker exec -it ollama ollama pull llama3.1
+docker exec -it OllamaSeQ ollama pull llama3.2
 
 # O directamente en el host si Ollama está instalado
-ollama pull llama3.1
+ollama pull llama3.2
 ```
 
-Las variables de entorno para la API se configuran en `.env`:
+Las variables de entorno para la API se configuran en `API/.env`:
 
 ```
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.1
+OLLAMA_MODEL=llama3.2
 ```
 
-> **Nota**: OpenVAS puede tardar varios minutos en iniciar la primera vez (descarga de plugins NVT). Verifica el estado en `http://localhost:9390`.
+> **Nota**: OpenVAS puede tardar ~15 minutos en iniciar la primera vez (descarga de plugins NVT). Verifica el estado en `http://localhost:9392`.
 
 ---
 
@@ -598,33 +595,30 @@ OLLAMA_MODEL=llama3.1
 SeQ/
 ├── API/                          # API REST Flask
 │   ├── run.py                    # Punto de entrada
+│   ├── Dockerfile                # Imagen Docker de la API
 │   ├── requirements.txt          # Dependencias Python
-│   ├── SecOpsConfig.json        # Prompts de IA
-│   ├── .env                   # Configuración (no hacer commit)
-│   ├── docker/
-│   │   ├── Dockerfile          # Imagen Docker de la API
-│   │   ├── entrypoint.sh       # Script de entrada
-│   │   └── .env             # Variables para contenedor
-│   ├── data/                  # Datos de salida (ignorado en git)
-│   │   ├── aegis/output/
-│   │   └── sentinel/output/
+│   ├── SecOpsConfig.json        # Configuración y prompts de IA
 │   └── src/
-│       ├── __init__.py
 │       └── modules/
-│           ├── users/            # Usuarios, auth, permisos
+│           ├── users/            # Usuarios, OAuth 2.0 + JWT
 │           ├── shared/           # Componentes compartidos
-│           ├── sentinel        # Escaneo: Nmap, Nikto, OpenVAS
-│           ├── aegis          # Píldoras de concienciación
-│           ├── acheron        # Vault de secretos
-│           ├── pages          # UI estática
-│           ├── health        # Health checks
-│           ├── exceptions    # Excepciones personalizadas
-│           └── misc         # Utilidades
+│           ├── sentinel/         # Escaneo: Nmap, Nikto, OpenVAS
+│           ├── aegis/            # Píldoras de concienciación
+│           ├── acheron/          # Vault de secretos cifrados
+│           ├── pages/            # UI estática
+│           ├── system/           # Configuración y logging
+│           └── infrastructure/   # Utilidades internas
+├── web/                          # Frontend web
+│   ├── Dockerfile                # Imagen Docker del frontend
+│   ├── nginx.conf                # Configuración Nginx (producción)
+│   └── app/                      # Vue 3 SPA (Vite + Pinia + Vue Router)
+├── mobile/                       # App móvil
+│   └── AcheronMobile/            # Android/Kotlin + AcheronCore (Java)
 ├── docker-compose.yml            # Orquestación de servicios
-├── Interface/                  # Frontends (en desarrollo)
-├── docs/                      # Documentación (auto-generada)
-└── .github/workflows/          # CI/CD
-    └── sync-docs.yml          # Generación de docs
+├── .github/workflows/            # CI/CD
+│   ├── sync-docs.yml             # Generación de docs (pdoc)
+│   └── static.yml                # Deploy a GitHub Pages
+└── .env                          # Variables de entorno (no commitear)
 ```
 
 ---
@@ -640,10 +634,11 @@ SeQ/
 | Escaneo web | Nikto |
 | Análisis de vulnerabilidades | OpenVAS / GVM |
 | Generación de PDFs | ReportLab + Pillow |
-| Concienciación y generación de contenido | Ollama (IA local) + prompts especializados |
-| Obtención de vulnerabilidades recientes | Feeds de INCIBE-CERT + API pública CIRCL/NVD |
-| App móvil | Android / Kotlin |
-| Lógica de vault | Java + Lombok |
+| Concienciación y generación de contenido | Ollama (IA local, llama3.2) + prompts especializados |
+| Obtención de vulnerabilidades recientes | INCIBE-CERT + API pública CIRCL/NVD |
+| Frontend web | Vue 3 (Vite + Pinia + Vue Router) |
+| App móvil | Android / Kotlin + Jetpack Compose |
+| Lógica de vault | AcheronCore (Java) |
 | Rate limiting | Flask-Limiter |
 | Infraestructura | Docker + Docker Compose |
 
