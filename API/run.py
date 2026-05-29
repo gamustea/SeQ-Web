@@ -6,18 +6,18 @@ Responsabilidades de este fiche:
     2. Configurar CORS y rate limiting.
     3. Registrar los blueprints.
     4. Instalar manejadores de error globales.
-    5. Servir la interfaz web estática.
-    6. Gestionar el apagado graceful.
-    7. Arrancar el servidor de desarrollo si se ejecuta directamente.
+    5. Gestionar el apagado graceful.
+    6. Arrancar el servidor de desarrollo si se ejecuta directamente.
 
-La ruta comodín de la UI se registra DESPUÉS de los blueprints para que
-los endpoints de la API siempre tengan prioridad.
+En producción, Nginx sirve el frontend Vue. En desarrollo, Vite sirve
+el frontend con proxy inverso al backend. La API no sirve contenido
+estático.
 """
 
 import os
 import signal
 
-from flask                  import Flask, jsonify, request, send_from_directory
+from flask                  import Flask, jsonify, request
 from flask_cors             import CORS
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
@@ -45,9 +45,6 @@ import src.modules.system.config_reading as CR
 
 
 APP_CONTEXT = CR.get_app_context()
-_UI_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "web")
-)
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
@@ -101,8 +98,7 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     """
     Factory de la aplicación Flask SeQ.
 
-    Configura todos los componentes necesarios para servir la API REST
-    y la interfaz web estática:
+    Configura todos los componentes necesarios para servir la API REST.
 
     Args:
         fresh_db_init: Si True, reinicializa la base de datos completamente
@@ -133,7 +129,6 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     app.register_blueprint(acheron_bp,  url_prefix="/acheron")
     app.register_blueprint(aegis_bp,    url_prefix="/aegis")
     app.register_blueprint(pages_bp,    url_prefix="/pages")
-    _register_ui_route(app)
 
     _logger.info("Registrando manejadores de error globales...")
     _register_error_handlers(app)
@@ -155,34 +150,6 @@ def create_app(fresh_db_init: bool = False) -> Flask:
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
-
-def _register_ui_route(app: Flask) -> None:
-    """
-    Sirve la interfaz web estática (Interface/web/) bajo la ruta raíz.
-
-    Reglas de resolución:
-      - Si la ruta coincide con un fichero existente dentro de _UI_DIR,
-        se sirve directamente (CSS, JS, imágenes, etc.).
-      - Cualquier otra ruta desconocida redirige al hub principal
-        (hub/index.html), lo que permite navegación client-side.
-
-    IMPORTANTE: esta función debe llamarse DESPUÉS de register_blueprints()
-    para que los endpoints de la API (/oauth/*, /sentinel/*, etc.) tengan
-    prioridad sobre el comodín.
-    """
-    @app.route("/", defaults={"path": ""})
-    @app.route("/<path:path>")
-    def serve_ui(path: str):
-        # No interceptar rutas de la API ni del blueprint /pages
-        if path.startswith(("pages/", "oauth/", "sentinel/", "aegis/", "users/", "acheron/")):
-            from flask import abort
-            abort(404)
-
-        target = os.path.join(_UI_DIR, path)
-        if path and os.path.isfile(target):
-            return send_from_directory(_UI_DIR, path)
-
-        return send_from_directory(_UI_DIR, "pages/hub.html")
 
 def _register_error_handlers(app: Flask) -> None:
     """

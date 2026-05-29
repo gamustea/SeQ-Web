@@ -4,7 +4,7 @@
 
 Monorepo with three components:
 - **API** (`API/`) — Python/Flask REST backend (the core)
-- **web** (`web/`) — static HTML/CSS/JS frontend, served by Flask catch-all route (not a SPA)
+- **web** (`web/`) — Vue 3 SPA in `web/app/` (Vite + Pinia + Vue Router), built to static files and served by Nginx in production or the Vite dev server in development
 - **mobile** (`mobile/AcheronMobile/`) — Android/Kotlin app with AcheronCore Java module
 
 The `API/` directory is the primary work area. The web and mobile dirs are separate projects with their own builds.
@@ -16,6 +16,11 @@ The `API/` directory is the primary work area. The web and mobile dirs are separ
 ```bash
 docker compose --profile dev up -d   # postgres (15432), ollama, openvas
 cd API && python run.py               # starts on 0.0.0.0:5000
+```
+
+Development — Vue frontend (separate terminal):
+```bash
+cd web/app && pnpm dev               # Vite dev server on :5173, proxies API to :5000
 ```
 
 Docker compose has two profiles:
@@ -97,7 +102,6 @@ Default model is **llama3.2** (set in `config_reading.py`), not llama3.1 (README
 - The `Interface/` directory referenced in README no longer exists — web files are in `web/` at repo root.
 - Docker files are colocated with their components: `API/Dockerfile` and `web/Dockerfile`. The old `API/docker/` directory has been removed.
 - OpenVAS only accepts a single host per scan (not CIDR ranges).
-- The API serves static web files from `../web` automatically via catch-all route in `run.py`. API route blueprints take priority over the UI wildcard.
 - `_init_db()` is destructive — it drops and recreates the entire database.
 
 ## CI
