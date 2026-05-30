@@ -42,6 +42,7 @@ Escaneos Programados
     POST   /sentinel/scheduled-scans                — Crear un escaneo programado
     GET    /sentinel/scheduled-scans                — Listar escaneos programados del usuario
     DELETE /sentinel/scheduled-scans/<ps_id>        — Revocar un escaneo programado
+    DELETE /sentinel/scheduled-scans/<ps_id>/permanent — Eliminar permanentemente un escaneo programado
 
 ────────────────────────────────────────────────────────────────────────────────
 AUTENTICACIÓN
@@ -905,6 +906,28 @@ def revoke_scheduled_scan(ps_id: int):
     _logger.info(f"Escaneo programado {ps_id} revocado por {user.username}")
     return jsonify({
         "message": "Escaneo programado revocado correctamente",
+        "programedScanId": ps_id,
+        "scanType": ps.scan_type,
+        "user": user.username,
+    }), 200
+
+@sentinel_bp.delete("/scheduled-scans/<int:ps_id>/permanent")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_DELETE])
+@limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=_logger)
+def delete_scheduled_scan(ps_id: int):
+    """Elimina permanentemente un escaneo programado de la base de datos.
+
+    A diferencia de la revocacion (DELETE /scheduled-scans/<int:ps_id>) que
+    solo desactiva el escaneo, este endpoint lo elimina completamente.
+    """
+    user = get_current_user()
+    ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
+    ProgramedScanManager.delete(ps_id, user.id) # type: ignore
+    _logger.info(f"Escaneo programado {ps_id} eliminado permanentemente por {user.username}")
+    return jsonify({
+        "message": "Escaneo programado eliminado permanentemente",
         "programedScanId": ps_id,
         "scanType": ps.scan_type,
         "user": user.username,

@@ -32,6 +32,10 @@ export const useSentinelStore = defineStore('sentinel', () => {
 
   const launching = ref(false)
 
+  /* ════════════════════════════════ PROGRAMADOS ════════════════════════ */
+  const scheduled = reactive({ scans: [], loading: false })
+  const scheduling = reactive({ showForm: false, submitting: false })
+
   /* ════════════════════════════════ MODALES ════════════════════════════ */
   const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
   const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
@@ -281,6 +285,61 @@ export const useSentinelStore = defineStore('sentinel', () => {
     return true
   }
 
+  /* ════════════════════════════════ PROGRAMADOS ════════════════════════ */
+  /** Carga los escaneos programados del usuario. */
+  async function loadScheduledScans() {
+    scheduled.loading = true
+    try {
+      const res = await apiFetch('/sentinel/scheduled-scans')
+      if (!res?.ok) { scheduled.scans = []; return }
+      const data = await res.json()
+      scheduled.scans = data.scheduledScans ?? []
+    } finally { scheduled.loading = false }
+  }
+
+  /** Crea un nuevo escaneo programado. */
+  async function createScheduledScan(payload) {
+    scheduling.submitting = true
+    try {
+      const res = await apiFetch('/sentinel/scheduled-scans', { method: 'POST', body: JSON.stringify(payload) })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al crear escaneo programado.', 'error')
+        return false
+      }
+      toast.show(`Escaneo programado creado (ID: ${data.programedScanId})`, 'success')
+      await loadScheduledScans()
+      scheduling.showForm = false
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    } finally { scheduling.submitting = false }
+  }
+
+  /** Revoca (desactiva) un escaneo programado. */
+  async function deactivateScheduledScan(id) {
+    const res = await apiFetch(`/sentinel/scheduled-scans/${id}`, { method: 'DELETE' })
+    if (!res?.ok) { toast.show('No se pudo revocar el escaneo programado.', 'error'); return false }
+    toast.show('Escaneo programado revocado.', 'success')
+    await loadScheduledScans()
+    return true
+  }
+
+  /** Elimina permanentemente un escaneo programado. */
+  async function deleteScheduledScan(id) {
+    const res = await apiFetch(`/sentinel/scheduled-scans/${id}/permanent`, { method: 'DELETE' })
+    if (!res?.ok) { toast.show('No se pudo eliminar el escaneo programado.', 'error'); return false }
+    toast.show('Escaneo programado eliminado.', 'success')
+    await loadScheduledScans()
+    return true
+  }
+
+  /** Muestra/oculta el formulario de creacion. */
+  function toggleScheduledForm() {
+    scheduling.showForm = !scheduling.showForm
+  }
+
   /* ── UTIL ── */
   function _triggerDownload(blob, filename) {
     const url = URL.createObjectURL(blob)
@@ -294,10 +353,12 @@ export const useSentinelStore = defineStore('sentinel', () => {
 
   return {
     activeTab, stats, loadingStats, scans, launching,
+    scheduled, scheduling,
     preview, details,
     loadStats, loadScans, switchTab, refreshCurrent,
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
+    loadScheduledScans, createScheduledScan, deactivateScheduledScan, deleteScheduledScan, toggleScheduledForm,
     openPreview, closePreview, refreshPreviewDocs,
     openDetails, closeDetails, refreshDetailsDocs,
     generatePdf, downloadDocument, deleteDocument,

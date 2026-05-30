@@ -1106,6 +1106,18 @@ class ProgramedScanManager():
             ps.is_active = False
             repo.update(ps)
 
+    @classmethod
+    def delete(cls, ps_id: int, user_id: int) -> None:
+        Scheduler.unschedule(ps_id)
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            if ps is None:
+                raise ProgramedScanNotFoundError(ps_id)
+            if ps.user_id != user_id:
+                raise ProgramedScanNotFoundError(ps_id)
+            repo.delete(ps)
+
 
 # =============================================================================
 # NMAP

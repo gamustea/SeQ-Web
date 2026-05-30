@@ -30,6 +30,17 @@
         @refresh="store.refreshCurrent()"
         @page="handlePage"
       />
+
+      <!-- Scheduled Scans Panel -->
+      <ScheduledScansPanel
+        :scheduled="store.scheduled"
+        :scheduling="store.scheduling"
+        :active-tab="store.activeTab"
+        @create="handleCreateScheduled"
+        @deactivate="handleDeactivateScheduled"
+        @delete="handleDeleteScheduled"
+        @toggle-form="store.toggleScheduledForm()"
+      />
     </main>
 
     <!-- Preview Modal -->
@@ -79,6 +90,7 @@ import ScanForm from '@/components/sentinel/ScanForm.vue'
 import ScanTable from '@/components/sentinel/ScanTable.vue'
 import ScanPreviewModal from '@/components/sentinel/ScanPreviewModal.vue'
 import ScanDetailsModal from '@/components/sentinel/ScanDetailsModal.vue'
+import ScheduledScansPanel from '@/components/sentinel/ScheduledScansPanel.vue'
 import { useSentinelStore } from '@/stores/sentinelStore'
 
 const store = useSentinelStore()
@@ -88,6 +100,7 @@ const currentData = computed(() => store.scans[store.activeTab])
 onMounted(() => {
   store.loadStats()
   store.loadScans(store.activeTab)
+  store.loadScheduledScans()
 })
 
 /* ── Callbacks de ScanTable ── */
@@ -111,6 +124,11 @@ async function handlePreviewPdf(id, type, useAi) { await store.generatePdf(id, u
 async function handleDetailsPdf(id, type, useAi) { await store.generatePdf(id, useAi); await store.refreshDetailsDocs() }
 async function handleDeletePreviewDoc(docId) { await store.deleteDocument(docId); await store.refreshPreviewDocs() }
 async function handleDeleteDetailsDoc(docId) { await store.deleteDocument(docId); await store.refreshDetailsDocs() }
+
+/* ── Callbacks de ScheduledScansPanel ── */
+async function handleCreateScheduled(payload) { await store.createScheduledScan(payload) }
+async function handleDeactivateScheduled(id) { await store.deactivateScheduledScan(id) }
+async function handleDeleteScheduled(id) { await store.deleteScheduledScan(id) }
 </script>
 
 <style scoped>
