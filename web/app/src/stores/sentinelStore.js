@@ -3,8 +3,6 @@ import { ref, reactive } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useToastStore } from '@/stores/toastStore'
 
-const PAGE_SIZE = 10
-
 /**
  * Store de Sentinel — gestiona escaneos, estadísticas, modales y documentos.
  *
@@ -25,9 +23,9 @@ export const useSentinelStore = defineStore('sentinel', () => {
 
   /* ════════════════════════════════ SCANS POR TIPO ═════════════════════ */
   const scans = reactive({
-    nmap:    { results: [], page: 1, total: 0, loading: false },
-    nikto:   { results: [], page: 1, total: 0, loading: false },
-    openvas: { results: [], page: 1, total: 0, loading: false },
+    nmap:    { results: [], loading: false },
+    nikto:   { results: [], loading: false },
+    openvas: { results: [], loading: false },
   })
 
   const launching = ref(false)
@@ -66,30 +64,27 @@ export const useSentinelStore = defineStore('sentinel', () => {
   }
 
   /* ════════════════════════════════ SCANS ═════════════════════════════ */
-  /** Carga la página de resultados para un tipo de escaneo. */
-  async function loadScans(type, page = 1) {
+  /** Carga todos los resultados para un tipo de escaneo. */
+  async function loadScans(type) {
     const d = _scandata(type)
     d.loading = true
     try {
-      const res = await apiFetch(`/sentinel/results?type=${type}&page=${page}&per_page=${PAGE_SIZE}`)
+      const res = await apiFetch(`/sentinel/results?type=${type}&per_page=9999`)
       if (!res?.ok) { d.results = []; return }
       const data = await res.json()
       d.results = data.results ?? []
-      d.page    = data.page ?? page
-      d.total   = data.count ?? 0
     } finally { d.loading = false }
   }
 
-  /** Cambia de pestaña y carga la primera página. */
+  /** Cambia de pestaña y carga los resultados. */
   function switchTab(type) {
     activeTab.value = type
-    _scandata(type).page = 1
-    loadScans(type, 1)
+    loadScans(type)
   }
 
   /** Refresca la pestaña activa y las estadísticas. */
   async function refreshCurrent() {
-    await loadScans(activeTab.value, _scandata(activeTab.value).page)
+    await loadScans(activeTab.value)
     await loadStats()
   }
 

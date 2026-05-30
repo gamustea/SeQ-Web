@@ -21,14 +21,11 @@
       <ScanTable
         :type="store.activeTab"
         :rows="currentData.results"
-        :page="currentData.page"
-        :total="currentData.total"
         :loading="currentData.loading"
         @preview="(id, type) => store.openPreview(id, type)"
         @cancel="handleCancel"
         @delete="handleDelete"
         @refresh="store.refreshCurrent()"
-        @page="handlePage"
       />
 
       <!-- Scheduled Scans Panel -->
@@ -51,7 +48,6 @@
       :docs="store.preview.docs"
       :docs-loading="store.preview.docsLoading"
       @close="store.closePreview()"
-      @view-details="handleViewDetails"
       @refresh-docs="store.refreshPreviewDocs()"
       @download-doc="store.downloadDocument"
       @delete-doc="handleDeletePreviewDoc"
@@ -106,7 +102,6 @@ onMounted(() => {
 /* ── Callbacks de ScanTable ── */
 async function handleCancel(id) { await store.cancelScan(id) }
 async function handleDelete(id) { await store.deleteScan(id) }
-function handlePage(page) { store.loadScans(store.activeTab, page) }
 
 /* ── Callbacks de ScanForm ── */
 function handleLaunch(payload) {
@@ -116,12 +111,18 @@ function handleLaunch(payload) {
 }
 
 /* ── Callbacks de modales ── */
-function handleViewDetails(id, type) {
-  store.closePreview()
-  store.openDetails(id, type)
+async function handlePreviewPdf(id, type, useAi) {
+  await store.generatePdf(id, useAi)
+  await new Promise(r => setTimeout(r, 600))
+  await store.refreshCurrent()
+  await store.refreshPreviewDocs()
 }
-async function handlePreviewPdf(id, type, useAi) { await store.generatePdf(id, useAi); await store.refreshPreviewDocs() }
-async function handleDetailsPdf(id, type, useAi) { await store.generatePdf(id, useAi); await store.refreshDetailsDocs() }
+async function handleDetailsPdf(id, type, useAi) {
+  await store.generatePdf(id, useAi)
+  await new Promise(r => setTimeout(r, 600))
+  await store.refreshCurrent()
+  await store.refreshDetailsDocs()
+}
 async function handleDeletePreviewDoc(docId) { await store.deleteDocument(docId); await store.refreshPreviewDocs() }
 async function handleDeleteDetailsDoc(docId) { await store.deleteDocument(docId); await store.refreshDetailsDocs() }
 

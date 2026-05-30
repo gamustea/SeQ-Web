@@ -26,6 +26,13 @@
         rows="6"
         class="textarea"
       ></textarea>
+
+      <h4>Plantilla de usuario</h4>
+      <textarea
+        v-model="flat[prefix + '.prompts.userTemplate']"
+        rows="6"
+        class="textarea"
+      ></textarea>
     </div>
   </div>
 </template>

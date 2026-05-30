@@ -147,6 +147,11 @@
   },
   "sentinel": {
     "areLocalIpsAllowed": true,
+    "hostReachabilityCheck": {
+      "enabled": true,
+      "timeout": 3.0,
+      "port": 80
+    },
     "directories": {
       "csv": "data/sentinel/csv",
       "output": "data/sentinel/output"

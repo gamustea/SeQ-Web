@@ -379,6 +379,25 @@ def get_openvas_port_list() -> dict[str, str]:
     return configs["openvas"]["toolConfigs"]["portList"]
 
 @_lazy_load
+def is_host_reachability_check_enabled() -> bool:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    check_cfg = sentinel.get("hostReachabilityCheck", {})
+    enabled = check_cfg.get("enabled", True)
+    return enabled is True or str(enabled).lower() == "true"
+
+@_lazy_load
+def get_host_reachability_check_timeout() -> float:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    check_cfg = sentinel.get("hostReachabilityCheck", {})
+    return float(check_cfg.get("timeout", 3.0))
+
+@_lazy_load
+def get_host_reachability_check_port() -> int:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    check_cfg = sentinel.get("hostReachabilityCheck", {})
+    return int(check_cfg.get("port", 80))
+
+@_lazy_load
 def get_sentinel_csv_dir() -> str:
     return get_directory_of(DirectoryType.CSV_SENTINEL)
 

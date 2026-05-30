@@ -72,12 +72,6 @@
         </tbody>
       </table>
 
-      <AppPagination
-        :current="page"
-        :total="total"
-        :per-page="10"
-        @go="$emit('page', $event)"
-      />
     </template>
   </div>
 </template>
@@ -89,17 +83,14 @@
  */
 import { ref, watch, onUnmounted } from 'vue'
 import StatusBadge from './StatusBadge.vue'
-import AppPagination from '@/components/shared/AppPagination.vue'
 
 const props = defineProps({
   type:    { type: String, required: true },
   rows:    { type: Array,  default: () => [] },
-  page:    { type: Number, default: 1 },
-  total:   { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh', 'page'])
+const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh'])
 
 const showLoading = ref(false)
 let loadingTimer = null

@@ -14,67 +14,69 @@
     </div>
 
     <!-- Document -->
-    <div v-else-if="viewerDoc.data" class="viewer-content">
-      <div class="viewer-toolbar">
-        <span class="doc-id">Doc #{{ viewerDoc.data.id }}</span>
-        <span v-if="viewerDoc.data.topicId" class="doc-topic">Tema #{{ viewerDoc.data.topicId }}</span>
-        <span class="doc-date">{{ formatDate(viewerDoc.data.generatedAt) }}</span>
-        <div class="toolbar-spacer"></div>
-        <div class="export-dropdown">
-          <button type="button" class="toolbar-btn" @click="exportOpen = !exportOpen">Exportar</button>
-          <div v-if="exportOpen" class="export-menu">
-            <button @click="emitExport('md')">Markdown</button>
-            <button @click="emitExport('html')">HTML</button>
-            <button @click="emitExport('json')">JSON</button>
+    <Transition name="pill-reveal" mode="out-in">
+      <div v-if="viewerDoc.data && !viewerDoc.loading" class="viewer-content">
+        <div class="viewer-toolbar">
+          <span class="doc-id">Doc #{{ viewerDoc.data.id }}</span>
+          <span v-if="viewerDoc.data.topicId" class="doc-topic">Tema #{{ viewerDoc.data.topicId }}</span>
+          <span class="doc-date">{{ formatDate(viewerDoc.data.generatedAt) }}</span>
+          <div class="toolbar-spacer"></div>
+          <div class="export-dropdown">
+            <button type="button" class="toolbar-btn" @click="exportOpen = !exportOpen">Exportar</button>
+            <div v-if="exportOpen" class="export-menu">
+              <button @click="emitExport('md')">Markdown</button>
+              <button @click="emitExport('html')">HTML</button>
+              <button @click="emitExport('json')">JSON</button>
+            </div>
           </div>
+          <button type="button" class="toolbar-btn" @click="emit('preview')">Vista previa</button>
+          <button type="button" class="toolbar-btn toolbar-close" @click="emit('close')">&times;</button>
         </div>
-        <button type="button" class="toolbar-btn" @click="emit('preview')">Vista previa</button>
-        <button type="button" class="toolbar-btn toolbar-close" @click="emit('close')">&times;</button>
-      </div>
 
-      <div class="pill-body">
-        <h2 class="pill-title">{{ viewerDoc.data.title }}</h2>
-        <p class="pill-subtitle" v-if="viewerDoc.data.subtitle">{{ viewerDoc.data.subtitle }}</p>
+        <div class="pill-body">
+          <h2 class="pill-title">{{ viewerDoc.data.title }}</h2>
+          <p class="pill-subtitle" v-if="viewerDoc.data.subtitle">{{ viewerDoc.data.subtitle }}</p>
 
-        <section v-if="viewerDoc.data.pill?.intro" class="pill-section">
-          <p class="pill-intro">{{ viewerDoc.data.pill.intro }}</p>
-        </section>
+          <section v-if="viewerDoc.data.pill?.intro" class="pill-section">
+            <p class="pill-intro">{{ viewerDoc.data.pill.intro }}</p>
+          </section>
 
-        <section v-if="viewerDoc.data.pill?.tips?.length" class="pill-section">
-          <h3>Recomendaciones</h3>
-          <div v-for="(tip, i) in viewerDoc.data.pill.tips" :key="i" class="pill-tip">
-            <span class="tip-num">{{ i + 1 }}</span>
-            <div class="tip-body">
-              <h4>{{ tip.headline }}</h4>
-              <p>{{ tip.body }}</p>
-              <div v-if="tip.links?.length" class="tip-links">
-                <a v-for="(link, j) in tip.links" :key="j" :href="link.url" target="_blank" rel="noopener" class="tip-link">{{ link.text }}</a>
+          <section v-if="viewerDoc.data.pill?.tips?.length" class="pill-section">
+            <h3>Recomendaciones</h3>
+            <div v-for="(tip, i) in viewerDoc.data.pill.tips" :key="i" class="pill-tip">
+              <span class="tip-num">{{ i + 1 }}</span>
+              <div class="tip-body">
+                <h4>{{ tip.headline }}</h4>
+                <p>{{ tip.body }}</p>
+                <div v-if="tip.links?.length" class="tip-links">
+                  <a v-for="(link, j) in tip.links" :key="j" :href="link.url" target="_blank" rel="noopener" class="tip-link">{{ link.text }}</a>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section v-if="viewerDoc.data.pill?.closing" class="pill-section">
-          <p class="pill-closing">{{ viewerDoc.data.pill.closing }}</p>
-        </section>
+          <section v-if="viewerDoc.data.pill?.closing" class="pill-section">
+            <p class="pill-closing">{{ viewerDoc.data.pill.closing }}</p>
+          </section>
 
-        <section v-if="viewerDoc.data.alerts?.length" class="pill-section">
-          <h3>Alertas de Seguridad</h3>
-          <div v-for="(alert, i) in viewerDoc.data.alerts" :key="i" class="pill-alert" :class="`pill-alert--${alert.severity || 'informativa'}`">
-            <div class="alert-header">
-              <span class="alert-severity">{{ sevIcon(alert.severity) }}</span>
-              <a v-if="alert.url" :href="alert.url" target="_blank" rel="noopener" class="alert-title">{{ alert.title }}</a>
-              <span v-else class="alert-title">{{ alert.title }}</span>
+          <section v-if="viewerDoc.data.alerts?.length" class="pill-section">
+            <h3>Alertas de Seguridad</h3>
+            <div v-for="(alert, i) in viewerDoc.data.alerts" :key="i" class="pill-alert" :class="`pill-alert--${alert.severity || 'informativa'}`">
+              <div class="alert-header">
+                <span class="alert-severity">{{ sevIcon(alert.severity) }}</span>
+                <a v-if="alert.url" :href="alert.url" target="_blank" rel="noopener" class="alert-title">{{ alert.title }}</a>
+                <span v-else class="alert-title">{{ alert.title }}</span>
+              </div>
+              <p class="alert-desc" v-if="alert.description">{{ alert.description }}</p>
+              <div class="alert-meta" v-if="alert.source || alert.sourceLabel">
+                <span class="alert-source">{{ alert.sourceLabel || alert.source }}</span>
+                <span v-if="alert.published" class="alert-published">{{ formatDate(alert.published) }}</span>
+              </div>
             </div>
-            <p class="alert-desc" v-if="alert.description">{{ alert.description }}</p>
-            <div class="alert-meta" v-if="alert.source || alert.sourceLabel">
-              <span class="alert-source">{{ alert.sourceLabel || alert.source }}</span>
-              <span v-if="alert.published" class="alert-published">{{ formatDate(alert.published) }}</span>
-            </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -172,4 +174,9 @@ function emitExport(fmt) { exportOpen.value = false; emit('export', fmt) }
 a.alert-title:hover { color: var(--accent); text-decoration: underline; }
 .alert-desc { font-size: 0.78rem; color: var(--text-dim); margin: 0.25rem 0; line-height: 1.45; }
 .alert-meta { display: flex; gap: 0.75rem; font-size: 0.7rem; color: var(--text-muted); margin-top: 0.35rem; }
+
+.pill-reveal-enter-active { transition: opacity 0.35s ease-out, transform 0.35s ease-out; }
+.pill-reveal-leave-active { transition: opacity 0.15s ease-in; }
+.pill-reveal-enter-from { opacity: 0; transform: scale(0.97); }
+.pill-reveal-leave-to { opacity: 0; }
 </style>

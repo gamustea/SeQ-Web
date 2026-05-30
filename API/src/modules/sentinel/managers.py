@@ -77,6 +77,7 @@ from .exceptions import (
     MaxHostsExceededError,
     PortValidationError,
     PrivateIPRequested,
+    HostUnreachableError,
     InvalidProgramedTaskArgumentError,
     ProgramedScanNotFoundError,
 )
@@ -464,6 +465,18 @@ class ScanManager(ABC):
             thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
             thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
 
+            if CR.is_host_reachability_check_enabled():
+                reachable_port = CR.get_host_reachability_check_port()
+                reachable_timeout = CR.get_host_reachability_check_timeout()
+                if not self.is_host_reachable(scan.target, port=reachable_port, timeout=reachable_timeout):
+                    thread_manager.logger.warning(
+                        f"Host '{scan.target}' inalcanzable en puerto {reachable_port}. "
+                        f"Marcando escaneo {scan_id} como FAILED"
+                    )
+                    thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+                    self._unregister_task(scan_id)
+                    return
+
             task.scan()
             success = task.wait(timeout=task.timeout + self._scan_timeout_margin)
 
@@ -530,24 +543,24 @@ class ScanManager(ABC):
             task: Task que ejecutó el scan.
         """
         try:
-            scan_type = scan.scan_type
-            logger = ScanLoggerFactory.get(scan_type) # type: ignore
-
             with UnitOfWork() as uow:
                 fresh_scan = ScanRepository(uow).get_by_id(scan_id)
+                scan_type = fresh_scan.scan_type # type: ignore
                 start = fresh_scan.started_at # type: ignore
                 end = fresh_scan.finished_at # type: ignore
                 status = fresh_scan.status # type: ignore
                 duration = (end - start).total_seconds() if end and start else 0 # type: ignore
 
-            data = {
-                "duration_sec": round(duration, 2),
-                "status": status,
-                "concurrent_tasks": len(self._running_tasks),
-            }
+                data = {
+                    "duration_sec": round(duration, 2),
+                    "status": status,
+                    "concurrent_tasks": len(self._running_tasks),
+                }
 
-            self.append_csv_data(data, scan, task)
-            logger.log(data)
+                self.append_csv_data(data, fresh_scan, task)
+
+            logger_obj = ScanLoggerFactory.get(scan_type) # type: ignore
+            logger_obj.log(data)
             self.logger.debug(f"Escaneo {scan_id} registrado en CSV ({scan_type})")
         except Exception as csv_err:
             self.logger.warning(f"Error registrando escaneo {scan_id} en CSV: {csv_err}")
@@ -953,6 +966,35 @@ class ScanManager(ABC):
                 ultimo_puerto = puerto
 
         return list(dict.fromkeys(lista_puertos))
+
+    @staticmethod
+    def is_host_reachable(host: str, port: int = 80, timeout: float = 3.0) -> bool:
+        """
+        Verifica conectividad TCP b\u00e1sica con un host sin dependencias externas.
+
+        Usa ``socket.create_connection`` que maneja resoluci\u00f3n DNS
+        autom\u00e1ticamente. Si el host responde con ``ConnectionRefusedError``
+        se considera alcanzable (el puerto est\u00e1 cerrado pero el host est\u00e1
+        vivo y responde).
+
+        Args:
+            host:    Direcci\u00f3n IP o hostname a comprobar.
+            port:    Puerto TCP de destino (default: 80).
+            timeout: Tiempo m\u00e1ximo de espera en segundos (default: 3.0).
+
+        Returns:
+            ``True`` si el host responde (conexi\u00f3n aceptada o rechazada).
+            ``False`` si no hay respuesta (timeout, sin ruta, DNS fallido).
+        """
+        import socket
+        try:
+            sock = socket.create_connection((host, port), timeout=timeout)
+            sock.close()
+            return True
+        except ConnectionRefusedError:
+            return True
+        except (socket.timeout, OSError):
+            return False
 
     # =========================================================================
     # ABSTRACT INTERFACE

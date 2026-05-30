@@ -455,6 +455,38 @@ class PrivateIPRequested(ScanError):
         )
 
 
+class HostUnreachableError(ScanError):
+    """
+    Excepci\u00f3n lanzada cuando se detecta que el host objetivo no responde
+    a conexiones TCP antes de ejecutar el escaneo.
+
+    Se usa internamente en ``_execute_scan_in_thread`` para marcar el escaneo
+    como ``FAILED`` sin esperar al timeout de la herramienta de escaneo.
+
+    Atributos:
+        default_code: C\u00f3digo de error (SCAN_EXECUTION_ERROR).
+        default_severity: MEDIUM.
+
+    Args:
+        host: Direcci\u00f3n IP o hostname que no respondi\u00f3.
+        port: Puerto TCP usado en la comprobaci\u00f3n.
+        details: Informaci\u00f3n adicional sobre el fallo de conectividad.
+
+    Ejemplo:
+        >>> raise HostUnreachableError(host="192.168.1.1", port=80)
+    """
+
+    default_code = ErrorCode.SCAN_EXECUTION_ERROR
+    default_severity = ErrorSeverity.MEDIUM
+
+    def __init__(self, host: str, port: int, details: str = ""):
+        super().__init__(
+            message=f"Host '{host}' no alcanzable en puerto {port}: {details}",
+            details={"host": host, "port": port, "reason": details},
+            user_message=f"No se pudo conectar con {host} antes de iniciar el escaneo."
+        )
+
+
 class PDFGenerationError(ReportError):
     """
     Excepci\u00f3n lanzada cuando ocurre un error al generar un PDF.
