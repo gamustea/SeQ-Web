@@ -188,6 +188,45 @@ class BaseRepository(Generic[T]):
         )
 
     # =========================================================================
+    # PAGINATION
+    # =========================================================================
+
+    def paginate(self, page=1, per_page=20, filters=None, order_by=None):
+        """
+        Retrieve a page of records with a count of total matching rows.
+
+        Args:
+            page:     1‑based page number (clamped to >= 1).
+            per_page: Items per page (clamped to >= 1).
+            filters:  Optional dict of field=value pairs appended as WHERE.
+            order_by: Optional SQLAlchemy ORDER BY expression.
+
+        Returns:
+            Tuple of (items: List[T], total_count: int).
+        """
+        page = max(page, 1)
+        per_page = max(per_page, 1)
+
+        query = self._session.query(self._model)
+        if filters:
+            for field, value in filters.items():
+                attr = getattr(self._model, field)
+                if isinstance(value, (list, tuple)):
+                    query = query.filter(attr.in_(value))
+                else:
+                    query = query.filter(attr == value)
+
+        total_count = query.count()
+
+        if order_by is not None:
+            query = query.order_by(order_by)
+
+        offset = (page - 1) * per_page
+        items = query.limit(per_page).offset(offset).all()
+
+        return items, total_count
+
+    # =========================================================================
     # CRUD METHODS
     # =========================================================================
 

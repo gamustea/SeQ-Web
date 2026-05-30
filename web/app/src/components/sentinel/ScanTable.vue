@@ -73,24 +73,39 @@
       </table>
 
     </template>
+
+    <!-- Pagination -->
+    <div class="table-footer">
+      <AppPagination
+        v-if="totalCount > perPage"
+        :current="currentPage"
+        :total="totalCount"
+        :per-page="perPage"
+        @go="page => $emit('page-change', page)"
+      />
+    </div>
   </div>
 </template>
 
 <script setup>
 /**
- * ScanTable — Tabla de resultados de escaneo con paginación.
- * Las columnas varían según el tipo: nmap (puertos), nikto (incidencias), openvas (vulns).
+ * ScanTable — Tabla de resultados de escaneo con paginacion.
+ * Las columnas varian segun el tipo: nmap (puertos), nikto (incidencias), openvas (vulns).
  */
 import { ref, watch, onUnmounted } from 'vue'
 import StatusBadge from './StatusBadge.vue'
+import AppPagination from '@/components/shared/AppPagination.vue'
 
 const props = defineProps({
   type:    { type: String, required: true },
   rows:    { type: Array,  default: () => [] },
   loading: { type: Boolean, default: false },
+  currentPage: { type: Number, default: 1 },
+  totalCount:  { type: Number, default: 0 },
+  perPage:     { type: Number, default: 10 },
 })
 
-const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh'])
+const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh', 'page-change'])
 
 const showLoading = ref(false)
 let loadingTimer = null
@@ -146,6 +161,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 3rem 1rem; color: var(--text-muted); font-size: 0.85rem; text-align: center; }
 .empty-state svg { opacity: 0.25; }
 .spin { animation: seq-spin 0.8s linear infinite; }
+.table-footer { border-top: 1px solid var(--border); }
 
 @media (max-width: 768px) {
   .target { max-width: 120px; }

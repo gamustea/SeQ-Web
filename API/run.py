@@ -48,28 +48,47 @@ APP_CONTEXT = CR.get_app_context()
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
+_IS_SHUTTING_DOWN = False
+
 
 def _graceful_shutdown(signum, *args) -> None:
     """
     Manejador de señales para shutdown graceful de la aplicación.
 
     Cancela todas las tareas de escaneo en ejecución antes de terminar
-    el proceso, asegurando que los escaneos no queden huérfanos.
+    el proceso, asegurando que los escaneos no queden huérfanos. Usa una
+    bandera a nivel de módulo para evitar re-entrada y forzar salida
+    inmediata si se recibe una segunda señal durante el apagado.
 
     Args:
         signum: Número de señal recibida (SIGTERM o SIGINT).
-        shutdown_time: Tiempo en el que se ha de matar el proceso
         *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
 
     Behavior:
-        1. Registra la señal recibida.
-        2. Importa ScanManager y cancela todas las tareas en ejecución.
-        3. Espera hasta SHUTDOWN_TIMEOUT segundos a que terminen.
-        4. Finaliza el proceso con SIGKILL para asegurar terminación.
+        1. Protege contra re-entrada: fuerza os._exit(1) si ya se está apagando.
+        2. Registra la señal recibida.
+        3. Cancela todas las tareas de escaneo activas (ScanManager).
+        4. Espera hasta SHUTDOWN_TIMEOUT segundos a que terminen.
+        5. Detiene el scheduler de tareas programadas.
+        6. Cierra las sesiones de base de datos.
+        7. Termina el proceso con os._exit(0).
 
     Note:
         Este manejador se registra para SIGTERM y SIGINT al inicio del módulo.
+        os._exit(0) garantiza terminación inmediata sin volver a disparar
+        el handler, rompiendo el bucle de recursión que causaba la versión
+        anterior con _os.kill().
     """
+    global _IS_SHUTTING_DOWN
+
+    if _IS_SHUTTING_DOWN:
+        _logger.warning(
+            "Segunda señal recibida durante el apagado — forzando salida inmediata."
+        )
+        os._exit(1)
+
+    _IS_SHUTTING_DOWN = True
+
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
     try:
@@ -90,9 +109,14 @@ def _graceful_shutdown(signum, *args) -> None:
     except Exception as e:
         _logger.error(f"Error deteniendo scheduler: {e}")
 
+    _logger.info("[Shutdown] Cerrando sesiones de base de datos...")
+    try:
+        BaseManager.close_all_sessions()
+    except Exception as e:
+        _logger.error(f"Error cerrando sesiones de BD: {e}")
+
     _logger.info("[Shutdown] Proceso terminado.")
-    import os as _os
-    _os.kill(_os.getpid(), signal.SIGTERM)
+    os._exit(0)
 
 def create_app(fresh_db_init: bool = False) -> Flask:
     """

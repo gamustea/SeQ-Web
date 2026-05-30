@@ -23,9 +23,9 @@ export const useSentinelStore = defineStore('sentinel', () => {
 
   /* ════════════════════════════════ SCANS POR TIPO ═════════════════════ */
   const scans = reactive({
-    nmap:    { results: [], loading: false },
-    nikto:   { results: [], loading: false },
-    openvas: { results: [], loading: false },
+    nmap:    { results: [], loading: false, page: 1, totalCount: 0, perPage: 10 },
+    nikto:   { results: [], loading: false, page: 1, totalCount: 0, perPage: 10 },
+    openvas: { results: [], loading: false, page: 1, totalCount: 0, perPage: 10 },
   })
 
   const launching = ref(false)
@@ -43,42 +43,41 @@ export const useSentinelStore = defineStore('sentinel', () => {
   function _scandata(type) { return scans[type] }
 
   /* ════════════════════════════════ STATS ══════════════════════════════ */
-  /** Carga los contadores de escaneos de cada tipo en paralelo. */
+  /** Carga los contadores de escaneos desde el endpoint de stats. */
   async function loadStats() {
     loadingStats.value = true
     try {
-      const [nmap, nikto, openvas] = await Promise.all([
-        apiFetch('/sentinel/results?type=nmap&per_page=1'),
-        apiFetch('/sentinel/results?type=nikto&per_page=1'),
-        apiFetch('/sentinel/results?type=openvas&per_page=1'),
-      ])
-      const nmapData    = nmap?.ok    ? (await nmap.json())     : {}
-      const niktoData   = nikto?.ok   ? (await nikto.json())     : {}
-      const openvasData = openvas?.ok ? (await openvas.json())   : {}
-      stats.nmap    = nmapData.count    || 0
-      stats.nikto   = niktoData.count   || 0
-      stats.openvas = openvasData.count || 0
-      stats.total   = stats.nmap + stats.nikto + stats.openvas
+      const res = await apiFetch('/sentinel/stats')
+      if (!res?.ok) return
+      const data = await res.json()
+      stats.nmap    = data.nmap    ?? 0
+      stats.nikto   = data.nikto   ?? 0
+      stats.openvas = data.openvas ?? 0
+      stats.total   = data.total   ?? 0
     } catch { /* noop */ }
     finally { loadingStats.value = false }
   }
 
   /* ════════════════════════════════ SCANS ═════════════════════════════ */
-  /** Carga todos los resultados para un tipo de escaneo. */
+  /** Carga una pagina de resultados para un tipo de escaneo. */
   async function loadScans(type) {
     const d = _scandata(type)
     d.loading = true
     try {
-      const res = await apiFetch(`/sentinel/results?type=${type}&per_page=9999`)
+      const params = new URLSearchParams({ type, page: d.page, per_page: d.perPage })
+      const res = await apiFetch(`/sentinel/results?${params}`)
       if (!res?.ok) { d.results = []; return }
       const data = await res.json()
       d.results = data.results ?? []
+      d.totalCount = data.totalCount ?? 0
     } finally { d.loading = false }
   }
 
-  /** Cambia de pestaña y carga los resultados. */
+  /** Cambia de pestana y carga los resultados desde pagina 1. */
   function switchTab(type) {
     activeTab.value = type
+    const d = _scandata(type)
+    d.page = 1
     loadScans(type)
   }
 
@@ -86,6 +85,13 @@ export const useSentinelStore = defineStore('sentinel', () => {
   async function refreshCurrent() {
     await loadScans(activeTab.value)
     await loadStats()
+  }
+
+  /** Navega a una pagina concreta para el tipo activo. */
+  function goToPage(type, page) {
+    const d = _scandata(type)
+    d.page = page
+    loadScans(type)
   }
 
   /* ════════════════════════════════ LANZAR ════════════════════════════ */
@@ -350,7 +356,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
     activeTab, stats, loadingStats, scans, launching,
     scheduled, scheduling,
     preview, details,
-    loadStats, loadScans, switchTab, refreshCurrent,
+    loadStats, loadScans, switchTab, refreshCurrent, goToPage,
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
     loadScheduledScans, createScheduledScan, deactivateScheduledScan, deleteScheduledScan, toggleScheduledForm,

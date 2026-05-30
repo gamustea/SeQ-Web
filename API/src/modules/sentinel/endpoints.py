@@ -396,12 +396,12 @@ def start_openvas_scan(data):
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
 def retrieve_all_scans():
-    """Lista todos los escaneos del usuario."""
+    """Lista todos los escaneos del usuario con paginacion opcional."""
     scan_type = request.args.get("type", "all").lower()
     if scan_type not in VALID_SCAN_TYPES:
         raise ValidationError(
             field="type",
-            message="Tipo de escaneo inválido",
+            message="Tipo de escaneo invalido",
             value=scan_type,
             expected="nmap, nikto, openvas o all"
         )
@@ -409,31 +409,41 @@ def retrieve_all_scans():
     user = get_current_user()
     uid = user.id
 
-    nmap_mgr = NmapScanManager()
-    nikto_mgr = NiktoScanManager()
-    openvas_mgr = OpenVASScanManager()
+    page = int(request.args.get("page", 1))
+    per_page = int(request.args.get("per_page", 10))
+    per_page = max(1, min(per_page, 100))
+
+    TYPE_MGR_MAP = {
+        "nmap":    NmapScanManager(),
+        "nikto":   NiktoScanManager(),
+        "openvas": OpenVASScanManager(),
+    }
+
+    if scan_type != "all":
+        mgr = TYPE_MGR_MAP[scan_type]
+        results, total_count = mgr.get_scans_paginated(uid, page, per_page)
+        total_pages = (total_count + per_page - 1) // per_page
+
+        return jsonify({
+            "message": "Escaneos obtenidos correctamente",
+            "filter": scan_type,
+            "count": total_count,
+            "results": results,
+            "page": page,
+            "perPage": per_page,
+            "totalCount": total_count,
+            "totalPages": total_pages,
+            "user": user.username,
+        }), 200
+
+    # "all" sin paginacion — comportamiento existente
     all_results = []
-
-    if scan_type in ("nmap", "all"):
+    for mgr in TYPE_MGR_MAP.values():
         try:
-            for scan in nmap_mgr.get_scans_for_user(uid): # type: ignore
-                all_results.append(nmap_mgr.format_scan(scan.id)) # type: ignore
+            for scan in mgr.get_scans_for_user(uid):
+                all_results.append(mgr.format_scan(scan.id))
         except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo Nmap scans: {exc}")
-
-    if scan_type in ("nikto", "all"):
-        try:
-            for scan in nikto_mgr.get_scans_for_user(uid): # type: ignore
-                all_results.append(nikto_mgr.format_scan(scan.id)) # type: ignore
-        except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo Nikto scans: {exc}")
-
-    if scan_type in ("openvas", "all"):
-        try:
-            for scan in openvas_mgr.get_scans_for_user(uid): # type: ignore
-                all_results.append(openvas_mgr.format_scan(scan.id)) # type: ignore
-        except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
+            _logger.error(f"Error obteniendo scans: {exc}")
 
     return jsonify({
         "message": "Escaneos obtenidos correctamente",
@@ -442,6 +452,22 @@ def retrieve_all_scans():
         "results": all_results,
         "user": user.username
     }), 200
+
+
+@sentinel_bp.get("/stats")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+def get_scan_stats():
+    """Devuelve los contadores de escaneos por tipo."""
+    from src.modules.infrastructure.session import get_db_session
+    from .repositories import ScanRepository as _ScanRepo
+    user = get_current_user()
+    session = get_db_session()
+    repo = _ScanRepo(session=session)
+    stats = repo.get_stats(user.id)
+    return jsonify(stats), 200
 
 
 @sentinel_bp.get("/results/<int:scan_id>")

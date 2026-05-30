@@ -22,10 +22,14 @@
         :type="store.activeTab"
         :rows="currentData.results"
         :loading="currentData.loading"
+        :current-page="currentData.page"
+        :total-count="currentData.totalCount"
+        :per-page="currentData.perPage"
         @preview="(id, type) => store.openPreview(id, type)"
         @cancel="handleCancel"
         @delete="handleDelete"
         @refresh="store.refreshCurrent()"
+        @page-change="page => store.goToPage(store.activeTab, page)"
       />
 
       <!-- Scheduled Scans Panel -->

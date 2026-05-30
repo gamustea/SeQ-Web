@@ -155,6 +155,55 @@ class ScanRepository(BaseRepository[Scan]):
             .all()
         )
 
+    def get_scans_by_type_paginated(
+        self,
+        user_id: int,
+        scan_type: ScanType,
+        page: int = 1,
+        per_page: int = 10,
+    ):
+        """
+        Retrieve a paginated list of scans for a user filtered by scan type.
+
+        Args:
+            user_id:   Owner user primary key.
+            scan_type: ScanType enum value.
+            page:      1‑based page number.
+            per_page:  Items per page.
+
+        Returns:
+            Tuple of (items: List[Scan], total_count: int).
+        """
+        return self.paginate(
+            page=page,
+            per_page=per_page,
+            filters={"user_id": user_id, "scan_type": scan_type},
+            order_by=Scan.started_at.desc(),
+        )
+
+    def get_stats(self, user_id: int) -> dict:
+        """
+        Return scan counts grouped by type for a user.
+
+        Returns:
+            Dict with keys ``total``, ``nmap``, ``nikto``, ``openvas``.
+        """
+        from sqlalchemy import func
+
+        results = (
+            self._session.query(Scan.scan_type, func.count(Scan.id))
+            .filter(Scan.user_id == user_id)
+            .group_by(Scan.scan_type)
+            .all()
+        )
+        counts = {"nmap": 0, "nikto": 0, "openvas": 0}
+        for scan_type_val, count in results:
+            key = scan_type_val.value if hasattr(scan_type_val, "value") else str(scan_type_val)
+            if key in counts:
+                counts[key] = count
+        counts["total"] = sum(counts.values())
+        return counts
+
     def get_by_target(self, target: str) -> List[Scan]:
         return self.get_all_by_field("target", target)
 

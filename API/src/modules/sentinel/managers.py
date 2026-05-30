@@ -108,6 +108,8 @@ class ScanManager(ABC):
     _scan_timeout_margin: int = 30
     _registry: Dict[ScanType, type["ScanManager"]] = {}
 
+    SCAN_TYPE: Optional[ScanType] = None
+
     def __init__(self) -> None:
         """
         Initialize the scan manager.
@@ -192,6 +194,31 @@ class ScanManager(ABC):
             f"Se obtuvieron {len(scans)} escaneos para el usuario {user_id}"
         )
         return scans
+
+    def get_scans_paginated(self, user_id: int, page: int = 1, per_page: int = 10):
+        """
+        Retrieve a paginated, formatted list of scans for a user.
+
+        Uses the subclass's SCAN_TYPE to filter by scan type and delegates
+        formatting to format_scan().
+
+        Args:
+            user_id:   Owner user primary key.
+            page:      1‑based page number.
+            per_page:  Items per page.
+
+        Returns:
+            Tuple of (formatted_results: list[dict], total_count: int).
+        """
+        if self.SCAN_TYPE is None:
+            raise NotImplementedError("SCAN_TYPE must be defined in subclass")
+        session = get_db_session()
+        repo = ScanRepository(session=session)
+        items, total_count = repo.get_scans_by_type_paginated(
+            user_id, self.SCAN_TYPE, page, per_page
+        )
+        formatted = [self.format_scan(item.id) for item in items]
+        return formatted, total_count
 
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
         """
@@ -1167,6 +1194,7 @@ class ProgramedScanManager():
 
 @ScanManager.register(ScanType.NMAP)
 class NmapScanManager(ScanManager):
+    SCAN_TYPE = ScanType.NMAP
     _strategy_class = NmapPrintingStrategy
     _scan_type: type[Scan] = NmapScan
 
@@ -1316,6 +1344,7 @@ class NmapScanManager(ScanManager):
 
 @ScanManager.register(ScanType.NIKTO)
 class NiktoScanManager(ScanManager):
+    SCAN_TYPE = ScanType.NIKTO
     _strategy_class = NiktoPrintingStrategy
     _scan_type: type[Scan] = NiktoScan
 
@@ -1484,6 +1513,7 @@ class OpenVASScanManager(ScanManager):
     SCAN_CONFIGS = CR.get_openvas_scan_configs()
     PORT_LISTS = CR.get_openvas_port_list()
 
+    SCAN_TYPE = ScanType.OPENVAS
     _strategy_class = OpenVASPrintingStrategy
 
     def __init__(self) -> None:
