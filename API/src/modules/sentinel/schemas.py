@@ -27,9 +27,9 @@ class ResultsQuerySchema(Schema):
     per_page = fields.Integer(load_default=10, validate=validate.Range(min=1, max=100))
 
 
-class GeneratePdfQuerySchema(Schema):
+class GeneratePdfRequestSchema(Schema):
     id = fields.Integer(required=True)
-    aiReport = fields.String(load_default="false")
+    aiReport = fields.Boolean(load_default=False)
 
 
 class DocumentStatusQuerySchema(Schema):

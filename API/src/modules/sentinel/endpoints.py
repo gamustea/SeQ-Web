@@ -45,7 +45,7 @@ from .schemas import (
     NiktoScanRequestSchema,
     OpenVASScanRequestSchema,
     ResultsQuerySchema,
-    GeneratePdfQuerySchema,
+    GeneratePdfRequestSchema,
     DocumentStatusQuerySchema,
     DocumentsQuerySchema,
     ScheduledScanRequestSchema,
@@ -471,8 +471,8 @@ def delete_scan(scan_id: int):
     }
 
 
-@sentinel_blp.get("/generate-pdf")
-@sentinel_blp.arguments(GeneratePdfQuerySchema, location="query")
+@sentinel_blp.post("/generate-pdf")
+@sentinel_blp.arguments(GeneratePdfRequestSchema)
 @sentinel_blp.response(202, PdfGenerateResponseSchema, description="PDF generation started")
 @sentinel_blp.alt_response(400, schema=ErrorSchema, description="Scan not finished")
 @sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
@@ -484,7 +484,7 @@ def delete_scan(scan_id: int):
 def generate_pdf(args):
     """Solicitar generacion asincrona de un PDF"""
     scan_id = args["id"]
-    ai_report = args["aiReport"].lower() == "true"
+    ai_report = args["aiReport"]
 
     user = get_current_user()
     uid = user.id

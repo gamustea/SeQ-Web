@@ -246,8 +246,10 @@ export const useSentinelStore = defineStore('sentinel', () => {
   /* ════════════════════════════════ DOCUMENTOS PDF ════════════════════ */
   /** Solicita la generación de un PDF para un escaneo (opcionalmente con IA). */
   async function generatePdf(scanId, useAi = false) {
-    const url = `/sentinel/generate-pdf?id=${scanId}${useAi ? '&aiReport=true' : ''}`
-    const res = await apiFetch(url)
+    const res = await apiFetch('/sentinel/generate-pdf', {
+      method: 'POST',
+      body: JSON.stringify({ id: scanId, aiReport: useAi }),
+    })
     if (!res?.ok) {
       const data = await res?.json().catch(() => ({}))
       toast.show(data.message || 'Error al generar documento', 'error')
