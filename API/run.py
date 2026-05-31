@@ -16,6 +16,7 @@ estático.
 
 import os
 import signal
+import warnings
 
 from flask                  import Flask, jsonify, request
 from flask_cors             import CORS
@@ -33,12 +34,12 @@ from src.modules.shared._exceptions import (
 from src.modules.system     import SecOpsLogger, config_reading, system_blp
 from src.modules.users      import (
     UserManager,
-    oauth_bp,
-    users_bp
+    oauth_blp,
+    users_blp
 )
-from src.modules.sentinel   import sentinel_bp
-from src.modules.acheron    import acheron_bp
-from src.modules.aegis      import aegis_bp
+from src.modules.sentinel   import sentinel_blp
+from src.modules.acheron    import acheron_blp
+from src.modules.aegis      import aegis_blp
 from src.modules.pages      import pages_bp
 
 import src.modules.system.config_reading as CR
@@ -47,6 +48,8 @@ import src.modules.system.config_reading as CR
 APP_CONTEXT = CR.get_app_context()
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
+
+warnings.filterwarnings("ignore", message="Multiple schemas resolved to the name")
 
 _IS_SHUTTING_DOWN = False
 
@@ -155,12 +158,12 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     flask_smorest_api = FlaskSmorestApi(app)
 
     _logger.info("Añadiendo endpoints...")
-    app.register_blueprint(system_blp,  url_prefix="/system")
-    app.register_blueprint(oauth_bp,    url_prefix="/oauth")
-    app.register_blueprint(users_bp,    url_prefix="/users")
-    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
-    app.register_blueprint(acheron_bp,  url_prefix="/acheron")
-    app.register_blueprint(aegis_bp,    url_prefix="/aegis")
+    flask_smorest_api.register_blueprint(system_blp,  url_prefix="/system")
+    flask_smorest_api.register_blueprint(oauth_blp,   url_prefix="/oauth")
+    flask_smorest_api.register_blueprint(users_blp,   url_prefix="/users")
+    flask_smorest_api.register_blueprint(sentinel_blp, url_prefix="/sentinel")
+    flask_smorest_api.register_blueprint(acheron_blp,  url_prefix="/acheron")
+    flask_smorest_api.register_blueprint(aegis_blp,    url_prefix="/aegis")
     app.register_blueprint(pages_bp,    url_prefix="/pages")
 
     _logger.info("Registrando manejadores de error globales...")
