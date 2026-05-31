@@ -6,10 +6,10 @@ Proporciona endpoints para leer y escribir SecOpsConfig.json.
 
 from .logging import SecOpsLogger
 from .platform import PlatformDetector
-from .endpoints import system_bp
+from .endpoints import system_blp
 
 __all__ = [
     "SecOpsLogger",
     "PlatformDetector",
-    "system_bp"
+    "system_blp"
 ]

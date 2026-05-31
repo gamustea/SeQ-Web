@@ -19,6 +19,7 @@ import signal
 
 from flask                  import Flask, jsonify, request
 from flask_cors             import CORS
+from flask_smorest          import Api as FlaskSmorestApi
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
@@ -29,7 +30,7 @@ from src.modules.shared._exceptions import (
     SecOpsException,
     create_error_response
 )
-from src.modules.system     import SecOpsLogger, config_reading
+from src.modules.system     import SecOpsLogger, config_reading, system_blp
 from src.modules.users      import (
     UserManager,
     oauth_bp,
@@ -38,7 +39,6 @@ from src.modules.users      import (
 from src.modules.sentinel   import sentinel_bp
 from src.modules.acheron    import acheron_bp
 from src.modules.aegis      import aegis_bp
-from src.modules.system     import system_bp
 from src.modules.pages      import pages_bp
 
 import src.modules.system.config_reading as CR
@@ -145,8 +145,17 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     _logger.info("Inicializando rate limiting...")
     limiter.init_app(app)
 
+    _logger.info("Inicializando documentación OpenAPI...")
+    app.config["API_TITLE"]             = "SeQ API"
+    app.config["API_VERSION"]           = "3.2"
+    app.config["OPENAPI_VERSION"]       = "3.0.3"
+    app.config["OPENAPI_URL_PREFIX"]    = "/api-docs"
+    app.config["OPENAPI_SWAGGER_UI_PATH"] = "/swagger"
+    app.config["OPENAPI_SWAGGER_UI_URL"] = "https://cdn.jsdelivr.net/npm/swagger-ui-dist/"
+    flask_smorest_api = FlaskSmorestApi(app)
+
     _logger.info("Añadiendo endpoints...")
-    app.register_blueprint(system_bp,   url_prefix="/system")
+    app.register_blueprint(system_blp,  url_prefix="/system")
     app.register_blueprint(oauth_bp,    url_prefix="/oauth")
     app.register_blueprint(users_bp,    url_prefix="/users")
     app.register_blueprint(sentinel_bp, url_prefix="/sentinel")

@@ -1,17 +1,7 @@
-"""
-system/endpoints.py
-Endpoints API para gestión de configuración de SecOps.
-Registrado en /config.
-
-GET /config    — Obtiene toda la configuración
-PUT /config    — Actualiza la configuración
-
-Autenticación: Bearer token requerido.
-"""
-
 import psutil
 
-from flask import Blueprint, jsonify, request
+from flask_smorest import Blueprint as SmorestBlueprint
+from flask import jsonify, request
 
 from src.modules.users.services.permissions import Role
 from src.modules.shared._endpoints import limiter
@@ -19,155 +9,93 @@ from src.modules.shared._exceptions import (
     handle_exceptions,
     IllegalStateError,
 )
+from src.modules.shared.schemas import ErrorSchema
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_role
+from .schemas import HelloResponseSchema, SystemStatusSchema
 
 import src.modules.system.config_reading as CR
 
 
-system_bp = Blueprint("system", __name__)
+system_blp = SmorestBlueprint(
+    "system", __name__,
+    description="Estado, configuración y health check del sistema"
+)
 _logger = SecOpsLogger("system").get_logger()
 
 
-@system_bp.get("/say-hello")
+@system_blp.get("/say-hello")
+@system_blp.response(200, HelloResponseSchema, description="Health check")
 @limiter.limit("60 per minute")
 def hello():
-    """Probe de liveness para verificar disponibilidad del servicio.
-
-    Este endpoint no requiere autenticación y es útil para:
-    - Health checks en contenedores
-    - Probe de liveness en Kubernetes
-    - Verificar que la API está respondiendo
-
-    Returns:
-        200 — Servicio disponible.
-            {
-                "message": "You did it! You reached an endpoint!",
-                "status": "ok",
-                "version": "3.2"
-            }
-
-    Example:
-        curl https://api.example.com/say-hello
-    """
+    """Health check del servicio"""
     _logger.info("GET /say-hello")
-    return jsonify({
+    return {
         "message": "You did it! You reached an endpoint!",
         "status":  "ok",
         "version": "3.2",
-    }), 200
+    }
 
 
-@system_bp.get("/status")
+@system_blp.get("/status")
+@system_blp.response(200, SystemStatusSchema, description="System metrics")
+@system_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@system_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @limiter.limit("30 per hour; 100 per day")
 @require_oauth_token
 @require_role(minimum_role=Role.ADMIN)
 def status():
-    """Obtiene información de estado del sistema: CPU, memoria y disco.
-
-    Este endpoint no requiere autenticación y proporciona métricas del
-    servidor donde se ejecuta la API.
-
-    Returns:
-        200 — Métricas del sistema.
-            {
-                "cpu": {"percent": 25.5},
-                "memory": {
-                    "total": 17179869184,
-                    "available": 8589934592,
-                    "percent": 50.0,
-                    "used": 8589934592,
-                    "free": 8589934592
-                },
-                "disk": {
-                    "total": 500000000000,
-                    "used": 250000000000,
-                    "free": 250000000000,
-                    "percent": 50.0
-                },
-                "status": "ok"
-            }
-
-    Example:
-        curl https://api.example.com/status
-    """
+    """Métricas en tiempo real del servidor (CPU, memoria, disco)"""
     _logger.info("GET /status")
 
     cpu_percent = psutil.cpu_percent(interval=1)
-
     memory = psutil.virtual_memory()
-    memory_info = {
-        "total": memory.total,
-        "available": memory.available,
-        "percent": memory.percent,
-        "used": memory.used,
-        "free": memory.free
-    }
-
-    # Obtener información de disco
     disk = psutil.disk_usage('/')
-    disk_info = {
-        "total": disk.total,
-        "used": disk.used,
-        "free": disk.free,
-        "percent": disk.percent
+
+    return {
+        "cpu": {"percent": cpu_percent},
+        "memory": {
+            "total": memory.total,
+            "available": memory.available,
+            "percent": memory.percent,
+            "used": memory.used,
+            "free": memory.free,
+        },
+        "disk": {
+            "total": disk.total,
+            "used": disk.used,
+            "free": disk.free,
+            "percent": disk.percent,
+        },
+        "status": "ok",
     }
 
-    return jsonify({
-        "cpu": {
-            "percent": cpu_percent
-        },
-        "memory": memory_info,
-        "disk": disk_info,
-        "status": "ok"
-    }), 200
 
-
-@system_bp.get("")
+@system_blp.get("")
+@system_blp.response(200, description="Full SecOps configuration")
+@system_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@system_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @limiter.limit("30 per hour; 100 per day")
 @require_oauth_token
 @require_role(minimum_role=Role.ADMIN)
 @handle_exceptions(default_exception=IllegalStateError, logger=_logger)
 def get_config():
-    """Obtiene toda la configuración de SecOpsConfig.json.
-
-    Returns:
-        200 — Configuración completa.
-        {
-            "general": {...},
-            "sentinel": {...},
-            "aegis": {...}
-        }
-
-    Example:
-        curl -X GET https://api.example.com/config \\
-        -H "Authorization: Bearer <token>"
-    """
+    """Obtiene toda la configuración de SecOpsConfig.json"""
     config = CR.get_full_config()
-    return jsonify(config), 200
+    return config
 
 
-@system_bp.put("")
+@system_blp.put("")
+@system_blp.response(200, description="Updated configuration")
+@system_blp.alt_response(400, schema=ErrorSchema, description="Invalid body")
+@system_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@system_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @limiter.limit("10 per hour; 20 per day")
 @require_oauth_token
 @require_role(minimum_role=Role.ADMIN)
 @handle_exceptions(default_exception=IllegalStateError, logger=_logger)
 def update_config():
-    """Actualiza la configuración de SecOpsConfig.json.
-
-    Args (JSON body):
-        Objeto JSON completo con la nueva configuración.
-
-    Returns:
-        200 — Configuración actualizada.
-        400 — Error de validación.
-
-    Example:
-        curl -X PUT https://api.example.com/config \\
-        -H "Authorization: Bearer <token>" \\
-        -H "Content-Type: application/json" \\
-        -d '@config.json'
-    """
+    """Actualiza la configuración de SecOpsConfig.json"""
     if not request.is_json:
         return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
 
@@ -177,4 +105,4 @@ def update_config():
 
     config = CR.save_full_config(new_config)
     _logger.info("Configuración actualizada correctamente")
-    return jsonify(config), 200
+    return config
