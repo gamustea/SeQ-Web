@@ -1,6 +1,6 @@
 from typing import Any
 
-from flask import jsonify, request
+from flask import request
 from flask_smorest import Blueprint as SmorestBlueprint
 
 from src.modules.shared._endpoints import limiter
@@ -8,6 +8,7 @@ from src.modules.shared._exceptions import (
     handle_exceptions,
     DatabaseError,
     IllegalStateError,
+    SecOpsException,
 )
 from src.modules.shared.schemas import ErrorSchema
 from src.modules.system import SecOpsLogger
@@ -75,10 +76,7 @@ def oauth_token(data: dict[str, Any]):
         is_valid, uid = UserManager().verify_credentials(username, password)
         if not is_valid or uid is None:
             _logger.warning(f"Login fallido para: {username}")
-            return jsonify({
-                "error": "invalid_grant",
-                "error_description": "Invalid username or password",
-            }), 401
+            raise InvalidCredentialsError()
 
         user = USER_MANAGER.get_user_by_id(uid)
         access_token = OAUTH_MANAGER.create_access_token(
@@ -102,17 +100,11 @@ def oauth_token(data: dict[str, Any]):
         refresh_token_str = data["refresh_token"]
         uid = OAUTH_MANAGER.verify_refresh_token(refresh_token_str)
         if not uid:
-            return jsonify({
-                "error": "invalid_grant",
-                "error_description": "Invalid or expired refresh token",
-            }), 401
+            raise InvalidCredentialsError()
 
         user = USER_MANAGER.get_user_by_id(uid)
         if not user:
-            return jsonify({
-                "error": "invalid_grant",
-                "error_description": "User not found",
-            }), 401
+            raise InvalidCredentialsError()
 
         access_token = OAUTH_MANAGER.create_access_token(uid, user.username, user.role)
         user_attrs = USER_MANAGER.get_user_attributes(uid)
@@ -126,10 +118,7 @@ def oauth_token(data: dict[str, Any]):
             "attributes": user_attrs,
         }
 
-    return jsonify({
-        "error": "unsupported_grant_type",
-        "error_description": "Supported: password, refresh_token",
-    }), 400
+    raise InvalidCredentialsError()
 
 
 @oauth_blp.post("/revoke")
@@ -330,10 +319,10 @@ def list_user_attributes(target_user_id: int):
 
     if not USER_MANAGER.can_manage_user(uid, target_user_id):
         _logger.warning(f"Usuario {uid} intento ver atributos de {target_user_id} sin permiso")
-        return jsonify({
-            "error": "forbidden",
-            "error_description": "No tienes permiso para ver atributos de este usuario",
-        }), 403
+        raise SecOpsException(
+            "No tienes permiso para ver atributos de este usuario",
+            status_code=403,
+        )
 
     target_user = USER_MANAGER.get_user_by_id(target_user_id)
     return {
@@ -358,10 +347,10 @@ def add_user_attribute(data: dict[str, Any], target_user_id: int):
 
     if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
         _logger.warning(f"Usuario {current_user_id} intento anadir atributos a {target_user_id} sin permiso")
-        return jsonify({
-            "error": "forbidden",
-            "error_description": "No tienes permiso para gestionar atributos de este usuario",
-        }), 403
+        raise SecOpsException(
+            "No tienes permiso para gestionar atributos de este usuario",
+            status_code=403,
+        )
 
     attrs_to_add = data["attributes"]
     added_attrs = USER_MANAGER.add_user_attributes(
@@ -389,10 +378,10 @@ def remove_user_attribute(data: dict[str, Any], target_user_id: int):
         _logger.warning(
             f"Usuario {current_user_id} intento eliminar atributos de {target_user_id} sin permiso"
         )
-        return jsonify({
-            "error": "forbidden",
-            "error_description": "No tienes permiso para gestionar atributos de este usuario",
-        }), 403
+        raise SecOpsException(
+            "No tienes permiso para gestionar atributos de este usuario",
+            status_code=403,
+        )
 
     attrs_to_remove = data["attributes"]
     USER_MANAGER.remove_user_attributes(

@@ -31,9 +31,9 @@ Excepciones de Validación:
     - URLValidationError: URL inválida.
 
 Ejemplo de uso:
-    >>> raise ScanNotFoundError(scan_id=42)
-    >>> raise ScanExecutionError(scan_type="nmap", target="192.168.1.1", reason="Timeout")
-    >>> raise PortValidationError(message="Puerto inválido", port_spec="invalid")
+>>> raise ScanNotFoundError(scan_id=42)
+>>> raise ScanExecutionError(scan_type="nmap", target="192.168.1.1", reason="Timeout")
+>>> raise PortValidationError(message="Puerto inválido", port_spec="invalid")
 """
 
 from src.modules.shared._exceptions import (

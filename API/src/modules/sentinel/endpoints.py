@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import ipaddress
 
-from flask import jsonify, request, send_file
+from flask import request, send_file
 from flask_smorest import Blueprint as SmorestBlueprint
 
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
@@ -12,12 +12,12 @@ from src.modules.shared import (
     limiter,
 )
 from src.modules.shared._exceptions import (
-    MissingParameterError,
     ValidationError,
     IllegalStateError,
+    SecOpsException,
 )
 from src.modules.shared.schemas import ErrorSchema
-from src.modules.aegis.exceptions import DocumentError
+from src.modules.aegis.exceptions import DocumentError, DocumentNotFoundError, DocumentNotReadyError
 from src.modules.system import SecOpsLogger
 
 from .managers import (
@@ -94,7 +94,7 @@ def get_scan_status(args):
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id)
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     status = manager.get_scan_status(scan_id)
     progress = manager.get_scan_progress(scan_id)
@@ -131,36 +131,28 @@ def cancel_scan(scan_id: int):
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id)
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     if scan.status not in CANCELLABLE_STATES:
-        return jsonify({
-            "error": "invalid_state",
-            "error_description": f"El escaneo no se puede cancelar en estado: {scan.status}",
-            "scanId": scan_id,
-            "currentStatus": scan.status,
-            "cancellableStates": sorted(CANCELLABLE_STATES),
-        }), 400
+        raise IllegalStateError(
+            f"El escaneo no se puede cancelar en estado: {scan.status}"
+        )
 
-    if not manager.cancel_scan(scan_id, user.id):
-        return jsonify({
-            "error": "cancellation_failed",
-            "error_description": "No se pudo cancelar",
-            "scanId": scan_id,
-        }), 500
+    if not manager.cancel_scan(scan_id, user.id): # type: ignore
+        raise ScanExecutionError("No se pudo cancelar")
 
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
 
     _logger.info(f"Escaneo {scan.scan_type} {scan_id} cancelado por {user.username}")
-    return jsonify({
+    return {
         "message": "Escaneo cancelado exitosamente",
         "scanId": scan_id,
         "scanType": scan.scan_type,
         "status": scan.status,
         "user": user.username,
-    }), 200
+    }
 
 
 @sentinel_blp.post("/nmap")
@@ -186,17 +178,9 @@ def start_nmap_scan(data: dict):
     except IPValidationError as exc:
         raise ValidationError(field="target", message=str(exc), value=host) from exc
     except MaxHostsExceededError as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {},
-        }), 400
+        raise ValidationError(str(exc.user_message or exc))
     except PrivateIPRequested as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {},
-        }), 403
+        raise SecOpsException(str(exc.user_message or exc), status_code=403)
 
     try:
         ScanManager.validate_port(ports)
@@ -214,13 +198,13 @@ def start_nmap_scan(data: dict):
         scan_ids.append(scan_id)
         _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={user.username}")
 
-    return jsonify({
+    return {
         "message": "Escaneo(s) Nmap iniciado(s) correctamente",
         "scanIds": scan_ids,
         "target": {"hosts": hosts, "ports": ports},
         "totalScans": len(scan_ids),
         "user": user.username,
-    }), 201
+    }
 
 
 @sentinel_blp.post("/nikto")
@@ -240,15 +224,15 @@ def start_nikto_scan(data):
     user = get_current_user()
 
     nikto_manager = NiktoScanManager()
-    scan_id = nikto_manager.run_scan(target, user_id=user.id, timeout=timeout)
+    scan_id = nikto_manager.run_scan(target, user_id=user.id, timeout=timeout) # type: ignore
     _logger.info(f"Nikto lanzado: ID={scan_id} target={target} timeout={timeout} user={user.username}")
-    return jsonify({
+    return {
         "message": "Escaneo Nikto iniciado correctamente",
         "scanId": scan_id,
         "target": target,
         "timeout": timeout,
         "user": user.username,
-    }), 201
+    }
 
 
 @sentinel_blp.post("/openvas")
@@ -274,17 +258,9 @@ def start_openvas_scan(data):
     except IPValidationError as exc:
         raise ValidationError(field="target", message=str(exc), value=target) from exc
     except MaxHostsExceededError as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {},
-        }), 400
+        raise ValidationError(str(exc.user_message or exc))
     except PrivateIPRequested as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {},
-        }), 403
+        raise SecOpsException(str(exc.user_message or exc), status_code=403)
 
     openvas_manager = OpenVASScanManager()
     target_ip = hosts[0]
@@ -298,14 +274,14 @@ def start_openvas_scan(data):
     )
     _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={user.username}")
 
-    return jsonify({
+    return {
         "message": "Escaneo OpenVAS iniciado correctamente",
         "scanId": scan_id,
         "target": target_ip,
         "scanConfig": scan_config,
         "user": user.username,
         "note": "Use /sentinel/scan-status para verificar el progreso.",
-    }), 201
+    }
 
 
 @sentinel_blp.get("/results")
@@ -337,7 +313,7 @@ def retrieve_all_scans(args):
         results, total_count = mgr.get_scans_paginated(uid, page, per_page)
         total_pages = (total_count + per_page - 1) // per_page
 
-        return jsonify({
+        return {
             "message": "Escaneos obtenidos correctamente",
             "filter": scan_type,
             "count": total_count,
@@ -347,7 +323,7 @@ def retrieve_all_scans(args):
             "totalCount": total_count,
             "totalPages": total_pages,
             "user": user.username,
-        }), 200
+        }
 
     all_results = []
     for mgr in TYPE_MGR_MAP.values():
@@ -357,13 +333,13 @@ def retrieve_all_scans(args):
         except (OSError, RuntimeError) as exc:
             _logger.error(f"Error obteniendo scans: {exc}")
 
-    return jsonify({
+    return {
         "message": "Escaneos obtenidos correctamente",
         "filter": scan_type,
         "count": len(all_results),
         "results": all_results,
         "user": user.username,
-    }), 200
+    }
 
 
 @sentinel_blp.get("/stats")
@@ -402,18 +378,18 @@ def retrieve_scan_by_id(scan_id: int):
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id)
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     _logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan.scan_type} por usuario {user.username}")
     result = manager.format_scan(scan_id)
-    if scan.scan_type == "nmap":
+    if scan.scan_type == "nmap": # type: ignore
         result["openPorts"] = [{
             "port": f"{p.port_id}/{p.port.protocol}",
             "reason": p.reason,
             "product": p.product,
             "version": p.version,
         } for p in scan.open_ports_relation]
-    elif scan.scan_type == "openvas":
+    elif scan.scan_type == "openvas": # type: ignore
         result["severityBreakdown"] = {
             "critical": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
             "high": sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
@@ -422,11 +398,11 @@ def retrieve_scan_by_id(scan_id: int):
             "info": sum(1 for r in scan.results if r.vulnerability.severity_class == "Log"),
         }
 
-    return jsonify({
+    return {
         "message": "Escaneo obtenido correctamente",
         "result": result,
         "user": user.username,
-    }), 200
+    }
 
 
 @sentinel_blp.get("/is-finished")
@@ -447,16 +423,16 @@ def is_scan_finished(args):
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id)
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
-    finished = manager.is_scan_finished(scan.id)
+    finished = manager.is_scan_finished(scan.id) # type: ignore
 
-    return jsonify({
+    return {
         "message": f"El escaneo {scan_id} {'esta' if finished else 'no esta'} terminado",
         "scanId": scan_id,
         "isFinished": finished,
         "scanType": scan.scan_type,
-    }), 200
+    }
 
 
 @sentinel_blp.delete("/<int:scan_id>")
@@ -477,26 +453,22 @@ def delete_scan(scan_id: int):
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id)
+    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     if scan.status in CANCELLABLE_STATES:
         _logger.info(f"Cancelando escaneo {scan_id} antes de eliminar")
-        manager.cancel_scan(scan_id, user.id)
+        manager.cancel_scan(scan_id, user.id) # type: ignore
 
     if not manager.delete_scan(scan_id):
-        return jsonify({
-            "error": "deletion_failed",
-            "error_description": "No se pudo eliminar el escaneo",
-            "scanId": scan_id,
-        }), 500
+        raise ScanExecutionError("No se pudo eliminar el escaneo")
 
     _logger.info(f"Escaneo {scan.scan_type} {scan_id} eliminado por {user.username}")
-    return jsonify({
+    return {
         "message": "Escaneo eliminado correctamente",
         "scanId": scan_id,
         "scanType": scan.scan_type,
         "user": user.username,
-    }), 200
+    }
 
 
 @sentinel_blp.get("/generate-pdf")
@@ -518,7 +490,7 @@ def generate_pdf(args):
     uid = user.id
 
     manager = ScanManager.resolve_manager(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, uid)
+    ScanManager.assert_scan_ownership(scan_id, uid) # type: ignore
 
     if not manager.is_scan_finished(scan_id):
         raise ValidationError(
@@ -535,14 +507,14 @@ def generate_pdf(args):
     )
     _logger.info(f"Generacion de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {user.username} con AI Report: {ai_report}")
 
-    return jsonify({
+    return {
         "message": "Generacion de PDF iniciada",
         "documentId": doc_id,
         "scanId": scan_id,
         "status": "pending",
         "aiReport": ai_report,
         "downloadUrl": f"/sentinel/document/{doc_id}/download",
-    }), 202
+    }
 
 
 @sentinel_blp.get("/document-status")
@@ -574,18 +546,19 @@ def get_document_status(args):
         doc_mgr.assert_document_ownership(document_id, user.id)
 
     download_url = None
-    if doc.status == "done" and doc.filename:
+    is_done = doc.status == "done"
+    if is_done and doc.filename: # type: ignore
         download_url = f"/sentinel/document/{doc.id}/download"
 
-    return jsonify({
+    return {
         "documentId": doc.id,
         "scanId": doc.scan_id,
         "status": doc.status,
         "aiReport": doc.enrichment_json is not None,
-        "createdAt": doc.created_at.isoformat() if doc.created_at else None,
-        "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+        "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
+        "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
         "downloadUrl": download_url,
-    }), 200
+    }
 
 
 @sentinel_blp.get("/documents")
@@ -603,7 +576,7 @@ def get_all_documents(args):
     scan_type_filter = args["scan_type"]
 
     doc_mgr = SentinelReportManager()
-    documents = doc_mgr.get_documents_for_user(user.id)
+    documents = doc_mgr.get_documents_for_user(user.id) # type: ignore
 
     if scan_type_filter != "all":
         documents = [d for d in documents if d.scan_type == scan_type_filter]
@@ -611,7 +584,8 @@ def get_all_documents(args):
     docs_list = []
     for doc in documents:
         download_url = None
-        if doc.status == "done" and doc.filename:
+        is_done = doc.status == "done"
+        if is_done and doc.filename: # type: ignore
             download_url = f"/sentinel/document/{doc.id}/download"
 
         docs_list.append({
@@ -620,16 +594,16 @@ def get_all_documents(args):
             "scanType": doc.scan_type,
             "status": doc.status,
             "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
-            "createdAt": doc.created_at.isoformat() if doc.created_at else None,
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+            "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
+            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
             "downloadUrl": download_url,
         })
 
-    return jsonify({
+    return {
         "documents": docs_list,
         "total": len(docs_list),
         "filter": scan_type_filter,
-    }), 200
+    }
 
 
 @sentinel_blp.get("/scan/<int:scan_id>/documents")
@@ -650,14 +624,15 @@ def get_documents_by_scan(scan_id: int):
 
     scan = scan_mgr.get_scan_by_id(scan_id)
     if not scan:
-        return jsonify({"error": "not_found", "error_description": "Escaneo no encontrado"}), 404
+        raise ScanNotFoundError(scan_id)
 
     documents = doc_mgr.get_documents_by_scan_id(scan_id)
 
     docs_list = []
     for doc in documents:
         download_url = None
-        if doc.status == "done" and doc.filename:
+        is_done = doc.status == "done"
+        if is_done and doc.filename: # type: ignore
             download_url = f"/sentinel/document/{doc.id}/download"
 
         docs_list.append({
@@ -671,11 +646,11 @@ def get_documents_by_scan(scan_id: int):
             "downloadUrl": download_url,
         })
 
-    return jsonify({
+    return {
         "scanId": scan_id,
         "documents": docs_list,
         "total": len(docs_list),
-    }), 200
+    }
 
 
 @sentinel_blp.get("/document/<int:document_id>/download")
@@ -694,20 +669,20 @@ def download_document(document_id: int):
     _logger.info(f"Download request for document {document_id} by user {uid}")
 
     doc_mgr = SentinelReportManager()
-    doc_mgr.assert_document_ownership(document_id, uid)
+    doc_mgr.assert_document_ownership(document_id, uid) # type: ignore
 
     doc = doc_mgr.get_document_by_id(document_id)
     if not doc:
         _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
-        return jsonify({"error": "not_found", "error_description": "Documento no encontrado o acceso denegado"}), 404
+        raise DocumentNotFoundError(document_id)
 
-    if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
+    if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename): # type: ignore
         _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
-        return jsonify({"error": "not_ready", "error_description": f"El documento {document_id} aun no esta disponible para descarga"}), 400
+        raise DocumentNotReadyError(document_id, doc.status)
 
     _logger.info(f"Serving document {document_id}: {doc.filename}")
     return send_file(
-        doc.filename,
+        doc.filename, # type: ignore
         mimetype="application/pdf",
         as_attachment=True,
         download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf",
@@ -729,7 +704,7 @@ def delete_document(document_id: int):
     uid = user.id
 
     doc_mgr = SentinelReportManager()
-    doc_mgr.assert_document_ownership(document_id, uid)
+    doc_mgr.assert_document_ownership(document_id, uid) # type: ignore
     doc_mgr.delete_document(document_id)
     _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
     return {"message": "Documento eliminado correctamente", "documentId": document_id}
@@ -758,7 +733,7 @@ def schedule_scan(data):
         )
     user = get_current_user()
     ps = ProgramedScanManager.register(
-        user_id=user.id,
+        user_id=user.id, # type: ignore
         scan_type=ScanType(scan_type_str),
         arguments=data["arguments"],
         schedule_type=data["schedule_type"],
@@ -768,15 +743,15 @@ def schedule_scan(data):
         f"Escaneo programado {ps.id} creado: tipo={scan_type_str} "
         f"programacion={data['schedule_type']} usuario={user.username}"
     )
-    return jsonify({
+    return {
         "message": "Escaneo programado creado correctamente",
         "programedScanId": ps.id,
         "scanType": scan_type_str,
         "scheduleType": data["schedule_type"],
         "scheduleConfig": data["schedule_config"],
-        "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None,
+        "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
         "user": user.username,
-    }), 201
+    }
 
 
 @sentinel_blp.delete("/scheduled-scans/<int:ps_id>")
@@ -791,15 +766,15 @@ def schedule_scan(data):
 def revoke_scheduled_scan(ps_id: int):
     """Revocar un escaneo programado (desactivar)"""
     user = get_current_user()
-    ps = ProgramedScanManager.assert_ownership(ps_id, user.id)
-    ProgramedScanManager.revoke(ps_id, user.id)
+    ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
+    ProgramedScanManager.revoke(ps_id, user.id) # type: ignore
     _logger.info(f"Escaneo programado {ps_id} revocado por {user.username}")
-    return jsonify({
+    return {
         "message": "Escaneo programado revocado correctamente",
         "programedScanId": ps_id,
         "scanType": ps.scan_type,
         "user": user.username,
-    }), 200
+    }
 
 
 @sentinel_blp.delete("/scheduled-scans/<int:ps_id>/permanent")
@@ -814,15 +789,15 @@ def revoke_scheduled_scan(ps_id: int):
 def delete_scheduled_scan(ps_id: int):
     """Eliminar permanentemente un escaneo programado de la BD"""
     user = get_current_user()
-    ps = ProgramedScanManager.assert_ownership(ps_id, user.id)
-    ProgramedScanManager.delete(ps_id, user.id)
+    ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
+    ProgramedScanManager.delete(ps_id, user.id) # type: ignore
     _logger.info(f"Escaneo programado {ps_id} eliminado permanentemente por {user.username}")
-    return jsonify({
+    return {
         "message": "Escaneo programado eliminado permanentemente",
         "programedScanId": ps_id,
         "scanType": ps.scan_type,
         "user": user.username,
-    }), 200
+    }
 
 
 @sentinel_blp.get("/scheduled-scans")
@@ -836,7 +811,7 @@ def delete_scheduled_scan(ps_id: int):
 def list_scheduled_scans():
     """Listar todos los escaneos programados del usuario"""
     user = get_current_user()
-    scans = ProgramedScanManager.get_scans_for_user(user.id)
+    scans = ProgramedScanManager.get_scans_for_user(user.id) # type: ignore
     results = [
         {
             "id": ps.id,
@@ -845,15 +820,15 @@ def list_scheduled_scans():
             "scheduleType": ps.schedule_type,
             "scheduleConfig": ps.schedule_config,
             "isActive": ps.is_active,
-            "lastRunAt": ps.last_run_at.isoformat() if ps.last_run_at else None,
-            "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None,
-            "createdAt": ps.created_at.isoformat() if ps.created_at else None,
+            "lastRunAt": ps.last_run_at.isoformat() if ps.last_run_at else None, # type: ignore
+            "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
+            "createdAt": ps.created_at.isoformat() if ps.created_at else None, # type: ignore
         }
         for ps in scans
     ]
-    return jsonify({
+    return {
         "message": "Escaneos programados obtenidos correctamente",
         "count": len(results),
         "scheduledScans": results,
         "user": user.username,
-    }), 200
+    }

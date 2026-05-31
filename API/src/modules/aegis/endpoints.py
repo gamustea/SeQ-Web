@@ -1,4 +1,4 @@
-from flask import jsonify, request, send_file, Response
+from flask import request, send_file, Response
 from flask_smorest import Blueprint as SmorestBlueprint
 
 import src.modules.system.config_reading as CR
@@ -86,11 +86,11 @@ def aegis_generate(data):
         f"Aegis generate lanzado -- topicId={topic_id} "
         f"documentId={document_id} user={get_current_user().username}"
     )
-    return jsonify({
+    return {
         "message": "Generacion Aegis iniciada",
         "documentId": document_id,
         "status": "pending",
-    }), 202
+    }
 
 
 # ============================================================================
@@ -355,7 +355,7 @@ def export_document(data, doc_id):
         f"Exportacion {export_format.value} generada para doc {doc_id} "
         f"-- user={get_current_user().username}, size={result.size_bytes}b"
     )
-    return jsonify({
+    return {
         "success": True,
         "export": result.to_response_dict(),
         "document": {
@@ -365,7 +365,7 @@ def export_document(data, doc_id):
             "status": doc_info.get("status"),
         },
         "downloadUrl": f"/aegis/export/{doc_id}/download?format={export_format.value}",
-    }), 200
+    }
 
 
 @aegis_blp.get("/export/<int:doc_id>/download")

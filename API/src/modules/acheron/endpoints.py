@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from flask import jsonify, request
+from flask import request
 from flask_smorest import Blueprint as SmorestBlueprint
 from contextlib import contextmanager
 
 from src.modules.shared._exceptions import (
     handle_exceptions,
+    ValidationError,
 )
 from src.modules.shared._endpoints import limiter
 from src.modules.shared.schemas import ErrorSchema
-from src.modules.acheron.exceptions import VaultError, VaultNotFoundError
+from src.modules.acheron.exceptions import VaultError, VaultNotFoundError, StorableNotFoundError, StorableConflictError
 from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
 from .managers import VaultManager
@@ -54,11 +55,7 @@ def get_vault(**kwargs):
         vault = mgr.get_vault_for_user(is_recovery=is_recovery)
 
         if not vault:
-            return jsonify({
-                "error": "not_found",
-                "error_description": "Vault not found for current user",
-                "isRecovery": is_recovery,
-            }), 404
+            raise VaultNotFoundError()
 
         payload = mgr.export_vault_to_json(vault.id)
     _logger.info(f"Vault {vault.id} devuelto -- user={get_current_user().username}")
@@ -82,26 +79,23 @@ def upsert_vault(**kwargs):
     is_recovery = kwargs.get("isRecovery", False)
 
     if not request.is_json:
-        return jsonify({
-            "error": "invalid_request",
-            "error_description": "Content-Type must be application/json",
-        }), 400
+        raise ValidationError("Content-Type must be application/json")
 
     data = request.get_json(silent=True)
     if not data or not isinstance(data, dict):
-        return jsonify({
-            "error": "invalid_request",
-            "error_description": "Request body must be a JSON object",
-        }), 400
+        raise ValidationError("Request body must be a JSON object")
 
     with get_vault_manager() as mgr:
         vault, created = mgr.upsert_vault_from_json(data, is_recovery=is_recovery)
         _logger.info(f"Vault {'creado' if created else 'actualizado'} (ID={vault.id}) -- user={get_current_user().username}")
-    return jsonify({
+    result = {
         "message": "Vault created" if created else "Vault updated",
         "vaultId": vault.id,
         "isRecovery": is_recovery,
-    }), 201 if created else 200
+    }
+    if created:
+        return result
+    return result, 200
 
 
 @acheron_blp.patch("/acheron/storables")
@@ -165,19 +159,10 @@ def add_vault_storable(data):
     with get_vault_manager() as mgr:
         vault = mgr.get_vault_for_user(is_recovery=is_recovery)
         if not vault:
-            return jsonify({
-                "error": "not_found",
-                "error_description": "Vault not found for current user",
-                "isRecovery": is_recovery,
-            }), 404
+            raise VaultNotFoundError()
 
         if internal_id and mgr.get_storable_by(vault_id=vault.id, internal_id=internal_id):
-            return jsonify({
-                "error": "conflict",
-                "error_description": f"Storable with internalId={internal_id} already exists",
-                "internalId": internal_id,
-                "vaultId": vault.id,
-            }), 409
+            raise StorableConflictError(internal_id)
 
         st = mgr.add_storable_to_vault(
             vault_id=vault.id, kind=kind, internal_id=internal_id,
@@ -185,14 +170,14 @@ def add_vault_storable(data):
             **payload,
         )
     _logger.info(f"Storable {st.id} anadido al vault {vault.id} -- user={get_current_user().username}")
-    return jsonify({
+    return {
         "message": "Storable created",
         "storableId": st.id,
         "internalId": st.internal_id,
         "vaultId": st.vault_id,
         "isRecovery": is_recovery,
         "kind": kind,
-    }), 201
+    }
 
 
 @acheron_blp.delete("/vaults/storables")
@@ -216,35 +201,23 @@ def delete_vault_storable(data):
         vault = mgr.get_vault_for_user(is_recovery=is_recovery)
 
         if not vault:
-            return jsonify({
-                "error": "not_found",
-                "error_description": "Vault not found",
-                "isRecovery": is_recovery,
-            }), 404
+            raise VaultNotFoundError()
 
         st = mgr.get_storable_by(vault_id=vault.id, internal_id=internal_id)
         if not st:
-            return jsonify({
-                "error": "not_found",
-                "error_description": "Storable not found in this vault",
-                "internalId": internal_id,
-            }), 404
+            raise StorableNotFoundError(internal_id)
 
         if not mgr.delete_storable(st.id):
-            return jsonify({
-                "error": "deletion_failed",
-                "error_description": "Could not delete storable",
-                "internalId": internal_id,
-            }), 500
+            raise VaultError("Could not delete storable")
 
         _logger.info(f"Storable {st.id} (internalId={internal_id}) eliminado -- user={get_current_user().username}")
-    return jsonify({
+    return {
         "message": "Storable deleted",
         "storableId": st.id,
         "internalId": internal_id,
         "vaultId": vault.id,
         "isRecovery": is_recovery,
-    }), 200
+    }
 
 
 def _parse_is_recovery() -> bool:

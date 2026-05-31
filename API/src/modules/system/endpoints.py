@@ -1,13 +1,14 @@
 import psutil
 
 from flask_smorest import Blueprint as SmorestBlueprint
-from flask import jsonify, request
+from flask import request
 
 from src.modules.users.services.permissions import Role
 from src.modules.shared._endpoints import limiter
 from src.modules.shared._exceptions import (
     handle_exceptions,
     IllegalStateError,
+    ValidationError,
 )
 from src.modules.shared.schemas import ErrorSchema
 from src.modules.system.logging import SecOpsLogger
@@ -97,12 +98,12 @@ def get_config():
 def update_config():
     """Actualiza la configuración de SecOpsConfig.json"""
     if not request.is_json:
-        return jsonify({"error": "invalid_request", "error_description": "Content-Type must be application/json"}), 400
+        raise ValidationError("Content-Type must be application/json")
 
     new_config = request.get_json(silent=True)
     if not new_config:
-        return jsonify({"error": "invalid_request", "error_description": "Request body must be JSON"}), 400
+        raise ValidationError("Request body must be JSON")
 
     config = CR.save_full_config(new_config)
-    _logger.info("Configuración actualizada correctamente")
+    _logger.info("Configuracion actualizada correctamente")
     return config
