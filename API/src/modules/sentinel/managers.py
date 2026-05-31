@@ -31,6 +31,7 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 
 import src.modules.system.config_reading as CR
@@ -493,11 +494,14 @@ class ScanManager(ABC):
             thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
 
             if CR.is_host_reachability_check_enabled():
-                reachable_port = CR.get_host_reachability_check_port()
+                raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
+                parsed_target = urlparse(raw_target)
+                host = parsed_target.hostname or scan.target
+                reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
                 reachable_timeout = CR.get_host_reachability_check_timeout()
-                if not self.is_host_reachable(scan.target, port=reachable_port, timeout=reachable_timeout):
+                if not self.is_host_reachable(host, port=reachable_port, timeout=reachable_timeout):
                     thread_manager.logger.warning(
-                        f"Host '{scan.target}' inalcanzable en puerto {reachable_port}. "
+                        f"Host '{host}' inalcanzable en puerto {reachable_port}. "
                         f"Marcando escaneo {scan_id} como FAILED"
                     )
                     thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
