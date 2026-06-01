@@ -22,6 +22,7 @@ from ._endpoints    import (
     require_arg,
     limiter
 )
+from .schemas import ErrorSchema, SuccessMessageSchema, PaginationQuerySchema
 
 __all__ = [
     "Base",
@@ -34,5 +35,8 @@ __all__ = [
     "require_json",
     "require_str",
     "require_arg",
-    "limiter"
+    "limiter",
+    "ErrorSchema",
+    "SuccessMessageSchema",
+    "PaginationQuerySchema"
 ]

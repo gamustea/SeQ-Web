@@ -33,6 +33,10 @@ mypy>=1.7.1
 black>=23.11.0
 flake8>=6.1.0
 
+# API Documentation & Validation
+flask-smorest>=0.45.0,<0.47
+marshmallow>=3.21.0,<4.0
+
 # Security, API & Utilities
 cryptography>=41.0.4
 flask_limiter

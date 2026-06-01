@@ -14,24 +14,19 @@ from .model import (
     Topic,
 )
 from .managers import AegisManager
-from .endpoints import aegis_bp
+from .endpoints import aegis_blp
 
 __all__ = [
-    # Models
     "AegisDocument",
     "AegisDocumentAlert",
     "AegisTip",
     "Topic",
-    # Managers
     "AegisManager",
-    # Endpoints
-    "aegis_bp",
-    # Pills
+    "aegis_blp",
     "AegisAIWriter",
     "AegisContent",
     "AegisAlert",
     "AegisAlertFetcher",
-    # Exporters
     "ExportFormat",
     "ExportData",
 ]
