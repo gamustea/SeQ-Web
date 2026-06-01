@@ -143,6 +143,11 @@
       "logdir": "..",
       "resourcedir": "../../shared/resources/images",
       "tempdir": "C:/tmp/secapp"
+    },
+    "sequeue": {
+      "max_workers": 4,
+      "history_ttl_seconds": 3600,
+      "history_max_items": 100
     }
   },
   "sentinel": {

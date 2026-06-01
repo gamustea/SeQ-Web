@@ -35,3 +35,35 @@ class SystemStatusSchema(Schema):
 
 class ConfigUpdateSchema(Schema):
     new_config = fields.Dict(required=True)
+
+
+class SeQueueTaskSchema(Schema):
+    id = fields.String()
+    name = fields.String()
+    category = fields.String()
+    externalId = fields.String(allow_none=True)
+    status = fields.String()
+    progress = fields.Integer()
+    createdAt = fields.String(allow_none=True)
+    startedAt = fields.String(allow_none=True)
+    finishedAt = fields.String(allow_none=True)
+    error = fields.String(allow_none=True)
+
+
+class SeQueueStatusSchema(Schema):
+    maxWorkers = fields.Integer()
+    aliveWorkers = fields.Integer()
+    runningCount = fields.Integer()
+    pendingCount = fields.Integer()
+    historyCount = fields.Integer()
+
+
+class SeQueueConfigSchema(Schema):
+    max_workers = fields.Integer(required=True)
+
+
+class SeQueuePaginationQuerySchema(Schema):
+    page = fields.Integer(load_default=1, validate=lambda n: n >= 1)
+    per_page = fields.Integer(load_default=20, validate=lambda n: 1 <= n <= 100)
+    category = fields.String(load_default=None)
+    status = fields.String(load_default=None)

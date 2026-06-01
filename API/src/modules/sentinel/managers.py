@@ -36,6 +36,7 @@ from urllib.parse import urlparse
 
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
+from src.modules.system.sequeue import SeQueue, SeQueueTask
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
@@ -92,10 +93,9 @@ class ScanManager(ABC):
     BaseManager. All database access is performed through UnitOfWork and
     ScanRepository, keeping transaction boundaries explicit.
 
+    Task lifecycle is managed by SeQueue (the shared background task queue).
+
     Class Attributes:
-        _running_tasks:       Dictionary mapping scan_id to running _Task.
-        _running_threads:     Dictionary mapping scan_id to running Thread.
-        _running_tasks_lock:  RLock for thread-safe task management.
         _scan_timeout_margin: Seconds added to task timeout for wait().
 
     Attributes:
@@ -103,9 +103,6 @@ class ScanManager(ABC):
         logger:      Logger instance for this manager.
     """
 
-    _running_tasks: Dict[int, _Task] = {}
-    _running_threads: Dict[int, threading.Thread] = {}
-    _running_tasks_lock = threading.RLock()
     _scan_timeout_margin: int = 30
     _registry: Dict[ScanType, type["ScanManager"]] = {}
 
@@ -125,36 +122,6 @@ class ScanManager(ABC):
     def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
         """Añade datos específicos del tipo de scan al diccionario data para el CSV."""
         pass
-
-    # =========================================================================
-    # TASK REGISTRY (class-level, thread-safe)
-    # =========================================================================
-
-    @classmethod
-    def _register_task(
-        cls,
-        scan_id: int,
-        task: _Task,
-        thread: Optional[threading.Thread] = None
-    ) -> None:
-        """Register a running task and its thread."""
-        with cls._running_tasks_lock:
-            cls._running_tasks[scan_id] = task
-            if thread is not None:
-                cls._running_threads[scan_id] = thread
-
-    @classmethod
-    def _get_task(cls, scan_id: int) -> Optional[_Task]:
-        """Return the registered task for a scan, or None."""
-        with cls._running_tasks_lock:
-            return cls._running_tasks.get(scan_id)
-
-    @classmethod
-    def _unregister_task(cls, scan_id: int) -> None:
-        """Remove a task and its thread from the registry."""
-        with cls._running_tasks_lock:
-            cls._running_tasks.pop(scan_id, None)
-            cls._running_threads.pop(scan_id, None)
 
     # =========================================================================
     # SCAN QUERIES
@@ -231,17 +198,18 @@ class ScanManager(ABC):
         Returns:
             Integer percentage, or None if the scan is not in the task registry.
         """
-        task = self._get_task(scan_id)
-        if task:
-            self.logger.debug(f"Progreso de escaneo {scan_id}: {task.progress}%")
-            return task.progress
+        sequeue = SeQueue.get_instance()
+        sq_task = sequeue.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
+        if sq_task:
+            self.logger.debug(f"Progreso de escaneo {scan_id}: {sq_task.progress}%")
+            return sq_task.progress
         return None
 
     def get_scan_status(self, scan_id: int) -> Optional[str]:
         """
         Return the current status string of a scan.
 
-        Checks the in-memory task registry first; falls back to the database.
+        Checks the in-memory SeQueue registry first; falls back to the database.
 
         Args:
             scan_id: Primary key of the scan.
@@ -249,9 +217,10 @@ class ScanManager(ABC):
         Returns:
             Status string, or None if not found.
         """
-        task = self._get_task(scan_id)
-        if task:
-            return str(task.status)
+        sequeue = SeQueue.get_instance()
+        sq_task = sequeue.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
+        if sq_task:
+            return str(sq_task.status)
         if self.is_scan_finished(scan_id):
             return str(TaskStatus.COMPLETED)
         return None
@@ -360,6 +329,7 @@ class ScanManager(ABC):
 
         Args:
             scan_id: Primary key of the scan to cancel.
+            user_id: ID of the user requesting cancellation.
 
         Returns:
             True if cancelled successfully, False otherwise.
@@ -392,17 +362,20 @@ class ScanManager(ABC):
                 )
                 return False
 
-            task = self._get_task(scan_id)
-            if task:
-                try:
-                    task.cancel()
-                    self.logger.info(f"Tarea del escaneo {scan_id} cancelada")
-                except (OSError, RuntimeError) as e:
-                    self.logger.error(f"Error cancelando tarea del escaneo {scan_id}: {e}")
-                finally:
-                    self._unregister_task(scan_id)
-            else:
-                self.logger.warning(f"No se encontró tarea en ejecución para el escaneo {scan_id}")
+            sequeue = SeQueue.get_instance()
+            sq_task = sequeue.get_task_by_external_id(
+                f"scan:{scan_id}", category="sentinel.scan"
+            )
+
+            if sq_task is None:
+                self.logger.warning(
+                    f"No se encontro tarea activa para el escaneo {scan_id}"
+                )
+                return False
+
+            cancelled = sequeue.cancel(sq_task.id)
+            if not cancelled:
+                self.logger.warning(f"No se pudo cancelar la tarea del escaneo {scan_id}")
                 return False
 
             with UnitOfWork() as uow:
@@ -423,46 +396,21 @@ class ScanManager(ABC):
         """
         Cancel all running scans and wait for tasks to finish.
 
+        Delegates to SeQueue.shutdown() which handles graceful termination
+        of all tasks across all categories.
+
         Called during graceful shutdown to ensure no orphaned scans.
-        Signals all registered tasks to stop and waits for their threads
-        to complete within the specified timeout.
 
         Args:
+            logger:  Logger instance for logging.
             timeout: Maximum seconds to wait for tasks to finish.
         """
-        with cls._running_tasks_lock:
-            task_ids = list(cls._running_tasks.keys())
-
-        if not task_ids:
-            logger.info("No hay tareas activas que cancelar") # type: ignore
-            return
-
-        logger.info(f"Cancelando {len(task_ids)} tarea(s) activa(s)...") # type: ignore
-
-        for scan_id in task_ids:
-            task = cls._get_task(scan_id)
-            if task:
-                try:
-                    task.cancel()
-                except (OSError, RuntimeError) as e:
-                    logger.warning(f"Error cancelando tarea {scan_id}: {e}") # type: ignore
-
-        logger.info("Esperando a que las tareas finalicen...") # type: ignore
-        start_time = time.monotonic()
-        remaining = timeout
-
-        while cls._running_tasks and remaining > 0:
-            time.sleep(0.5)
-            elapsed = time.monotonic() - start_time
-            remaining = timeout - elapsed
-
-        if cls._running_tasks:
-            logger.warning( # type: ignore
-                f"{len(cls._running_tasks)} tarea(s) no respondieron al cancel "
-                "— forzada la terminación"
-            )
-
-        logger.info("Todas las tareas finalizadas") # type: ignore
+        logger.info("Cancelando todas las tareas activas via SeQueue...")
+        try:
+            SeQueue.get_instance().shutdown(timeout=timeout)
+        except Exception as e:
+            logger.error(f"Error durante shutdown de SeQueue: {e}")
+        logger.info("Todas las tareas finalizadas")
 
 
     # =========================================================================
@@ -505,7 +453,6 @@ class ScanManager(ABC):
                         f"Marcando escaneo {scan_id} como FAILED"
                     )
                     thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
-                    self._unregister_task(scan_id)
                     return
 
             task.scan()
@@ -543,8 +490,6 @@ class ScanManager(ABC):
                 thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
                 thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
             thread_manager._log_to_csv(scan_id, fresh_scan, task)
-        finally:
-            self._unregister_task(scan_id)
 
     def update_scan_status(self, scan_id: int, status: ScanStatus) -> None:
         """
@@ -585,7 +530,7 @@ class ScanManager(ABC):
                 data = {
                     "duration_sec": round(duration, 2),
                     "status": status,
-                    "concurrent_tasks": len(self._running_tasks),
+                    "concurrent_tasks": SeQueue.get_instance().get_status()["runningCount"],
                 }
 
                 self.append_csv_data(data, fresh_scan, task)
@@ -1242,15 +1187,14 @@ class NmapScanManager(ScanManager):
                 timeout      = timeout,
             )
 
-            thread = threading.Thread(
-                target = self._execute_scan_in_thread,
-                args   = (scan_id, task),
-                daemon = True,
-                name   = f"NmapScan-{scan_id}",
+            SeQueue.get_instance().submit(
+                func=self._execute_scan_in_thread,
+                args=(scan_id, task),
+                name=f"NmapScan-{scan_id}",
+                category="sentinel.scan",
+                external_id=f"scan:{scan_id}",
+                on_cancel=task.cancel,
             )
-
-            self._register_task(scan_id, task, thread) # type: ignore
-            thread.start()
 
             self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
             return scan_id # type: ignore
@@ -1385,15 +1329,14 @@ class NiktoScanManager(ScanManager):
 
             task = NiktoScanTask(target_domain=target_domain, timeout=timeout)
 
-            thread = threading.Thread(
-                target = self._execute_scan_in_thread,
-                args   = (scan_id, task),
-                daemon = True,
-                name   = f"NiktoScan-{scan_id}",
+            SeQueue.get_instance().submit(
+                func=self._execute_scan_in_thread,
+                args=(scan_id, task),
+                name=f"NiktoScan-{scan_id}",
+                category="sentinel.scan",
+                external_id=f"scan:{scan_id}",
+                on_cancel=task.cancel,
             )
-
-            self._register_task(scan_id, task, thread) # type: ignore
-            thread.start()
 
             self.logger.info(f"Escaneo Nikto {scan_id} iniciado")
             return scan_id # type: ignore
@@ -1568,15 +1511,14 @@ class OpenVASScanManager(ScanManager):
                 scan_config = config_id,
             )
 
-            thread = threading.Thread(
-                target = self._execute_scan_in_thread,
-                args   = (scan_id, task, skip_normalize),
-                daemon = True,
-                name   = f"OpenVASScan-{scan_id}",
+            SeQueue.get_instance().submit(
+                func=self._execute_scan_in_thread,
+                args=(scan_id, task, skip_normalize),
+                name=f"OpenVASScan-{scan_id}",
+                category="sentinel.scan",
+                external_id=f"scan:{scan_id}",
+                on_cancel=task.cancel,
             )
-
-            self._register_task(scan_id, task, thread) # type: ignore
-            thread.start()
 
             self.logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
             return scan_id # type: ignore
@@ -1867,13 +1809,13 @@ class SentinelReportManager:
 
         doc_id = self._create_document(scan, ai_report)
 
-        thread = threading.Thread(
-            target=self._generate_pdf_async,
+        SeQueue.get_instance().submit(
+            func=self._generate_pdf_async,
             args=(doc_id, scan.id, ai_report),
-            daemon=True,
             name=f"PDFGeneration-Scan-{scan.id}",
+            category="sentinel.report",
+            external_id=f"sentinel-doc:{doc_id}",
         )
-        thread.start()
         return doc_id  # type: ignore
 
     def _generate_pdf_async(
