@@ -58,6 +58,12 @@ const routes = [
     component: () => import('@/views/UsersView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/queue',
+    name: 'Queue',
+    component: () => import('@/views/QueueView.vue'),
+    meta: { requiresAuth: true },
+  },
 ]
 
 /**

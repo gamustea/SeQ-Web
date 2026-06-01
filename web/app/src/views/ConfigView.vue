@@ -53,6 +53,31 @@
           </div>
         </section>
 
+        <!-- ══════════ SEQUEUE ══════════ -->
+        <section id="section-sequeue" class="section">
+          <div class="section-head">
+            <h2>SeQueue</h2>
+            <p class="section-desc">Cola de tareas en segundo plano</p>
+          </div>
+
+          <div class="section-body">
+            <div class="cfg-grid">
+              <div class="form-group">
+                <label for="sq.max_workers">Max Workers</label>
+                <input id="sq.max_workers" v-model.number="store.configFlat['general.sequeue.max_workers']" type="number" min="1" max="32" class="input" />
+              </div>
+              <div class="form-group">
+                <label for="sq.ttl">Historial TTL (segundos)</label>
+                <input id="sq.ttl" v-model.number="store.configFlat['general.sequeue.history_ttl_seconds']" type="number" min="60" max="86400" class="input" />
+              </div>
+              <div class="form-group">
+                <label for="sq.max_items">Max items en historial</label>
+                <input id="sq.max_items" v-model.number="store.configFlat['general.sequeue.history_max_items']" type="number" min="10" max="1000" class="input" />
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- ══════════ SENTINEL ══════════ -->
         <section id="section-sentinel" class="section">
           <div class="section-head">
@@ -241,6 +266,7 @@ const store = useConfigStore()
 /* ── Sidebar nav ── */
 const navSections = [
   { id: 'general',  label: 'General',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
+  { id: 'sequeue',  label: 'SeQueue',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>' },
   { id: 'sentinel', label: 'Sentinel', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' },
   { id: 'aegis',    label: 'Aegis',    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>' },
 ]
