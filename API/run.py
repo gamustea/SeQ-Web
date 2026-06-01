@@ -87,13 +87,11 @@ def _graceful_shutdown(signum, *args) -> None:
     _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
     try:
         from src.modules.system.sequeue import SeQueue
-        _logger.info("Deteniendo cola de tareas en segundo plano...")
-        SeQueue.get_instance().shutdown(
-            timeout=APP_CONTEXT.shutdown_time
-        )
-        _logger.info("Cola de tareas detenida.")
+        _logger.info("Cancelando tareas en segundo plano...")
+        SeQueue.get_instance().cancel_all()
+        _logger.info("Tareas canceladas.")
     except Exception as e:
-        _logger.error(f"Error durante el apagado de SeQueue: {e}")
+        _logger.error(f"Error cancelando tareas: {e}")
 
     _logger.info("[Shutdown] Deteniendo scheduler...")
     try:

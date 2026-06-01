@@ -394,23 +394,22 @@ class ScanManager(ABC):
     @classmethod
     def cancel_all_running(cls, logger, timeout: int = 30) -> None:
         """
-        Cancel all running scans and wait for tasks to finish.
+        Cancel all running scans.
 
-        Delegates to SeQueue.shutdown() which handles graceful termination
-        of all tasks across all categories.
-
-        Called during graceful shutdown to ensure no orphaned scans.
+        Delegates to SeQueue.cancel_all() which terminates subprocesses
+        and returns immediately (signal-safe). Workers exit naturally
+        when the process terminates.
 
         Args:
             logger:  Logger instance for logging.
-            timeout: Maximum seconds to wait for tasks to finish.
+            timeout: Ignored — cancel_all() is fire-and-forget.
         """
         logger.info("Cancelando todas las tareas activas via SeQueue...")
         try:
-            SeQueue.get_instance().shutdown(timeout=timeout)
+            SeQueue.get_instance().cancel_all()
         except Exception as e:
-            logger.error(f"Error durante shutdown de SeQueue: {e}")
-        logger.info("Todas las tareas finalizadas")
+            logger.error(f"Error cancelando tareas SeQueue: {e}")
+        logger.info("Tareas canceladas.")
 
 
     # =========================================================================

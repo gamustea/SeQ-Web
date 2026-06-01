@@ -103,15 +103,31 @@ class SeQueue:
     def shutdown(self, timeout: int = 30) -> None:
         self.logger.info("SeQueue shutting down...")
 
+        self.cancel_all()
+
+        deadline = time.monotonic() + timeout
+        for worker in list(self._workers):
+            remaining = max(0.0, deadline - time.monotonic())
+            worker.join(timeout=remaining)
+
+        self._workers.clear()
+        self.logger.info("SeQueue shut down complete")
+
+    def cancel_all(self) -> None:
+        """
+        Cancel all tasks (pending + running) without waiting for workers.
+
+        Safe to call from signal handlers — returns immediately and does
+        NOT join worker threads. Workers are unblocked via sentinel values
+        so they exit their loop when the shutdown event is signalled.
+        """
         with self._lock:
-            # Cancel pending
             for task in list(self._pending.values()):
                 task.status = SeQueueTaskStatus.CANCELLED
                 task.finished_at = datetime.now()
                 self._add_to_history(task)
             self._pending.clear()
 
-            # Cancel running – call domain cancel callbacks
             for task in list(self._running.values()):
                 if task.on_cancel:
                     try:
@@ -126,22 +142,14 @@ class SeQueue:
                 if task.id in self._running:
                     del self._running[task.id]
 
-            # Clean external_id_map
             self._external_id_map.clear()
 
         self._shutdown_event.set()
 
-        # Unblock workers
         for _ in self._workers:
-            self._queue.put(None)  # type: ignore[arg-type]
+            self._queue.put(None)
 
-        deadline = time.monotonic() + timeout
-        for worker in list(self._workers):
-            remaining = max(0.0, deadline - time.monotonic())
-            worker.join(timeout=remaining)
-
-        self._workers.clear()
-        self.logger.info("SeQueue shut down complete")
+        self.logger.info("SeQueue cancel_all complete (signal-safe)")
 
     # =========================================================================
     # PUBLIC API
