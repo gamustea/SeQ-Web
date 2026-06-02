@@ -145,23 +145,23 @@
       "tempdir": "C:/tmp/secapp"
     },
     "sequeue": {
-      "max_workers": 4,
+      "history_max_items": 100,
       "history_ttl_seconds": 3600,
-      "history_max_items": 100
+      "max_workers": 6
     }
   },
   "sentinel": {
     "areLocalIpsAllowed": true,
-    "hostReachabilityCheck": {
-      "enabled": true,
-      "timeout": 3.0,
-      "port": 80
-    },
     "directories": {
       "csv": "data/sentinel/csv",
       "output": "data/sentinel/output"
     },
     "enabled": true,
+    "hostReachabilityCheck": {
+      "enabled": true,
+      "port": 80,
+      "timeout": 3
+    },
     "nikto": {
       "colorPalette": {
         "black": "#4b2500",

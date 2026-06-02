@@ -1,19 +1,15 @@
 <template>
   <div class="viewer">
-    <!-- Empty -->
     <div v-if="!viewerDoc.data && !viewerDoc.loading" class="viewer-empty">
-      <div class="empty-icon">&#128218;</div>
       <h3>Visor de Documentos</h3>
       <p>Selecciona un documento del historial o genera una nueva píldora para ver su contenido aquí.</p>
     </div>
 
-    <!-- Loading -->
     <div v-else-if="viewerDoc.loading" class="viewer-loading">
       <div class="spinner-lg"></div>
       <p>Cargando documento…</p>
     </div>
 
-    <!-- Document -->
     <Transition name="pill-reveal" mode="out-in">
       <div v-if="viewerDoc.data && !viewerDoc.loading" class="viewer-content">
         <div class="viewer-toolbar">
@@ -85,11 +81,7 @@ import { ref } from 'vue'
 import { useUtils } from '@/composables/useUtils'
 
 const { formatDate } = useUtils()
-
-defineProps({
-  viewerDoc: { type: Object, default: () => ({ loading: false, data: null }) },
-})
-
+defineProps({ viewerDoc: { type: Object, default: () => ({ loading: false, data: null }) } })
 const emit = defineEmits(['close', 'export', 'preview'])
 const exportOpen = ref(false)
 
@@ -99,82 +91,50 @@ function emitExport(fmt) { exportOpen.value = false; emit('export', fmt) }
 </script>
 
 <style scoped>
-.viewer { min-height: 100%; display: flex; flex-direction: column; }
-
-.viewer-empty { text-align: center; padding: 3rem 1.5rem; color: var(--text-muted); }
-.empty-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
-.viewer-empty h3 { font-size: 1.1rem; font-weight: 600; color: var(--text-dim); margin: 0 0 0.5rem; }
-.viewer-empty p { font-size: 0.82rem; line-height: 1.5; max-width: 320px; margin: 0 auto; }
-
-.viewer-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; padding: 4rem 0; color: var(--text-muted); font-size: 0.85rem; }
-.spinner-lg { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
+.viewer { height: 100%; display: flex; flex-direction: column; }
+.viewer-empty { text-align: center; padding: 2.5rem 1.25rem; color: var(--text-muted); }
+.viewer-empty h3 { font-size: 1rem; font-weight: 600; color: var(--text-dim); margin: 0 0 0.4rem; }
+.viewer-empty p { font-size: 0.8rem; line-height: 1.5; max-width: 300px; margin: 0 auto; }
+.viewer-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.85rem; padding: 3.5rem 0; color: var(--text-muted); font-size: 0.82rem; }
+.spinner-lg { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: seq-spin .7s linear infinite; }
 .viewer-content { flex: 1; display: flex; flex-direction: column; }
-
-.viewer-toolbar {
-  display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem;
-  background: var(--surface); border-bottom: 1px solid var(--border);
-  font-size: 0.76rem; color: var(--text-muted); flex-wrap: wrap;
-}
-.doc-id, .doc-topic { font-weight: 600; color: var(--text-dim); font-family: var(--font-mono); }
+.viewer-toolbar { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.85rem; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 0.72rem; color: var(--text-muted); flex-wrap: wrap; }
+.doc-id, .doc-topic { font-weight: 600; color: var(--text-dim); font-family: var(--font-mono); font-size: 0.75rem; }
 .toolbar-spacer { flex: 1; }
-
-.toolbar-btn {
-  padding: 0.3rem 0.7rem; font-size: 0.7rem; font-weight: 600; border-radius: 5px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text-dim); cursor: pointer; transition: background 0.2s;
-}
-.toolbar-btn:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-.toolbar-close { border: none; background: none; font-size: 1.2rem; padding: 0 0.3rem; line-height: 1; }
+.toolbar-btn { padding: 0.25rem 0.6rem; font-size: 0.68rem; font-weight: 600; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--text-dim); cursor: pointer; transition: all 0.2s; }
+.toolbar-btn:hover { background: var(--accent); color: #0b0c10; border-color: var(--accent); }
+.toolbar-close { border: none; background: none; font-size: 1.1rem; padding: 0 0.25rem; line-height: 1; }
 .toolbar-close:hover { background: none; color: var(--danger); }
-
 .export-dropdown { position: relative; }
-.export-menu {
-  position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: 20;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; min-width: 110px;
-}
-.export-menu button {
-  display: block; width: 100%; text-align: left; padding: 0.4rem 0.7rem;
-  font-size: 0.75rem; background: none; border: none; color: var(--text-dim); cursor: pointer; transition: background 0.15s;
-}
-.export-menu button:hover { background: var(--accent); color: var(--bg); }
-
-.pill-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
-.pill-title { font-size: 1.4rem; font-weight: 800; color: var(--text); margin: 0 0 0.25rem; }
-.pill-subtitle { font-size: 0.9rem; color: var(--text-dim); margin: 0 0 1.5rem; }
-
-.pill-section { margin-bottom: 1.5rem; }
-.pill-section h3 { font-size: 1rem; font-weight: 700; color: var(--accent); margin: 0 0 0.75rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
-
-.pill-intro, .pill-closing { font-size: 0.88rem; line-height: 1.65; color: var(--text); }
-
-.pill-tip { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
-.tip-num {
-  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
-  background: var(--accent); color: var(--bg); font-size: 0.75rem; font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-}
+.export-menu { position: absolute; right: 0; top: 100%; margin-top: 3px; z-index: 20; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; overflow: hidden; min-width: 100px; }
+.export-menu button { display: block; width: 100%; text-align: left; padding: 0.35rem 0.6rem; font-size: 0.72rem; background: none; border: none; color: var(--text-dim); cursor: pointer; transition: background 0.15s; }
+.export-menu button:hover { background: var(--accent); color: #0b0c10; }
+.pill-body { padding: 1.25rem; overflow-y: auto; flex: 1; }
+.pill-title { font-size: 1.3rem; font-weight: 800; color: var(--text); margin: 0 0 0.2rem; font-family: var(--font-display); }
+.pill-subtitle { font-size: 0.85rem; color: var(--text-dim); margin: 0 0 1.25rem; }
+.pill-section { margin-bottom: 1.25rem; }
+.pill-section h3 { font-size: 0.95rem; font-weight: 700; color: var(--accent); margin: 0 0 0.65rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); font-family: var(--font-display); }
+.pill-intro, .pill-closing { font-size: 0.85rem; line-height: 1.6; color: var(--text); }
+.pill-tip { display: flex; gap: 0.65rem; margin-bottom: 0.85rem; }
+.tip-num { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; background: var(--accent); color: #0b0c10; font-size: 0.72rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .tip-body { flex: 1; min-width: 0; }
-.tip-body h4 { font-size: 0.92rem; font-weight: 700; color: var(--text); margin: 0 0 0.2rem; }
-.tip-body p { font-size: 0.82rem; line-height: 1.5; color: var(--text-dim); margin: 0 0 0.35rem; }
-.tip-links { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.tip-link { font-size: 0.75rem; color: var(--accent); text-decoration: none; font-weight: 600; }
+.tip-body h4 { font-size: 0.88rem; font-weight: 700; color: var(--text); margin: 0 0 0.15rem; }
+.tip-body p { font-size: 0.8rem; line-height: 1.5; color: var(--text-dim); margin: 0 0 0.3rem; }
+.tip-links { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.tip-link { font-size: 0.72rem; color: var(--accent); text-decoration: none; font-weight: 600; }
 .tip-link:hover { text-decoration: underline; }
-
-.pill-alert { padding: 0.75rem; border-radius: 8px; margin-bottom: 0.6rem; border: 1px solid var(--border); background: var(--bg); }
-.pill-alert--critica     { border-color: rgba(239,68,68,0.25); border-left: 3px solid var(--danger); }
+.pill-alert { padding: 0.65rem; border-radius: 7px; margin-bottom: 0.5rem; border: 1px solid var(--border); background: var(--bg); }
+.pill-alert--critica     { border-color: rgba(217,108,108,0.25); border-left: 3px solid var(--danger); }
 .pill-alert--alta        { border-color: rgba(251,146,60,0.2); border-left: 3px solid #fb923c; }
-.pill-alert--media       { border-color: rgba(251,191,36,0.2); border-left: 3px solid var(--warn); }
-.pill-alert--baja        { border-color: rgba(52,211,153,0.2); border-left: 3px solid var(--success); }
-.pill-alert--informativa { border-color: rgba(96,165,250,0.2); border-left: 3px solid var(--info); }
-
-.alert-header { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.25rem; }
-.alert-severity { font-size: 0.85rem; }
-.alert-title { font-size: 0.85rem; font-weight: 700; color: var(--text); text-decoration: none; }
+.pill-alert--media       { border-color: rgba(212,160,74,0.2); border-left: 3px solid var(--warn); }
+.pill-alert--baja        { border-color: rgba(76,183,130,0.2); border-left: 3px solid var(--success); }
+.pill-alert--informativa { border-color: rgba(96,128,224,0.2); border-left: 3px solid var(--info); }
+.alert-header { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.2rem; }
+.alert-severity { font-size: 0.8rem; }
+.alert-title { font-size: 0.82rem; font-weight: 700; color: var(--text); text-decoration: none; }
 a.alert-title:hover { color: var(--accent); text-decoration: underline; }
-.alert-desc { font-size: 0.78rem; color: var(--text-dim); margin: 0.25rem 0; line-height: 1.45; }
-.alert-meta { display: flex; gap: 0.75rem; font-size: 0.7rem; color: var(--text-muted); margin-top: 0.35rem; }
-
+.alert-desc { font-size: 0.75rem; color: var(--text-dim); margin: 0.2rem 0; line-height: 1.45; }
+.alert-meta { display: flex; gap: 0.65rem; font-size: 0.68rem; color: var(--text-muted); margin-top: 0.3rem; }
 .pill-reveal-enter-active { transition: opacity 0.35s ease-out, transform 0.35s ease-out; }
 .pill-reveal-leave-active { transition: opacity 0.15s ease-in; }
 .pill-reveal-enter-from { opacity: 0; transform: scale(0.97); }

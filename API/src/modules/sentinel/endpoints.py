@@ -555,8 +555,8 @@ def get_document_status(args):
         "scanId": doc.scan_id,
         "status": doc.status,
         "aiReport": doc.enrichment_json is not None,
-        "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
-        "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
+        "createdAt": doc.created_at if doc.created_at else None, # type: ignore
+        "generatedAt": doc.generated_at if doc.generated_at else None, # type: ignore
         "downloadUrl": download_url,
     }
 
@@ -594,8 +594,8 @@ def get_all_documents(args):
             "scanType": doc.scan_type,
             "status": doc.status,
             "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
-            "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
+            "createdAt": doc.created_at if doc.created_at else None, # type: ignore
+            "generatedAt": doc.generated_at if doc.generated_at else None, # type: ignore
             "downloadUrl": download_url,
         })
 
@@ -641,8 +641,8 @@ def get_documents_by_scan(scan_id: int):
             "scanType": doc.scan_type,
             "status": doc.status,
             "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
-            "createdAt": doc.created_at.isoformat() if doc.created_at else None,
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+            "createdAt": doc.created_at if doc.created_at else None,
+            "generatedAt": doc.generated_at if doc.generated_at else None,
             "downloadUrl": download_url,
         })
 
@@ -749,7 +749,7 @@ def schedule_scan(data):
         "scanType": scan_type_str,
         "scheduleType": data["schedule_type"],
         "scheduleConfig": data["schedule_config"],
-        "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
+        "nextRunAt": ps.next_run_at if ps.next_run_at else None, # type: ignore
         "user": user.username,
     }
 
@@ -820,9 +820,9 @@ def list_scheduled_scans():
             "scheduleType": ps.schedule_type,
             "scheduleConfig": ps.schedule_config,
             "isActive": ps.is_active,
-            "lastRunAt": ps.last_run_at.isoformat() if ps.last_run_at else None, # type: ignore
-            "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
-            "createdAt": ps.created_at.isoformat() if ps.created_at else None, # type: ignore
+            "lastRunAt": ps.last_run_at if ps.last_run_at else None, # type: ignore
+            "nextRunAt": ps.next_run_at if ps.next_run_at else None, # type: ignore
+            "createdAt": ps.created_at if ps.created_at else None, # type: ignore
         }
         for ps in scans
     ]

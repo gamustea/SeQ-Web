@@ -8,9 +8,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
-
       <div class="modal-body" v-if="scan">
-        <!-- General info -->
         <div class="detail-section">
           <h3>Información General</h3>
           <div class="detail-grid">
@@ -21,8 +19,6 @@
             <span class="dl">Finalizado:</span><span class="dv">{{ fmt(scan.finishedAt) }}</span>
           </div>
         </div>
-
-        <!-- Ports (nmap) -->
         <div v-if="type === 'nmap' && scan.openPorts?.length" class="detail-section">
           <h3>Puertos Abiertos ({{ scan.openPorts.length }})</h3>
           <table class="ports-table">
@@ -37,8 +33,6 @@
             </tbody>
           </table>
         </div>
-
-        <!-- Incidents (nikto) -->
         <div v-if="type === 'nikto' && scan.incidents?.length" class="detail-section">
           <h3>Incidencias ({{ scan.incidents.length }})</h3>
           <div class="vulns-scroll">
@@ -51,8 +45,6 @@
             </div>
           </div>
         </div>
-
-        <!-- Vulns (openvas) -->
         <div v-if="type === 'openvas' && scan.vulnerabilities?.length" class="detail-section">
           <h3>Vulnerabilidades ({{ scan.vulnerabilities.length }})</h3>
           <div class="vulns-scroll">
@@ -65,13 +57,9 @@
             </div>
           </div>
         </div>
-
-        <!-- No data -->
         <div class="detail-section" v-if="!hasDetailData">
           <div class="empty-state">No hay datos disponibles.</div>
         </div>
-
-        <!-- Documents section -->
         <div class="detail-section document-section">
           <div class="docs-header">
             <div class="docs-title-wrap">
@@ -80,21 +68,15 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{ spin: docsLoading }"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
               </button>
             </div>
-            <label class="doc-checkbox">
-              <input type="checkbox" v-model="useAiDocs" />
-              <span class="doc-checklabel">Análisis IA con Ollama</span>
-            </label>
+            <label class="doc-checkbox"><input type="checkbox" v-model="useAiDocs" /><span class="doc-checklabel">Análisis IA con Ollama</span></label>
             <button class="docs-gen-btn" @click="$emit('generate-pdf', scan.id, type, useAiDocs)">Generar PDF</button>
           </div>
-
           <div v-if="docsLoading" class="docs-empty">Cargando documentos…</div>
           <div v-else-if="!docs.length" class="docs-empty">Sin documentos generados</div>
           <div v-else class="docs-list">
             <div v-for="doc in docs" :key="doc.documentId" class="doc-item">
               <div class="doc-info">
-                <span class="doc-name">PDF {{ doc.scanType?.toUpperCase() }}
-                  <span v-if="doc.isAiGenerated" class="doc-ai-badge">IA</span>
-                </span>
+                <span class="doc-name">PDF {{ doc.scanType?.toUpperCase() }} <span v-if="doc.isAiGenerated" class="doc-ai-badge">IA</span></span>
                 <span v-if="doc.createdAt" class="doc-date">{{ fmtDate(doc.createdAt) }}</span>
               </div>
               <div class="doc-actions">
@@ -114,12 +96,10 @@
           </div>
         </div>
       </div>
-
       <div class="modal-body empty-state" v-else>
-        <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:24px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:22px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         <span>Cargando…</span>
       </div>
-
       <div class="modal-footer">
         <button class="btn btn--secondary" @click="$emit('close')">Cerrar</button>
       </div>
@@ -131,12 +111,8 @@
 import { ref, computed } from 'vue'
 import StatusBadge from './StatusBadge.vue'
 
-const props = defineProps({
-  show: Boolean, scan: Object, type: String, docs: { type: Array, default: () => [] }, docsLoading: Boolean,
-})
-
+const props = defineProps({ show: Boolean, scan: Object, type: String, docs: { type: Array, default: () => [] }, docsLoading: Boolean })
 defineEmits(['close', 'refresh-docs', 'download-doc', 'delete-doc', 'generate-pdf'])
-
 const useAiDocs = ref(false)
 
 const hasDetailData = computed(() => {
@@ -153,54 +129,50 @@ function sevClass(s) { if (!s) return 'low'; const x = s.toLowerCase(); if (x.in
 </script>
 
 <style scoped>
-.detail-section { margin-bottom: 1.5rem; }
-.detail-section h3 { font-size: 0.95rem; font-weight: 600; color: var(--text); margin-bottom: 0.75rem; }
-.detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 1rem; padding: 0.75rem; background: var(--surface-2); border-radius: 8px; }
-.dl { font-size: 0.75rem; color: var(--text-muted); font-weight: 500; }
-.dv { font-size: 0.85rem; color: var(--text); }
-.mono { font-family: var(--font-mono); font-size: 0.82rem; }
-
-.ports-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-.ports-table th { text-align: left; padding: 0.45rem 0.7rem; font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2); }
-.ports-table td { padding: 0.45rem 0.7rem; font-size: 0.82rem; border-top: 1px solid var(--border); color: var(--text); }
-
-.vulns-scroll { max-height: 350px; overflow-y: auto; }
-.incident-card { padding: 0.7rem 0.85rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.5rem; }
-.incident-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
-.incident-title { font-size: 0.84rem; font-weight: 600; color: var(--text); word-break: break-all; margin-right: 0.5rem; flex: 1; }
-.incident-desc { font-size: 0.78rem; color: var(--text-dim); line-height: 1.5; }
-.severity-badge { font-size: 0.65rem; padding: 2px 7px; border-radius: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
-.severity-badge.critical { background: rgba(248,113,113,0.15); color: var(--danger); border: 1px solid rgba(248,113,113,0.3); }
-.severity-badge.high { background: rgba(251,191,36,0.12); color: var(--warn); border: 1px solid rgba(251,191,36,0.25); }
-.severity-badge.medium { background: rgba(96,165,250,0.12); color: var(--info); border: 1px solid rgba(96,165,250,0.25); }
+.detail-section { margin-bottom: 1.25rem; }
+.detail-section h3 { font-size: 0.9rem; font-weight: 600; color: var(--text); margin-bottom: 0.65rem; font-family: var(--font-display); }
+.detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.85rem; padding: 0.65rem; background: var(--surface-2); border-radius: 8px; }
+.dl { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; }
+.dv { font-size: 0.82rem; color: var(--text); }
+.mono { font-family: var(--font-mono); font-size: 0.78rem; }
+.ports-table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; }
+.ports-table th { text-align: left; padding: 0.4rem 0.6rem; font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2); }
+.ports-table td { padding: 0.4rem 0.6rem; font-size: 0.8rem; border-top: 1px solid var(--border); color: var(--text); }
+.vulns-scroll { max-height: 320px; overflow-y: auto; }
+.incident-card { padding: 0.6rem 0.75rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; margin-bottom: 0.4rem; }
+.incident-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.25rem; }
+.incident-title { font-size: 0.8rem; font-weight: 600; color: var(--text); word-break: break-all; margin-right: 0.4rem; flex: 1; }
+.incident-desc { font-size: 0.75rem; color: var(--text-dim); line-height: 1.5; }
+.severity-badge { font-size: 0.62rem; padding: 2px 6px; border-radius: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+.severity-badge.critical { background: rgba(217,108,108,0.15); color: var(--danger); border: 1px solid rgba(217,108,108,0.25); }
+.severity-badge.high { background: rgba(212,160,74,0.12); color: var(--warn); border: 1px solid rgba(212,160,74,0.2); }
+.severity-badge.medium { background: rgba(96,128,224,0.12); color: var(--info); border: 1px solid rgba(96,128,224,0.2); }
 .severity-badge.low { background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border); }
-
-.document-section { border-top: 1px solid var(--border); padding-top: 1rem; }
-.docs-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
-.docs-title-wrap { display: flex; align-items: center; gap: 0.5rem; }
-.docs-refresh { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 6px; }
+.document-section { border-top: 1px solid var(--border); padding-top: 0.85rem; }
+.docs-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.65rem; }
+.docs-title-wrap { display: flex; align-items: center; gap: 0.4rem; }
+.docs-refresh { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 3px; border-radius: 5px; }
 .docs-refresh:hover { color: var(--accent); }
-.docs-refresh svg { width: 14px; height: 14px; }
+.docs-refresh svg { width: 13px; height: 13px; }
 .spin { animation: seq-spin 0.8s linear infinite; }
-.doc-checkbox { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--text-dim); cursor: pointer; }
+.doc-checkbox { display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; color: var(--text-dim); cursor: pointer; }
 .doc-checklabel { user-select: none; }
-.docs-gen-btn { padding: 0.35rem 0.8rem; font-size: 0.78rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 7px; color: var(--accent); cursor: pointer; font-weight: 500; }
-.docs-gen-btn:hover { background: var(--accent); color: #000; }
-.docs-empty { font-size: 0.82rem; color: var(--text-muted); padding: 1rem 0; text-align: center; }
-.docs-list { display: flex; flex-direction: column; gap: 0.4rem; }
-.doc-item { display: flex; align-items: center; justify-content: space-between; padding: 0.45rem 0.65rem; background: var(--surface-2); border-radius: 7px; }
-.doc-info { display: flex; align-items: center; gap: 0.5rem; }
-.doc-name { font-size: 0.82rem; color: var(--text); font-weight: 500; }
-.doc-ai-badge { font-size: 0.65rem; color: var(--accent); background: var(--accent-dim); padding: 1px 5px; border-radius: 4px; margin-left: 4px; }
-.doc-date { font-size: 0.7rem; color: var(--text-muted); }
-.doc-actions { display: flex; gap: 0.25rem; }
-.doc-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text-muted); cursor: pointer; }
+.docs-gen-btn { padding: 0.3rem 0.7rem; font-size: 0.75rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 6px; color: var(--accent-bright); cursor: pointer; font-weight: 500; }
+.docs-gen-btn:hover { background: var(--accent); color: #0b0c10; }
+.docs-empty { font-size: 0.8rem; color: var(--text-muted); padding: 0.85rem 0; text-align: center; }
+.docs-list { display: flex; flex-direction: column; gap: 0.35rem; }
+.doc-item { display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0.55rem; background: var(--surface-2); border-radius: 6px; }
+.doc-info { display: flex; align-items: center; gap: 0.45rem; }
+.doc-name { font-size: 0.8rem; color: var(--text); font-weight: 500; }
+.doc-ai-badge { font-size: 0.62rem; color: var(--accent); background: var(--accent-dim); padding: 1px 4px; border-radius: 3px; margin-left: 3px; }
+.doc-date { font-size: 0.68rem; color: var(--text-muted); }
+.doc-actions { display: flex; gap: 0.2rem; }
+.doc-btn { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text-muted); cursor: pointer; }
 .doc-btn:hover { border-color: var(--accent); color: var(--accent); }
 .doc-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
-.doc-btn svg { width: 13px; height: 13px; }
-.doc-status { font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; }
+.doc-btn svg { width: 12px; height: 12px; }
+.doc-status { font-size: 0.7rem; padding: 2px 7px; border-radius: 8px; }
 .doc-status.pending { background: var(--warn-dim); color: var(--warn); }
 .doc-status.error { background: var(--danger-dim); color: var(--danger); }
-
-.empty-state { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 2rem 1rem; color: var(--text-muted); font-size: 0.85rem; }
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 1.5rem 1rem; color: var(--text-muted); font-size: 0.82rem; }
 </style>

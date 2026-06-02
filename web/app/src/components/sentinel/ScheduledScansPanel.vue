@@ -1,150 +1,79 @@
 <template>
   <div class="scheduled-card">
-    <!-- Header colapsable -->
     <div class="scheduled-header" @click="expanded = !expanded">
       <div class="scheduled-header-left">
         <span class="scheduled-title">Escaneos Programados</span>
         <span class="scheduled-badge">{{ filtered.length }}</span>
       </div>
       <button class="btn-toggle" :class="{ open: expanded }" :aria-label="expanded ? 'Colapsar' : 'Expandir'">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9" /></svg>
       </button>
     </div>
-
-    <!-- Cuerpo expandido -->
     <transition name="panel-slide">
       <div v-if="expanded" class="scheduled-body">
-        <!-- Boton crear -->
         <button class="btn-new" @click="$emit('toggleForm')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
           Nuevo escaneo programado
         </button>
-
-        <!-- Formulario inline -->
         <transition name="form-fade">
           <div v-if="scheduling.showForm" class="create-form">
-            <!-- Tipo de escaneo -->
             <div class="form-row">
-              <div class="field field-sm">
-                <label>Tipo</label>
+              <div class="field field-sm"><label>Tipo</label>
                 <select v-model="form.scanType">
-                  <option value="nmap">Nmap</option>
-                  <option value="nikto">Nikto</option>
-                  <option value="openvas">OpenVAS</option>
+                  <option value="nmap">Nmap</option><option value="nikto">Nikto</option><option value="openvas">OpenVAS</option>
                 </select>
               </div>
             </div>
-
-            <!-- Argumentos (adaptativos) -->
             <div class="form-row" v-if="form.scanType === 'nmap'">
-              <div class="field field-lg">
-                <label>Host</label>
-                <input v-model="form.args.target_host" placeholder="192.168.1.0/24" />
-              </div>
-              <div class="field field-md">
-                <label>Puertos</label>
-                <input v-model="form.args.target_ports" placeholder="80,443 o 1-1000" />
-              </div>
+              <div class="field field-lg"><label>Host</label><input v-model="form.args.target_host" placeholder="192.168.1.0/24" /></div>
+              <div class="field field-md"><label>Puertos</label><input v-model="form.args.target_ports" placeholder="80,443 o 1-1000" /></div>
             </div>
             <div class="form-row" v-if="form.scanType === 'nikto'">
-              <div class="field field-lg">
-                <label>Dominio</label>
-                <input v-model="form.args.target_domain" placeholder="example.com" />
-              </div>
+              <div class="field field-lg"><label>Dominio</label><input v-model="form.args.target_domain" placeholder="example.com" /></div>
             </div>
             <div class="form-row" v-if="form.scanType === 'openvas'">
-              <div class="field field-lg">
-                <label>Target (IP)</label>
-                <input v-model="form.args.target" placeholder="192.168.1.1" />
-              </div>
+              <div class="field field-lg"><label>Target (IP)</label><input v-model="form.args.target" placeholder="192.168.1.1" /></div>
             </div>
-
-            <!-- Programacion -->
             <div class="form-row">
-              <div class="field field-sm">
-                <label>Programacion</label>
-                <select v-model="form.scheduleType">
-                  <option value="interval">Intervalo</option>
-                  <option value="cron">Cron</option>
-                </select>
+              <div class="field field-sm"><label>Programación</label>
+                <select v-model="form.scheduleType"><option value="interval">Intervalo</option><option value="cron">Cron</option></select>
               </div>
             </div>
-
             <div class="form-row" v-if="form.scheduleType === 'interval'">
-              <div class="field field-xs">
-                <label>Cada</label>
-                <input v-model.number="form.scheduleConfig.every" type="number" min="1" class="no-spin" />
-              </div>
-              <div class="field field-sm">
-                <label>Unidad</label>
-                <select v-model="form.scheduleConfig.unit">
-                  <option value="minutes">Minutos</option>
-                  <option value="hours">Horas</option>
-                  <option value="days">Dias</option>
-                </select>
+              <div class="field field-xs"><label>Cada</label><input v-model.number="form.scheduleConfig.every" type="number" min="1" class="no-spin" /></div>
+              <div class="field field-sm"><label>Unidad</label>
+                <select v-model="form.scheduleConfig.unit"><option value="minutes">Minutos</option><option value="hours">Horas</option><option value="days">Días</option></select>
               </div>
             </div>
             <div class="form-row" v-if="form.scheduleType === 'cron'">
-              <div class="field field-md">
-                <label>Expresion Cron</label>
-                <input v-model="form.scheduleConfig.cron" placeholder="0 2 * * *" />
-              </div>
+              <div class="field field-md"><label>Expresión Cron</label><input v-model="form.scheduleConfig.cron" placeholder="0 2 * * *" /></div>
             </div>
-
             <button class="btn-create" :disabled="scheduling.submitting" @click="handleCreate">
               <span v-if="!scheduling.submitting">Crear</span>
               <span v-else class="btn-spin"></span>
             </button>
           </div>
         </transition>
-
-        <!-- Tabla -->
-        <div v-if="scheduled.loading" class="scheduled-loading">
-          <span class="spinner"></span> Cargando...
-        </div>
+        <div v-if="scheduled.loading" class="scheduled-loading"><span class="spinner"></span> Cargando...</div>
         <div v-else-if="!filtered.length" class="scheduled-empty">
-          <span class="empty-icon">&#128225;</span>
           <span>No hay escaneos programados de {{ activeTab.toUpperCase() }}</span>
         </div>
         <table v-else class="scheduled-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Tipo</th>
-              <th>Argumentos</th>
-              <th>Programacion</th>
-              <th>Estado</th>
-              <th>Prox. ejecucion</th>
-              <th></th>
-            </tr>
-          </thead>
+          <thead><tr><th>ID</th><th>Tipo</th><th>Argumentos</th><th>Programación</th><th>Estado</th><th>Prox. ejecución</th><th></th></tr></thead>
           <tbody>
             <tr v-for="ps in filtered" :key="ps.id" :class="{ inactive: !ps.isActive }">
               <td class="mono">{{ ps.id }}</td>
-              <td>
-                <span class="type-badge" :class="ps.scanType">{{ ps.scanType }}</span>
-              </td>
+              <td><span class="type-badge" :class="ps.scanType">{{ ps.scanType }}</span></td>
               <td class="args-cell" :title="formatArgs(ps.scanType, ps.arguments)">{{ formatArgs(ps.scanType, ps.arguments) }}</td>
               <td class="mono">{{ formatSchedule(ps.scheduleType, ps.scheduleConfig) }}</td>
-              <td>
-                <span class="status-dot" :class="ps.isActive ? 'active' : 'revoked'"></span>
-                {{ ps.isActive ? 'Activo' : 'Revocado' }}
-              </td>
+              <td><span class="status-dot" :class="ps.isActive ? 'active' : 'revoked'"></span>{{ ps.isActive ? 'Activo' : 'Revocado' }}</td>
               <td class="mono text-muted">{{ formatDate(ps.nextRunAt) }}</td>
               <td class="actions-cell">
                 <button v-if="ps.isActive" class="btn-action btn-revoke" title="Revocar" @click="handleDeactivate(ps.id)">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-                  </svg>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" /></svg>
                 </button>
                 <button class="btn-action btn-delete" title="Eliminar" @click="handleDelete(ps.id)">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                  </svg>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
                 </button>
               </td>
             </tr>
@@ -158,235 +87,88 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 
-const props = defineProps({
-  scheduled: { type: Object, required: true },
-  scheduling: { type: Object, required: true },
-  activeTab: { type: String, required: true },
-})
-
+const props = defineProps({ scheduled: { type: Object, required: true }, scheduling: { type: Object, required: true }, activeTab: { type: String, required: true } })
 const emit = defineEmits(['create', 'deactivate', 'delete', 'toggleForm'])
-
 const expanded = ref(false)
 
-const filtered = computed(() => {
-  return props.scheduled.scans.filter(s => s.scanType === props.activeTab)
-})
+const filtered = computed(() => props.scheduled.scans.filter(s => s.scanType === props.activeTab))
+const DEFAULTS = { nmap: { target_host: '', target_ports: '1-1000' }, nikto: { target_domain: '' }, openvas: { target: '' } }
+const form = reactive({ scanType: 'nmap', args: { ...DEFAULTS.nmap }, scheduleType: 'interval', scheduleConfig: { every: 60, unit: 'minutes' } })
 
-const DEFAULTS = {
-  nmap:    { target_host: '', target_ports: '1-1000' },
-  nikto:   { target_domain: '' },
-  openvas: { target: '' },
-}
+watch(() => form.scanType, (type) => { form.args = { ...DEFAULTS[type] } })
 
-const form = reactive({
-  scanType: 'nmap',
-  args: { ...DEFAULTS.nmap },
-  scheduleType: 'interval',
-  scheduleConfig: { every: 60, unit: 'minutes' },
-})
-
-watch(() => form.scanType, (type) => {
-  form.args = { ...DEFAULTS[type] }
-})
-
-function handleCreate() {
-  const payload = {
-    scan_type: form.scanType,
-    arguments: { ...form.args },
-    schedule_type: form.scheduleType,
-    schedule_config: { ...form.scheduleConfig },
-  }
-  emit('create', payload)
-}
-
-function handleDeactivate(id) {
-  if (confirm('Desactivar este escaneo programado?')) {
-    emit('deactivate', id)
-  }
-}
-
-function handleDelete(id) {
-  if (confirm('Eliminar permanentemente este escaneo programado?')) {
-    emit('delete', id)
-  }
-}
-
+function handleCreate() { emit('create', { scan_type: form.scanType, arguments: { ...form.args }, schedule_type: form.scheduleType, schedule_config: { ...form.scheduleConfig } }) }
+function handleDeactivate(id) { if (confirm('Desactivar este escaneo programado?')) emit('deactivate', id) }
+function handleDelete(id) { if (confirm('Eliminar permanentemente este escaneo programado?')) emit('delete', id) }
 function formatArgs(type, args) {
-  if (!args) return '\u2014'
-  if (type === 'nmap') {
-    const parts = []
-    if (args.target_host) parts.push(args.target_host)
-    if (args.target_ports) parts.push(`puertos ${args.target_ports}`)
-    return parts.length ? parts.join(' \u00b7 ') : '\u2014'
-  }
-  if (type === 'nikto') return args.target_domain || '\u2014'
-  if (type === 'openvas') return args.target || '\u2014'
-  return '\u2014'
+  if (!args) return '—'
+  if (type === 'nmap') { const p = []; if (args.target_host) p.push(args.target_host); if (args.target_ports) p.push(`puertos ${args.target_ports}`); return p.length ? p.join(' · ') : '—' }
+  if (type === 'nikto') return args.target_domain || '—'
+  if (type === 'openvas') return args.target || '—'
+  return '—'
 }
-
 function formatSchedule(type, config) {
   if (!config) return '—'
-  if (type === 'interval') {
-    const unitLabel = { minutes: 'min', hours: 'h', days: 'd' }
-    return `cada ${config.every} ${unitLabel[config.unit] || config.unit}`
-  }
+  if (type === 'interval') { const u = { minutes: 'min', hours: 'h', days: 'd' }; return `cada ${config.every} ${u[config.unit] || config.unit}` }
   if (type === 'cron') return config.cron
   return '—'
 }
-
-function formatDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-}
+function formatDate(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) }
 </script>
 
 <style scoped>
-.scheduled-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  margin-bottom: 1.25rem;
-  overflow: hidden;
-}
-
-.scheduled-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.5rem;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.2s;
-}
+.scheduled-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 1.1rem; overflow: hidden; }
+.scheduled-header { display: flex; align-items: center; justify-content: space-between; padding: 0.85rem 1.25rem; cursor: pointer; user-select: none; transition: background 0.2s; }
 .scheduled-header:hover { background: var(--surface-2); }
-
-.scheduled-header-left { display: flex; align-items: center; gap: 0.5rem; }
-.scheduled-title { font-weight: 600; color: var(--text); font-size: 0.95rem; }
-.scheduled-badge {
-  font-size: 0.7rem;
-  color: var(--accent);
-  background: var(--accent-dim);
-  padding: 0.1rem 0.5rem;
-  border-radius: 10px;
-  font-family: var(--font-mono);
-}
-
-.btn-toggle { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0.25rem; transition: transform 0.25s; }
+.scheduled-header-left { display: flex; align-items: center; gap: 0.4rem; }
+.scheduled-title { font-weight: 600; color: var(--text); font-size: 0.9rem; font-family: var(--font-display); }
+.scheduled-badge { font-size: 0.68rem; color: var(--accent); background: var(--accent-dim); padding: 0.1rem 0.45rem; border-radius: 8px; font-family: var(--font-mono); }
+.btn-toggle { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0.2rem; transition: transform 0.25s; }
 .btn-toggle.open { transform: rotate(180deg); }
-
-/* ── Cuerpo ── */
-.scheduled-body { padding: 0 1.5rem 1.25rem; }
-
-.panel-slide-enter-active,
-.panel-slide-leave-active { transition: all 0.25s ease; overflow: hidden; }
-.panel-slide-enter-from,
-.panel-slide-leave-to { max-height: 0; opacity: 0; }
-.panel-slide-enter-to,
-.panel-slide-leave-from { max-height: 2000px; opacity: 1; }
-
-/* ── Boton nuevo ── */
-.btn-new {
-  display: inline-flex; align-items: center; gap: 0.4rem;
-  height: 34px; padding: 0 1rem; margin-bottom: 1rem;
-  background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent);
-  font-weight: 600; font-size: 0.8rem; border-radius: 8px; cursor: pointer;
-  transition: all 0.2s;
-}
-.btn-new:hover { background: var(--accent); color: #000; }
-
-/* ── Formulario ── */
-.create-form {
-  background: var(--surface-2);
-  border: 1px solid var(--border-solid);
-  border-radius: 10px;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1rem;
-}
-
-.form-fade-enter-active,
-.form-fade-leave-active { transition: all 0.2s ease; }
-.form-fade-enter-from,
-.form-fade-leave-to { opacity: 0; transform: translateY(-6px); }
-
-.form-row { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
-.field { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; min-width: 120px; }
-.field label { font-size: 0.75rem; color: var(--text-muted); font-weight: 500; }
-.field input, .field select {
-  padding: 0.5rem 0.65rem;
-  background: var(--surface-3);
-  border: 1px solid var(--border-solid);
-  border-radius: 8px;
-  color: var(--text);
-  font-size: 0.82rem;
-  outline: none;
-  transition: border-color 0.2s;
-}
+.scheduled-body { padding: 0 1.25rem 1.1rem; }
+.panel-slide-enter-active, .panel-slide-leave-active { transition: all 0.25s ease; overflow: hidden; }
+.panel-slide-enter-from, .panel-slide-leave-to { max-height: 0; opacity: 0; }
+.panel-slide-enter-to, .panel-slide-leave-from { max-height: 2000px; opacity: 1; }
+.btn-new { display: inline-flex; align-items: center; gap: 0.35rem; height: 32px; padding: 0 0.85rem; margin-bottom: 0.85rem; background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent-bright); font-weight: 600; font-size: 0.78rem; border-radius: 6px; cursor: pointer; transition: all 0.2s; }
+.btn-new:hover { background: var(--accent); color: #0b0c10; }
+.create-form { background: var(--surface-2); border: 1px solid var(--border-solid); border-radius: 8px; padding: 0.85rem 1.1rem; margin-bottom: 0.85rem; }
+.form-fade-enter-active, .form-fade-leave-active { transition: all 0.2s ease; }
+.form-fade-enter-from, .form-fade-leave-to { opacity: 0; transform: translateY(-6px); }
+.form-row { display: flex; gap: 0.6rem; margin-bottom: 0.65rem; flex-wrap: wrap; }
+.field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 110px; }
+.field label { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; }
+.field input, .field select { padding: 0.45rem 0.6rem; background: var(--surface-3); border: 1px solid var(--border-solid); border-radius: 6px; color: var(--text); font-size: 0.8rem; outline: none; transition: border-color 0.2s; }
 .field input:focus, .field select:focus { border-color: var(--accent); }
-.field-xs { flex: 0 0 80px; min-width: 70px; }
-.field-sm { flex: 0 0 140px; min-width: 120px; }
-.field-md { flex: 0 0 180px; min-width: 150px; }
-.field-lg { flex: 2; min-width: 200px; }
-.no-spin::-webkit-outer-spin-button,
-.no-spin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.field-xs { flex: 0 0 70px; min-width: 60px; }
+.field-sm { flex: 0 0 130px; min-width: 110px; }
+.field-md { flex: 0 0 170px; min-width: 140px; }
+.field-lg { flex: 2; min-width: 190px; }
+.no-spin::-webkit-outer-spin-button, .no-spin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .no-spin { -moz-appearance: textfield; }
-
-.btn-create {
-  height: 34px; padding: 0 1.25rem;
-  background: var(--accent); border: 1px solid var(--accent-bright); color: #000;
-  font-weight: 600; font-size: 0.8rem; border-radius: 8px; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
-  transition: opacity 0.2s; margin-top: 0.25rem; min-width: 72px;
-}
+.btn-create { height: 32px; padding: 0 1.1rem; background: var(--accent); border: 1px solid var(--accent-bright); color: #0b0c10; font-weight: 600; font-size: 0.78rem; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; transition: opacity 0.2s; margin-top: 0.2rem; min-width: 64px; }
 .btn-create:hover:not(:disabled) { opacity: 0.85; }
 .btn-create:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-spin { width: 14px; height: 14px; border: 2px solid #000; border-top-color: transparent; border-radius: 50%; animation: seq-spin 0.6s linear infinite; display: inline-block; }
-
-/* ── Estados ── */
-.scheduled-loading, .scheduled-empty {
-  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
-  padding: 2.5rem 1rem; color: var(--text-muted); font-size: 0.85rem;
-}
+.btn-spin { width: 13px; height: 13px; border: 2px solid rgba(0,0,0,0.2); border-top-color: #0b0c10; border-radius: 50%; animation: seq-spin 0.6s linear infinite; display: inline-block; }
+.scheduled-loading, .scheduled-empty { display: flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 2rem 1rem; color: var(--text-muted); font-size: 0.82rem; }
 .scheduled-empty { flex-direction: column; }
-.empty-icon { font-size: 1.5rem; opacity: 0.4; }
-.spinner {
-  width: 16px; height: 16px; border: 2px solid var(--text-muted);
-  border-top-color: transparent; border-radius: 50%; animation: seq-spin 0.6s linear infinite;
-}
-
-/* ── Tabla ── */
+.spinner { width: 14px; height: 14px; border: 2px solid var(--text-muted); border-top-color: transparent; border-radius: 50%; animation: seq-spin 0.6s linear infinite; }
 .scheduled-table { width: 100%; border-collapse: collapse; }
-.scheduled-table th {
-  text-align: left; padding: 0.55rem 0.6rem;
-  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
-  color: var(--text-muted); font-weight: 600; background: var(--surface-2);
-}
-.scheduled-table td {
-  padding: 0.6rem; font-size: 0.82rem; color: var(--text);
-  border-top: 1px solid var(--border);
-}
+.scheduled-table th { text-align: left; padding: 0.5rem 0.55rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); font-weight: 600; background: var(--surface-2); }
+.scheduled-table td { padding: 0.5rem 0.55rem; font-size: 0.8rem; color: var(--text); border-top: 1px solid var(--border); }
 .scheduled-table tr:hover td { background: rgba(255,255,255,0.01); }
 .scheduled-table tr.inactive td { opacity: 0.5; }
-
-.mono { font-family: var(--font-mono); font-size: 0.78rem; }
+.mono { font-family: var(--font-mono); font-size: 0.75rem; }
 .text-muted { color: var(--text-muted); }
-.args-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.type-badge {
-  text-transform: uppercase; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em;
-  padding: 0.12rem 0.45rem; border-radius: 6px;
-}
+.args-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-badge { text-transform: uppercase; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.03em; padding: 0.1rem 0.4rem; border-radius: 5px; }
 .type-badge.nmap { color: var(--success); background: var(--success-dim); }
 .type-badge.nikto { color: var(--warn); background: var(--warn-dim); }
 .type-badge.openvas { color: var(--danger); background: var(--danger-dim); }
-
-.status-dot {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 0.35rem;
-}
-.status-dot.active { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 0.3rem; }
+.status-dot.active { background: var(--success); }
 .status-dot.revoked { background: var(--text-muted); }
-
 .actions-cell { white-space: nowrap; text-align: right; }
-.btn-action { background: none; border: none; padding: 0.35rem 0.4rem; cursor: pointer; border-radius: 6px; transition: all 0.15s; }
+.btn-action { background: none; border: none; padding: 0.3rem 0.35rem; cursor: pointer; border-radius: 5px; transition: all 0.15s; }
 .btn-revoke { color: var(--warn); }
 .btn-revoke:hover { background: var(--warn-dim); }
 .btn-delete { color: var(--danger); }
