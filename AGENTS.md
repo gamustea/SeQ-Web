@@ -27,6 +27,16 @@ Docker compose has two profiles:
 - `dev` — infrastructure only (postgres, ollama, openvas). Use for local Python development.
 - `container` — everything including the API container and web. Use for full deployment.
 
+Ollama corre en CPU por defecto. Para aceleración GPU, añade el archivo correspondiente con `-f`:
+
+| GPU | Comando |
+|---|---|
+| NVIDIA (dedicada) | `docker compose -f docker-compose.yml -f docker-compose.gpu-nvidia.yml --profile dev up -d` |
+| Intel integrada (iGPU) | `docker compose -f docker-compose.yml -f docker-compose.gpu-intel.yml --profile dev up -d` |
+| AMD (dedicada o APU) | `docker compose -f docker-compose.yml -f docker-compose.gpu-amd.yml --profile dev up -d` |
+
+Cada archivo cambia la imagen al tag específico del backend (`intel-gpu`, `rocm`) o añade los device mappings necesarios.
+
 The `.env` at the repo root is for docker-compose (PostgreSQL and OpenVAS credentials). The `API/.env` is for local development only; the containerised API does **not** load it.
 
 ## Database
