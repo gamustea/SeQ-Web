@@ -135,18 +135,31 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
-import { useApi } from '@/composables/useApi'
+import { useProfileStore } from '@/stores/profileStore'
 import StarBackground from '@/components/shared/StarBackground.vue'
 import TerminalConsole from '@/components/shared/TerminalConsole.vue'
 
 const auth = useAuthStore()
-const { apiFetch } = useApi()
+const profileStore = useProfileStore()
 
 const profileOpen = ref(false)
-const profileName = ref('Usuario')
-const profileLoaded = ref(false)
-const roleLabel = ref('Usuario')
 const dropRef = ref(null)
+
+const profileName = computed(() => {
+  const fn = profileStore.profile.first_name
+  const ln = profileStore.profile.last_name
+  if (fn || ln) return `${fn} ${ln}`.trim()
+  return auth.username() || 'Usuario'
+})
+
+const profileLoaded = computed(() => !!profileStore.profile.username)
+
+const roleLabel = computed(() => {
+  const r = profileStore.profile.role || auth.role
+  if (r === 'role_root') return 'Root'
+  if (r === 'role_admin') return 'Admin'
+  return 'Usuario'
+})
 
 const profileInitials = computed(() => {
   const parts = profileName.value.split(' ')
@@ -158,7 +171,8 @@ const profileInitials = computed(() => {
 let clickOutside = null
 
 onMounted(() => {
-  loadProfileName()
+  console.log('[HubView] mounted, llamando loadProfile...')
+  profileStore.loadProfile()
   clickOutside = (e) => {
     const d = dropRef.value
     const t = document.querySelector('.profile-trigger')
@@ -172,24 +186,6 @@ onMounted(() => {
 onUnmounted(() => {
   if (clickOutside) document.removeEventListener('click', clickOutside)
 })
-
-async function loadProfileName() {
-  try {
-    const res = await apiFetch('/users/me')
-    if (res?.ok) {
-      const data = await res.json()
-      profileName.value = `${data.first_name} ${data.last_name}`
-      const r = data.role || auth.role
-      if (r === 'role_root') roleLabel.value = 'Root'
-      else if (r === 'role_admin') roleLabel.value = 'Admin'
-      else roleLabel.value = 'Usuario'
-    }
-  } catch {
-    profileName.value = auth.username() || 'Usuario'
-  } finally {
-    profileLoaded.value = true
-  }
-}
 
 function logout() {
   profileOpen.value = false
