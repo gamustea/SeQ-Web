@@ -36,12 +36,12 @@ class SeQueue:
     _instance_lock = threading.Lock()
 
     def __init__(self, max_workers: Optional[int] = None) -> None:
-        cfg = CR.get_sequeue_config()
-        self._max_workers = max_workers if max_workers is not None else int(
-            cfg.get("max_workers", 4)
+        config = CR.get_sequeue_config()
+        self._max_workers = max_workers if max_workers else int(
+            config.get("max_workers", 4)
         )
-        self._history_max = int(cfg.get("history_max_items", 100))
-        self._history_ttl = float(cfg.get("history_ttl_seconds", 3600))
+        self._history_max = int(config.get("history_max_items", 100))
+        self._history_ttl = float(config.get("history_ttl_seconds", 3600))
 
         self._queue: queue.Queue[SeQueueTask] = queue.Queue()
         self._pending: Dict[uuid.UUID, SeQueueTask] = {}
@@ -102,9 +102,7 @@ class SeQueue:
 
     def shutdown(self, timeout: int = 30) -> None:
         self.logger.info("SeQueue shutting down...")
-
         self.cancel_all()
-
         deadline = time.monotonic() + timeout
         for worker in list(self._workers):
             remaining = max(0.0, deadline - time.monotonic())
@@ -286,16 +284,16 @@ class SeQueue:
                 "historyCount":  len(self._history),
             }
 
-    def resize(self, max_workers: int) -> None:
-        if max_workers < 1:
-            raise ValueError("max_workers must be >= 1")
+    def resize(self, new_max_workers: int) -> None:
+        if new_max_workers < 1:
+            raise ValueError("new_max_workers must be >= 1")
 
         with self._lock:
             old = self._max_workers
-            self._max_workers = max_workers
+            self._max_workers = new_max_workers
 
-            if max_workers > old:
-                for i in range(old, max_workers):
+            if new_max_workers > old:
+                for i in range(old, new_max_workers):
                     t = threading.Thread(
                         target=self._worker_loop,
                         daemon=True,
@@ -304,15 +302,15 @@ class SeQueue:
                     t.start()
                     self._workers.append(t)
                 self.logger.info(
-                    "SeQueue scaled up: %d → %d workers", old, max_workers
+                    "SeQueue scaled up: %d → %d workers", old, new_max_workers
                 )
 
-            elif max_workers < old:
-                to_remove = old - max_workers
+            elif new_max_workers < old:
+                to_remove = old - new_max_workers
                 for _ in range(to_remove):
                     self._queue.put(None)  # type: ignore[arg-type]
                 self.logger.info(
-                    "SeQueue scaled down: %d → %d workers", old, max_workers
+                    "SeQueue scaled down: %d → %d workers", old, new_max_workers
                 )
 
     # =========================================================================

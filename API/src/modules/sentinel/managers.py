@@ -468,13 +468,13 @@ class ScanManager(ABC):
 
             thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
 
-            processor  = thread_manager.get_result_processor()
+            processor  = thread_manager.result_processor
             scan_type = scan.scan_type
             domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
 
             with UnitOfWork() as uow:
                 fresh_scan              = ScanRepository(uow).get_by_id(scan_id)
-                thread_manager.persist_scan_results(uow, fresh_scan, domain_data)
+                thread_manager._persist_scan_results(uow, fresh_scan, domain_data)
                 fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
                 fresh_scan.finished_at  = datetime.now() # type: ignore
 
@@ -790,7 +790,7 @@ class ScanManager(ABC):
 
         if not lista_ips:
             raise IPValidationError(
-                message="No se generaron IPs v\u00e1lidas",
+                message="No se generaron IPs válidas",
                 ip_spec=ips_str
             )
 
@@ -945,20 +945,20 @@ class ScanManager(ABC):
     @staticmethod
     def is_host_reachable(host: str, port: int = 80, timeout: float = 3.0) -> bool:
         """
-        Verifica conectividad TCP b\u00e1sica con un host sin dependencias externas.
+        Verifica conectividad TCP básica con un host sin dependencias externas.
 
-        Usa ``socket.create_connection`` que maneja resoluci\u00f3n DNS
-        autom\u00e1ticamente. Si el host responde con ``ConnectionRefusedError``
-        se considera alcanzable (el puerto est\u00e1 cerrado pero el host est\u00e1
+        Usa ``socket.create_connection`` que maneja resolución DNS
+        automáticamente. Si el host responde con ``ConnectionRefusedError``
+        se considera alcanzable (el puerto está cerrado pero el host está
         vivo y responde).
 
         Args:
-            host:    Direcci\u00f3n IP o hostname a comprobar.
+            host:    Dirección IP o hostname a comprobar.
             port:    Puerto TCP de destino (default: 80).
-            timeout: Tiempo m\u00e1ximo de espera en segundos (default: 3.0).
+            timeout: Tiempo máximo de espera en segundos (default: 3.0).
 
         Returns:
-            ``True`` si el host responde (conexi\u00f3n aceptada o rechazada).
+            ``True`` si el host responde (conexión aceptada o rechazada).
             ``False`` si no hay respuesta (timeout, sin ruta, DNS fallido).
         """
         import socket
@@ -984,11 +984,7 @@ class ScanManager(ABC):
         """Create and persist the initial scan record."""
 
     @abstractmethod
-    def get_result_processor(self) -> ScanResultProcessor:
-        """Return the result processor for this scan type."""
-
-    @abstractmethod
-    def persist_scan_results(self, uow, scan, domain_data) -> None:
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
         """Persist domain data into the database within the given UnitOfWork."""
 
     @abstractmethod
@@ -1100,7 +1096,7 @@ class ProgramedScanManager():
             ps = repo.get_by_id(ps_id)
             if not ps:
                 raise ProgramedScanNotFoundError(ps_id)
-            if ps.user_id != user_id:
+            if ps.user_id != user_id: # type: ignore
                 raise ProgramedScanNotFoundError(ps_id)
             return ps
 
@@ -1108,7 +1104,9 @@ class ProgramedScanManager():
     def get_scans_for_user(cls, user_id: int) -> List[ProgramedScan]:
         with UnitOfWork() as uow:
             repo = ProgramedScanRepository(uow)
-            return repo.get_by_user(user_id)
+            programed_scans = repo.get_by_user(user_id)
+
+        return programed_scans
 
     @classmethod
     def revoke(cls, ps_id: int, user_id: int) -> None:
@@ -1118,9 +1116,9 @@ class ProgramedScanManager():
             ps = repo.get_by_id(ps_id)
             if ps is None:
                 raise ProgramedScanNotFoundError(ps_id)
-            if ps.user_id != user_id:
+            if ps.user_id != user_id: # type: ignore
                 raise ProgramedScanNotFoundError(ps_id)
-            ps.is_active = False
+            ps.is_active = False # type: ignore
             repo.update(ps)
 
     @classmethod
@@ -1131,7 +1129,7 @@ class ProgramedScanManager():
             ps = repo.get_by_id(ps_id)
             if ps is None:
                 raise ProgramedScanNotFoundError(ps_id)
-            if ps.user_id != user_id:
+            if ps.user_id != user_id: # type: ignore
                 raise ProgramedScanNotFoundError(ps_id)
             repo.delete(ps)
 
@@ -1159,6 +1157,7 @@ class NmapScanManager(ScanManager):
     def __init__(self):
         super().__init__()
         self.scan_type = NmapScan
+        self.result_processor = NmapResultProcessor(self.logger)
 
     def run_scan(self, target_host: str, target_ports: str, user_id: int, timeout: int = 300, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
         """
@@ -1209,9 +1208,6 @@ class NmapScanManager(ScanManager):
             ScanRepository(uow).save(scan)
         return scan
 
-    def get_result_processor(self) -> NmapResultProcessor:
-        return NmapResultProcessor(self.logger)
-
     def get_scan_by_id(self, scan_id: int) -> Optional[NmapScan]:
         """
         Retrieve an NmapScan by its primary key.
@@ -1246,7 +1242,7 @@ class NmapScanManager(ScanManager):
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
         return scans
 
-    def persist_scan_results(self, uow, scan, domain_data) -> None:
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
         """Persist Nmap host and port data into the database."""
         host_data, ports_data = domain_data
         scan_repo = ScanRepository(uow)
@@ -1306,6 +1302,7 @@ class NiktoScanManager(ScanManager):
     def __init__(self):
         super().__init__()
         self.scan_type = NiktoScan
+        self.result_processor = NiktoResultProcessor(self.logger)
 
     def run_scan(self, target_domain: str, user_id: int, timeout: int = 6000, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
         """
@@ -1319,16 +1316,16 @@ class NiktoScanManager(ScanManager):
             Primary key of the created NiktoScan record.
         """
         try:
-            scan    = self._create_scan_record(
+            scan = self._create_scan_record(
                 target=target_domain,
                 user_id=user_id,
                 programed_scan_id=programed_scan_id,
             )
             scan_id = scan.id
 
+            queue = SeQueue.get_instance()
             task = NiktoScanTask(target_domain=target_domain, timeout=timeout)
-
-            SeQueue.get_instance().submit(
+            queue.submit(
                 func=self._execute_scan_in_thread,
                 args=(scan_id, task),
                 name=f"NiktoScan-{scan_id}",
@@ -1350,9 +1347,6 @@ class NiktoScanManager(ScanManager):
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
-
-    def get_result_processor(self) -> NiktoResultProcessor:
-        return NiktoResultProcessor(self.logger)
 
     def get_scan_by_id(self, scan_id: int) -> Optional[NiktoScan]:
         """
@@ -1389,7 +1383,7 @@ class NiktoScanManager(ScanManager):
         self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
         return scans
 
-    def persist_scan_results(self, uow, scan, domain_data) -> None:
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
         """Persist Nikto incidents and associate a host."""
         incidents_data = domain_data
         scan_repo = ScanRepository(uow)
@@ -1473,6 +1467,8 @@ class OpenVASScanManager(ScanManager):
         self.username  = config["username"]
         self.password  = config["password"]
 
+        self.result_processor = OpenVASResultProcessor(self.logger)
+
     def run_scan(               # pylint: disable=arguments-differ
         self,
         target: str,
@@ -1510,7 +1506,9 @@ class OpenVASScanManager(ScanManager):
                 scan_config = config_id,
             )
 
-            SeQueue.get_instance().submit(
+            queue = SeQueue.get_instance()
+
+            queue.submit(
                 func=self._execute_scan_in_thread,
                 args=(scan_id, task, skip_normalize),
                 name=f"OpenVASScan-{scan_id}",
@@ -1539,9 +1537,6 @@ class OpenVASScanManager(ScanManager):
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
-
-    def get_result_processor(self) -> OpenVASResultProcessor:
-        return OpenVASResultProcessor(self.logger)
 
     def get_scan_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
         """
@@ -1612,7 +1607,7 @@ class OpenVASScanManager(ScanManager):
                     f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}"
                 )
 
-    def persist_scan_results(self, uow, scan, domain_data) -> None:
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
         """Persist OpenVAS vulnerabilities, hosts, and scan results."""
         vulnerabilities_data, scan_results_data, _ = domain_data
         scan_repo = ScanRepository(uow)
