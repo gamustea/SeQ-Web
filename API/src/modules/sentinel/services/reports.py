@@ -756,7 +756,7 @@ class PDFCreator:
         """
 
 
-        directory_type = CR.DirectoryType.RESOURCE
+        directory_type = CR.DirectoryType.RESOURCES_SENTINEL
         resource_directory = CR.get_directory_of(directory_type)
         picture_name = self.printing_strategy.get_picture_name()
         image_filename = os.path.join(resource_directory, picture_name)
@@ -1054,7 +1054,7 @@ class NmapPrintingStrategy(PrintingStrategy):
         Returns:
             Logo filename.
         """
-        picture_name = "SecOps-Logo-Blue"
+        picture_name = "Sentinel-Blue-Bg"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
     def get_report_title(self) -> str:
@@ -1411,7 +1411,7 @@ class OpenVASPrintingStrategy(PrintingStrategy):
         Returns:
             Logo filename.
         """
-        picture_name = "SecOps-Logo-Green"
+        picture_name = "Sentinel-Green-Bg"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
     def get_report_title(self) -> str:
@@ -1679,7 +1679,7 @@ class NiktoPrintingStrategy(PrintingStrategy):
         return "_Nikto.pdf"
 
     def get_picture_name(self, dark: bool = False) -> str:
-        picture_name = "SecOps-Logo-Salmon"
+        picture_name = "Sentinel-Salmon-Bg"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
     def get_report_title(self) -> str:

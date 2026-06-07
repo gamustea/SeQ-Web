@@ -142,7 +142,6 @@
   "general": {
     "directories": {
       "logdir": "..",
-      "resourcedir": "../../shared/resources/images",
       "tempdir": "C:/tmp/secapp"
     },
     "sequeue": {
@@ -151,11 +150,12 @@
       "max_workers": 6
     }
   },
-  "sentinel": {
+    "sentinel": {
     "areLocalIpsAllowed": true,
     "directories": {
       "csv": "data/sentinel/csv",
-      "output": "data/sentinel/output"
+      "output": "data/sentinel/output",
+      "resources": "../resources/sentinel"
     },
     "enabled": true,
     "hostReachabilityCheck": {

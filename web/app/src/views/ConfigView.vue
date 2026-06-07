@@ -29,7 +29,6 @@
               <div class="cfg-grid">
                 <div class="form-group"><label>Temp</label><input v-model="store.configFlat['general.directories.tempdir']" type="text" class="inp" /></div>
                 <div class="form-group"><label>Logs</label><input v-model="store.configFlat['general.directories.logdir']" type="text" class="inp" /></div>
-                <div class="form-group"><label>Resources</label><input v-model="store.configFlat['general.directories.resourcedir']" type="text" class="inp" /></div>
               </div>
             </div>
           </section>
