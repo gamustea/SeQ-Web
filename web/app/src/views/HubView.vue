@@ -105,7 +105,26 @@
         </div>
       </router-link>
 
-      <div class="card card-acheron card-disabled" style="animation-delay: 0.3s">
+      <router-link to="/iris" class="card card-iris" style="animation-delay: 0.3s">
+        <div class="card-bg"></div>
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M9 12l2 2 4-4"/>
+          </svg>
+        </div>
+        <h2 class="card-title">Iris</h2>
+        <p class="card-desc">Análisis de cabeceras de correo para detectar phishing mediante reglas de verificación.</p>
+        <div class="card-meta">
+          <span class="card-status status-active">
+            <span class="status-dot"></span>
+            Operativo
+          </span>
+          <span class="card-info">5 reglas de análisis</span>
+        </div>
+      </router-link>
+
+      <div class="card card-acheron card-disabled" style="animation-delay: 0.4s">
         <div class="card-bg"></div>
         <div class="card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -443,6 +462,7 @@ function logout() {
 }
 .card-sentinel .card-bg { background: radial-gradient(circle, rgba(76,183,130,0.15) 0%, transparent 70%); }
 .card-aegis .card-bg    { background: radial-gradient(circle, rgba(96,128,224,0.15) 0%, transparent 70%); }
+.card-iris .card-bg     { background: radial-gradient(circle, rgba(224,122,95,0.15) 0%, transparent 70%); }
 .card-acheron .card-bg  { background: radial-gradient(circle, rgba(160,122,192,0.12) 0%, transparent 70%); }
 .card:not(.card-disabled):hover {
   transform: translateY(-4px);
@@ -484,6 +504,8 @@ function logout() {
 .card-sentinel .card-icon svg { color: #4cb782; }
 .card-aegis    { --accent: #6080e0; --accent-dim: rgba(96,128,224,0.10); }
 .card-aegis .card-icon svg    { color: #6080e0; }
+.card-iris     { --accent: #e07a5f; --accent-dim: rgba(224,122,95,0.10); }
+.card-iris .card-icon svg     { color: #e07a5f; }
 .card-acheron  { --accent: #a07ac0; --accent-dim: rgba(160,122,192,0.08); }
 .card-acheron .card-icon svg  { color: #a07ac0; }
 

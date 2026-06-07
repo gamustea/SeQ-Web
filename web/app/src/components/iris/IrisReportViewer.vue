@@ -1,0 +1,779 @@
+<template>
+  <div class="report-viewer">
+
+    <!-- EMPTY -- no selection, show form -->
+    <div v-if="!reportId && !reportData && !reportLoading" class="rv-empty">
+      <slot name="form" />
+    </div>
+
+    <!-- LOADING -->
+    <div v-else-if="reportLoading" class="rv-loading">
+      <div class="spinner"></div>
+      <p>Cargando informe…</p>
+    </div>
+
+    <!-- RUNNING / PENDING -->
+    <div v-else-if="status && (status === 'pending' || status === 'running')" class="rv-running">
+      <div class="rv-running-header">
+        <span class="badge badge--running">En análisis</span>
+        <span class="analysis-id">#{{ reportId }}</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" :style="{ width: (progress ?? 0) + '%' }"></div>
+      </div>
+      <div class="progress-label">{{ progress ?? 0 }}% — ejecutando reglas de verificación</div>
+      <button type="button" class="btn-cancel" @click="$emit('cancel')">
+        Cancelar análisis
+      </button>
+    </div>
+
+    <!-- FAILED -->
+    <div v-else-if="reportData && reportData.status === 'failed'" class="rv-failed">
+      <div class="rv-result-icon rv-result-icon--fail">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      </div>
+      <h3>Análisis fallido</h3>
+      <p>El análisis #{{ reportId }} no pudo completarse. Intenta de nuevo.</p>
+    </div>
+
+    <!-- CANCELLED -->
+    <div v-else-if="reportData && reportData.status === 'cancelled'" class="rv-cancelled">
+      <div class="rv-result-icon rv-result-icon--warn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+      </div>
+      <h3>Análisis cancelado</h3>
+      <p>El análisis #{{ reportId }} fue cancelado por el usuario.</p>
+    </div>
+
+    <!-- FINISHED REPORT -->
+    <div v-else-if="reportData && reportData.status === 'finished'" class="rv-report">
+      <div class="rv-report-header">
+        <div class="rv-report-id">
+          <span class="analysis-id">#{{ reportData.analysisId }}</span>
+          <span class="report-date" v-if="reportData.finishedAt">{{ formatDate(reportData.finishedAt) }}</span>
+        </div>
+        <div class="rv-actions">
+          <button type="button" class="action-btn" title="Cancelar" @click="$emit('cancel')" v-if="status === 'running' || status === 'pending'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Score + Verdict hero -->
+      <div class="rv-hero" :class="`rv-hero--${verdictClass}`">
+        <div class="rv-hero-score">
+          <span class="score-num">{{ reportData.totalScore }}</span>
+          <span class="score-unit">/ máx</span>
+        </div>
+        <div class="rv-hero-verdict">
+          <span class="verdict-badge" :class="`verdict--${verdictClass}`">{{ reportData.verdict }}</span>
+          <span class="verdict-status">{{ statusLabel }}</span>
+        </div>
+      </div>
+
+      <!-- Rule cards -->
+      <div class="rv-rules">
+        <h3 class="section-title">Reglas aplicadas</h3>
+        <div
+          v-for="(rule, i) in reportData.rules"
+          :key="i"
+          class="rule-card"
+          :class="{ 'rule-card--expanded': expandedRule === i }"
+        >
+          <button type="button" class="rule-header" @click="toggleRule(i)">
+            <div class="rule-left">
+              <span class="rule-name">{{ rule.ruleName }}</span>
+              <span class="rule-category" v-if="rule.category">{{ rule.category }}</span>
+            </div>
+            <div class="rule-right">
+              <span class="rule-score" :class="scoreClass(rule.score)">{{ sign(rule.score) }}{{ rule.score }}</span>
+              <span class="rule-verdict" :class="`verdict-chip--${rule.verdict}`">{{ rule.verdict }}</span>
+              <svg class="rule-chevron" :class="{ rotated: expandedRule === i }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+          </button>
+          <Transition name="rule-detail">
+            <div v-if="expandedRule === i" class="rule-detail">
+              <div v-if="rule.details && Object.keys(rule.details).length" class="rule-details">
+                <div v-for="(v, k) in rule.details" :key="k" class="detail-row">
+                  <span class="detail-key">{{ k }}</span>
+                  <span class="detail-val">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
+                </div>
+              </div>
+              <div v-if="rule.recommendation" class="rule-recommendation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="rec-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                {{ rule.recommendation }}
+              </div>
+            </div>
+          </Transition>
+        </div>
+      </div>
+
+      <!-- Recommendations -->
+      <div v-if="reportData.recommendations && reportData.recommendations.length" class="rv-recommendations">
+        <h3 class="section-title">Recomendaciones</h3>
+        <ul class="rec-list">
+          <li v-for="(rec, i) in reportData.recommendations" :key="i" class="rec-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="rec-bullet"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            {{ rec }}
+          </li>
+        </ul>
+      </div>
+
+      <!-- Raw headers (collapsible) -->
+      <div class="rv-raw">
+        <button type="button" class="raw-toggle" @click="rawOpen = !rawOpen">
+          <svg :class="{ rotated: rawOpen }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="toggle-chevron"><polyline points="6 9 12 15 18 9"/></svg>
+          Cabeceras originales
+        </button>
+        <Transition name="raw-reveal">
+          <pre v-if="rawOpen" class="raw-block">{{ reportData.rawHeaders }}</pre>
+        </Transition>
+      </div>
+    </div>
+
+  </div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue'
+import { useUtils } from '@/composables/useUtils'
+
+const { formatDate } = useUtils()
+
+const props = defineProps({
+  reportId: { type: [Number, null], default: null },
+  reportData: { type: [Object, null], default: null },
+  reportLoading: { type: Boolean, default: false },
+  status: { type: [String, null], default: null },
+  progress: { type: [Number, null], default: null },
+})
+
+defineEmits(['cancel'])
+
+const expandedRule = ref(null)
+const rawOpen = ref(false)
+
+function toggleRule(i) {
+  expandedRule.value = expandedRule.value === i ? null : i
+}
+
+function sign(s) {
+  if (s > 0) return '+'
+  if (s < 0) return ''
+  return ''
+}
+
+function scoreClass(s) {
+  if (s > 0) return 'score--pos'
+  if (s < 0) return 'score--neg'
+  return 'score--neutral'
+}
+
+const verdictClass = computed(() => {
+  const v = props.reportData?.verdict?.toLowerCase() ?? ''
+  if (v === 'legitimate') return 'legit'
+  if (v === 'suspicious') return 'susp'
+  if (v === 'phishing') return 'phish'
+  return 'unknown'
+})
+
+const statusLabel = computed(() => {
+  const v = props.reportData?.verdict?.toLowerCase() ?? ''
+  if (v === 'legitimate') return 'Correo verificado'
+  if (v === 'suspicious') return 'Posible amenaza'
+  if (v === 'phishing') return 'Phishing detectado'
+  return ''
+})
+</script>
+
+<style scoped>
+.report-viewer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Empty */
+.rv-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 2.5rem;
+}
+
+/* Loading */
+.rv-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 4rem 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: seq-spin 0.7s linear infinite;
+}
+
+/* Running */
+.rv-running {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.rv-running-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.progress-track {
+  width: 100%;
+  max-width: 360px;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.progress-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.btn-cancel {
+  padding: 0.5rem 1.1rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-cancel:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
+/* Failed / Cancelled */
+.rv-failed,
+.rv-cancelled {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.rv-failed h3,
+.rv-cancelled h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-display);
+  margin: 0;
+}
+
+.rv-failed p,
+.rv-cancelled p {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  max-width: 320px;
+  margin: 0;
+}
+
+.rv-result-icon svg {
+  width: 40px;
+  height: 40px;
+}
+
+.rv-result-icon--fail svg { color: var(--danger); }
+.rv-result-icon--warn svg { color: var(--warn); }
+
+/* Finished report */
+.rv-report {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.rv-report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rv-report-id {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.analysis-id {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.report-date {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.rv-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.action-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* Hero */
+.rv-hero {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-med);
+  background: var(--surface);
+}
+
+.rv-hero--legit {
+  border-color: rgba(76, 183, 130, 0.2);
+  background: linear-gradient(135deg, var(--surface) 0%, rgba(76, 183, 130, 0.04) 100%);
+}
+
+.rv-hero--susp {
+  border-color: rgba(212, 160, 74, 0.2);
+  background: linear-gradient(135deg, var(--surface) 0%, rgba(212, 160, 74, 0.04) 100%);
+}
+
+.rv-hero--phish {
+  border-color: rgba(217, 108, 108, 0.2);
+  background: linear-gradient(135deg, var(--surface) 0%, rgba(217, 108, 108, 0.04) 100%);
+}
+
+.rv-hero-score {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.score-num {
+  font-size: 2.2rem;
+  font-weight: 800;
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.rv-hero--legit .score-num { color: var(--success); }
+.rv-hero--susp .score-num { color: var(--warn); }
+.rv-hero--phish .score-num { color: var(--danger); }
+
+.score-unit {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.rv-hero-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.verdict-badge {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-family: var(--font-display);
+}
+
+.verdict--legit { color: var(--success); }
+.verdict--susp { color: var(--warn); }
+.verdict--phish { color: var(--danger); }
+
+.verdict-status {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* Section title */
+.section-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-display);
+  margin: 0 0 0.65rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Rule cards */
+.rv-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.rule-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.4rem;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.rule-card:hover {
+  border-color: var(--border-med);
+}
+
+.rule-card--expanded {
+  border-color: var(--accent);
+}
+
+.rule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  background: var(--surface);
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s;
+  gap: 0.5rem;
+}
+
+.rule-header:hover {
+  background: var(--surface-2);
+}
+
+.rule-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.rule-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.rule-category {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.rule-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.rule-score {
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+.score--pos { color: var(--success); }
+.score--neg { color: var(--danger); }
+.score--neutral { color: var(--text-muted); }
+
+.rule-verdict {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.verdict-chip--pass {
+  background: var(--success-dim);
+  color: var(--success);
+  border: 1px solid rgba(76, 183, 130, 0.15);
+}
+
+.verdict-chip--fail {
+  background: var(--danger-dim);
+  color: var(--danger);
+  border: 1px solid rgba(217, 108, 108, 0.15);
+}
+
+.verdict-chip--suspicious {
+  background: var(--warn-dim);
+  color: var(--warn);
+  border: 1px solid rgba(212, 160, 74, 0.15);
+}
+
+.verdict-chip--neutral,
+.verdict-chip--missing,
+.verdict-chip--softfail {
+  background: rgba(100, 116, 139, 0.1);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.verdict-chip--error {
+  background: var(--danger-dim);
+  color: var(--danger);
+  border: 1px solid rgba(217, 108, 108, 0.15);
+}
+
+.verdict-chip--bestguess,
+.verdict-chip--policy {
+  background: var(--info-dim);
+  color: var(--info);
+  border: 1px solid rgba(96, 128, 224, 0.15);
+}
+
+.rule-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.rule-chevron.rotated {
+  transform: rotate(180deg);
+}
+
+.rule-detail {
+  padding: 0 0.85rem 0.75rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.rule-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.detail-row {
+  display: flex;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.detail-key {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  min-width: 90px;
+}
+
+.detail-val {
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.rule-recommendation {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  background: var(--warn-dim);
+  border: 1px solid rgba(212, 160, 74, 0.12);
+  color: var(--warn);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.rec-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Rule detail transition */
+.rule-detail-enter-active,
+.rule-detail-leave-active {
+  transition: all 0.2s ease;
+}
+
+.rule-detail-enter-from,
+.rule-detail-leave-to {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Recommendations */
+.rv-recommendations {
+  display: flex;
+  flex-direction: column;
+}
+
+.rec-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rec-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.rec-bullet {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--warn);
+}
+
+/* Raw headers */
+.rv-raw {
+  display: flex;
+  flex-direction: column;
+}
+
+.raw-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.raw-toggle:hover {
+  color: var(--text);
+}
+
+.toggle-chevron {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s;
+}
+
+.toggle-chevron.rotated {
+  transform: rotate(90deg);
+}
+
+.raw-block {
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Raw reveal transition */
+.raw-reveal-enter-active,
+.raw-reveal-leave-active {
+  transition: all 0.25s ease;
+}
+
+.raw-reveal-enter-from,
+.raw-reveal-leave-to {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+</style>
