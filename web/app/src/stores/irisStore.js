@@ -20,12 +20,15 @@ export const useIrisStore = defineStore('iris', () => {
 
   let pollTimer = null
 
-  async function submitAnalysis(rawHeaders) {
+  async function submitAnalysis(rawHeaders, title) {
     submitting.value = true
     try {
+      const body = { headers: rawHeaders }
+      if (title) body.title = title
+
       const res = await apiFetch('/iris/analyze', {
         method: 'POST',
-        body: JSON.stringify({ headers: rawHeaders }),
+        body: JSON.stringify(body),
       })
       if (!res) return null
       const data = await res.json().catch(() => ({}))

@@ -68,11 +68,12 @@ CANCELLABLE_STATES = frozenset({"pending", "running"})
 def analyze_headers(data):
     """Enviar cabeceras de correo para un analisis anti-phishing"""
     raw_headers = data["headers"]
+    title = data.get("title")
     user = get_current_user()
 
     manager = IrisManager()
     try:
-        analysis_id = manager.analyze(raw_headers, user.id)
+        analysis_id = manager.analyze(raw_headers, user.id, title=title)
     except IrisInvalidInputError as e:
         return {
             "error": e.__class__.__name__,

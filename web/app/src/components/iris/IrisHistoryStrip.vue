@@ -37,7 +37,8 @@
           @click="$emit('select', item.analysisId)"
         >
           <span class="strip-dot" :class="`dot--${item.status || 'pending'}`"></span>
-          <span class="strip-id">#{{ item.analysisId }}</span>
+          <span v-if="item.title" class="strip-title">{{ item.title }}</span>
+          <span v-else class="strip-id">#{{ item.analysisId }}</span>
           <span v-if="item.verdict && item.status === 'finished'" class="strip-verdict" :class="`verdict--${verdictClass(item.verdict)}`">
             {{ item.totalScore }}
           </span>
@@ -300,6 +301,16 @@ function verdictClass(v) {
 .strip-id {
   font-family: var(--font-mono);
   font-size: 0.82rem;
+}
+
+.strip-title {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 500;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .strip-verdict {

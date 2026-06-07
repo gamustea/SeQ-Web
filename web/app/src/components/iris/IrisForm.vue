@@ -6,6 +6,13 @@
     </div>
 
     <div class="form-body">
+      <input
+        v-model="title"
+        type="text"
+        class="form-title"
+        maxlength="120"
+        placeholder="Título opcional para identificar el análisis (ej: Correo de Amazon)"
+      />
       <textarea
         v-model="headers"
         class="form-textarea"
@@ -44,10 +51,11 @@ const props = defineProps({
 })
 
 const headers = ref('')
+const title = ref('')
 
 function handleSubmit() {
   if (headers.value.length < 10 || props.submitting) return
-  emit('submit', headers.value)
+  emit('submit', { headers: headers.value, title: title.value || undefined })
 }
 </script>
 
@@ -77,7 +85,33 @@ function handleSubmit() {
 }
 
 .form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
   position: relative;
+}
+
+.form-title {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border-solid);
+  border-radius: 8px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-title:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.form-title::placeholder {
+  color: var(--text-muted);
+  opacity: 0.4;
 }
 
 .form-textarea {

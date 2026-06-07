@@ -49,6 +49,7 @@
     <div v-else-if="reportData && reportData.status === 'finished'" class="rv-report">
       <div class="rv-report-header">
         <div class="rv-report-id">
+          <span v-if="reportData.title" class="report-title">{{ reportData.title }}</span>
           <span class="analysis-id">#{{ reportData.analysisId }}</span>
           <span class="report-date" v-if="reportData.finishedAt">{{ formatDate(reportData.finishedAt) }}</span>
         </div>
@@ -351,6 +352,17 @@ const statusLabel = computed(() => {
   background: var(--surface-2);
   padding: 0.25rem 0.6rem;
   border-radius: 5px;
+}
+
+.report-title {
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .report-date {

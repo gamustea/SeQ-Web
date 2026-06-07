@@ -26,6 +26,7 @@ class IrisAnalysis(Base):
 
     Attributes:
         id: Primary key, auto-incrementing integer.
+        title: Optional user-defined label for quick identification.
         raw_headers: Original email headers as plain text.
         status: Lifecycle state — "pending", "running", "finished",
                 "failed", or "cancelled".
@@ -41,6 +42,7 @@ class IrisAnalysis(Base):
     __tablename__ = "IrisAnalysis"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(120), nullable=True, default=None)
     raw_headers = Column(Text, nullable=False)
     status = Column(String(20), nullable=False, default="pending")
     total_score = Column(Float, nullable=True)

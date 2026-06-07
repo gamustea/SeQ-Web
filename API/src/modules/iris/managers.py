@@ -56,7 +56,7 @@ class IrisManager:
     # PUBLIC API
     # =========================================================================
 
-    def analyze(self, raw_headers: str, user_id: int) -> int:
+    def analyze(self, raw_headers: str, user_id: int, title: str | None = None) -> int:
         """Submit raw email headers for background analysis.
 
         Creates an IrisAnalysis record in ``pending`` state and enqueues
@@ -66,6 +66,8 @@ class IrisManager:
         Args:
             raw_headers: Full email header block as plain text.
             user_id:     Primary key of the requesting user.
+            title:       Optional user-defined label for quick
+                         identification in history.
 
         Returns:
             The new IrisAnalysis primary key (``analysis_id``).  The
@@ -78,7 +80,7 @@ class IrisManager:
                 ``iris.min_headers`` in SecOpsConfig.json).
         """
         self._validate_headers_pre(raw_headers)
-        analysis_id = self._create_analysis_record(raw_headers, user_id)
+        analysis_id = self._create_analysis_record(raw_headers, user_id, title=title)
         self.logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
 
         cancel_event = threading.Event()
@@ -191,6 +193,7 @@ class IrisManager:
 
         return {
             "analysisId": analysis.id,
+            "title": analysis.title,
             "status": analysis.status,
             "rawHeaders": analysis.raw_headers,
             "totalScore": analysis.total_score,
@@ -301,6 +304,7 @@ class IrisManager:
         results = [
             {
                 "analysisId": a.id,
+                "title": a.title,
                 "status": a.status,
                 "totalScore": a.total_score,
                 "verdict": a.verdict,
@@ -329,11 +333,12 @@ class IrisManager:
     # INTERNAL
     # =========================================================================
 
-    def _create_analysis_record(self, raw_headers: str, user_id: int) -> int:
+    def _create_analysis_record(self, raw_headers: str, user_id: int, title: str | None = None) -> int:
         """Persist a new IrisAnalysis row in ``pending`` state."""
         analysis = IrisAnalysis(
             raw_headers=raw_headers,
             user_id=user_id,
+            title=title.strip()[:120] if title and title.strip() else None,
             status="pending",
         )
         with UnitOfWork() as uow:

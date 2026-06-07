@@ -10,6 +10,7 @@ from marshmallow import Schema, fields, validate
 
 class AnalyzeRequestSchema(Schema):
     """Request body for ``POST /iris/analyze``."""
+    title = fields.String(load_default=None, validate=validate.Length(max=120))
     headers = fields.String(required=True, validate=validate.Length(min=10))
 
 
@@ -53,6 +54,7 @@ class RuleResultSchema(Schema):
 class AnalysisDetailResponseSchema(Schema):
     """Full analysis report: headers, per-rule results, verdict."""
     analysisId = fields.Integer()
+    title = fields.String(load_default=None)
     status = fields.String()
     rawHeaders = fields.String()
     totalScore = fields.Float(load_default=None)
@@ -67,6 +69,7 @@ class AnalysisDetailResponseSchema(Schema):
 class AnalysisListItemSchema(Schema):
     """Summary of a single analysis shown in a paginated list."""
     analysisId = fields.Integer()
+    title = fields.String(load_default=None)
     status = fields.String()
     totalScore = fields.Float(load_default=None)
     verdict = fields.String(load_default=None)

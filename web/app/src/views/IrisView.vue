@@ -78,8 +78,8 @@ onMounted(async () => {
   }
 })
 
-async function handleSubmit(rawHeaders) {
-  const id = await store.submitAnalysis(rawHeaders)
+async function handleSubmit({ headers, title }) {
+  const id = await store.submitAnalysis(headers, title)
   if (id) formKey.value++
 }
 
