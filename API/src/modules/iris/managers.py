@@ -479,5 +479,12 @@ class IrisManager:
         )
         if sq_task and sq_task.status.value == "cancelled":
             return True
-        analysis = self.get_analysis(analysis_id)
-        return analysis is not None and analysis.status == "cancelled" # type: ignore
+        try:
+            with UnitOfWork() as uow:
+                repo = IrisAnalysisRepository(uow)
+                analysis = repo.get_by_id(analysis_id)
+                if analysis and analysis.status == "cancelled":
+                    return True
+        except Exception:
+            pass
+        return False # type: ignore
