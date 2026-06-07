@@ -216,5 +216,9 @@
         }
       }
     }
+  },
+  "iris": {
+    "legitimate_threshold": 30,
+    "suspicious_threshold": -10
   }
 }
