@@ -41,6 +41,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/iris',
+    name: 'Iris',
+    component: () => import('@/views/IrisView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/config',
     name: 'Config',
     component: () => import('@/views/ConfigView.vue'),

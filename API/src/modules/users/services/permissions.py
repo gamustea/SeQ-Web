@@ -86,6 +86,11 @@ class AttributeType(Enum):
     ACHERON_UPDATE  = "acheron_update"
     ACHERON_DELETE  = "acheron_delete"
 
+    IRIS_CREATE     = "iris_create"
+    IRIS_READ       = "iris_read"
+    IRIS_UPDATE     = "iris_update"
+    IRIS_DELETE     = "iris_delete"
+
     SENTINEL_SCHEDULE_CREATE = "sentinel_schedule_create"
     SENTINEL_SCHEDULE_READ   = "sentinel_schedule_read"
     SENTINEL_SCHEDULE_DELETE = "sentinel_schedule_delete"
@@ -103,6 +108,10 @@ class AttributeType(Enum):
         "acheron_read":    "Read access for Acheron vault secrets",
         "acheron_update":  "Update access for Acheron vault secrets",
         "acheron_delete":  "Delete access for Acheron vault secrets",
+        "iris_create":     "Create access for Iris email header analysis",
+        "iris_read":       "Read access for Iris email header analysis",
+        "iris_update":     "Update access for Iris email header analysis",
+        "iris_delete":     "Delete access for Iris email header analysis",
         "sentinel_schedule_create": "Create access for scheduled scans",
         "sentinel_schedule_read":   "Read access for scheduled scans",
         "sentinel_schedule_delete": "Delete access for scheduled scans",
@@ -132,6 +141,7 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
         AttributeType.AEGIS_READ,
         AttributeType.SENTINEL_READ,
         AttributeType.ACHERON_READ,
+        AttributeType.IRIS_READ,
         AttributeType.SENTINEL_SCHEDULE_READ,
     },
     Role.ADMIN: {
@@ -144,6 +154,10 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
         AttributeType.SENTINEL_UPDATE,
         AttributeType.SENTINEL_DELETE,
         AttributeType.ACHERON_READ,
+        AttributeType.IRIS_CREATE,
+        AttributeType.IRIS_READ,
+        AttributeType.IRIS_UPDATE,
+        AttributeType.IRIS_DELETE,
         AttributeType.SENTINEL_SCHEDULE_CREATE,
         AttributeType.SENTINEL_SCHEDULE_READ,
         AttributeType.SENTINEL_SCHEDULE_DELETE,

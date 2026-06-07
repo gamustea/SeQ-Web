@@ -441,6 +441,32 @@ def get_sequeue_config() -> dict:
     return cfg
 
 # =============================================================================
+# CONFIGURACIÓN DE IRIS
+# =============================================================================
+
+@_lazy_load
+def get_iris_config() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+    return _configs.get("iris", {})
+
+@_lazy_load
+def get_iris_legitimate_threshold() -> float:
+    cfg = get_iris_config()
+    return float(cfg.get("legitimate_threshold", 50))
+
+@_lazy_load
+def get_iris_suspicious_threshold() -> float:
+    cfg = get_iris_config()
+    return float(cfg.get("suspicious_threshold", 0))
+
+@_lazy_load
+def get_iris_min_headers() -> int:
+    cfg = get_iris_config()
+    return int(cfg.get("min_headers", 2))
+
+
+# =============================================================================
 # ENTORNO
 # =============================================================================
 

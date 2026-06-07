@@ -7,8 +7,13 @@
         <span class="dot dot-green"></span>
       </div>
       <span class="terminal-title">{{ title }}</span>
+      <span class="terminal-live">
+        <span class="live-dot"></span>
+        LIVE
+      </span>
     </div>
     <div class="terminal-body" ref="bodyEl">
+      <div class="terminal-scanlines"></div>
       <div class="terminal-line">
         <span class="prompt">
           <span class="prompt-user">{{ user }}</span>
@@ -143,7 +148,7 @@ function startAnimation() {
     if (i < sel.command.length) {
       cmd.textContent += sel.command.charAt(i)
       i++
-      typingTimer = setTimeout(typeChar, 45)
+      typingTimer = setTimeout(typeChar, 40)
     } else {
       setTimeout(showOutput, 500)
     }
@@ -176,16 +181,20 @@ onUnmounted(() => {
 
 <style scoped>
 .terminal {
-  background: #0a0a0f;
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 10px;
+  background: rgba(10,10,15,0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(212,160,74,0.12);
+  border-radius: 12px;
   overflow: hidden;
   width: 100%;
-  max-width: 700px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(212,160,74,0.06);
+  box-shadow:
+    0 0 40px rgba(212,160,74,0.05),
+    0 0 80px rgba(212,160,74,0.02),
+    0 8px 32px rgba(0,0,0,0.5);
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.78rem;
-  line-height: 1.7;
+  font-size: 1.1rem;
+  line-height: 1.55;
   text-align: left;
 }
 
@@ -193,19 +202,19 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.6rem 0.85rem;
-  background: rgba(255,255,255,0.02);
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  padding: 0.65rem 0.9rem;
+  background: rgba(255,255,255,0.015);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
 .terminal-dots {
   display: flex;
-  gap: 6px;
+  gap: 7px;
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
 }
 .dot-red    { background: #e06565; }
@@ -213,20 +222,65 @@ onUnmounted(() => {
 .dot-green  { background: #4cb782; }
 
 .terminal-title {
-  color: rgba(255,255,255,0.25);
+  flex: 1;
+  color: rgba(255,255,255,0.22);
   font-size: 0.7rem;
   font-weight: 500;
 }
 
+.terminal-live {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: #4cb782;
+  text-transform: uppercase;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4cb782;
+  box-shadow: 0 0 8px #4cb782;
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.7); }
+}
+
 .terminal-body {
-  padding: 0.85rem 1rem;
-  height: 240px;
+  position: relative;
+  padding: 0.9rem 1.1rem;
+  height: 360px;
   overflow-y: auto;
+}
+
+.terminal-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(255,255,255,0.04) 2px,
+    rgba(255,255,255,0.04) 3px
+  );
+  z-index: 1;
 }
 
 .terminal-line {
   margin-bottom: 0.5rem;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: break-word;
+  position: relative;
+  z-index: 2;
 }
 
 .prompt {
@@ -248,6 +302,7 @@ onUnmounted(() => {
 .cursor {
   color: var(--accent, #d4a04a);
   animation: blink 1s step-end infinite;
+  font-weight: 700;
 }
 .cursor.hidden {
   opacity: 0;
@@ -259,10 +314,12 @@ onUnmounted(() => {
 }
 
 .output {
+  position: relative;
+  z-index: 2;
   color: #c8c8d0;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.72rem;
-  line-height: 1.6;
+  font-size: 1.1rem;
+  line-height: 1.5;
   white-space: pre;
   overflow-x: auto;
   transition: opacity 0.3s ease;
@@ -276,15 +333,14 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .terminal {
-    font-size: 0.7rem;
-    max-width: 100%;
+    font-size: 1.1rem;
   }
   .terminal-body {
-    padding: 0.65rem 0.75rem;
-    min-height: 140px;
+    padding: 0.7rem 0.85rem;
+    height: 260px;
   }
   .output {
-    font-size: 0.65rem;
+    font-size: 1rem;
   }
 }
 </style>

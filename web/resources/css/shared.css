@@ -55,6 +55,14 @@
   --border-med:   rgba(160,122,192,0.14);
 }
 
+[data-module="iris"] {
+  --accent:       #e07a5f;
+  --accent-dim:   rgba(224,122,95,0.10);
+  --accent-bright:#f09a7f;
+  --border:       rgba(224,122,95,0.06);
+  --border-med:   rgba(224,122,95,0.14);
+}
+
 html, body {
   min-height: 100vh;
   background: var(--bg);

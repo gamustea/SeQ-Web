@@ -40,6 +40,7 @@ from src.modules.users      import (
 from src.modules.sentinel   import sentinel_blp
 from src.modules.acheron    import acheron_blp
 from src.modules.aegis      import aegis_blp
+from src.modules.iris       import iris_blp
 from src.modules.pages      import pages_bp
 
 import src.modules.system.config_reading as CR
@@ -152,6 +153,7 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     flask_smorest_api.register_blueprint(sentinel_blp, url_prefix="/sentinel")
     flask_smorest_api.register_blueprint(acheron_blp,  url_prefix="/acheron")
     flask_smorest_api.register_blueprint(aegis_blp,    url_prefix="/aegis")
+    flask_smorest_api.register_blueprint(iris_blp,     url_prefix="/iris")
     app.register_blueprint(pages_bp,    url_prefix="/pages")
 
     _logger.info("Registrando manejadores de error globales...")

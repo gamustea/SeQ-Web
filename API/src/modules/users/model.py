@@ -151,6 +151,7 @@ class User(Base):
         tokens: List of AccessToken objects (active OAuth tokens).
         refresh_tokens: List of RefreshToken objects (token refresh tokens).
         vaults: List of Vault objects (encrypted secrets vaults).
+        analyses: List of IrisAnalysis objects (email header analyses).
         documents: List of all Document objects (polymorphic relationship).
         attributes: List of UserAttribute objects (ABAC capability attributes).
     """
@@ -171,6 +172,12 @@ class User(Base):
     tokens         = relationship("AccessToken",  back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     vaults         = relationship("Vault",        back_populates="user")
+
+    analyses = relationship(
+        "IrisAnalysis",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     documents = relationship(
         "Document",

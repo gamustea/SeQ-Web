@@ -3,15 +3,15 @@ import { useAuthStore } from '@/stores/authStore'
 /**
  * Composable para llamadas autenticadas a la API REST.
  *
- * Sustituye a `apiFetch()` del legacy (shared.js).
  * Inyecta automáticamente el header Authorization con el JWT vigente
- * (refrescándolo si está próximo a expirar) y maneja el login redirect
- * si la sesión ya no es válida.
+ * (refrescándolo si está próximo a expirar). Si el servidor responde
+ * con 401, intenta refrescar el token y rehacer la petición una vez.
+ * Si el refresco falla, redirige al login.
  *
  * @example
  * import { useApi } from '@/composables/useApi'
  * const { apiFetch } = useApi()
- * const res = await apiFetch('/sentinel/results?type=nmap')
+ * const res = await apiFetch('/iris/analyze', { method: 'POST', body: '...' })
  * const data = await res.json()
  *
  * @returns {{ apiFetch: (path: string, options?: object) => Promise<Response|null> }}
@@ -20,21 +20,14 @@ export function useApi() {
   const auth = useAuthStore()
 
   /**
-   * Wrapper autenticado sobre fetch.
+   * Wrapper autenticado sobre fetch con re-intento en 401.
    *
-   * - Obtiene el token vía authStore (con refresco automático si procede).
-   * - Si el token no está disponible, ejecuta logout() y devuelve null.
-   * - Añade cabeceras Authorization y Content-Type por defecto.
-   * - Si el body es FormData, elimina Content-Type para que el navegador
-   *   ponga el boundary correcto automáticamente.
-   *
-   * @param {string} path - Ruta de la API (ej: '/sentinel/nmap')
-   * @param {object} [options={}] - Opciones de fetch (method, body, headers, etc.)
-   * @param {object} [options.headers] - Cabeceras adicionales que se mezclan con las de auth
-   * @param {object|FormData|null} [options.body] - Cuerpo de la petición
-   * @returns {Promise<Response|null>} Response de fetch, o null si no hay sesión o hay error de red
+   * @param {string} path - Ruta de la API (ej: '/iris/analyze')
+   * @param {object} [options={}] - Opciones de fetch (method, body, headers)
+   * @param {boolean} [_isRetry=false] - Interno: true si es un re-intento
+   * @returns {Promise<Response|null>} Response, o null sin sesión / error de red
    */
-  async function apiFetch(path, options = {}) {
+  async function apiFetch(path, options = {}, _isRetry = false) {
     const token = await auth.getToken()
     if (!token) {
       auth.logout()
@@ -51,12 +44,25 @@ export function useApi() {
       delete headers['Content-Type']
     }
 
+    let res
     try {
-      return await fetch(path, { ...options, headers })
+      res = await fetch(path, { ...options, headers })
     } catch (e) {
       console.error('[SeQ] apiFetch error:', e)
       return null
     }
+
+    // ── 401 handling: refresh token once and retry ────────────────────
+    if (res.status === 401 && !_isRetry) {
+      const refreshed = await auth.refresh()
+      if (!refreshed) {
+        auth.logout()
+        return null
+      }
+      return apiFetch(path, options, true)
+    }
+
+    return res
   }
 
   return { apiFetch }

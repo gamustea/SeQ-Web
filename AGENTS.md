@@ -11,7 +11,7 @@ Monorepo:
 
 `API/run.py` → `create_app()` factory. Does this in order:
 1. Register CORS, rate limiter, FlaskSmorest API
-2. Register blueprints (system, oauth, users, sentinel, acheron, aegis, pages)
+2. Register blueprints (system, oauth, users, sentinel, acheron, aegis, iris, pages)
 3. Init DB engine + create tables
 4. **Start APScheduler** (`Scheduler.start()`)
 5. **Start SeQueue** (`SeQueue.get_instance().start()`)

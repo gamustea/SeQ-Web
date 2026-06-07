@@ -34,6 +34,7 @@ export default defineConfig({
       '/users':     { target: 'http://localhost:5000', changeOrigin: true },
       '/system':    { target: 'http://localhost:5000', changeOrigin: true },
       '/acheron':   { target: 'http://localhost:5000', changeOrigin: true },
+      '/iris':      { target: 'http://localhost:5000', changeOrigin: true },
     }
   }
 })
