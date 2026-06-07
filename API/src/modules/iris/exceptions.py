@@ -55,3 +55,10 @@ class IrisInvalidStateError(IrisError):
     """
     default_code = ErrorCode.SCAN_ERROR
     default_status_code = 400
+
+
+class IrisInvalidInputError(IrisError):
+    """Raised when the submitted headers do not contain enough valid entries
+    to perform a meaningful analysis."""
+    default_code = ErrorCode.VALIDATION_ERROR
+    default_status_code = 400

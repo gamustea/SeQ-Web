@@ -23,6 +23,7 @@
         >
           <template #form>
             <IrisForm
+              :key="formKey"
               :submitting="store.submitting"
               @submit="handleSubmit"
             />
@@ -36,7 +37,7 @@
 </template>
 
 <script setup>
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import Topbar from '@/components/shared/Topbar.vue'
 import StarBackground from '@/components/shared/StarBackground.vue'
 import AppToast from '@/components/shared/AppToast.vue'
@@ -46,6 +47,7 @@ import IrisForm from '@/components/iris/IrisForm.vue'
 import { useIrisStore } from '@/stores/irisStore'
 
 const store = useIrisStore()
+const formKey = ref(0)
 
 const sortMode = computed({
   get: () => store.sortMode || 'date-desc',
@@ -75,7 +77,8 @@ onMounted(async () => {
 })
 
 async function handleSubmit(rawHeaders) {
-  await store.submitAnalysis(rawHeaders)
+  const id = await store.submitAnalysis(rawHeaders)
+  if (id) formKey.value++
 }
 
 async function handleCancel() {

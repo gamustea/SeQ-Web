@@ -26,6 +26,7 @@ from .exceptions import (
     IrisAnalysisNotFoundError,
     IrisAnalysisNotReadyError,
     IrisExecutionError,
+    IrisInvalidInputError,
     IrisInvalidStateError,
 )
 from .model import IrisAnalysis, IrisRuleResult
@@ -70,7 +71,13 @@ class IrisManager:
             The new IrisAnalysis primary key (``analysis_id``).  The
             caller should store this to later poll status or fetch the
             full report.
+
+        Raises:
+            IrisInvalidInputError: If the headers contain fewer than
+                the minimum required header lines (configurable via
+                ``iris.min_headers`` in SecOpsConfig.json).
         """
+        self._validate_headers_pre(raw_headers)
         analysis_id = self._create_analysis_record(raw_headers, user_id)
         self.logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
 
@@ -334,6 +341,33 @@ class IrisManager:
             repo.save(analysis)
         return analysis.id # type: ignore
 
+    @staticmethod
+    def _validate_headers_pre(raw_headers: str) -> None:
+        """Quick pre-check before creating a DB record.
+
+        Counts lines that contain a colon — a rough proxy for valid
+        header entries.  Rejects obviously non-header input early so
+        we do not waste a DB row on garbage.
+        """
+        min_h = CR.get_iris_min_headers()
+        count = sum(1 for line in raw_headers.split("\n") if ":" in line)
+        if count < min_h:
+            raise IrisInvalidInputError(
+                "Se detectaron %d cabezeras v\u00e1lidas (m\u00ednimo: %d). "
+                "El contenido no parece ser un bloque de cabeceras de correo v\u00e1lido." % (count, min_h)
+            )
+
+    @staticmethod
+    def _validate_headers_parsed(parsed: dict) -> None:
+        """Full validation after parsing — ensures the analysis runs on
+        enough data to produce meaningful results."""
+        min_h = CR.get_iris_min_headers()
+        if len(parsed) < min_h:
+            raise IrisInvalidInputError(
+                "Tras parsear se obtuvieron %d cabeceras (m\u00ednimo: %d). "
+                "El contenido no contiene suficientes cabeceras de correo v\u00e1lidas." % (len(parsed), min_h)
+            )
+
     def _run_analysis(self, analysis_id: int, raw_headers: str) -> None:
         """Background task: execute all rules and persist results.
 
@@ -364,27 +398,29 @@ class IrisManager:
             return
 
         headers = parse_raw_headers(raw_headers)
-        rules = iris_rules.get_rules()
-        total_rules = len(rules)
+        self._validate_headers_parsed(headers)
+
+        rules_defs = iris_rules.get_rules()
+        total_rules = len(rules_defs)
         results: List[RuleResult] = []
         sequeue = SeQueue.get_instance()
 
-        for idx, rule in enumerate(rules):
+        for idx, rule_def in enumerate(rules_defs):
             if self._is_cancelled(analysis_id):
                 self.logger.info(f"Analysis {analysis_id} was cancelled")
                 return
 
             try:
-                result = rule["func"](headers)
+                result = rule_def["func"](headers)
             except Exception as e:
-                self.logger.error(f"Rule '{rule['name']}' failed for analysis {analysis_id}: {e}")
+                self.logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}")
                 result = RuleResult(
                     score=0, verdict="error",
                     details={"error": str(e)},
-                    recommendation=f"La regla '{rule['name']}' falló durante la ejecución.",
+                    recommendation=f"La regla '{rule_def['name']}' falló durante la ejecución.",
                 )
 
-            self._persist_rule_result(analysis_id, rule, result, idx)
+            self._persist_rule_result(analysis_id, rule_def, result, idx)
             results.append(result)
 
             progress = int(((idx + 1) / total_rules) * 100)

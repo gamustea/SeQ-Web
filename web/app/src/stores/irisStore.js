@@ -27,9 +27,10 @@ export const useIrisStore = defineStore('iris', () => {
         method: 'POST',
         body: JSON.stringify({ headers: rawHeaders }),
       })
-      const data = await res?.json().catch(() => ({}))
-      if (!res?.ok) {
-        toast.show(data.message || 'Error al iniciar el an\u00e1lisis.', 'error')
+      if (!res) return null
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.show(data.error_description || data.message || 'Error al iniciar el an\u00e1lisis.', 'error')
         return null
       }
       toast.show(`An\u00e1lisis iniciado (ID: ${data.analysisId})`, 'success')

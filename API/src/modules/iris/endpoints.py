@@ -28,6 +28,7 @@ from .exceptions import (
     IrisAnalysisNotFoundError,
     IrisAnalysisNotReadyError,
     IrisExecutionError,
+    IrisInvalidInputError,
     IrisInvalidStateError,
 )
 from .schemas import (
@@ -64,13 +65,20 @@ CANCELLABLE_STATES = frozenset({"pending", "running"})
 @require_attributes(at_least_one=[AttributeType.IRIS_CREATE])
 @limiter.limit("20 per hour; 100 per day")
 @handle_exceptions(default_exception=IrisExecutionError, logger=_logger)
-def analyze_headers(data: dict):
+def analyze_headers(data):
     """Enviar cabeceras de correo para un analisis anti-phishing"""
     raw_headers = data["headers"]
     user = get_current_user()
 
     manager = IrisManager()
-    analysis_id = manager.analyze(raw_headers, user.id)
+    try:
+        analysis_id = manager.analyze(raw_headers, user.id)
+    except IrisInvalidInputError as e:
+        return {
+            "error": e.__class__.__name__,
+            "error_description": str(e.user_message or e),
+            "code": e.code.value if e.code else 1100,
+        }, 400
 
     _logger.info(f"Iris analysis {analysis_id} started by user {user.username}")
     return {

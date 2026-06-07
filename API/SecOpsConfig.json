@@ -219,6 +219,7 @@
   },
   "iris": {
     "legitimate_threshold": 30,
-    "suspicious_threshold": -10
+    "suspicious_threshold": -10,
+    "min_headers": 2
   }
 }
