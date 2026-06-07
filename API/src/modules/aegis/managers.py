@@ -24,6 +24,7 @@ from src.modules.aegis.exceptions import DocumentError
 import src.modules.system.config_reading as CR
 from src.modules.users import User
 from src.modules.system import SecOpsLogger
+from src.modules.system.sequeue import SeQueue
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
 from src.modules.shared._documents import (
@@ -60,7 +61,7 @@ class AegisManager:
 
     def generate(self, topic_id: int, tweaks: dict | None = None) -> int:
         """
-        Lanza la generación asíncrona de una píldora y devuelve el documentId
+        Lanza la generacion asincrona de una pildora y devuelve el documentId
         inmediatamente. Thread-safe.
         """
         with self._lock:
@@ -68,12 +69,16 @@ class AegisManager:
             document_id = self._create_pending_document(topic_id)
 
             thread_manager = self.__class__(self.user)
-            threading.Thread(
-                target  = thread_manager._run_generation_workflow,
-                args    = (document_id, topic_id, tweaks),
-                daemon  = True,
-                name    = f"AegisGen-{document_id}",
-            ).start()
+            cancel_event = threading.Event()
+
+            SeQueue.get_instance().submit(
+                func=thread_manager._run_generation_workflow,
+                args=(document_id, topic_id, tweaks),
+                name=f"AegisGen-{document_id}",
+                category="aegis.generate",
+                external_id=f"aegis-doc:{document_id}",
+                on_cancel=cancel_event.set,
+            )
 
         return document_id
 

@@ -1,12 +1,14 @@
 # SeQ — Security Operations Platform
 
-**SeQ** es una plataforma de operaciones de seguridad compuesta por tres módulos principales, con interfaces web y móvil:
+**SeQ** es una plataforma de operaciones de seguridad compuesta por cuatro módulos principales, con interfaces web y móvil:
 
 - **Sentinel** — API REST de escaneo de vulnerabilidades con análisis de IA (operativo).
+- **Iris** — Análisis de cabeceras de correo para detección de phishing mediante reglas (operativo).
 - **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (operativo, en expansión).
 - **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades, potenciado por IA local (operativo).
 - **SeQ Web** — Interfaz web SPA (Vue 3 + Vite + Pinia) para interactuar con todos los módulos.
 - **AcheronMobile** — App Android/Kotlin con módulo de cifrado AcheronCore (Java).
+- **SeQ Hub** — Dashboard central con terminal interactiva de comandos y acceso rápido a todos los módulos.
 
 ---
 
@@ -41,6 +43,8 @@
       - [Descargar la píldora como Markdown](#descargar-la-píldora-como-markdown)
       - [Otros endpoints Aegis](#otros-endpoints-aegis)
       - [Arquitectura de IA en Aegis](#arquitectura-de-ia-en-aegis)
+  - [Módulo Iris — Análisis Anti-Phishing](#módulo-iris--análisis-anti-phishing)
+    - [Endpoints](#endpoints-1)
   - [Módulo Acheron — Vault](#módulo-acheron--vault)
     - [Endpoints](#endpoints)
       - [Vault](#vault)
@@ -455,6 +459,128 @@ Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se acced
 
 ---
 
+## Módulo Iris — Análisis Anti-Phishing
+
+> 🕵️ **Iris** analiza cabeceras de correo electrónico para detectar intentos de phishing mediante un sistema de reglas atómicas. Cada regla evalúa un aspecto concreto de las cabeceras y devuelve una puntuación; la suma determina un veredicto final (Legitimate / Suspicious / Phishing).
+
+Las cabeceras se envían en texto plano a la API, que las procesa en segundo plano mediante **SeQueue** (cola de tareas asíncrona). El usuario puede consultar el estado del análisis y, una vez completado, obtener un informe detallado con la puntuación de cada regla y recomendaciones.
+
+### Endpoints
+
+| Método | Endpoint | Permiso | Descripción |
+|---|---|---|---|
+| `POST` | `/iris/analyze` | `IRIS_CREATE` | Enviar cabeceras para análisis (opcional: `title`) |
+| `GET` | `/iris/status?id={{id}}` | `IRIS_READ` | Estado y progreso del análisis |
+| `GET` | `/iris/results?page=&per_page=` | `IRIS_READ` | Lista paginada de análisis del usuario |
+| `GET` | `/iris/results/{{id}}` | `IRIS_READ` | Informe completo con reglas, scores y veredicto |
+| `POST` | `/iris/analyze/{{id}}/cancel` | `IRIS_UPDATE` | Cancelar un análisis en curso |
+| `DELETE` | `/iris/results/{{id}}` | `IRIS_DELETE` | Eliminar un análisis |
+
+### Iniciar un análisis
+
+```http
+POST /iris/analyze
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "Correo sospechoso de Amazon",
+  "headers": "Received: from mail.evil.com (10.0.0.1)\nFrom: \"Amazon\" <no-reply@amaz0n-secure.com>\nReply-To: phisher@evil.com\nDKIM-Signature: v=1; a=rsa-sha256; d=amaz0n-secure.com;\nAuthentication-Results: spf=fail; dkim=fail; dmarc=fail"
+}
+```
+
+**Respuesta (asíncrona):**
+```json
+{
+  "message": "Analisis de cabeceras iniciado correctamente",
+  "analysisId": 42,
+  "status": "pending"
+}
+```
+
+### Consultar estado
+
+```http
+GET /iris/status?id=42
+Authorization: Bearer <token>
+```
+
+**Respuesta (en ejecución):**
+```json
+{
+  "analysisId": 42,
+  "status": "running",
+  "progress": 60
+}
+```
+
+### Informe completo
+
+```http
+GET /iris/results/42
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "analysisId": 42,
+  "title": "Correo sospechoso de Amazon",
+  "status": "finished",
+  "totalScore": -35,
+  "verdict": "Phishing",
+  "rules": [
+    { "ruleName": "SPF", "category": "authentication", "score": -20, "verdict": "fail", "recommendation": "..." },
+    { "ruleName": "DKIM", "category": "authentication", "score": -15, "verdict": "fail", "recommendation": "..." },
+    { "ruleName": "Reply-To check", "category": "header_analysis", "score": -10, "verdict": "fail", "recommendation": "..." }
+  ],
+  "recommendations": [
+    "El servidor de envío no está autorizado por el registro SPF...",
+    "La dirección Reply-To apunta a un dominio diferente al remitente..."
+  ]
+}
+```
+
+### Reglas de análisis
+
+Iris ejecuta **8 reglas atómicas** registradas mediante decorador (`@iris_rules.register`), cada una en su propio archivo dentro de `rules/`:
+
+| Regla | Categoría | Score máx | Score mín |
+|---|---|---|---|
+| SPF | authentication | +15 | -20 |
+| DKIM | authentication | +15 | -15 |
+| DMARC | authentication | +15 | -20 |
+| Reply-To check | header_analysis | +3 | -10 |
+| Return-Path mismatch | header_analysis | 0 | -8 |
+| Message-ID check | header_analysis | 0 | -4 |
+| Content-Type check | header_analysis | 0 | -2 |
+| From header check | header_analysis | 0 | -10 |
+
+Los umbrales de veredicto se configuran en `SecOpsConfig.json`:
+```json
+"iris": {
+  "legitimate_threshold": 30,
+  "suspicious_threshold": -10,
+  "min_headers": 2
+}
+```
+
+### Validación de entrada
+
+Antes de crear un análisis, Iris verifica que el texto contenga al menos `min_headers` líneas con formato de cabecera (`Clave: Valor`). Si no supera esta validación, la API responde con un error 400.
+
+### Frontend web
+
+La interfaz de Iris (`/iris`) sigue un layout de **strip horizontal + contenido completo**, diferenciándose de Sentinel (scroll vertical) y Aegis (tres paneles). Incluye:
+
+- **Strip de historial**: pestañas horizontales con scroll para cada análisis, con título (si se proporcionó), score y veredicto.
+- **Hover card**: al pasar el ratón sobre un ítem del strip, aparece una card con el título completo, fecha, puntuación y veredicto.
+- **Formulario de entrada**: textarea monoespaciada para pegar cabeceras + campo de título opcional.
+- **Visor de informe**: tarjetas expandibles por regla, sección de recomendaciones y cabeceras originales colapsables.
+- **Polling automático cada 2s** mientras el análisis está en ejecución.
+- **Eliminación**: desde el strip (con confirmación inline) o desde el visor del informe.
+
+---
+
 ## Módulo Acheron — Vault
 
 > 🔐 **Acheron** es el sistema de gestión de secretos cifrados de SeQ. La API REST del vault está **operativa**. Las interfaces móvil y web están en desarrollo.
@@ -541,6 +667,23 @@ Content-Type: application/json
 
 ---
 
+## Web Frontend — SeQ Hub
+
+La interfaz web SPA (Vue 3 + Vite + Pinia + Vue Router) cuenta con un **hub central** rediseñado como dashboard de operaciones de seguridad:
+
+### Dashboard Hub (`/hub`)
+
+- **Layout partido 2/3 + 1/3**: Columna izquierda con hero `[ SeQ ]` + terminal interactiva; columna derecha con fichas de módulos scrolleables.
+- **Terminal de comandos**: Panel con efecto glass morphism (`backdrop-filter: blur(16px)`) y borde neón dorado. Reproduce escaneos reales (nikto, nmap, openvas) con typewriter y highlight sintáctico de JSON. Indicador LIVE pulsante en la barra de título.
+- **Fondo animado**: Orbes de color con blur 150px, rejilla hexagonal SVG, partículas flotantes, scan-lines CRT y granulado SVG — todo con animación CSS.
+- **Módulos glass**: Fichas con `backdrop-filter: blur(12px)`, borde izquierdo neón de 3px por módulo (verde Sentinel, azul Aegis, naranja Iris, púrpura Acheron). Hover con elevación y glow expansivo.
+- **Quick-stats**: Acceso directo al repositorio GitHub del proyecto y versión del sistema.
+- **Perfil**: Avatar circular fijo en esquina superior derecha, dropdown glass con perfil, rutas de administración y cierre de sesión.
+- **Tipografía**: Syne (display), Sora (body), JetBrains Mono (terminal).
+- **Responsive**: Colapsa a columna única en ≤1024px, scroll de página normal en móvil.
+
+---
+
 ## Infraestructura Docker
 
 El archivo `docker-compose.yml` en la raíz del repositorio orquesta todos los servicios mediante dos perfiles:
@@ -603,6 +746,7 @@ SeQ/
 │           ├── users/            # Usuarios, OAuth 2.0 + JWT
 │           ├── shared/           # Componentes compartidos
 │           ├── sentinel/         # Escaneo: Nmap, Nikto, OpenVAS
+│           ├── iris/             # Análisis anti-phishing de cabeceras
 │           ├── aegis/            # Píldoras de concienciación
 │           ├── acheron/          # Vault de secretos cifrados
 │           ├── pages/            # UI estática
@@ -636,6 +780,7 @@ SeQ/
 | Generación de PDFs | ReportLab + Pillow |
 | Concienciación y generación de contenido | Ollama (IA local, llama3.2) + prompts especializados |
 | Obtención de vulnerabilidades recientes | INCIBE-CERT + API pública CIRCL/NVD |
+| Análisis anti-phishing | Iris (reglas atómicas con registro por decorador + SeQueue) |
 | Frontend web | Vue 3 (Vite + Pinia + Vue Router) |
 | App móvil | Android / Kotlin + Jetpack Compose |
 | Lógica de vault | AcheronCore (Java) |

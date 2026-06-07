@@ -41,6 +41,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/iris',
+    name: 'Iris',
+    component: () => import('@/views/IrisView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/config',
     name: 'Config',
     component: () => import('@/views/ConfigView.vue'),
@@ -56,6 +62,12 @@ const routes = [
     path: '/users',
     name: 'Users',
     component: () => import('@/views/UsersView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/queue',
+    name: 'Queue',
+    component: () => import('@/views/QueueView.vue'),
     meta: { requiresAuth: true },
   },
 ]

@@ -1,103 +1,23 @@
-"""
-sentinel_endpoints.py
-══════════════════════════════════════════════════════════════════════════════
-
-Blueprint de la API REST para el módulo Sentinel (escaneos de seguridad).
-
-Este módulo proporciona endpoints para lanzar, monitorizar y gestionar escaneos
-de seguridad utilizando tres motores de escaneo:
-
-    • Nmap      — Escaneo de puertos y detección de servicios
-    • Nikto     — Escaneo de vulnerabilidades web
-    • OpenVAS   — Escaneo completo de vulnerabilidades (GMP)f
-
-────────────────────────────────────────────────────────────────────────────────
-ENDPOINTS DISPONIBLES
-────────────────────────────────────────────────────────────────────────────────
-
-Estado y Control
-    GET  /sentinel/is-finished?id=<scan_id>     — ¿Ha finalizado un escaneo?
-    GET  /sentinel/scan-status?id=<scan_id>     — Estado y progreso del escaneo
-    POST /sentinel/scans/<scan_id>/cancel       — Cancelar escaneo en curso
-
-Lanzamiento
-    POST /sentinel/nmap    — Lanzar escaneo Nmap (soporta rangos CIDR/múltiples IPs)
-    POST /sentinel/nikto   — Lanzar escaneo Nikto
-    POST /sentinel/openvas — Lanzar escaneo OpenVAS (un solo host)
-
-Resultados
-    GET /sentinel/results              — Listar todos los escaneos del usuario
-    GET /sentinel/results/<scan_id>    — Obtener detalle de un escaneo
-
-PDF y Documentos
-    GET /sentinel/generate-pdf?id=<scan_id>         — Solicitar generación async de PDF
-    GET /sentinel/document-status                   — Consultar estado de generación
-    GET /sentinel/document/<id>/download            — Descargar documento generado
-    GET /sentinel/generate-pdf-base64               — (Legacy) Obtener PDF en Base64
-
-Eliminación
-    DELETE /sentinel/<scan_id> — Eliminar un escaneo
-
-Escaneos Programados
-    POST   /sentinel/scheduled-scans                — Crear un escaneo programado
-    GET    /sentinel/scheduled-scans                — Listar escaneos programados del usuario
-    DELETE /sentinel/scheduled-scans/<ps_id>        — Revocar un escaneo programado
-
-────────────────────────────────────────────────────────────────────────────────
-AUTENTICACIÓN
-────────────────────────────────────────────────────────────────────────────────
-
-Todos los endpoints requieren un token OAuth2 válido en el header:
-    Authorization: Bearer <access_token>
-
-Los límites de tasa (rate limiting) están configurados por endpoint:
-    • is-finished, scan-status, results, document-status: 300/hour, 2000/day
-    • nmap, nikto: 20/hour, 100/day
-    • openvas: 10/hour, 50/day
-    • generate-pdf: 30/hour, 100/day
-    • cancel, delete: 60/hour, 200/day
-
-────────────────────────────────────────────────────────────────────────────────
-EJEMPLOS DE USO
-────────────────────────────────────────────────────────────────────────────────
-
-# Lanzar escaneo Nmap
-curl -X POST https://api.example.com/sentinel/nmap \
-    -H "Authorization: Bearer <token>" \
-    -H "Content-Type: application/json" \
-    -d '{"target": "192.168.1.0/24", "ports": "22,80,443", "timeout": 300}'
-
-# Listar escaneos con paginación
-curl "https://api.example.com/sentinel/results?type=nmap&page=1&per_page=20" \
-    -H "Authorization: Bearer <token>"
-
-# Obtener estado de un escaneo
-curl "https://api.example.com/sentinel/scan-status?id=42" \
-    -H "Authorization: Bearer <token>"
-
-────────────────────────────────────────────────────────────────────────────────
-"""
-
 from __future__ import annotations
 
 import os
 import ipaddress
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import request, send_file
+from flask_smorest import Blueprint as SmorestBlueprint
 
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
 from src.modules.shared import (
     handle_exceptions,
-    require_json,
-    require_arg,
-    limiter
+    limiter,
 )
 from src.modules.shared._exceptions import (
-    MissingParameterError,
     ValidationError,
-    IllegalStateError
+    IllegalStateError,
+    SecOpsException,
 )
-from src.modules.aegis.exceptions import DocumentError
+from src.modules.shared.schemas import ErrorSchema
+from src.modules.aegis.exceptions import DocumentError, DocumentNotFoundError, DocumentNotReadyError
 from src.modules.system import SecOpsLogger
 
 from .managers import (
@@ -118,34 +38,57 @@ from .exceptions import (
     PrivateIPRequested,
     ProgramedScanError,
     ProgramedScanNotFoundError,
-    InvalidProgramedTaskArgumentError,
+)
+from .schemas import (
+    ScanIdQuerySchema,
+    NmapScanRequestSchema,
+    NiktoScanRequestSchema,
+    OpenVASScanRequestSchema,
+    ResultsQuerySchema,
+    GeneratePdfRequestSchema,
+    DocumentStatusQuerySchema,
+    DocumentsQuerySchema,
+    ScheduledScanRequestSchema,
+    ScanResponseSchema,
+    NmapScanResponseSchema,
+    ScanStatusResponseSchema,
+    IsFinishedResponseSchema,
+    ResultsResponseSchema,
+    ScanDetailResponseSchema,
+    DocumentStatusResponseSchema,
+    DocumentListResponseSchema,
+    ScanDocumentsResponseSchema,
+    DocumentDeleteResponseSchema,
+    PdfGenerateResponseSchema,
+    ScheduledScanResponseSchema,
+    ScheduledScanListResponseSchema,
+    ScheduledScanActionResponseSchema,
 )
 
 
-# =========================================================================
-# CONSTANTS
-# =========================================================================
+sentinel_blp = SmorestBlueprint(
+    "sentinel", __name__,
+    description="Escaneos de seguridad (Nmap, Nikto, OpenVAS) y PDFs"
+)
+_logger = SecOpsLogger("sentinel").get_logger()
 
-sentinel_bp = Blueprint("sentinel", __name__)
-_logger     = SecOpsLogger("sentinel").get_logger()
+CANCELLABLE_STATES = frozenset({"pending", "running"})
+MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024
 
-CANCELLABLE_STATES      = frozenset({"pending", "running"})
-VALID_SCAN_TYPES        = frozenset({"nmap", "nikto", "openvas", "all"})
-VALID_OPENVAS_CONFIGS   = frozenset({"full_fast", "full_deep", "full_ultimate"})
-MAX_PDF_SIZE_BYTES      = 50 * 1024 * 1024
 
-# =========================================================================
-# SCAN ENDPOINTS
-# =========================================================================
-
-@sentinel_bp.get("/scan-status")
+@sentinel_blp.get("/scan-status")
+@sentinel_blp.arguments(ScanIdQuerySchema, location="query")
+@sentinel_blp.response(200, ScanStatusResponseSchema, description="Scan status")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
-def get_scan_status():
-    """Estado y progreso de un escaneo."""
-    scan_id = int(require_arg("id"))
+def get_scan_status(args):
+    """Estado y progreso de un escaneo"""
+    scan_id = args["id"]
     user = get_current_user()
     manager = ScanManager.resolve_manager(scan_id)
     scan = manager.get_scan_by_id(scan_id)
@@ -153,30 +96,35 @@ def get_scan_status():
         raise ScanNotFoundError(scan_id)
     ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
-    status      = manager.get_scan_status(scan_id)
-    progress    = manager.get_scan_progress(scan_id)
-    result      = manager.format_scan(scan_id)
+    status = manager.get_scan_status(scan_id)
+    progress = manager.get_scan_progress(scan_id)
+    result = manager.format_scan(scan_id)
 
     response = {
-        "message":  f"Estado del escaneo {scan_id}: {status}",
-        "scanId":   scan_id,
-        "status":   status,
+        "message": f"Estado del escaneo {scan_id}: {status}",
+        "scanId": scan_id,
+        "status": status,
         "scanType": scan.scan_type,
     }
     if progress is not None:
         response["progress"] = progress
     response["scan"] = result
 
-    return jsonify(response), 200
+    return response
 
 
-@sentinel_bp.post("/scans/<int:scan_id>/cancel")
+@sentinel_blp.post("/scans/<int:scan_id>/cancel")
+@sentinel_blp.response(200, ScanResponseSchema, description="Scan cancelled")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Invalid state")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(500, schema=ErrorSchema, description="Cancellation failed")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_UPDATE])
 @limiter.limit("60 per hour; 200 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
 def cancel_scan(scan_id: int):
-    """Cancela un escaneo en curso."""
+    """Cancelar un escaneo en curso"""
     user = get_current_user()
 
     manager = ScanManager.resolve_manager(scan_id)
@@ -186,59 +134,43 @@ def cancel_scan(scan_id: int):
     ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     if scan.status not in CANCELLABLE_STATES:
-        return jsonify({
-            "error": "invalid_state",
-            "error_description": f"El escaneo no se puede cancelar en estado: {scan.status}",
-            "scanId": scan_id,
-            "currentStatus": scan.status,
-            "cancellableStates": sorted(CANCELLABLE_STATES),
-        }), 400
+        raise IllegalStateError(
+            f"El escaneo no se puede cancelar en estado: {scan.status}"
+        )
 
     if not manager.cancel_scan(scan_id, user.id): # type: ignore
-        return jsonify(
-            {
-                "error": "cancellation_failed",
-                "error_description": "No se pudo cancelar",
-                "scanId": scan_id
-            }
-        ), 500
+        raise ScanExecutionError("No se pudo cancelar")
 
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
 
     _logger.info(f"Escaneo {scan.scan_type} {scan_id} cancelado por {user.username}")
-    return jsonify(
-        {
-            "message": "Escaneo cancelado exitosamente",
-            "scanId": scan_id,
-            "scanType": scan.scan_type,
-            "status": scan.status,
-            "user": user.username
-        }
-    ), 200
+    return {
+        "message": "Escaneo cancelado exitosamente",
+        "scanId": scan_id,
+        "scanType": scan.scan_type,
+        "status": scan.status,
+        "user": user.username,
+    }
 
 
-@sentinel_bp.post("/nmap")
+@sentinel_blp.post("/nmap")
+@sentinel_blp.arguments(NmapScanRequestSchema)
+@sentinel_blp.response(201, NmapScanResponseSchema, description="Nmap scan started")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
 @limiter.limit("20 per hour; 100 per day")
-@require_json(["target", "ports"])
 @handle_exceptions(default_exception=ScanExecutionError, logger=_logger)
-def start_nmap_scan(data: dict[str, str]):
-    """Lanza uno o más escaneos Nmap."""
-
-    host  = data["target"]
+def start_nmap_scan(data: dict):
+    """Lanzar uno o mas escaneos Nmap (soporta rangos CIDR)"""
+    host = data["target"]
     ports = data["ports"]
+    timeout = data["timeout"]
     user = get_current_user()
-
-    timeout = int(data.get("timeout", 300))
-    if timeout <= 0:
-        raise ValidationError(
-            field="timeout",
-            message="El timeout debe ser positivo",
-            value=timeout
-        )
 
     nmap_manager = NmapScanManager()
     try:
@@ -246,17 +178,9 @@ def start_nmap_scan(data: dict[str, str]):
     except IPValidationError as exc:
         raise ValidationError(field="target", message=str(exc), value=host) from exc
     except MaxHostsExceededError as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {}
-        }), 400
+        raise ValidationError(str(exc.user_message or exc))
     except PrivateIPRequested as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {}
-        }), 403
+        raise SecOpsException(str(exc.user_message or exc), status_code=403)
 
     try:
         ScanManager.validate_port(ports)
@@ -269,101 +193,74 @@ def start_nmap_scan(data: dict[str, str]):
             target_host=target_host,
             target_ports=ports,
             user_id=user.id,
-            timeout=timeout
+            timeout=timeout,
         )
         scan_ids.append(scan_id)
-        _logger.info(
-            f"Nmap lanzado: ID={scan_id} host={target_host}\
-            ports={ports} user={user.username}"
-        )
+        _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={user.username}")
 
-    return jsonify({
-        "message":    "Escaneo(s) Nmap iniciado(s) correctamente",
-        "scanIds":    scan_ids,
-        "target":     {"hosts": hosts, "ports": ports},
+    return {
+        "message": "Escaneo(s) Nmap iniciado(s) correctamente",
+        "scanIds": scan_ids,
+        "target": {"hosts": hosts, "ports": ports},
         "totalScans": len(scan_ids),
-        "user":       user.username,
-    }), 201
+        "user": user.username,
+    }
 
 
-@sentinel_bp.post("/nikto")
+@sentinel_blp.post("/nikto")
+@sentinel_blp.arguments(NiktoScanRequestSchema)
+@sentinel_blp.response(201, ScanResponseSchema, description="Nikto scan started")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
 @limiter.limit("20 per hour; 100 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
-@require_json(["target"])
 @handle_exceptions(default_exception=ScanExecutionError, logger=_logger)
 def start_nikto_scan(data):
-    """Lanza un escaneo Nikto."""
+    """Lanzar un escaneo Nikto"""
     target = data["target"]
+    timeout = data["timeout"]
     user = get_current_user()
 
-    timeout = int(data.get("timeout", 900))
-    if timeout <= 0:
-        raise ValidationError(
-            field="timeout",
-            message="El timeout debe ser positivo",
-            value=timeout
-        )
-
     nikto_manager = NiktoScanManager()
-    scan_id = nikto_manager.run_scan(
-        target, # type: ignore
-        user_id=user.id,
-        timeout=timeout
-    ) # type: ignore
-    _logger.info(
-        f"Nikto lanzado: ID={scan_id} target={target}\
-        timeout={timeout} user={user.username}"
-    )
-    return jsonify(
-        {
-            "message": "Escaneo Nikto iniciado correctamente",
-            "scanId": scan_id,
-            "target": target,
-            "timeout": timeout,
-            "user": user.username
-        }
-    ), 201
+    scan_id = nikto_manager.run_scan(target, user_id=user.id, timeout=timeout) # type: ignore
+    _logger.info(f"Nikto lanzado: ID={scan_id} target={target} timeout={timeout} user={user.username}")
+    return {
+        "message": "Escaneo Nikto iniciado correctamente",
+        "scanId": scan_id,
+        "target": target,
+        "timeout": timeout,
+        "user": user.username,
+    }
 
 
-@sentinel_bp.post("/openvas")
+@sentinel_blp.post("/openvas")
+@sentinel_blp.arguments(OpenVASScanRequestSchema)
+@sentinel_blp.response(201, ScanResponseSchema, description="OpenVAS scan started")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
 @limiter.limit("10 per hour; 50 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
-@require_json(["target"])
 @handle_exceptions(default_exception=ScanExecutionError, logger=_logger)
 def start_openvas_scan(data):
-    """Lanza un escaneo OpenVAS para un único host."""
-    target      = data["target"]
-    scan_config = data.get("scanConfig", "full_fast")
-    user        = get_current_user()
+    """Lanzar un escaneo OpenVAS para un unico host"""
+    target = data["target"]
+    scan_config = data["scanConfig"]
+    user = get_current_user()
     if user is None:
         raise IllegalStateError("'user' detectado como None")
-
-    if scan_config not in VALID_OPENVAS_CONFIGS:
-        raise ValidationError(
-            field="scanConfig",
-            message="Configuración inválida",
-            value=scan_config,
-            expected=", ".join(sorted(VALID_OPENVAS_CONFIGS))
-        )
 
     try:
         hosts = ScanManager.validate_ip(target, max_hosts=1)
     except IPValidationError as exc:
         raise ValidationError(field="target", message=str(exc), value=target) from exc
     except MaxHostsExceededError as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {}
-        }), 400
+        raise ValidationError(str(exc.user_message or exc))
     except PrivateIPRequested as exc:
-        return jsonify({
-            "error": exc.__class__.__name__,
-            "error_description": exc.user_message or str(exc),
-            "details": exc.details or {}
-        }), 403
+        raise SecOpsException(str(exc.user_message or exc), status_code=403)
 
     openvas_manager = OpenVASScanManager()
     target_ip = hosts[0]
@@ -373,83 +270,108 @@ def start_openvas_scan(data):
         target=target_ip,
         scan_config=scan_config,
         user_id=user.id,
-        skip_normalize=True
+        skip_normalize=True,
     )
     _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={user.username}")
 
-    return jsonify(
-        {
-            "message": "Escaneo OpenVAS iniciado correctamente",
-            "scanId": scan_id,
-            "target": target_ip,
-            "scanConfig": scan_config,
-            "user": user.username,
-            "note": "Use /sentinel/scan-status para verificar el progreso."
-        }
-    ), 201
+    return {
+        "message": "Escaneo OpenVAS iniciado correctamente",
+        "scanId": scan_id,
+        "target": target_ip,
+        "scanConfig": scan_config,
+        "user": user.username,
+        "note": "Use /sentinel/scan-status para verificar el progreso.",
+    }
 
 
-@sentinel_bp.get("/results")
+@sentinel_blp.get("/results")
+@sentinel_blp.arguments(ResultsQuerySchema, location="query")
+@sentinel_blp.response(200, ResultsResponseSchema, description="Scan results")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
-def retrieve_all_scans():
-    """Lista todos los escaneos del usuario."""
-    scan_type = request.args.get("type", "all").lower()
-    if scan_type not in VALID_SCAN_TYPES:
-        raise ValidationError(
-            field="type",
-            message="Tipo de escaneo inválido",
-            value=scan_type,
-            expected="nmap, nikto, openvas o all"
-        )
+def retrieve_all_scans(args):
+    """Listar todos los escaneos del usuario con paginacion opcional"""
+    scan_type = args["type"]
+    page = args["page"]
+    per_page = args["per_page"]
 
     user = get_current_user()
     uid = user.id
 
-    nmap_mgr = NmapScanManager()
-    nikto_mgr = NiktoScanManager()
-    openvas_mgr = OpenVASScanManager()
+    TYPE_MGR_MAP = {
+        "nmap": NmapScanManager(),
+        "nikto": NiktoScanManager(),
+        "openvas": OpenVASScanManager(),
+    }
+
+    if scan_type != "all":
+        mgr = TYPE_MGR_MAP[scan_type]
+        results, total_count = mgr.get_scans_paginated(uid, page, per_page)
+        total_pages = (total_count + per_page - 1) // per_page
+
+        return {
+            "message": "Escaneos obtenidos correctamente",
+            "filter": scan_type,
+            "count": total_count,
+            "results": results,
+            "page": page,
+            "perPage": per_page,
+            "totalCount": total_count,
+            "totalPages": total_pages,
+            "user": user.username,
+        }
+
     all_results = []
-
-    if scan_type in ("nmap", "all"):
+    for mgr in TYPE_MGR_MAP.values():
         try:
-            for scan in nmap_mgr.get_scans_for_user(uid): # type: ignore
-                all_results.append(nmap_mgr.format_scan(scan.id)) # type: ignore
+            for scan in mgr.get_scans_for_user(uid):
+                all_results.append(mgr.format_scan(scan.id))
         except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo Nmap scans: {exc}")
+            _logger.error(f"Error obteniendo scans: {exc}")
 
-    if scan_type in ("nikto", "all"):
-        try:
-            for scan in nikto_mgr.get_scans_for_user(uid): # type: ignore
-                all_results.append(nikto_mgr.format_scan(scan.id)) # type: ignore
-        except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo Nikto scans: {exc}")
-
-    if scan_type in ("openvas", "all"):
-        try:
-            for scan in openvas_mgr.get_scans_for_user(uid): # type: ignore
-                all_results.append(openvas_mgr.format_scan(scan.id)) # type: ignore
-        except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo OpenVAS scans: {exc}")
-
-    return jsonify({
+    return {
         "message": "Escaneos obtenidos correctamente",
         "filter": scan_type,
         "count": len(all_results),
         "results": all_results,
-        "user": user.username
-    }), 200
+        "user": user.username,
+    }
 
 
-@sentinel_bp.get("/results/<int:scan_id>")
+@sentinel_blp.get("/stats")
+@sentinel_blp.response(200, description="Scan statistics")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+def get_scan_stats():
+    """Contadores de escaneos por tipo"""
+    from src.modules.infrastructure.session import get_db_session
+    from .repositories import ScanRepository as _ScanRepo
+    user = get_current_user()
+    session = get_db_session()
+    repo = _ScanRepo(session=session)
+    stats = repo.get_stats(user.id)
+    return stats
+
+
+@sentinel_blp.get("/results/<int:scan_id>")
+@sentinel_blp.response(200, ScanDetailResponseSchema, description="Scan detail")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
 def retrieve_scan_by_id(scan_id: int):
-    """Devuelve el detalle completo de un escaneo específico."""
+    """Detalle completo de un escaneo especifico"""
     user = get_current_user()
 
     manager = ScanManager.resolve_manager(scan_id)
@@ -461,54 +383,42 @@ def retrieve_scan_by_id(scan_id: int):
     _logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan.scan_type} por usuario {user.username}")
     result = manager.format_scan(scan_id)
     if scan.scan_type == "nmap": # type: ignore
-        result["openPorts"] = [{"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason, "product": p.product, "version": p.version} for p in scan.open_ports_relation]
+        result["openPorts"] = [{
+            "port": f"{p.port_id}/{p.port.protocol}",
+            "reason": p.reason,
+            "product": p.product,
+            "version": p.version,
+        } for p in scan.open_ports_relation]
     elif scan.scan_type == "openvas": # type: ignore
         result["severityBreakdown"] = {
             "critical": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
-            "high":     sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
-            "medium":   sum(1 for r in scan.results if r.vulnerability.severity_class == "Medium"),
-            "low":      sum(1 for r in scan.results if r.vulnerability.severity_class == "Low"),
-            "info":     sum(1 for r in scan.results if r.vulnerability.severity_class == "Log"),
+            "high": sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
+            "medium": sum(1 for r in scan.results if r.vulnerability.severity_class == "Medium"),
+            "low": sum(1 for r in scan.results if r.vulnerability.severity_class == "Low"),
+            "info": sum(1 for r in scan.results if r.vulnerability.severity_class == "Log"),
         }
 
-    return jsonify(
-        {
-            "message": "Escaneo obtenido correctamente",
-            "result": result,
-            "user": user.username
-        }
-    ), 200
+    return {
+        "message": "Escaneo obtenido correctamente",
+        "result": result,
+        "user": user.username,
+    }
 
 
-@sentinel_bp.get("/is-finished")
+@sentinel_blp.get("/is-finished")
+@sentinel_blp.arguments(ScanIdQuerySchema, location="query")
+@sentinel_blp.response(200, IsFinishedResponseSchema, description="Scan finished status")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
-def is_scan_finished():
-    """Indica si un escaneo ha finalizado.
-
-    Args (query params):
-        id (int): ID del escaneo a verificar.
-
-    Returns:
-        200 — JSON con el estado de finalización.
-            {
-                "message": "El escaneo 42 está terminado",
-                "scanId": 42,
-                "isFinished": true,
-                "scanType": "nmap"
-            }
-        400 — Error de validación (parámetro 'id' faltante o inválido).
-        404 — Escaneo no encontrado.
-        401 — Token OAuth2 inválido o ausente.
-
-    Example:
-        curl "http://localhost:5000/sentinel/is-finished?id=42" \\
-             -H "Authorization: Bearer <token>"
-    """
+def is_scan_finished(args):
+    """Indicar si un escaneo ha finalizado"""
     user = get_current_user()
-    scan_id = int(require_arg("id"))
+    scan_id = args["id"]
     manager = ScanManager.resolve_manager(scan_id)
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
@@ -517,92 +427,26 @@ def is_scan_finished():
 
     finished = manager.is_scan_finished(scan.id) # type: ignore
 
-    return jsonify({
-        "message":    f"El escaneo {scan_id} {'está' if finished else 'no está'} terminado",
-        "scanId":     scan_id,
-        "isFinished": finished,
-        "scanType":   scan.scan_type,
-    }), 200
-
-
-# =========================================================================
-# DOCUMENT ENDPOINTS
-# =========================================================================
-
-@sentinel_bp.get("/generate-pdf")
-@require_oauth_token
-@require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
-@limiter.limit("30 per hour; 100 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
-def generate_pdf():
-    """Solicita la generación asíncrona de un PDF."""
-    scan_id = int(require_arg("id"))
-    ai_report_str = request.args.get("aiReport", "false").lower()
-    ai_report = ai_report_str == "true"
-
-    user = get_current_user()
-    uid = user.id
-
-    manager = ScanManager.resolve_manager(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, uid) # type: ignore
-
-    if not manager.is_scan_finished(scan_id):
-        raise ValidationError(
-            field="scan_id",
-            message=f"El escaneo {scan_id} no está finalizado aún",
-            value=scan_id
-        )
-
-    doc_mgr = SentinelReportManager()
-    doc_id = doc_mgr.generate_report(
-        scan_id=scan_id,
-        ai_report=ai_report,
-        strategy_class=manager._strategy_class # type: ignore
-    )
-    _logger.info(f"Generación de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {user.username} con AI Report: {ai_report}")
-
-    return jsonify({
-        "message": "Generación de PDF iniciada",
-        "documentId": doc_id,
+    return {
+        "message": f"El escaneo {scan_id} {'esta' if finished else 'no esta'} terminado",
         "scanId": scan_id,
-        "status": "pending",
-        "aiReport": ai_report,
-        "downloadUrl": f"/sentinel/document/{doc_id}/download"
-    }), 202
+        "isFinished": finished,
+        "scanType": scan.scan_type,
+    }
 
 
-@sentinel_bp.delete("/<int:scan_id>")
+@sentinel_blp.delete("/<int:scan_id>")
+@sentinel_blp.response(200, ScanResponseSchema, description="Scan deleted")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
+@sentinel_blp.alt_response(500, schema=ErrorSchema, description="Deletion failed")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_DELETE])
 @limiter.limit("60 per hour; 200 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
 def delete_scan(scan_id: int):
-    """Elimina un escaneo del sistema.
-
-    Si el escaneo está en curso (estado 'pending' o 'running'), se cancela
-    automáticamente antes de eliminarlo.
-
-    Args (path):
-        scan_id (int): ID del escaneo a eliminar.
-
-    Returns:
-        200 — Escaneo eliminado correctamente.
-            {
-                "message": "Escaneo eliminado correctamente",
-                "scanId": 42,
-                "scanType": "nmap",
-                "user": "admin"
-            }
-        404 — Escaneo no encontrado.
-        500 — Error al intentar eliminar.
-
-    Warning:
-        Esta acción es irreversible. Se perderán todos los datos del escaneo.
-
-    Example:
-        curl -X DELETE "http://localhost:5000/sentinel/42" \\
-             -H "Authorization: Bearer <token>"
-    """
+    """Eliminar un escaneo del sistema"""
     user = get_current_user()
 
     manager = ScanManager.resolve_manager(scan_id)
@@ -616,99 +460,132 @@ def delete_scan(scan_id: int):
         manager.cancel_scan(scan_id, user.id) # type: ignore
 
     if not manager.delete_scan(scan_id):
-        return jsonify(
-            {
-                "error": "deletion_failed",
-                "error_description": "No se pudo eliminar el escaneo",
-                "scanId": scan_id
-            }
-        ), 500
+        raise ScanExecutionError("No se pudo eliminar el escaneo")
 
     _logger.info(f"Escaneo {scan.scan_type} {scan_id} eliminado por {user.username}")
-    return jsonify(
-        {
-            "message": "Escaneo eliminado correctamente",
-            "scanId": scan_id,
-            "scanType": scan.scan_type,
-            "user": user.username
-        }
-    ), 200
+    return {
+        "message": "Escaneo eliminado correctamente",
+        "scanId": scan_id,
+        "scanType": scan.scan_type,
+        "user": user.username,
+    }
 
 
-@sentinel_bp.get("/document-status")
+@sentinel_blp.post("/generate-pdf")
+@sentinel_blp.arguments(GeneratePdfRequestSchema)
+@sentinel_blp.response(202, PdfGenerateResponseSchema, description="PDF generation started")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Scan not finished")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
+@limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+def generate_pdf(args):
+    """Solicitar generacion asincrona de un PDF"""
+    scan_id = args["id"]
+    ai_report = args["aiReport"]
+
+    user = get_current_user()
+    uid = user.id
+
+    manager = ScanManager.resolve_manager(scan_id)
+    ScanManager.assert_scan_ownership(scan_id, uid) # type: ignore
+
+    if not manager.is_scan_finished(scan_id):
+        raise ValidationError(
+            field="scan_id",
+            message=f"El escaneo {scan_id} no esta finalizado aun",
+            value=scan_id,
+        )
+
+    doc_mgr = SentinelReportManager()
+    doc_id = doc_mgr.generate_report(
+        scan_id=scan_id,
+        ai_report=ai_report,
+        strategy_class=manager._strategy_class,
+    )
+    _logger.info(f"Generacion de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {user.username} con AI Report: {ai_report}")
+
+    return {
+        "message": "Generacion de PDF iniciada",
+        "documentId": doc_id,
+        "scanId": scan_id,
+        "status": "pending",
+        "aiReport": ai_report,
+        "downloadUrl": f"/sentinel/document/{doc_id}/download",
+    }
+
+
+@sentinel_blp.get("/document-status")
+@sentinel_blp.arguments(DocumentStatusQuerySchema, location="query")
+@sentinel_blp.response(200, DocumentStatusResponseSchema, description="Document status")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
-def get_document_status():
-    """Consulta el estado de generación de un documento."""
+def get_document_status(args):
+    """Consultar estado de generacion de un documento"""
     user = get_current_user()
-
-    document_id = request.args.get("document_id", type=int)
-    scan_id = request.args.get("scan_id", type=int)
+    document_id = args.get("document_id")
+    scan_id = args.get("scan_id")
 
     doc_mgr = SentinelReportManager()
-
-    if not document_id and not scan_id:
-        raise MissingParameterError("document_id o scan_id")
 
     doc = doc_mgr.get_document_by_id(document_id) if document_id else (
         doc_mgr.get_latest_document_by_scan_id(scan_id) if scan_id else None
     )
 
     if not doc:
-        raise ScanNotFoundError(document_id or scan_id)  # type: ignore
+        raise ScanNotFoundError(document_id or scan_id)
 
-    doc_mgr.assert_document_ownership(document_id, user.id) if document_id else None # type: ignore
+    if document_id:
+        doc_mgr.assert_document_ownership(document_id, user.id)
 
     download_url = None
-    if doc.status == "done" and doc.filename:  # type: ignore
+    is_done = doc.status == "done"
+    if is_done and doc.filename: # type: ignore
         download_url = f"/sentinel/document/{doc.id}/download"
 
-    return jsonify({
+    return {
         "documentId": doc.id,
         "scanId": doc.scan_id,
         "status": doc.status,
         "aiReport": doc.enrichment_json is not None,
-        "createdAt": doc.created_at.isoformat() if doc.created_at else None,  # type: ignore
-        "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,  # type: ignore
-        "downloadUrl": download_url
-    }), 200
+        "createdAt": doc.created_at if doc.created_at else None, # type: ignore
+        "generatedAt": doc.generated_at if doc.generated_at else None, # type: ignore
+        "downloadUrl": download_url,
+    }
 
 
-@sentinel_bp.get("/documents")
+@sentinel_blp.get("/documents")
+@sentinel_blp.arguments(DocumentsQuerySchema, location="query")
+@sentinel_blp.response(200, DocumentListResponseSchema, description="All documents")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
-def get_all_documents():
-    """Obtiene todos los documentos del usuario.
-
-    Query params:
-        scan_type (str): Filtrar por tipo de escaneo.\
-        Valores válidos: nmap, nikto, openvas, all. Default: all.
-    """
+def get_all_documents(args):
+    """Obtener todos los documentos del usuario"""
     user = get_current_user()
-    scan_type_filter = request.args.get("scan_type", "all").lower()
-
-    valid_types = ["nmap", "nikto", "openvas", "all"]
-    if scan_type_filter not in valid_types:
-        return jsonify(
-            {
-                "error": f"Tipo de escaneo inválido. Valores válidos: {', '.join(valid_types)}"
-            }
-        ), 400
+    scan_type_filter = args["scan_type"]
 
     doc_mgr = SentinelReportManager()
     documents = doc_mgr.get_documents_for_user(user.id) # type: ignore
 
     if scan_type_filter != "all":
-        documents = [d for d in documents if d.scan_type == scan_type_filter] # type: ignore
+        documents = [d for d in documents if d.scan_type == scan_type_filter]
 
     docs_list = []
     for doc in documents:
         download_url = None
-        if doc.status == "done" and doc.filename: # type: ignore
+        is_done = doc.status == "done"
+        if is_done and doc.filename: # type: ignore
             download_url = f"/sentinel/document/{doc.id}/download"
 
         docs_list.append({
@@ -717,33 +594,29 @@ def get_all_documents():
             "scanType": doc.scan_type,
             "status": doc.status,
             "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
-            "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
-            "downloadUrl": download_url
+            "createdAt": doc.created_at if doc.created_at else None, # type: ignore
+            "generatedAt": doc.generated_at if doc.generated_at else None, # type: ignore
+            "downloadUrl": download_url,
         })
 
-    return jsonify({
+    return {
         "documents": docs_list,
         "total": len(docs_list),
-        "filter": scan_type_filter
-    }), 200
+        "filter": scan_type_filter,
+    }
 
 
-@sentinel_bp.get("/scan/<int:scan_id>/documents")
+@sentinel_blp.get("/scan/<int:scan_id>/documents")
+@sentinel_blp.response(200, ScanDocumentsResponseSchema, description="Scan documents")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def get_documents_by_scan(scan_id: int):
-    """Obtiene todos los documentos de un escaneo concreto.
-
-    Args:
-        scan_id(path): ID del escaneo.
-
-    Returns:
-        200 — Lista de documentos del escaneo.
-        404 — Escaneo no encontrado.
-    """
+    """Obtener todos los documentos de un escaneo concreto"""
     user = get_current_user()
 
     doc_mgr = SentinelReportManager()
@@ -751,14 +624,15 @@ def get_documents_by_scan(scan_id: int):
 
     scan = scan_mgr.get_scan_by_id(scan_id)
     if not scan:
-        return jsonify({"error": "not_found", "error_description": "Escaneo no encontrado"}), 404
+        raise ScanNotFoundError(scan_id)
 
     documents = doc_mgr.get_documents_by_scan_id(scan_id)
 
     docs_list = []
     for doc in documents:
         download_url = None
-        if doc.status == "done" and doc.filename: # type: ignore
+        is_done = doc.status == "done"
+        if is_done and doc.filename: # type: ignore
             download_url = f"/sentinel/document/{doc.id}/download"
 
         docs_list.append({
@@ -767,40 +641,30 @@ def get_documents_by_scan(scan_id: int):
             "scanType": doc.scan_type,
             "status": doc.status,
             "isAiGenerated": doc.is_ai_generated == 1 if doc.is_ai_generated is not None else False,
-            "createdAt": doc.created_at.isoformat() if doc.created_at else None, # type: ignore
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
-            "downloadUrl": download_url
+            "createdAt": doc.created_at if doc.created_at else None,
+            "generatedAt": doc.generated_at if doc.generated_at else None,
+            "downloadUrl": download_url,
         })
 
-    return jsonify({
+    return {
         "scanId": scan_id,
         "documents": docs_list,
-        "total": len(docs_list)
-    }), 200
+        "total": len(docs_list),
+    }
 
 
-@sentinel_bp.get("/document/<int:document_id>/download")
+@sentinel_blp.get("/document/<int:document_id>/download")
+@sentinel_blp.response(200, description="PDF file download")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Document not ready")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def download_document(document_id: int):
-    """Descarga un documento generado previamente.
-
-    Args (path):
-        document_id (int): ID del documento a descargar.
-
-    Returns:
-        200 — Archivo PDF como attachment.
-        400 — El documento aún no está listo (status != 'done').
-        404 — Documento no encontrado.
-
-    Example:
-        curl "http://localhost:5000/sentinel/document/123/download" \\
-                -H "Authorization: Bearer <token>" \\
-                -o reporte.pdf
-    """
+    """Descargar un documento PDF generado"""
     user = get_current_user()
-
     uid = user.id
     _logger.info(f"Download request for document {document_id} by user {uid}")
 
@@ -810,37 +674,32 @@ def download_document(document_id: int):
     doc = doc_mgr.get_document_by_id(document_id)
     if not doc:
         _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
-        return jsonify({"error": "not_found", "error_description": "Documento no encontrado o acceso denegado"}), 404
+        raise DocumentNotFoundError(document_id)
 
     if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename): # type: ignore
         _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
-        return jsonify({"error": "not_ready", "error_description": f"El documento {document_id} aún no está disponible para descarga"}), 400
+        raise DocumentNotReadyError(document_id, doc.status)
 
     _logger.info(f"Serving document {document_id}: {doc.filename}")
     return send_file(
         doc.filename, # type: ignore
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf"
-    ) # type: ignore
+        download_name=f"{doc.scan_type}_scan_{doc.scan_id}.pdf",
+    )
 
 
-@sentinel_bp.route("/document/<int:document_id>", methods=["DELETE"])
+@sentinel_blp.delete("/document/<int:document_id>")
+@sentinel_blp.response(200, DocumentDeleteResponseSchema, description="Document deleted")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_DELETE])
 @limiter.limit("30 per hour; 100 per day")
 @handle_exceptions(default_exception=DocumentError, logger=_logger)
 def delete_document(document_id: int):
-    """Elimina un documento.
-
-    Args (path):
-        document_id (int): ID del documento a eliminar.
-
-    Returns:
-        200 — Documento eliminado correctamente.
-        404 — Documento no encontrado.
-        403 — Sin permisos.
-    """
+    """Eliminar un documento"""
     user = get_current_user()
     uid = user.id
 
@@ -848,26 +707,27 @@ def delete_document(document_id: int):
     doc_mgr.assert_document_ownership(document_id, uid) # type: ignore
     doc_mgr.delete_document(document_id)
     _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
-    return jsonify({"message": "Documento eliminado correctamente", "documentId": document_id}), 200
+    return {"message": "Documento eliminado correctamente", "documentId": document_id}
 
 
-# =========================================================================
-# SCHEDULED SCAN ENDPOINTS
-# =========================================================================
-
-@sentinel_bp.post("/scheduled-scans")
+@sentinel_blp.post("/scheduled-scans")
+@sentinel_blp.arguments(ScheduledScanRequestSchema)
+@sentinel_blp.response(201, ScheduledScanResponseSchema, description="Scheduled scan created")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_CREATE])
 @limiter.limit("30 per hour; 100 per day")
-@require_json(["scan_type", "arguments", "schedule_type", "schedule_config"])
 @handle_exceptions(default_exception=ProgramedScanError, logger=_logger)
 def schedule_scan(data):
+    """Crear un escaneo programado"""
     scan_type_str = data["scan_type"].lower()
     valid_types = {t.value for t in ScanType}
     if scan_type_str not in valid_types:
         raise ValidationError(
             field="scan_type",
-            message="Tipo de escaneo inv\u00e1lido",
+            message="Tipo de escaneo invalido",
             value=scan_type_str,
             expected=", ".join(sorted(valid_types)),
         )
@@ -883,39 +743,73 @@ def schedule_scan(data):
         f"Escaneo programado {ps.id} creado: tipo={scan_type_str} "
         f"programacion={data['schedule_type']} usuario={user.username}"
     )
-    return jsonify({
+    return {
         "message": "Escaneo programado creado correctamente",
         "programedScanId": ps.id,
         "scanType": scan_type_str,
         "scheduleType": data["schedule_type"],
         "scheduleConfig": data["schedule_config"],
-        "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
+        "nextRunAt": ps.next_run_at if ps.next_run_at else None, # type: ignore
         "user": user.username,
-    }), 201
+    }
 
-@sentinel_bp.delete("/scheduled-scans/<int:ps_id>")
+
+@sentinel_blp.delete("/scheduled-scans/<int:ps_id>")
+@sentinel_blp.response(200, ScheduledScanActionResponseSchema, description="Scheduled scan revoked")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_DELETE])
 @limiter.limit("60 per hour; 200 per day")
 @handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=_logger)
 def revoke_scheduled_scan(ps_id: int):
+    """Revocar un escaneo programado (desactivar)"""
     user = get_current_user()
     ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
     ProgramedScanManager.revoke(ps_id, user.id) # type: ignore
     _logger.info(f"Escaneo programado {ps_id} revocado por {user.username}")
-    return jsonify({
+    return {
         "message": "Escaneo programado revocado correctamente",
         "programedScanId": ps_id,
         "scanType": ps.scan_type,
         "user": user.username,
-    }), 200
+    }
 
-@sentinel_bp.get("/scheduled-scans")
+
+@sentinel_blp.delete("/scheduled-scans/<int:ps_id>/permanent")
+@sentinel_blp.response(200, ScheduledScanActionResponseSchema, description="Scheduled scan permanently deleted")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_DELETE])
+@limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=_logger)
+def delete_scheduled_scan(ps_id: int):
+    """Eliminar permanentemente un escaneo programado de la BD"""
+    user = get_current_user()
+    ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
+    ProgramedScanManager.delete(ps_id, user.id) # type: ignore
+    _logger.info(f"Escaneo programado {ps_id} eliminado permanentemente por {user.username}")
+    return {
+        "message": "Escaneo programado eliminado permanentemente",
+        "programedScanId": ps_id,
+        "scanType": ps.scan_type,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.get("/scheduled-scans")
+@sentinel_blp.response(200, ScheduledScanListResponseSchema, description="List of scheduled scans")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
 @limiter.limit("300 per hour; 2000 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_READ])
 @handle_exceptions(default_exception=ProgramedScanError, logger=_logger)
 def list_scheduled_scans():
+    """Listar todos los escaneos programados del usuario"""
     user = get_current_user()
     scans = ProgramedScanManager.get_scans_for_user(user.id) # type: ignore
     results = [
@@ -926,15 +820,15 @@ def list_scheduled_scans():
             "scheduleType": ps.schedule_type,
             "scheduleConfig": ps.schedule_config,
             "isActive": ps.is_active,
-            "lastRunAt": ps.last_run_at.isoformat() if ps.last_run_at else None, # type: ignore
-            "nextRunAt": ps.next_run_at.isoformat() if ps.next_run_at else None, # type: ignore
-            "createdAt": ps.created_at.isoformat() if ps.created_at else None, # type: ignore
+            "lastRunAt": ps.last_run_at if ps.last_run_at else None, # type: ignore
+            "nextRunAt": ps.next_run_at if ps.next_run_at else None, # type: ignore
+            "createdAt": ps.created_at if ps.created_at else None, # type: ignore
         }
         for ps in scans
     ]
-    return jsonify({
+    return {
         "message": "Escaneos programados obtenidos correctamente",
         "count": len(results),
         "scheduledScans": results,
         "user": user.username,
-    }), 200
+    }

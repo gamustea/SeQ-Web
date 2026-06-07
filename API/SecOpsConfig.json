@@ -1,4 +1,5 @@
 {
+  "appVersion": "3.0.0",
   "aegis": {
     "brands": [
       {
@@ -143,6 +144,11 @@
       "logdir": "..",
       "resourcedir": "../../shared/resources/images",
       "tempdir": "C:/tmp/secapp"
+    },
+    "sequeue": {
+      "history_max_items": 100,
+      "history_ttl_seconds": 3600,
+      "max_workers": 6
     }
   },
   "sentinel": {
@@ -152,6 +158,11 @@
       "output": "data/sentinel/output"
     },
     "enabled": true,
+    "hostReachabilityCheck": {
+      "enabled": true,
+      "port": 80,
+      "timeout": 3
+    },
     "nikto": {
       "colorPalette": {
         "black": "#4b2500",
@@ -206,5 +217,10 @@
         }
       }
     }
+  },
+  "iris": {
+    "legitimate_threshold": 30,
+    "suspicious_threshold": -10,
+    "min_headers": 2
   }
 }

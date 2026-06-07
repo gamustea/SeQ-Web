@@ -49,42 +49,18 @@ from .services import (
     Scheduler,
 )
 
-from .endpoints import sentinel_bp
+from .endpoints import sentinel_blp
 
 __all__ = [
-    # Models
-    "Host",
-    "NiktoIncident",
-    "NiktoScan",
-    "NmapScan",
-    "OpenPort",
-    "OpenVASScan",
-    "OpenVASScanResult",
-    "OpenVASVulnerability",
-    "Port",
-    "ProgramedScan",
-    "Scan",
-    "ScanIncident",
-    "ScanStatus",
-    "SentinelDocument",
+    "Host", "NiktoIncident", "NiktoScan", "NmapScan", "OpenPort",
+    "OpenVASScan", "OpenVASScanResult", "OpenVASVulnerability", "Port",
+    "ProgramedScan", "Scan", "ScanIncident", "ScanStatus", "SentinelDocument",
     "TargetPort",
-    # Managers
-    "NmapScanManager",
-    "NiktoScanManager",
-    "OpenVASScanManager",
-    "ProgramedScanManager",
-    "ScanManager",
-    # Repositories
-    "ProgramedScanRepository",
-    "ScanRepository",
-    "SentinelReportRepository",
-    # Endpoints
-    "sentinel_bp",
-    # Reports
-    "PDFCreator",
-    "NmapPrintingStrategy",
-    "NiktoPrintingStrategy",
+    "NmapScanManager", "NiktoScanManager", "OpenVASScanManager",
+    "ProgramedScanManager", "ScanManager",
+    "ProgramedScanRepository", "ScanRepository", "SentinelReportRepository",
+    "sentinel_blp",
+    "PDFCreator", "NmapPrintingStrategy", "NiktoPrintingStrategy",
     "OpenVASPrintingStrategy",
-    # Scheduling
     "Scheduler",
 ]

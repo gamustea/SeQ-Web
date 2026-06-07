@@ -1,52 +1,131 @@
 <template>
-  <div class="stars" ref="starsRef" aria-hidden="true"></div>
+  <div class="bg" aria-hidden="true">
+    <div class="bg-orb bg-orb--1"></div>
+    <div class="bg-orb bg-orb--2"></div>
+    <div class="bg-orb bg-orb--3"></div>
+    <div class="bg-hex"></div>
+    <div class="bg-scanlines"></div>
+    <div class="bg-grain"></div>
+    <div
+      v-for="p in particles"
+      :key="p.id"
+      class="bg-particle"
+      :style="{
+        left: p.x + '%',
+        top: p.y + '%',
+        width: p.size + 'px',
+        height: p.size + 'px',
+        animationDelay: p.delay + 's',
+        animationDuration: p.duration + 's',
+        opacity: p.opacity
+      }"
+    ></div>
+  </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-
-const starsRef = ref(null)
-
-onMounted(() => {
-  const container = starsRef.value
-  if (!container) return
-  const count = window.innerWidth < 768 ? 60 : 120
-  for (let i = 0; i < count; i++) {
-    const star = document.createElement('div')
-    star.className = 'star'
-    star.style.cssText = `
-      left: ${Math.random() * 100}%;
-      top: ${Math.random() * 100}%;
-      width: ${Math.random() * 2.5 + 0.5}px;
-      height: ${Math.random() * 2.5 + 0.5}px;
-      animation-delay: ${Math.random() * 5}s;
-      animation-duration: ${Math.random() * 4 + 2}s;
-      opacity: ${Math.random() * 0.6 + 0.2};
-    `
-    container.appendChild(star)
-  }
-})
+const particles = Array.from({ length: 18 }, (_, i) => ({
+  id: i,
+  x: Math.random() * 100,
+  y: Math.random() * 100,
+  size: 1 + Math.random() * 2.5,
+  delay: Math.random() * 8,
+  duration: 6 + Math.random() * 10,
+  opacity: 0.12 + Math.random() * 0.28
+}))
 </script>
 
 <style scoped>
-.stars {
+.bg {
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
+  background: var(--bg, #0b0c10);
 }
 
-:deep(.star) {
+.bg-orb {
   position: absolute;
-  background: #fff;
   border-radius: 50%;
-  animation: star-twinkle linear infinite;
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
+  filter: blur(150px);
+  animation: orb-drift 24s ease-in-out infinite;
+}
+.bg-orb--1 {
+  width: 700px;
+  height: 700px;
+  background: radial-gradient(circle, rgba(212,160,74,0.14) 0%, transparent 70%);
+  top: -25%;
+  left: -15%;
+  animation-delay: 0s;
+}
+.bg-orb--2 {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(76,183,130,0.10) 0%, transparent 70%);
+  bottom: -15%;
+  right: -10%;
+  animation-delay: -9s;
+}
+.bg-orb--3 {
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(96,128,224,0.08) 0%, transparent 70%);
+  top: 35%;
+  left: 55%;
+  animation-delay: -18s;
 }
 
-@keyframes star-twinkle {
-  0%, 100% { opacity: 0.2; transform: scale(1); }
-  50%      { opacity: 1; transform: scale(1.3); }
+@keyframes orb-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25%      { transform: translate(40px, -25px) scale(1.06); }
+  50%      { transform: translate(-25px, 35px) scale(0.94); }
+  75%      { transform: translate(25px, 12px) scale(1.03); }
+}
+
+.bg-hex {
+  position: absolute;
+  inset: 0;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 0L56 16v32L28 64L0 48V16L28 0zM28 97L0 81V49l28 16 28-16v32L28 97z' fill='none' stroke='%23e8bc6a' stroke-width='0.6'/%3E%3C/svg%3E");
+  background-size: 56px 97px;
+}
+
+.bg-scanlines {
+  position: absolute;
+  inset: 0;
+  opacity: 0.015;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(255,255,255,0.03) 3px,
+    rgba(255,255,255,0.03) 4px
+  );
+}
+
+.bg-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+.bg-particle {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--accent-bright, #e8bc6a);
+  animation: particle-float linear infinite;
+  pointer-events: none;
+}
+
+@keyframes particle-float {
+  0%   { transform: translateY(0) translateX(0); opacity: 1; }
+  25%  { transform: translateY(-120px) translateX(15px); opacity: 0.7; }
+  50%  { transform: translateY(-240px) translateX(-10px); opacity: 0.3; }
+  75%  { transform: translateY(-360px) translateX(8px); opacity: 0.5; }
+  100% { transform: translateY(-500px) translateX(-5px); opacity: 0; }
 }
 </style>

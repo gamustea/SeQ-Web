@@ -3,8 +3,6 @@ import { ref, reactive } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useToastStore } from '@/stores/toastStore'
 
-const PAGE_SIZE = 10
-
 /**
  * Store de Sentinel — gestiona escaneos, estadísticas, modales y documentos.
  *
@@ -25,12 +23,16 @@ export const useSentinelStore = defineStore('sentinel', () => {
 
   /* ════════════════════════════════ SCANS POR TIPO ═════════════════════ */
   const scans = reactive({
-    nmap:    { results: [], page: 1, total: 0, loading: false },
-    nikto:   { results: [], page: 1, total: 0, loading: false },
-    openvas: { results: [], page: 1, total: 0, loading: false },
+    nmap:    { results: [], loading: false, page: 1, totalCount: 0, perPage: 10 },
+    nikto:   { results: [], loading: false, page: 1, totalCount: 0, perPage: 10 },
+    openvas: { results: [], loading: false, page: 1, totalCount: 0, perPage: 10 },
   })
 
   const launching = ref(false)
+
+  /* ════════════════════════════════ PROGRAMADOS ════════════════════════ */
+  const scheduled = reactive({ scans: [], loading: false })
+  const scheduling = reactive({ showForm: false, submitting: false })
 
   /* ════════════════════════════════ MODALES ════════════════════════════ */
   const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
@@ -41,52 +43,55 @@ export const useSentinelStore = defineStore('sentinel', () => {
   function _scandata(type) { return scans[type] }
 
   /* ════════════════════════════════ STATS ══════════════════════════════ */
-  /** Carga los contadores de escaneos de cada tipo en paralelo. */
+  /** Carga los contadores de escaneos desde el endpoint de stats. */
   async function loadStats() {
     loadingStats.value = true
     try {
-      const [nmap, nikto, openvas] = await Promise.all([
-        apiFetch('/sentinel/results?type=nmap&per_page=1'),
-        apiFetch('/sentinel/results?type=nikto&per_page=1'),
-        apiFetch('/sentinel/results?type=openvas&per_page=1'),
-      ])
-      const nmapData    = nmap?.ok    ? (await nmap.json())     : {}
-      const niktoData   = nikto?.ok   ? (await nikto.json())     : {}
-      const openvasData = openvas?.ok ? (await openvas.json())   : {}
-      stats.nmap    = nmapData.count    || 0
-      stats.nikto   = niktoData.count   || 0
-      stats.openvas = openvasData.count || 0
-      stats.total   = stats.nmap + stats.nikto + stats.openvas
+      const res = await apiFetch('/sentinel/stats')
+      if (!res?.ok) return
+      const data = await res.json()
+      stats.nmap    = data.nmap    ?? 0
+      stats.nikto   = data.nikto   ?? 0
+      stats.openvas = data.openvas ?? 0
+      stats.total   = data.total   ?? 0
     } catch { /* noop */ }
     finally { loadingStats.value = false }
   }
 
   /* ════════════════════════════════ SCANS ═════════════════════════════ */
-  /** Carga la página de resultados para un tipo de escaneo. */
-  async function loadScans(type, page = 1) {
+  /** Carga una pagina de resultados para un tipo de escaneo. */
+  async function loadScans(type) {
     const d = _scandata(type)
     d.loading = true
     try {
-      const res = await apiFetch(`/sentinel/results?type=${type}&page=${page}&per_page=${PAGE_SIZE}`)
+      const params = new URLSearchParams({ type, page: d.page, per_page: d.perPage })
+      const res = await apiFetch(`/sentinel/results?${params}`)
       if (!res?.ok) { d.results = []; return }
       const data = await res.json()
       d.results = data.results ?? []
-      d.page    = data.page ?? page
-      d.total   = data.count ?? 0
+      d.totalCount = data.totalCount ?? 0
     } finally { d.loading = false }
   }
 
-  /** Cambia de pestaña y carga la primera página. */
+  /** Cambia de pestana y carga los resultados desde pagina 1. */
   function switchTab(type) {
     activeTab.value = type
-    _scandata(type).page = 1
-    loadScans(type, 1)
+    const d = _scandata(type)
+    d.page = 1
+    loadScans(type)
   }
 
   /** Refresca la pestaña activa y las estadísticas. */
   async function refreshCurrent() {
-    await loadScans(activeTab.value, _scandata(activeTab.value).page)
+    await loadScans(activeTab.value)
     await loadStats()
+  }
+
+  /** Navega a una pagina concreta para el tipo activo. */
+  function goToPage(type, page) {
+    const d = _scandata(type)
+    d.page = page
+    loadScans(type)
   }
 
   /* ════════════════════════════════ LANZAR ════════════════════════════ */
@@ -241,8 +246,10 @@ export const useSentinelStore = defineStore('sentinel', () => {
   /* ════════════════════════════════ DOCUMENTOS PDF ════════════════════ */
   /** Solicita la generación de un PDF para un escaneo (opcionalmente con IA). */
   async function generatePdf(scanId, useAi = false) {
-    const url = `/sentinel/generate-pdf?id=${scanId}${useAi ? '&aiReport=true' : ''}`
-    const res = await apiFetch(url)
+    const res = await apiFetch('/sentinel/generate-pdf', {
+      method: 'POST',
+      body: JSON.stringify({ id: scanId, aiReport: useAi }),
+    })
     if (!res?.ok) {
       const data = await res?.json().catch(() => ({}))
       toast.show(data.message || 'Error al generar documento', 'error')
@@ -281,6 +288,61 @@ export const useSentinelStore = defineStore('sentinel', () => {
     return true
   }
 
+  /* ════════════════════════════════ PROGRAMADOS ════════════════════════ */
+  /** Carga los escaneos programados del usuario. */
+  async function loadScheduledScans() {
+    scheduled.loading = true
+    try {
+      const res = await apiFetch('/sentinel/scheduled-scans')
+      if (!res?.ok) { scheduled.scans = []; return }
+      const data = await res.json()
+      scheduled.scans = data.scheduledScans ?? []
+    } finally { scheduled.loading = false }
+  }
+
+  /** Crea un nuevo escaneo programado. */
+  async function createScheduledScan(payload) {
+    scheduling.submitting = true
+    try {
+      const res = await apiFetch('/sentinel/scheduled-scans', { method: 'POST', body: JSON.stringify(payload) })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al crear escaneo programado.', 'error')
+        return false
+      }
+      toast.show(`Escaneo programado creado (ID: ${data.programedScanId})`, 'success')
+      await loadScheduledScans()
+      scheduling.showForm = false
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    } finally { scheduling.submitting = false }
+  }
+
+  /** Revoca (desactiva) un escaneo programado. */
+  async function deactivateScheduledScan(id) {
+    const res = await apiFetch(`/sentinel/scheduled-scans/${id}`, { method: 'DELETE' })
+    if (!res?.ok) { toast.show('No se pudo revocar el escaneo programado.', 'error'); return false }
+    toast.show('Escaneo programado revocado.', 'success')
+    await loadScheduledScans()
+    return true
+  }
+
+  /** Elimina permanentemente un escaneo programado. */
+  async function deleteScheduledScan(id) {
+    const res = await apiFetch(`/sentinel/scheduled-scans/${id}/permanent`, { method: 'DELETE' })
+    if (!res?.ok) { toast.show('No se pudo eliminar el escaneo programado.', 'error'); return false }
+    toast.show('Escaneo programado eliminado.', 'success')
+    await loadScheduledScans()
+    return true
+  }
+
+  /** Muestra/oculta el formulario de creacion. */
+  function toggleScheduledForm() {
+    scheduling.showForm = !scheduling.showForm
+  }
+
   /* ── UTIL ── */
   function _triggerDownload(blob, filename) {
     const url = URL.createObjectURL(blob)
@@ -294,10 +356,12 @@ export const useSentinelStore = defineStore('sentinel', () => {
 
   return {
     activeTab, stats, loadingStats, scans, launching,
+    scheduled, scheduling,
     preview, details,
-    loadStats, loadScans, switchTab, refreshCurrent,
+    loadStats, loadScans, switchTab, refreshCurrent, goToPage,
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
+    loadScheduledScans, createScheduledScan, deactivateScheduledScan, deleteScheduledScan, toggleScheduledForm,
     openPreview, closePreview, refreshPreviewDocs,
     openDetails, closeDetails, refreshDetailsDocs,
     generatePdf, downloadDocument, deleteDocument,

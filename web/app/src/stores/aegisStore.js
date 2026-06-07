@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import { useApi } from '@/composables/useApi'
+import { useCache } from '@/composables/useCache'
 import { useToastStore } from '@/stores/toastStore'
 
 /**
@@ -12,6 +13,9 @@ import { useToastStore } from '@/stores/toastStore'
 export const useAegisStore = defineStore('aegis', () => {
   const { apiFetch } = useApi()
   const toast = useToastStore()
+
+  /** Caché de documentos del visor (evita re-fetch al navegar entre documentos ya vistos) */
+  const docCache = useCache({ keyPrefix: 'aegis:doc:', maxSize: 50 })
 
   /** Lista de temas disponibles */
   const topics = ref([])
@@ -141,16 +145,27 @@ export const useAegisStore = defineStore('aegis', () => {
 
   /**
    * Carga un documento en el visor central desde GET /aegis/document?id=<id>.
+   * Si el documento ya est� en cach�, lo sirve instant�neamente sin re-fetch.
    * @param {number|string} id - ID del documento
    */
   async function loadDocument(id) {
+    currentDocId.value = id
+
+    const cached = docCache.get(id)
+    if (cached) {
+      viewerDoc.loading = false
+      viewerDoc.data = cached
+      return
+    }
+
     viewerDoc.loading = true
     viewerDoc.data = null
-    currentDocId.value = id
     try {
       const res = await apiFetch(`/aegis/document?id=${id}`)
       if (!res?.ok) { toast.show('No se pudo cargar el documento.', 'error'); return }
-      viewerDoc.data = await res.json()
+      const data = await res.json()
+      viewerDoc.data = data
+      docCache.set(id, data)
     } finally { viewerDoc.loading = false }
   }
 
@@ -163,7 +178,7 @@ export const useAegisStore = defineStore('aegis', () => {
   /* ── ACCIONES SOBRE DOCUMENTOS ── */
 
   /**
-   * Elimina un documento vía DELETE /aegis/document?id=<id>.
+   * Elimina un documento v�a DELETE /aegis/document?id=<id>.
    * @param {number|string} id - ID del documento
    * @returns {Promise<boolean>}
    */
@@ -173,6 +188,7 @@ export const useAegisStore = defineStore('aegis', () => {
       toast.show('No se pudo eliminar el documento.', 'error')
       return false
     }
+    docCache.delete(id)
     if (currentDocId.value === id) closeViewer()
     await loadHistory()
     return true

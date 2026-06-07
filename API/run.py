@@ -16,9 +16,11 @@ estático.
 
 import os
 import signal
+import warnings
 
 from flask                  import Flask, jsonify, request
 from flask_cors             import CORS
+from flask_smorest          import Api as FlaskSmorestApi
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
@@ -29,16 +31,16 @@ from src.modules.shared._exceptions import (
     SecOpsException,
     create_error_response
 )
-from src.modules.system     import SecOpsLogger, config_reading
+from src.modules.system     import SecOpsLogger, config_reading, system_blp
 from src.modules.users      import (
     UserManager,
-    oauth_bp,
-    users_bp
+    oauth_blp,
+    users_blp
 )
-from src.modules.sentinel   import sentinel_bp
-from src.modules.acheron    import acheron_bp
-from src.modules.aegis      import aegis_bp
-from src.modules.system     import system_bp
+from src.modules.sentinel   import sentinel_blp
+from src.modules.acheron    import acheron_blp
+from src.modules.aegis      import aegis_blp
+from src.modules.iris       import iris_blp
 from src.modules.pages      import pages_bp
 
 import src.modules.system.config_reading as CR
@@ -48,40 +50,49 @@ APP_CONTEXT = CR.get_app_context()
 
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
+warnings.filterwarnings("ignore", message="Multiple schemas resolved to the name")
+
+_IS_SHUTTING_DOWN = False
+
 
 def _graceful_shutdown(signum, *args) -> None:
     """
     Manejador de señales para shutdown graceful de la aplicación.
 
-    Cancela todas las tareas de escaneo en ejecución antes de terminar
-    el proceso, asegurando que los escaneos no queden huérfanos.
+    Cancela todas las tareas en segundo plano antes de terminar
+    el proceso, asegurando que los workers y subprocesses no queden huérfanos.
 
     Args:
         signum: Número de señal recibida (SIGTERM o SIGINT).
-        shutdown_time: Tiempo en el que se ha de matar el proceso
         *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
 
     Behavior:
-        1. Registra la señal recibida.
-        2. Importa ScanManager y cancela todas las tareas en ejecución.
-        3. Espera hasta SHUTDOWN_TIMEOUT segundos a que terminen.
-        4. Finaliza el proceso con SIGKILL para asegurar terminación.
-
-    Note:
-        Este manejador se registra para SIGTERM y SIGINT al inicio del módulo.
+        1. Protege contra re-entrada: fuerza os._exit(1) si ya se está apagando.
+        2. Registra la señal recibida.
+        3. Detiene SeQueue (cancela todas las tareas en todas las categorías).
+        4. Detiene el scheduler de tareas programadas.
+        5. Cierra las sesiones de base de datos.
+        6. Termina el proceso con os._exit(0).
     """
+    global _IS_SHUTTING_DOWN
+
+    if _IS_SHUTTING_DOWN:
+        _logger.warning(
+            "Segunda señal recibida durante el apagado — forzando salida inmediata."
+        )
+        os._exit(1)
+
+    _IS_SHUTTING_DOWN = True
+
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
     try:
-        from src.modules.sentinel import ScanManager
-        _logger.info("Cancelando tarea(s) activa(s)...")
-        ScanManager.cancel_all_running(
-            logger=_logger,
-            timeout=APP_CONTEXT.shutdown_time
-        )
-        _logger.info("Todas las tareas finalizadas.")
+        from src.modules.system.sequeue import SeQueue
+        _logger.info("Cancelando tareas en segundo plano...")
+        SeQueue.get_instance().cancel_all()
+        _logger.info("Tareas canceladas.")
     except Exception as e:
-        _logger.error(f"Error durante el apagado: {e}")
+        _logger.error(f"Error cancelando tareas: {e}")
 
     _logger.info("[Shutdown] Deteniendo scheduler...")
     try:
@@ -90,9 +101,14 @@ def _graceful_shutdown(signum, *args) -> None:
     except Exception as e:
         _logger.error(f"Error deteniendo scheduler: {e}")
 
+    _logger.info("[Shutdown] Cerrando sesiones de base de datos...")
+    try:
+        BaseManager.close_all_sessions()
+    except Exception as e:
+        _logger.error(f"Error cerrando sesiones de BD: {e}")
+
     _logger.info("[Shutdown] Proceso terminado.")
-    import os as _os
-    _os.kill(_os.getpid(), signal.SIGTERM)
+    os._exit(0)
 
 def create_app(fresh_db_init: bool = False) -> Flask:
     """
@@ -121,13 +137,23 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     _logger.info("Inicializando rate limiting...")
     limiter.init_app(app)
 
+    _logger.info("Inicializando documentación OpenAPI...")
+    app.config["API_TITLE"]             = "SeQ API"
+    app.config["API_VERSION"]           = "3.2"
+    app.config["OPENAPI_VERSION"]       = "3.0.3"
+    app.config["OPENAPI_URL_PREFIX"]    = "/api-docs"
+    app.config["OPENAPI_SWAGGER_UI_PATH"] = "/swagger"
+    app.config["OPENAPI_SWAGGER_UI_URL"] = "https://cdn.jsdelivr.net/npm/swagger-ui-dist/"
+    flask_smorest_api = FlaskSmorestApi(app)
+
     _logger.info("Añadiendo endpoints...")
-    app.register_blueprint(system_bp,   url_prefix="/system")
-    app.register_blueprint(oauth_bp,    url_prefix="/oauth")
-    app.register_blueprint(users_bp,    url_prefix="/users")
-    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
-    app.register_blueprint(acheron_bp,  url_prefix="/acheron")
-    app.register_blueprint(aegis_bp,    url_prefix="/aegis")
+    flask_smorest_api.register_blueprint(system_blp,  url_prefix="/system")
+    flask_smorest_api.register_blueprint(oauth_blp,   url_prefix="/oauth")
+    flask_smorest_api.register_blueprint(users_blp,   url_prefix="/users")
+    flask_smorest_api.register_blueprint(sentinel_blp, url_prefix="/sentinel")
+    flask_smorest_api.register_blueprint(acheron_blp,  url_prefix="/acheron")
+    flask_smorest_api.register_blueprint(aegis_blp,    url_prefix="/aegis")
+    flask_smorest_api.register_blueprint(iris_blp,     url_prefix="/iris")
     app.register_blueprint(pages_bp,    url_prefix="/pages")
 
     _logger.info("Registrando manejadores de error globales...")
@@ -147,6 +173,10 @@ def create_app(fresh_db_init: bool = False) -> Flask:
 
     _logger.info("Arrancando scheduler de tareas programadas...")
     Scheduler.start()
+
+    _logger.info("Arrancando cola de tareas en segundo plano (SeQueue)...")
+    from src.modules.system.sequeue import SeQueue
+    SeQueue.get_instance().start()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app

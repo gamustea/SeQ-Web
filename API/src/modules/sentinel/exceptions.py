@@ -31,9 +31,9 @@ Excepciones de Validación:
     - URLValidationError: URL inválida.
 
 Ejemplo de uso:
-    >>> raise ScanNotFoundError(scan_id=42)
-    >>> raise ScanExecutionError(scan_type="nmap", target="192.168.1.1", reason="Timeout")
-    >>> raise PortValidationError(message="Puerto inválido", port_spec="invalid")
+>>> raise ScanNotFoundError(scan_id=42)
+>>> raise ScanExecutionError(scan_type="nmap", target="192.168.1.1", reason="Timeout")
+>>> raise PortValidationError(message="Puerto inválido", port_spec="invalid")
 """
 
 from src.modules.shared._exceptions import (
@@ -424,19 +424,19 @@ class URLValidationError(ValidationError):
 
 class PrivateIPRequested(ScanError):
     """
-    Excepci\u00f3n lanzada cuando se solicita escanear IPs privadas y la
-    configuraci\u00f3n del sistema no lo permite.
+    Excepción lanzada cuando se solicita escanear IPs privadas y la
+    configuración del sistema no lo permite.
 
-    Se usa cuando el campo 'areLocalIpsAllowed' en la configuraci\u00f3n de sentinel
+    Se usa cuando el campo 'areLocalIpsAllowed' en la configuración de sentinel
     es falso y el usuario intenta escanear IPs en rangos privados (RFC 1918).
 
     Atributos:
-        default_code: C\u00f3digo de error (PRIVATE_IP_REQUESTED).
+        default_code: Código de error (PRIVATE_IP_REQUESTED).
         default_status_code: HTTP 403 (Forbidden).
         default_severity: LOW.
 
     Args:
-        private_ips: Lista de IPs privadas detectadas en la petici\u00f3n.
+        private_ips: Lista de IPs privadas detectadas en la petición.
 
     Ejemplo:
         >>> raise PrivateIPRequested(private_ips=["192.168.1.1", "10.0.0.5"])
@@ -451,24 +451,56 @@ class PrivateIPRequested(ScanError):
         super().__init__(
             message=f"No se permite escanear IPs privadas: {ips_list}",
             details={"private_ips": private_ips},
-            user_message="El escaneo de IPs locales/privadas est\u00e1 deshabilitado."
+            user_message="El escaneo de IPs locales/privadas está deshabilitado."
+        )
+
+
+class HostUnreachableError(ScanError):
+    """
+    Excepción lanzada cuando se detecta que el host objetivo no responde
+    a conexiones TCP antes de ejecutar el escaneo.
+
+    Se usa internamente en ``_execute_scan_in_thread`` para marcar el escaneo
+    como ``FAILED`` sin esperar al timeout de la herramienta de escaneo.
+
+    Atributos:
+        default_code: Código de error (SCAN_EXECUTION_ERROR).
+        default_severity: MEDIUM.
+
+    Args:
+        host: Dirección IP o hostname que no respondió.
+        port: Puerto TCP usado en la comprobación.
+        details: Información adicional sobre el fallo de conectividad.
+
+    Ejemplo:
+        >>> raise HostUnreachableError(host="192.168.1.1", port=80)
+    """
+
+    default_code = ErrorCode.SCAN_EXECUTION_ERROR
+    default_severity = ErrorSeverity.MEDIUM
+
+    def __init__(self, host: str, port: int, details: str = ""):
+        super().__init__(
+            message=f"Host '{host}' no alcanzable en puerto {port}: {details}",
+            details={"host": host, "port": port, "reason": details},
+            user_message=f"No se pudo conectar con {host} antes de iniciar el escaneo."
         )
 
 
 class PDFGenerationError(ReportError):
     """
-    Excepci\u00f3n lanzada cuando ocurre un error al generar un PDF.
+    Excepción lanzada cuando ocurre un error al generar un PDF.
 
-    Se usa espec\u00edficamente para errores en la generaci\u00f3n de documentos
+    Se usa espec\u00edficamente para errores en la generación de documentos
     PDF de reportes de escaneos. Tiene severidad HIGH ya que indica
-    un problema significativo en el flujo de generaci\u00f3n de informes.
+    un problema significativo en el flujo de generación de informes.
 
     Atributos:
-        default_code: C\u00f3digo de error (REPORT_GENERATION_ERROR).
+        default_code: Código de error (REPORT_GENERATION_ERROR).
         default_severity: HIGH.
 
     Args:
-        message: Descripci\u00f3n del error de generaci\u00f3n del PDF.
+        message: Descripción del error de generación del PDF.
         scan_id: ID opcional del escaneo asociado (puede ser None).
 
     Ejemplo:
@@ -494,15 +526,15 @@ class PDFGenerationError(ReportError):
 
 class ProgramedScanError(ScanError):
     """
-    Excepci\u00f3n base para errores relacionados con escaneos programados.
+    Excepción base para errores relacionados con escaneos programados.
 
     Esta clase sirve como padre para todas las excepciones de escaneos
-    programados (recurrentes o cron). Por defecto retorna c\u00f3digo 500
+    programados (recurrentes o cron). Por defecto retorna código 500
     con severidad MEDIA.
 
     Atributos:
-        default_code: C\u00f3digo de error por defecto (SCAN_ERROR).
-        default_status_code: C\u00f3digo HTTP por defecto (500).
+        default_code: Código de error por defecto (SCAN_ERROR).
+        default_status_code: Código HTTP por defecto (500).
         default_severity: Severidad por defecto (MEDIUM).
     """
 
@@ -513,18 +545,18 @@ class ProgramedScanError(ScanError):
 
 class ProgramedScanNotFoundError(ProgramedScanError):
     """
-    Excepci\u00f3n lanzada cuando no se encuentra un escaneo programado.
+    Excepción lanzada cuando no se encuentra un escaneo programado.
 
     Se usa cuando se intenta acceder a un ProgramedScan por su ID pero
     este no existe o ha sido eliminado.
 
     Atributos:
-        default_code: C\u00f3digo de error (PROGRAMED_SCAN_NOT_FOUND).
+        default_code: Código de error (PROGRAMED_SCAN_NOT_FOUND).
         default_status_code: HTTP 404 (No encontrado).
         default_severity: LOW.
 
     Args:
-        ps_id: ID del escaneo programado que no se encontr\u00f3.
+        ps_id: ID del escaneo programado que no se encontró.
 
     Ejemplo:
         >>> raise ProgramedScanNotFoundError(ps_id=15)
@@ -544,14 +576,14 @@ class ProgramedScanNotFoundError(ProgramedScanError):
 
 class ProgramedScanAlreadyActiveError(ProgramedScanError):
     """
-    Excepci\u00f3n lanzada cuando ya existe un escaneo programado activo
-    con la misma configuraci\u00f3n para el mismo usuario.
+    Excepción lanzada cuando ya existe un escaneo programado activo
+    con la misma configuración para el mismo usuario.
 
     Se usa para evitar duplicados de programaciones activas con
     id\u00e9ntico tipo de escaneo y argumentos.
 
     Atributos:
-        default_code: C\u00f3digo de error (PROGRAMED_SCAN_ALREADY_ACTIVE).
+        default_code: Código de error (PROGRAMED_SCAN_ALREADY_ACTIVE).
         default_status_code: HTTP 409 (Conflicto).
         default_severity: LOW.
 
@@ -578,21 +610,21 @@ class ProgramedScanAlreadyActiveError(ProgramedScanError):
 
 class InvalidProgramedTaskArgumentError(ProgramedScanError):
     """
-    Excepci\u00f3n lanzada cuando un escaneo programado tiene un argumento
-    requerido faltante o inv\u00e1lido en su configuraci\u00f3n.
+    Excepción lanzada cuando un escaneo programado tiene un argumento
+    requerido faltante o inválido en su configuración.
 
     Se usa en el scheduler para validar que los campos necesarios
     de cada tipo de escaneo est\u00e9n presentes y no sean None antes
     de ejecutar la tarea.
 
     Atributos:
-        default_code: C\u00f3digo de error (PROGRAMED_SCAN_INVALID_ARGUMENT).
+        default_code: Código de error (PROGRAMED_SCAN_INVALID_ARGUMENT).
         default_status_code: HTTP 400 (Solicitud incorrecta).
         default_severity: LOW.
 
     Args:
         scan_type: Tipo de escaneo (nmap, nikto, openvas).
-        field:     Nombre del campo requerido faltante o inv\u00e1lido.
+        field:     Nombre del campo requerido faltante o inválido.
 
     Ejemplo:
         >>> raise InvalidProgramedTaskArgumentError(
@@ -607,7 +639,7 @@ class InvalidProgramedTaskArgumentError(ProgramedScanError):
     def __init__(self, scan_type: str, field: str):
         super().__init__(
             message=f"Argumento '{field}' requerido para escaneo "
-                    f"{scan_type} no encontrado o inv\u00e1lido",
+                    f"{scan_type} no encontrado o inválido",
             details={"scan_type": scan_type, "field": field},
             user_message=f"Falta el argumento '{field}' para el escaneo de "
                          f"tipo '{scan_type}'."

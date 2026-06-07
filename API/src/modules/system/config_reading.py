@@ -379,6 +379,25 @@ def get_openvas_port_list() -> dict[str, str]:
     return configs["openvas"]["toolConfigs"]["portList"]
 
 @_lazy_load
+def is_host_reachability_check_enabled() -> bool:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    check_cfg = sentinel.get("hostReachabilityCheck", {})
+    enabled = check_cfg.get("enabled", True)
+    return enabled is True or str(enabled).lower() == "true"
+
+@_lazy_load
+def get_host_reachability_check_timeout() -> float:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    check_cfg = sentinel.get("hostReachabilityCheck", {})
+    return float(check_cfg.get("timeout", 3.0))
+
+@_lazy_load
+def get_host_reachability_check_port() -> int:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    check_cfg = sentinel.get("hostReachabilityCheck", {})
+    return int(check_cfg.get("port", 80))
+
+@_lazy_load
 def get_sentinel_csv_dir() -> str:
     return get_directory_of(DirectoryType.CSV_SENTINEL)
 
@@ -403,6 +422,48 @@ def save_full_config(new_config: dict) -> dict:
         json.dump(new_config, f, indent=2, ensure_ascii=False)
     _configs = new_config
     return new_config
+
+
+# =============================================================================
+# CONFIGURACIÓN DE SEQUEUE
+# =============================================================================
+
+@_lazy_load
+def get_sequeue_config() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
+    cfg = _configs.get("general", {}).get("sequeue", {})
+    max_workers_env = os.getenv("SEQUEUE_MAX_WORKERS")
+    if max_workers_env is not None:
+        cfg["max_workers"] = int(max_workers_env)
+
+    return cfg
+
+# =============================================================================
+# CONFIGURACIÓN DE IRIS
+# =============================================================================
+
+@_lazy_load
+def get_iris_config() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+    return _configs.get("iris", {})
+
+@_lazy_load
+def get_iris_legitimate_threshold() -> float:
+    cfg = get_iris_config()
+    return float(cfg.get("legitimate_threshold", 50))
+
+@_lazy_load
+def get_iris_suspicious_threshold() -> float:
+    cfg = get_iris_config()
+    return float(cfg.get("suspicious_threshold", 0))
+
+@_lazy_load
+def get_iris_min_headers() -> int:
+    cfg = get_iris_config()
+    return int(cfg.get("min_headers", 2))
 
 
 # =============================================================================

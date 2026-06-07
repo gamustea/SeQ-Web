@@ -1,14 +1,13 @@
 <template>
   <div class="aegis-page">
+    <StarBackground />
     <Topbar title="Aegis" badge="Generación de Píldoras" />
 
     <div class="app-layout">
-      <!-- Left panel: Generation form -->
       <aside class="panel panel--left">
         <TweaksForm />
       </aside>
 
-      <!-- Center: Document viewer -->
       <section class="panel panel--center">
         <DocumentViewer
           :viewer-doc="store.viewerDoc"
@@ -18,7 +17,6 @@
         />
       </section>
 
-      <!-- Right: History -->
       <aside class="panel panel--right">
         <HistoryPanel
           :documents="store.sortedDocuments()"
@@ -34,7 +32,6 @@
       </aside>
     </div>
 
-    <StarBackground />
     <AppToast />
   </div>
 </template>
@@ -50,32 +47,15 @@ import DocumentViewer from '@/components/aegis/DocumentViewer.vue'
 import HistoryPanel from '@/components/aegis/HistoryPanel.vue'
 
 const store = useAegisStore()
-
-onMounted(async () => {
-  await Promise.all([store.loadTopics(), store.loadBrands()])
-  await store.loadHistory()
-})
+onMounted(async () => { await Promise.all([store.loadTopics(), store.loadBrands()]); await store.loadHistory() })
 </script>
 
 <style scoped>
-.aegis-page { min-height: 100vh; background: var(--bg); padding-top: var(--topbar-h); }
-
-.app-layout {
-  display: grid;
-  grid-template-columns: 380px 1fr 360px;
-  gap: 0;
-  height: calc(100vh - var(--topbar-h));
-  overflow: hidden;
-}
-
-.panel { overflow-y: auto; }
-
+.aegis-page { min-height: 100vh; background: var(--bg); padding-top: var(--topbar-h); position: relative; }
+.app-layout { display: grid; grid-template-columns: 340px 1fr 320px; gap: 0; height: calc(100vh - var(--topbar-h)); overflow: hidden; position: relative; z-index: 1; }
+.panel { overflow-y: auto; display: flex; flex-direction: column; position: relative; }
 .panel--left   { background: var(--surface); border-right: 1px solid var(--border); }
-.panel--center { background: var(--bg); }
-.panel--right  { background: var(--bg); border-left: 1px solid var(--border); }
-
-@media (max-width: 1100px) {
-  .app-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
-  .panel--left, .panel--right { border: none; border-bottom: 1px solid var(--border); max-height: 45vh; }
-}
+.panel--center { background: var(--surface); }
+.panel--right  { background: var(--surface); border-left: 1px solid var(--border); }
+@media (max-width: 1100px) { .app-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; } .panel--left, .panel--right { border: none; border-bottom: 1px solid var(--border); max-height: 40vh; } }
 </style>
