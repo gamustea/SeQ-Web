@@ -96,7 +96,7 @@ def get_analysis_status(args: dict):
     user = get_current_user()
 
     manager = IrisManager()
-    IrisManager.assert_ownership(analysis_id, user.id)
+    IrisManager.assert_analysis_ownership(analysis_id, user.id)
 
     status = manager.get_analysis_status(analysis_id)
     progress = manager.get_analysis_progress(analysis_id)
@@ -156,7 +156,7 @@ def get_analysis_result(analysis_id: int):
     user = get_current_user()
 
     manager = IrisManager()
-    IrisManager.assert_ownership(analysis_id, user.id)
+    IrisManager.assert_analysis_ownership(analysis_id, user.id)
 
     result = manager.get_analysis_results(analysis_id)
     return result
@@ -177,7 +177,7 @@ def cancel_analysis(analysis_id: int):
     user = get_current_user()
 
     manager = IrisManager()
-    IrisManager.assert_ownership(analysis_id, user.id)
+    IrisManager.assert_analysis_ownership(analysis_id, user.id)
 
     if not manager.cancel_analysis(analysis_id, user.id):
         raise IrisExecutionError("No se pudo cancelar el analisis")
@@ -205,7 +205,7 @@ def delete_analysis(analysis_id: int):
     user = get_current_user()
 
     manager = IrisManager()
-    IrisManager.assert_ownership(analysis_id, user.id)
+    IrisManager.assert_analysis_ownership(analysis_id, user.id)
 
     if not manager.delete_analysis(analysis_id):
         raise IrisExecutionError("No se pudo eliminar el analisis")

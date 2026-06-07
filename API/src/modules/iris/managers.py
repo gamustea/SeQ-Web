@@ -214,12 +214,7 @@ class IrisManager:
             IrisInvalidStateError: If the analysis is not in a
                 cancellable state (``pending`` or ``running``).
         """
-        analysis = self.get_analysis(analysis_id)
-        if not analysis:
-            raise IrisAnalysisNotFoundError(analysis_id)
-
-        if analysis.user_id != user_id:
-            raise IrisAnalysisNotFoundError(analysis_id)
+        analysis = self.assert_analysis_ownership(analysis_id, user_id)
 
         if analysis.status not in _CANCELLABLE_STATES:
             raise IrisInvalidStateError(
@@ -302,15 +297,15 @@ class IrisManager:
                 "status": a.status,
                 "totalScore": a.total_score,
                 "verdict": a.verdict,
-                "startedAt": a.started_at.isoformat() if a.started_at else None,
-                "finishedAt": a.finished_at.isoformat() if a.finished_at else None,
+                "startedAt": a.started_at.isoformat() if a.started_at else None, # type: ignore
+                "finishedAt": a.finished_at.isoformat() if a.finished_at else None, # type: ignore
             }
             for a in items
         ]
         return results, total
 
-    @staticmethod
-    def assert_ownership(analysis_id: int, user_id: int) -> IrisAnalysis:
+    @classmethod
+    def assert_analysis_ownership(cls, analysis_id: int, user_id: int) -> IrisAnalysis:
         """Verify that an analysis belongs to a given user.
 
         Raises IrisAnalysisNotFoundError when the analysis does not
@@ -407,10 +402,10 @@ class IrisManager:
                 repo = IrisAnalysisRepository(uow)
                 fresh = repo.get_by_id(analysis_id)
                 if fresh:
-                    fresh.status = "finished"
-                    fresh.total_score = total_score
-                    fresh.verdict = verdict
-                    fresh.finished_at = datetime.now()
+                    fresh.status = "finished" # type: ignore
+                    fresh.total_score = total_score # type: ignore
+                    fresh.verdict = verdict # type: ignore
+                    fresh.finished_at = datetime.now() # type: ignore
                     repo.update(fresh)
         except Exception as e:
             self.logger.error(f"Failed to finalise analysis {analysis_id}: {e}")
@@ -466,8 +461,8 @@ class IrisManager:
                 repo = IrisAnalysisRepository(uow)
                 fresh = repo.get_by_id(analysis_id)
                 if fresh:
-                    fresh.status = "failed"
-                    fresh.finished_at = datetime.now()
+                    fresh.status = "failed" # type: ignore
+                    fresh.finished_at = datetime.now() # type: ignore
                     repo.update(fresh)
         except Exception as e:
             self.logger.error(f"Failed to mark analysis {analysis_id} as failed: {e}")
@@ -485,4 +480,4 @@ class IrisManager:
         if sq_task and sq_task.status.value == "cancelled":
             return True
         analysis = self.get_analysis(analysis_id)
-        return analysis is not None and analysis.status == "cancelled"
+        return analysis is not None and analysis.status == "cancelled" # type: ignore
