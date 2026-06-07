@@ -55,22 +55,22 @@ function handleSubmit() {
 .iris-form {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  max-width: 700px;
+    gap: 1.25rem;
+  max-width: 820px;
   width: 100%;
   margin: 0 auto;
 }
 
 .form-header h2 {
-  font-size: 1.2rem;
+  font-size: 1.5rem;
   font-weight: 700;
   color: var(--text);
   font-family: var(--font-display);
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.35rem;
 }
 
 .form-hint {
-  font-size: 0.82rem;
+  font-size: 0.92rem;
   color: var(--text-dim);
   line-height: 1.5;
   margin: 0;
@@ -82,12 +82,12 @@ function handleSubmit() {
 
 .form-textarea {
   width: 100%;
-  min-height: 260px;
+  min-height: 320px;
   resize: vertical;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  line-height: 1.6;
-  padding: 1rem;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  padding: 1.1rem;
   background: var(--surface);
   border: 1px solid var(--border-solid);
   border-radius: 8px;
@@ -105,18 +105,18 @@ function handleSubmit() {
   color: var(--text-muted);
   opacity: 0.35;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.82rem;
 }
 
 .form-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1.25rem;
 }
 
 .char-count {
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
@@ -124,11 +124,11 @@ function handleSubmit() {
 .btn-analyze {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.65rem 1.25rem;
-  font-size: 0.85rem;
+  gap: 0.55rem;
+  padding: 0.75rem 1.5rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  border-radius: 8px;
+  border-radius: 10px;
   border: none;
   cursor: pointer;
   background: var(--accent);
@@ -149,14 +149,14 @@ function handleSubmit() {
 }
 
 .btn-analyze .btn-icon {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
 }
 
 .btn-spinner {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border: 2px solid rgba(0, 0, 0, 0.15);
   border-top-color: #0b0c10;
   border-radius: 50%;

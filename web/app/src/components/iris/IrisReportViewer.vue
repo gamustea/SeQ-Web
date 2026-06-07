@@ -199,7 +199,7 @@ const statusLabel = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem 2.5rem;
+  padding: 2.5rem 3rem;
 }
 
 /* Loading */
@@ -208,15 +208,15 @@ const statusLabel = computed(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
-  padding: 4rem 0;
+  gap: 1rem;
+  padding: 5rem 0;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .spinner {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border: 3px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;
@@ -229,8 +229,8 @@ const statusLabel = computed(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
-  padding: 3rem 2rem;
+  gap: 1.25rem;
+  padding: 4rem 2rem;
   text-align: center;
 }
 
@@ -242,31 +242,31 @@ const statusLabel = computed(() => {
 
 .progress-track {
   width: 100%;
-  max-width: 360px;
-  height: 6px;
+  max-width: 400px;
+  height: 10px;
   background: var(--surface-2);
-  border-radius: 3px;
+  border-radius: 5px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: 5px;
   transition: width 0.4s ease;
 }
 
 .progress-label {
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   color: var(--text-dim);
   font-family: var(--font-mono);
 }
 
 .btn-cancel {
-  padding: 0.5rem 1.1rem;
-  font-size: 0.78rem;
+  padding: 0.6rem 1.3rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-dim);
@@ -287,14 +287,14 @@ const statusLabel = computed(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.6rem;
-  padding: 4rem 2rem;
+  gap: 0.8rem;
+  padding: 5rem 2rem;
   text-align: center;
 }
 
 .rv-failed h3,
 .rv-cancelled h3 {
-  font-size: 1.05rem;
+  font-size: 1.35rem;
   font-weight: 700;
   color: var(--text);
   font-family: var(--font-display);
@@ -303,15 +303,16 @@ const statusLabel = computed(() => {
 
 .rv-failed p,
 .rv-cancelled p {
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--text-dim);
-  max-width: 320px;
+  max-width: 380px;
   margin: 0;
+  line-height: 1.5;
 }
 
 .rv-result-icon svg {
-  width: 40px;
-  height: 40px;
+  width: 52px;
+  height: 52px;
 }
 
 .rv-result-icon--fail svg { color: var(--danger); }
@@ -321,10 +322,10 @@ const statusLabel = computed(() => {
 .rv-report {
   flex: 1;
   overflow-y: auto;
-  padding: 1.25rem 1.5rem;
+  padding: 1.5rem 2rem;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.5rem;
 }
 
 .rv-report-header {
@@ -336,21 +337,21 @@ const statusLabel = computed(() => {
 .rv-report-id {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
 .analysis-id {
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-dim);
   background: var(--surface-2);
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  border-radius: 5px;
 }
 
 .report-date {
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
 }
 
@@ -363,9 +364,9 @@ const statusLabel = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
@@ -374,8 +375,8 @@ const statusLabel = computed(() => {
 }
 
 .action-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
 }
 
 .action-btn:hover {
@@ -388,9 +389,9 @@ const statusLabel = computed(() => {
 .rv-hero {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
-  padding: 1.25rem 1.5rem;
-  border-radius: 10px;
+  gap: 2rem;
+  padding: 1.5rem 2rem;
+  border-radius: 12px;
   border: 1px solid var(--border-med);
   background: var(--surface);
 }
@@ -417,7 +418,7 @@ const statusLabel = computed(() => {
 }
 
 .score-num {
-  font-size: 2.2rem;
+  font-size: 3.2rem;
   font-weight: 800;
   font-family: var(--font-display);
   letter-spacing: -0.02em;
@@ -428,7 +429,7 @@ const statusLabel = computed(() => {
 .rv-hero--phish .score-num { color: var(--danger); }
 
 .score-unit {
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
@@ -436,11 +437,11 @@ const statusLabel = computed(() => {
 .rv-hero-verdict {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: 0.15rem;
 }
 
 .verdict-badge {
-  font-size: 1.05rem;
+  font-size: 1.4rem;
   font-weight: 700;
   font-family: var(--font-display);
 }
@@ -450,18 +451,18 @@ const statusLabel = computed(() => {
 .verdict--phish { color: var(--danger); }
 
 .verdict-status {
-  font-size: 0.75rem;
+  font-size: 0.88rem;
   color: var(--text-dim);
 }
 
 /* Section title */
 .section-title {
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: var(--text);
   font-family: var(--font-display);
-  margin: 0 0 0.65rem;
-  padding-bottom: 0.3rem;
+  margin: 0 0 0.85rem;
+  padding-bottom: 0.4rem;
   border-bottom: 1px solid var(--border);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -495,7 +496,7 @@ const statusLabel = computed(() => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 0.65rem 0.85rem;
+  padding: 0.85rem 1.1rem;
   background: var(--surface);
   border: none;
   color: var(--text);
@@ -511,39 +512,39 @@ const statusLabel = computed(() => {
 .rule-left {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
   min-width: 0;
 }
 
 .rule-name {
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
 }
 
 .rule-category {
-  font-size: 0.65rem;
+  font-size: 0.78rem;
   font-weight: 500;
   color: var(--text-muted);
   background: var(--surface-2);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 3px 8px;
+  border-radius: 5px;
   white-space: nowrap;
 }
 
 .rule-right {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.7rem;
   flex-shrink: 0;
 }
 
 .rule-score {
-  font-size: 0.82rem;
+  font-size: 1.1rem;
   font-weight: 700;
   font-family: var(--font-mono);
-  min-width: 2.5rem;
+  min-width: 3rem;
   text-align: right;
 }
 
@@ -552,10 +553,10 @@ const statusLabel = computed(() => {
 .score--neutral { color: var(--text-muted); }
 
 .rule-verdict {
-  font-size: 0.65rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 4px;
+  padding: 3px 9px;
+  border-radius: 5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -600,8 +601,8 @@ const statusLabel = computed(() => {
 }
 
 .rule-chevron {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   color: var(--text-muted);
   transition: transform 0.2s;
   flex-shrink: 0;
@@ -612,7 +613,7 @@ const statusLabel = computed(() => {
 }
 
 .rule-detail {
-  padding: 0 0.85rem 0.75rem;
+  padding: 0 1.1rem 0.85rem;
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
@@ -620,22 +621,22 @@ const statusLabel = computed(() => {
 .rule-details {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  margin-bottom: 0.5rem;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
 }
 
 .detail-row {
   display: flex;
-  gap: 0.4rem;
-  font-size: 0.75rem;
-  line-height: 1.5;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  line-height: 1.6;
 }
 
 .detail-key {
   color: var(--text-muted);
   font-family: var(--font-mono);
   flex-shrink: 0;
-  min-width: 90px;
+  min-width: 100px;
 }
 
 .detail-val {
@@ -646,19 +647,19 @@ const statusLabel = computed(() => {
 .rule-recommendation {
   display: flex;
   align-items: flex-start;
-  gap: 0.4rem;
-  padding: 0.5rem 0.65rem;
-  border-radius: 6px;
+  gap: 0.5rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
   background: var(--warn-dim);
   border: 1px solid rgba(212, 160, 74, 0.12);
   color: var(--warn);
-  font-size: 0.75rem;
+  font-size: 0.88rem;
   line-height: 1.5;
 }
 
 .rec-icon {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -695,19 +696,19 @@ const statusLabel = computed(() => {
 .rec-item {
   display: flex;
   align-items: flex-start;
-  gap: 0.45rem;
-  padding: 0.6rem 0.75rem;
-  border-radius: 8px;
+  gap: 0.55rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  font-size: 0.8rem;
-  line-height: 1.5;
+  font-size: 0.92rem;
+  line-height: 1.6;
   color: var(--text-dim);
 }
 
 .rec-bullet {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   margin-top: 3px;
   color: var(--warn);
@@ -722,9 +723,9 @@ const statusLabel = computed(() => {
 .raw-toggle {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.55rem 0;
-  font-size: 0.8rem;
+  gap: 0.5rem;
+  padding: 0.65rem 0;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-dim);
   background: none;
@@ -738,8 +739,8 @@ const statusLabel = computed(() => {
 }
 
 .toggle-chevron {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   transition: transform 0.2s;
 }
 
@@ -748,18 +749,18 @@ const statusLabel = computed(() => {
 }
 
 .raw-block {
-  padding: 0.85rem 1rem;
+  padding: 1rem 1.2rem;
   background: var(--surface);
   border: 1px solid var(--border-solid);
-  border-radius: 6px;
+  border-radius: 8px;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  line-height: 1.5;
+  font-size: 0.85rem;
+  line-height: 1.6;
   color: var(--text-dim);
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 300px;
+  max-height: 400px;
   overflow-y: auto;
 }
 

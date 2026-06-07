@@ -88,7 +88,7 @@ function verdictClass(v) {
 .history-strip {
   display: flex;
   align-items: center;
-  height: 44px;
+  height: 54px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: relative;
@@ -98,8 +98,8 @@ function verdictClass(v) {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 0 0.5rem;
+  gap: 4px;
+  padding: 0 0.65rem;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -113,19 +113,19 @@ function verdictClass(v) {
 .strip-item {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.35rem 0.55rem;
-  border-radius: 5px;
+  gap: 0.4rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-dim);
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
   flex-shrink: 0;
-  height: 30px;
+  height: 36px;
 }
 
 .strip-item:hover {
@@ -146,13 +146,13 @@ function verdictClass(v) {
 }
 
 .new-icon {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
 }
 
 .strip-dot {
-  width: 5px;
-  height: 5px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -165,12 +165,12 @@ function verdictClass(v) {
 
 .strip-id {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.82rem;
 }
 
 .strip-verdict {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.8rem;
   font-weight: 700;
   margin-left: 0.15rem;
 }
@@ -180,7 +180,7 @@ function verdictClass(v) {
 .strip-verdict.verdict--phish { color: var(--danger); }
 
 .strip-status {
-  font-size: 0.62rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -190,7 +190,7 @@ function verdictClass(v) {
 .strip-fade {
   position: sticky;
   right: 0;
-  width: 24px;
+  width: 28px;
   height: 100%;
   background: linear-gradient(90deg, transparent, var(--surface));
   flex-shrink: 0;
@@ -200,16 +200,16 @@ function verdictClass(v) {
 .strip-tools {
   position: relative;
   flex-shrink: 0;
-  padding-right: 0.5rem;
+  padding-right: 0.65rem;
 }
 
 .tool-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 5px;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
@@ -224,21 +224,21 @@ function verdictClass(v) {
 }
 
 .tool-btn svg {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
 }
 
 .sort-menu {
   position: absolute;
-  right: 0.5rem;
+  right: 0.65rem;
   top: 100%;
-  margin-top: 4px;
+  margin-top: 5px;
   z-index: 30;
   background: var(--surface);
   border: 1px solid var(--border-solid);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
-  min-width: 140px;
+  min-width: 160px;
   box-shadow: 0 8px 20px rgba(0,0,0,0.4);
 }
 
@@ -246,8 +246,8 @@ function verdictClass(v) {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.4rem 0.65rem;
-  font-size: 0.72rem;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.82rem;
   background: none;
   border: none;
   color: var(--text-dim);
