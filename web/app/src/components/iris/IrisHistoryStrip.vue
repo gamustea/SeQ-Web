@@ -1,5 +1,5 @@
 <template>
-  <div class="history-strip">
+  <div class="history-strip" ref="stripRef">
     <div class="strip-scroll">
       <!-- New analysis button -->
       <button
@@ -21,7 +21,7 @@
         v-for="item in items"
         :key="item.analysisId"
         class="strip-item-wrap"
-        @mouseenter="hoverId = item.analysisId"
+        @mouseenter="onItemEnter(item.analysisId, $event)"
         @mouseleave="hoverId = null"
       >
         <button
@@ -72,6 +72,36 @@
       <div class="strip-fade"></div>
     </div>
 
+    <!-- Hover card (outside scroll to avoid overflow clip) -->
+    <Transition name="card">
+      <div v-if="hoverItem" class="strip-card" :style="{ left: cardLeft + 'px' }">
+        <div class="card-row card-title-row">
+          <span class="card-label">Título</span>
+          <span class="card-value card-value--title">{{ hoverItem.title || `#${hoverItem.analysisId}` }}</span>
+        </div>
+        <div class="card-row">
+          <span class="card-label">ID</span>
+          <span class="card-value">#{{ hoverItem.analysisId }}</span>
+        </div>
+        <div class="card-row">
+          <span class="card-label">Fecha</span>
+          <span class="card-value">{{ formatDate(hoverItem.startedAt) }}</span>
+        </div>
+        <div class="card-row" v-if="hoverItem.status === 'finished'">
+          <span class="card-label">Puntuación</span>
+          <span class="card-value" :class="scoreClass(hoverItem.totalScore)">{{ hoverItem.totalScore }}</span>
+        </div>
+        <div class="card-row" v-if="hoverItem.verdict && hoverItem.status === 'finished'">
+          <span class="card-label">Veredicto</span>
+          <span class="card-verdict" :class="`v--${verdictClass(hoverItem.verdict)}`">{{ hoverItem.verdict }}</span>
+        </div>
+        <div class="card-row" v-else-if="hoverItem.status !== 'finished'">
+          <span class="card-label">Estado</span>
+          <span class="card-value card-value--status">{{ statusLabel(hoverItem.status) }}</span>
+        </div>
+      </div>
+    </Transition>
+
     <div class="strip-tools">
       <button type="button" class="tool-btn" title="Ordenar" @click="sortOpen = !sortOpen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
@@ -100,6 +130,42 @@ const emit = defineEmits(['select', 'sort', 'delete'])
 const sortOpen = ref(false)
 const hoverId = ref(null)
 const confirmDeleteId = ref(null)
+const stripRef = ref(null)
+const cardLeft = ref(0)
+
+const hoverItem = computed(() => {
+  if (hoverId.value == null) return null
+  return props.items.find(i => i.analysisId === hoverId.value) ?? null
+})
+
+function onItemEnter(id, event) {
+  hoverId.value = id
+  if (!stripRef.value || !event?.currentTarget) return
+  const stripRect = stripRef.value.getBoundingClientRect()
+  const elRect = event.currentTarget.getBoundingClientRect()
+  cardLeft.value = elRect.left - stripRect.left + elRect.width / 2
+}
+
+function formatDate(iso) {
+  if (!iso) return ''
+  try { return new Date(iso).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+  catch { return iso }
+}
+
+function statusLabel(s) {
+  if (s === 'running') return 'En análisis'
+  if (s === 'pending') return 'Pendiente'
+  if (s === 'failed') return 'Fallido'
+  if (s === 'cancelled') return 'Cancelado'
+  return s || ''
+}
+
+function scoreClass(s) {
+  if (s == null) return ''
+  if (s > 0) return 'score--pos'
+  if (s < 0) return 'score--neg'
+  return 'score--neutral'
+}
 
 function changeSort(val) {
   sortOpen.value = false
@@ -232,6 +298,101 @@ function verdictClass(v) {
   background: var(--surface);
   border: 1px solid var(--danger);
   flex-shrink: 0;
+}
+
+/* ── Hover card ─────────────────────────────────────────── */
+.strip-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 100;
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border-solid);
+  border-radius: 9px;
+  padding: 0.7rem 0.85rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+
+.card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.card-title-row {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.1rem;
+}
+
+.card-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.card-value {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-align: right;
+  word-break: break-word;
+  max-width: 140px;
+}
+
+.card-value--title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.card-value--status {
+  text-transform: capitalize;
+}
+
+.card-verdict {
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 4px;
+}
+
+.card-verdict.v--legit {
+  background: var(--success-dim);
+  color: var(--success);
+}
+
+.card-verdict.v--susp {
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+
+.card-verdict.v--phish {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+
+.card .score--pos { color: var(--success); }
+.card .score--neg { color: var(--danger); }
+.card .score--neutral { color: var(--text-muted); }
+
+.card-enter-active,
+.card-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.card-enter-from,
+.card-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(4px);
 }
 
 .confirm-text {
