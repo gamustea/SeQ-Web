@@ -7,6 +7,7 @@
 - **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades, potenciado por IA local (operativo).
 - **SeQ Web** — Interfaz web SPA (Vue 3 + Vite + Pinia) para interactuar con todos los módulos.
 - **AcheronMobile** — App Android/Kotlin con módulo de cifrado AcheronCore (Java).
+- **SeQ Hub** — Dashboard central con terminal interactiva de comandos y acceso rápido a todos los módulos.
 
 ---
 
@@ -538,6 +539,23 @@ Content-Type: application/json
 | `AcheronMobile` | Android / Kotlin + Jetpack Compose | 🔨 En desarrollo |
 | `AcheronWeb` | Web (interfaz de escritorio) | 🔨 En desarrollo |
 | `AcheronCore` | Java (lógica de cifrado y modelo de dominio) | 🔨 En desarrollo |
+
+---
+
+## Web Frontend — SeQ Hub
+
+La interfaz web SPA (Vue 3 + Vite + Pinia + Vue Router) cuenta con un **hub central** rediseñado como dashboard de operaciones de seguridad:
+
+### Dashboard Hub (`/hub`)
+
+- **Layout partido 2/3 + 1/3**: Columna izquierda con hero `[ SeQ ]` + terminal interactiva; columna derecha con fichas de módulos scrolleables.
+- **Terminal de comandos**: Panel con efecto glass morphism (`backdrop-filter: blur(16px)`) y borde neón dorado. Reproduce escaneos reales (nikto, nmap, openvas) con typewriter y highlight sintáctico de JSON. Indicador LIVE pulsante en la barra de título.
+- **Fondo animado**: Orbes de color con blur 150px, rejilla hexagonal SVG, partículas flotantes, scan-lines CRT y granulado SVG — todo con animación CSS.
+- **Módulos glass**: Fichas con `backdrop-filter: blur(12px)`, borde izquierdo neón de 3px por módulo (verde Sentinel, azul Aegis, naranja Iris, púrpura Acheron). Hover con elevación y glow expansivo.
+- **Quick-stats**: Acceso directo al repositorio GitHub del proyecto y versión del sistema.
+- **Perfil**: Avatar circular fijo en esquina superior derecha, dropdown glass con perfil, rutas de administración y cierre de sesión.
+- **Tipografía**: Syne (display), Sora (body), JetBrains Mono (terminal).
+- **Responsive**: Colapsa a columna única en ≤1024px, scroll de página normal en móvil.
 
 ---
 
