@@ -17,27 +17,56 @@
       </button>
 
       <!-- Analysis items -->
-      <button
+      <div
         v-for="item in items"
         :key="item.analysisId"
-        type="button"
-        class="strip-item"
-        :class="{
-          active: activeId === item.analysisId,
-          'strip-item--finished': item.status === 'finished',
-          'strip-item--running': item.status === 'running' || item.status === 'pending',
-          'strip-item--failed': item.status === 'failed',
-          'strip-item--cancelled': item.status === 'cancelled',
-        }"
-        @click="$emit('select', item.analysisId)"
+        class="strip-item-wrap"
+        @mouseenter="hoverId = item.analysisId"
+        @mouseleave="hoverId = null"
       >
-        <span class="strip-dot" :class="`dot--${item.status || 'pending'}`"></span>
-        <span class="strip-id">#{{ item.analysisId }}</span>
-        <span v-if="item.verdict && item.status === 'finished'" class="strip-verdict" :class="`verdict--${verdictClass(item.verdict)}`">
-          {{ item.totalScore }}
-        </span>
-        <span v-else-if="item.status === 'running' || item.status === 'pending'" class="strip-status">{{ item.status }}</span>
-      </button>
+        <button
+          type="button"
+          class="strip-item"
+          :class="{
+            active: activeId === item.analysisId,
+            'strip-item--finished': item.status === 'finished',
+            'strip-item--running': item.status === 'running' || item.status === 'pending',
+            'strip-item--failed': item.status === 'failed',
+            'strip-item--cancelled': item.status === 'cancelled',
+          }"
+          @click="$emit('select', item.analysisId)"
+        >
+          <span class="strip-dot" :class="`dot--${item.status || 'pending'}`"></span>
+          <span class="strip-id">#{{ item.analysisId }}</span>
+          <span v-if="item.verdict && item.status === 'finished'" class="strip-verdict" :class="`verdict--${verdictClass(item.verdict)}`">
+            {{ item.totalScore }}
+          </span>
+          <span v-else-if="item.status === 'running' || item.status === 'pending'" class="strip-status">{{ item.status }}</span>
+        </button>
+
+        <!-- Delete button (visible on hover) -->
+        <button
+          v-if="!confirmDeleteId || confirmDeleteId !== item.analysisId"
+          type="button"
+          class="strip-del"
+          :class="{ 'strip-del--visible': hoverId === item.analysisId }"
+          title="Eliminar"
+          @click.stop="confirmDeleteId = item.analysisId"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        </button>
+
+        <!-- Inline confirmation -->
+        <div v-else-if="confirmDeleteId === item.analysisId" class="strip-confirm">
+          <span class="confirm-text">¿Eliminar #{{ item.analysisId }}?</span>
+          <button type="button" class="confirm-yes" title="Sí" @click.stop="handleDelete(item.analysisId)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button type="button" class="confirm-no" title="No" @click.stop="confirmDeleteId = null">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
 
       <div class="strip-fade"></div>
     </div>
@@ -65,13 +94,20 @@ const props = defineProps({
   sort: { type: String, default: 'date-desc' },
 })
 
-const emit = defineEmits(['select', 'sort'])
+const emit = defineEmits(['select', 'sort', 'delete'])
 
 const sortOpen = ref(false)
+const hoverId = ref(null)
+const confirmDeleteId = ref(null)
 
 function changeSort(val) {
   sortOpen.value = false
   emit('sort', val)
+}
+
+function handleDelete(id) {
+  confirmDeleteId.value = null
+  emit('delete', id)
 }
 
 function verdictClass(v) {
@@ -143,6 +179,104 @@ function verdictClass(v) {
 .strip-item--new {
   border-style: dashed;
   gap: 0.2rem;
+}
+
+.strip-item-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.strip-del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  opacity: 0;
+  flex-shrink: 0;
+}
+
+.strip-del--visible {
+  opacity: 1;
+  border-color: var(--border);
+}
+
+.strip-del:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
+.strip-del svg {
+  width: 13px;
+  height: 13px;
+}
+
+.strip-confirm {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 0.3rem;
+  height: 30px;
+  border-radius: 5px;
+  background: var(--surface);
+  border: 1px solid var(--danger);
+  flex-shrink: 0;
+}
+
+.confirm-text {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+.confirm-yes,
+.confirm-no {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.confirm-yes {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+
+.confirm-yes:hover {
+  background: var(--danger);
+  color: #0b0c10;
+}
+
+.confirm-no {
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.confirm-no:hover {
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+.confirm-yes svg,
+.confirm-no svg {
+  width: 12px;
+  height: 12px;
 }
 
 .new-icon {

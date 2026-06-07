@@ -56,6 +56,9 @@
           <button type="button" class="action-btn" title="Cancelar" @click="$emit('cancel')" v-if="status === 'running' || status === 'pending'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
           </button>
+          <button type="button" class="action-btn action-btn--danger" title="Eliminar" @click="$emit('delete', reportData.analysisId)" v-if="reportData && reportData.status !== 'running' && reportData.status !== 'pending'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+          </button>
         </div>
       </div>
 
@@ -148,7 +151,7 @@ const props = defineProps({
   progress: { type: [Number, null], default: null },
 })
 
-defineEmits(['cancel'])
+defineEmits(['cancel', 'delete'])
 
 const expandedRule = ref(null)
 const rawOpen = ref(false)
@@ -383,6 +386,12 @@ const statusLabel = computed(() => {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-dim);
+}
+
+.action-btn--danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-dim);
 }
 
 /* Hero */

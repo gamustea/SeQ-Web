@@ -10,6 +10,7 @@
         :sort="sortMode"
         @select="store.selectAnalysis"
         @sort="handleSort"
+        @delete="handleDelete"
       />
 
       <main class="iris-main">
@@ -20,6 +21,7 @@
           :status="store.currentStatus.status"
           :progress="store.currentStatus.progress"
           @cancel="handleCancel"
+          @delete="handleDelete"
         >
           <template #form>
             <IrisForm
@@ -85,6 +87,10 @@ async function handleCancel() {
   if (store.currentId) {
     await store.cancelAnalysis(store.currentId)
   }
+}
+
+async function handleDelete(id) {
+  await store.deleteAnalysis(id)
 }
 
 function handleSort(mode) {
