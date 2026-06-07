@@ -8,8 +8,15 @@ and discovered automatically when their module is imported.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+
+
+def extract_domain(email: str) -> str | None:
+    """Extract the domain part from an email address string."""
+    match = re.search(r"@([\w.-]+)", email)
+    return match.group(1).lower() if match else None
 
 
 @dataclass
