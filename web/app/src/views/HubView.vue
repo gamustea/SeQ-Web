@@ -1,96 +1,73 @@
 <template>
   <div class="hub-page">
-    <!-- Sidebar toggle -->
-    <button
-      class="sidebar-toggle"
-      :class="{ active: sidebarOpen }"
-      @click="sidebarOpen = !sidebarOpen"
-      aria-label="Menú de perfil"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="3" y1="12" x2="21" y2="12"/>
-        <line x1="3" y1="6" x2="21" y2="6"/>
-        <line x1="3" y1="18" x2="21" y2="18"/>
-      </svg>
+    <StarBackground />
+
+    <!-- Profile trigger -->
+    <button class="profile-trigger" @click="profileOpen = !profileOpen" aria-label="Perfil">
+      <div class="profile-avatar-mini">
+        {{ profileInitials }}
+      </div>
     </button>
 
-    <!-- Profile sidebar -->
-    <Transition name="sidebar">
-      <aside v-show="sidebarOpen" class="profile-sidebar" ref="sidebarRef">
-        <div class="profile-header">
-          <div class="profile-avatar-wrap">
-            <img :src="'/resources/images/default-avatar.svg'" alt="Perfil" class="profile-avatar" />
-            <div class="avatar-glow"></div>
+    <!-- Profile dropdown -->
+    <Transition name="drop">
+      <div v-if="profileOpen" class="profile-drop" ref="dropRef">
+        <div class="drop-header">
+          <div class="drop-avatar">{{ profileInitials }}</div>
+          <div class="drop-name-wrap">
+            <h3 v-if="profileLoaded" class="drop-name">{{ profileName }}</h3>
+            <div v-else class="skeleton-line"></div>
+            <span class="drop-role">{{ roleLabel }}</span>
           </div>
-          <!-- Skeleton while loading name, real name when ready -->
-          <div class="profile-name-wrap">
-            <h3 v-if="profileLoaded" class="profile-name">{{ profileName }}</h3>
-            <div v-else class="skeleton-name"></div>
-          </div>
-          <p v-if="profileLoaded" class="profile-role">{{ roleLabel }}</p>
         </div>
-        <nav class="profile-menu">
-          <router-link to="/profile" class="menu-item" @click="sidebarOpen = false">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
+        <nav class="drop-menu">
+          <router-link to="/profile" class="drop-item" @click="profileOpen = false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             Perfil
           </router-link>
-          <router-link v-if="auth.isAdmin" to="/users" class="menu-item" @click="sidebarOpen = false">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-            </svg>
+          <router-link v-if="auth.isAdmin" to="/users" class="drop-item" @click="profileOpen = false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             Usuarios
           </router-link>
-          <router-link v-if="auth.isAdmin" to="/config" class="menu-item" @click="sidebarOpen = false">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
+          <router-link v-if="auth.isAdmin" to="/config" class="drop-item" @click="profileOpen = false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             Configuración
           </router-link>
-          <button class="menu-item menu-item--danger" @click="logout">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-              <polyline points="16 17 21 12 16 7"/>
-              <line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
+          <router-link v-if="auth.isAdmin" to="/queue" class="drop-item" @click="profileOpen = false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>
+            Cola de Tareas
+          </router-link>
+          <div class="drop-divider"></div>
+          <button class="drop-item drop-item--danger" @click="logout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Cerrar sesión
           </button>
         </nav>
-      </aside>
-    </Transition>
-
-    <!-- Backdrop for sidebar on mobile -->
-    <Transition name="fade">
-      <div v-if="sidebarOpen" class="sidebar-backdrop" @click="sidebarOpen = false"></div>
-    </Transition>
-
-    <!-- Header -->
-    <header class="hub-header">
-      <div class="hub-logo">
-        <span class="logo-bracket">[</span>
-        <span class="logo-text">SeQ</span>
-        <span class="logo-bracket">]</span>
       </div>
-      <p class="hub-subtitle">Security Operations Platform</p>
-      <div class="hub-version">v2.0 — Vue SPA</div>
+    </Transition>
+
+    <!-- Backdrop -->
+    <Transition name="fade">
+      <div v-if="profileOpen" class="drop-backdrop" @click="profileOpen = false"></div>
+    </Transition>
+
+    <!-- Hero section -->
+    <header class="hub-hero">
+      <div class="hero-logo">
+        <span class="hero-bracket">[</span>
+        <span class="hero-text">SeQ</span>
+        <span class="hero-bracket">]</span>
+      </div>
+      <p class="hero-sub">Security Operations Platform</p>
+      <div class="hero-terminal">
+        <TerminalConsole />
+      </div>
     </header>
 
-    <!-- Module cards grid -->
-    <main class="hub-grid">
-      <!-- Sentinel -->
-      <router-link
-        to="/sentinel"
-        class="module-card module-sentinel"
-        :style="{ animationDelay: '0.1s' }"
-      >
-        <div class="card-glow"></div>
-        <div class="card-shine"></div>
+    <!-- Module cards -->
+    <main class="hub-cards">
+      <router-link to="/sentinel" class="card card-sentinel" style="animation-delay: 0.1s">
+        <div class="card-bg"></div>
         <div class="card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="11" cy="11" r="8"/>
@@ -98,62 +75,38 @@
             <path d="M11 8v3l2 2"/>
           </svg>
         </div>
-        <div class="card-content">
-          <h2 class="card-title">Sentinel</h2>
-          <p class="card-desc">Escaneo de red, análisis de vulnerabilidades y generación de informes con IA.</p>
-          <div class="card-meta">
-            <span class="card-badge card-badge--active">
-              <span class="badge-dot"></span>
-              Operativo
-            </span>
-            <span class="card-count">3 escáneres</span>
-          </div>
-        </div>
-        <div class="card-arrow">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M5 12h14M12 5l7 7-7 7"/>
-          </svg>
+        <h2 class="card-title">Sentinel</h2>
+        <p class="card-desc">Escaneo de red, análisis de vulnerabilidades y generación de informes con IA.</p>
+        <div class="card-meta">
+          <span class="card-status status-active">
+            <span class="status-dot"></span>
+            Operativo
+          </span>
+          <span class="card-info">3 escáneres</span>
         </div>
       </router-link>
 
-      <!-- Aegis -->
-      <router-link
-        to="/aegis"
-        class="module-card module-aegis"
-        :style="{ animationDelay: '0.25s' }"
-      >
-        <div class="card-glow"></div>
-        <div class="card-shine"></div>
+      <router-link to="/aegis" class="card card-aegis" style="animation-delay: 0.2s">
+        <div class="card-bg"></div>
         <div class="card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"/>
             <path d="M9 12l2 2 4-4"/>
           </svg>
         </div>
-        <div class="card-content">
-          <h2 class="card-title">Aegis</h2>
-          <p class="card-desc">Newsletter de inteligencia de seguridad generada por IA para concienciación.</p>
-          <div class="card-meta">
-            <span class="card-badge card-badge--active">
-              <span class="badge-dot"></span>
-              Operativo
-            </span>
-            <span class="card-count">Exporta MD / JSON</span>
-          </div>
-        </div>
-        <div class="card-arrow">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M5 12h14M12 5l7 7-7 7"/>
-          </svg>
+        <h2 class="card-title">Aegis</h2>
+        <p class="card-desc">Newsletter de inteligencia de seguridad generada por IA para concienciación.</p>
+        <div class="card-meta">
+          <span class="card-status status-active">
+            <span class="status-dot"></span>
+            Operativo
+          </span>
+          <span class="card-info">Exporta MD / JSON</span>
         </div>
       </router-link>
 
-      <!-- Acheron (disabled) -->
-      <div
-        class="module-card module-acheron module-disabled"
-        :style="{ animationDelay: '0.4s' }"
-      >
-        <div class="card-glow"></div>
+      <div class="card card-acheron card-disabled" style="animation-delay: 0.3s">
+        <div class="card-bg"></div>
         <div class="card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="3" y="11" width="18" height="11" rx="2"/>
@@ -161,101 +114,86 @@
             <circle cx="12" cy="16" r="1"/>
           </svg>
         </div>
-        <div class="card-content">
-          <h2 class="card-title">Acheron</h2>
-          <p class="card-desc">Bóveda cifrada de credenciales y tarjetas para tu organización.</p>
-          <div class="card-meta">
-            <span class="card-badge card-badge--later">Pendiente</span>
-          </div>
+        <h2 class="card-title">Acheron</h2>
+        <p class="card-desc">Bóveda cifrada de credenciales y tarjetas para tu organización.</p>
+        <div class="card-meta">
+          <span class="card-status status-later">Pendiente</span>
         </div>
-        <div class="wip-overlay">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
-            <circle cx="12" cy="12" r="10"/>
-            <polyline points="12 6 12 12 16 14"/>
-          </svg>
-          <span>Disponible más adelante</span>
+        <div class="card-wip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Próximamente</span>
         </div>
       </div>
     </main>
 
-    <!-- Footer -->
     <footer class="hub-footer">
-      <span>SeQ Platform &mdash; Security Operations Suite</span>
+      SeQ Platform &mdash; Security Operations Suite
     </footer>
   </div>
 </template>
 
 <script setup>
-/**
- * HubView — Dashboard principal de la plataforma.
- *
- * Sustituye a hub.html + hub.js. Muestra el logo de SeQ,
- * los módulos disponibles y un sidebar de perfil.
- */
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
-import { useApi } from '@/composables/useApi'
+import { useProfileStore } from '@/stores/profileStore'
+import StarBackground from '@/components/shared/StarBackground.vue'
+import TerminalConsole from '@/components/shared/TerminalConsole.vue'
 
 const auth = useAuthStore()
-const { apiFetch } = useApi()
+const profileStore = useProfileStore()
 
-const sidebarOpen = ref(false)
-const profileName = ref('Usuario')
-const profileLoaded = ref(false)
-const sidebarRef = ref(null)
+const profileOpen = ref(false)
+const dropRef = ref(null)
 
-/** Determina el label del rol para mostrar */
-const roleLabel = ref('Usuario')
+const profileName = computed(() => {
+  const fn = profileStore.profile.first_name
+  const ln = profileStore.profile.last_name
+  if (fn || ln) return `${fn} ${ln}`.trim()
+  return auth.username() || 'Usuario'
+})
 
-let clickOutsideHandler = null
+const profileLoaded = computed(() => !!profileStore.profile.username)
+
+const roleLabel = computed(() => {
+  const r = profileStore.profile.role || auth.role
+  if (r === 'role_root') return 'Root'
+  if (r === 'role_admin') return 'Admin'
+  return 'Usuario'
+})
+
+const profileInitials = computed(() => {
+  const parts = profileName.value.split(' ')
+  return parts.length >= 2
+    ? (parts[0][0] + parts[1][0]).toUpperCase()
+    : (parts[0]?.[0] || 'U').toUpperCase()
+})
+
+let clickOutside = null
 
 onMounted(() => {
-  loadProfileName()
-
-  clickOutsideHandler = (e) => {
-    const sb = sidebarRef.value
-    const tb = document.querySelector('.sidebar-toggle')
-    if (sb && tb && !sb.contains(e.target) && !tb.contains(e.target)) {
-      sidebarOpen.value = false
+  console.log('[HubView] mounted, llamando loadProfile...')
+  profileStore.loadProfile()
+  clickOutside = (e) => {
+    const d = dropRef.value
+    const t = document.querySelector('.profile-trigger')
+    if (d && t && !d.contains(e.target) && !t.contains(e.target)) {
+      profileOpen.value = false
     }
   }
-  document.addEventListener('click', clickOutsideHandler)
+  document.addEventListener('click', clickOutside)
 })
 
 onUnmounted(() => {
-  if (clickOutsideHandler) {
-    document.removeEventListener('click', clickOutsideHandler)
-  }
+  if (clickOutside) document.removeEventListener('click', clickOutside)
 })
 
-async function loadProfileName() {
-  try {
-    const res = await apiFetch('/users/me')
-    if (res?.ok) {
-      const data = await res.json()
-      profileName.value = `${data.first_name} ${data.last_name}`
-      const r = data.role || auth.role
-      if (r === 'role_root') roleLabel.value = 'Root'
-      else if (r === 'role_admin') roleLabel.value = 'Administrador'
-      else roleLabel.value = 'Usuario'
-    }
-  } catch {
-    profileName.value = auth.username() || 'Usuario'
-  } finally {
-    profileLoaded.value = true
-  }
-}
-
 function logout() {
-  sidebarOpen.value = false
+  profileOpen.value = false
   auth.logout()
 }
 </script>
 
 <style scoped>
-/* ═══════════════════════════════════════════════════════════
-   HUB PAGE — Layout & Background
-   ═══════════════════════════════════════════════════════════ */
 .hub-page {
   min-height: 100vh;
   display: flex;
@@ -264,492 +202,374 @@ function logout() {
   overflow-x: hidden;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SIDEBAR TOGGLE
-   ═══════════════════════════════════════════════════════════ */
-.sidebar-toggle {
+/* Profile trigger — top-right */
+.profile-trigger {
   position: fixed;
-  top: 1.25rem;
-  left: 1.25rem;
-  z-index: 101;
-  width: 44px;
-  height: 44px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 0.6rem;
-  color: var(--text-muted);
+  top: 1rem;
+  right: 1.25rem;
+  z-index: 51;
   cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+.profile-avatar-mini {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  border: 1.5px solid var(--border-med);
+  color: var(--accent-bright);
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.25s ease;
-  backdrop-filter: blur(8px);
 }
-.sidebar-toggle svg {
-  width: 22px;
-  height: 22px;
-  transition: transform 0.25s ease;
-}
-.sidebar-toggle:hover {
+.profile-trigger:hover .profile-avatar-mini {
   border-color: var(--accent);
-  color: var(--accent);
-  box-shadow: 0 0 16px var(--accent-dim);
-}
-.sidebar-toggle.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.sidebar-toggle.active svg {
-  transform: rotate(90deg);
+  box-shadow: 0 0 12px var(--accent-dim);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SIDEBAR — Profile panel
-   ═══════════════════════════════════════════════════════════ */
-.sidebar-enter-active,
-.sidebar-leave-active {
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
-}
-.sidebar-enter-from,
-.sidebar-leave-to {
-  transform: translateX(-100%);
-  opacity: 0;
-}
-
-.profile-sidebar {
+/* Profile dropdown */
+.profile-drop {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 280px;
-  height: 100vh;
+  top: calc(1rem + 42px);
+  right: 1.25rem;
+  z-index: 51;
+  width: 240px;
   background: var(--surface);
-  border-right: 1px solid var(--border);
-  z-index: 100;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
+  border: 1px solid var(--border-solid);
+  border-radius: 10px;
+  padding: 0.75rem;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+  animation: seq-fade-up 0.15s ease-out;
 }
-
-.profile-header {
-  text-align: center;
-  padding: 2.5rem 0 1.5rem;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.25rem;
+.drop-enter-active,
+.drop-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
-
-.profile-avatar-wrap {
-  position: relative;
-  display: inline-block;
-  margin-bottom: 1rem;
-}
-.profile-avatar {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  background: var(--surface-2);
-  border: 2px solid var(--border);
-  position: relative;
-  z-index: 1;
-  transition: border-color 0.3s ease;
-}
-.profile-avatar-wrap:hover .profile-avatar {
-  border-color: var(--accent);
-}
-.avatar-glow {
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--accent-dim) 0%, transparent 70%);
+.drop-enter-from,
+.drop-leave-to {
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transform: translateY(-4px);
 }
-.profile-avatar-wrap:hover .avatar-glow {
-  opacity: 1;
+.drop-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.4rem;
 }
-
-.profile-name-wrap {
-  min-height: 28px;
+.drop-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+  font-size: 0.72rem;
+  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
-.profile-name {
-  font-size: 1.1rem;
-  font-weight: 700;
+.drop-name-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.drop-name {
+  font-size: 0.88rem;
+  font-weight: 600;
   color: var(--text);
-  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.profile-role {
-  font-size: 0.8rem;
+.drop-role {
+  font-size: 0.7rem;
   color: var(--text-muted);
-  margin-top: 0.25rem;
-  font-weight: 500;
 }
-
-/* Skeleton shimmer for loading name */
-.skeleton-name {
-  width: 140px;
-  height: 20px;
-  border-radius: 6px;
-  background: linear-gradient(
-    90deg,
-    var(--surface-2) 25%,
-    var(--surface-3) 50%,
-    var(--surface-2) 75%
-  );
-  background-size: 200% 100%;
+.skeleton-line {
+  width: 100px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--surface-2);
   animation: seq-shimmer 1.5s infinite;
+  background-size: 200% 100%;
+  background-image: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
 }
 
-.profile-menu {
+.drop-menu {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.15rem;
 }
-.menu-item {
+.drop-item {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background: none;
-  border: none;
-  border-radius: 10px;
+  gap: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
   color: var(--text-dim);
-  font-size: 0.95rem;
+  font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  border: none;
+  background: none;
   width: 100%;
   text-align: left;
-  text-decoration: none;
 }
-.menu-item svg {
-  width: 20px;
-  height: 20px;
+.drop-item svg {
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
-  opacity: 0.7;
-  transition: opacity 0.2s ease;
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
 }
-.menu-item:hover {
+.drop-item:hover {
   background: var(--surface-2);
   color: var(--text);
-  transform: translateX(4px);
 }
-.menu-item:hover svg {
-  opacity: 1;
-}
-.menu-item--danger {
-  color: var(--danger);
-  margin-top: 0.5rem;
-}
-.menu-item--danger:hover {
-  background: var(--danger-dim);
-  color: var(--danger);
+.drop-item:hover svg { opacity: 0.8; }
+.drop-item--danger { color: var(--danger); }
+.drop-item--danger:hover { background: var(--danger-dim); }
+.drop-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.25rem 0;
 }
 
-/* Backdrop for mobile sidebar */
-.sidebar-backdrop {
+.drop-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-  z-index: 99;
+  z-index: 50;
+  background: transparent;
 }
 .fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
+.fade-leave-active { transition: opacity 0.15s ease; }
 .fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
+.fade-leave-to { opacity: 0; }
 
-/* ═══════════════════════════════════════════════════════════
-   HEADER
-   ═══════════════════════════════════════════════════════════ */
-.hub-header {
+/* Hero */
+.hub-hero {
   text-align: center;
-  padding: 4rem 1.5rem 2.5rem;
+  padding: 3.5rem 1.5rem 2.5rem;
   position: relative;
   z-index: 1;
   animation: seq-fade-up 0.6s ease-out;
 }
-
-.hub-logo {
-  margin-bottom: 0.75rem;
+.hero-logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
+  gap: 0.3rem;
+  margin-bottom: 0.4rem;
 }
-.logo-bracket {
+.hero-bracket {
   color: var(--accent);
-  font-size: 2rem;
+  font-size: 1.8rem;
   font-weight: 300;
-  opacity: 0.7;
-}
-.logo-text {
-  color: var(--text);
-  font-size: 2.4rem;
-  font-weight: 800;
-  letter-spacing: 2px;
-  text-shadow: 0 0 40px rgba(56, 189, 248, 0.15);
-}
-.hub-subtitle {
-  color: var(--text-muted);
-  font-size: 1.05rem;
-  font-weight: 400;
-  letter-spacing: 0.03em;
-}
-.hub-version {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  margin-top: 0.75rem;
-  font-family: var(--font-mono);
   opacity: 0.5;
 }
+.hero-text {
+  color: var(--text);
+  font-size: 2.2rem;
+  font-weight: 800;
+  font-family: var(--font-display);
+  letter-spacing: 3px;
+}
+.hero-sub {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  margin-bottom: 2rem;
+}
+.hero-terminal {
+  display: flex;
+  justify-content: center;
+}
 
-/* ═══════════════════════════════════════════════════════════
-   MODULE CARDS GRID
-   ═══════════════════════════════════════════════════════════ */
-.hub-grid {
+/* Cards */
+.hub-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 1.5rem;
-  max-width: 1100px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.25rem;
+  max-width: 1000px;
   width: 100%;
   margin: 0 auto;
   padding: 0 1.5rem 3rem;
   flex: 1;
   position: relative;
   z-index: 1;
-  align-content: start;   /* no distribuir espacio sobrante entre filas */
-  align-items: start;     /* las cards no se estiran verticalmente en su celda */
+  align-content: start;
 }
 
-.module-card {
+.card {
   position: relative;
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 2rem;
+  border-radius: 12px;
+  padding: 1.75rem;
   text-decoration: none;
   display: flex;
   flex-direction: column;
-  min-height: 240px;
-  max-height: 320px;
+  min-height: 220px;
   animation: seq-fade-up 0.5s ease-out backwards;
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.3s ease,
-              box-shadow 0.3s ease;
+  transition: transform 0.3s cubic-bezier(0.16,1,0.3,1),
+              border-color 0.3s ease;
   cursor: pointer;
   isolation: isolate;
 }
-
-/* Card hover — lift + glow */
-.module-card:not(.module-disabled):hover {
-  transform: translateY(-6px) scale(1.01);
-  border-color: var(--border-med);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.3),
-              0 0 0 1px var(--accent-dim);
-}
-
-/* Glow orb behind card */
-.card-glow {
+.card-bg {
   position: absolute;
-  top: -40%;
-  right: -30%;
-  width: 250px;
-  height: 250px;
+  top: 0;
+  right: 0;
+  width: 180px;
+  height: 180px;
   border-radius: 50%;
   opacity: 0;
   transition: opacity 0.5s ease;
   pointer-events: none;
-  filter: blur(50px);
+  filter: blur(60px);
   z-index: -1;
 }
-.module-sentinel .card-glow {
-  background: radial-gradient(circle, rgba(52, 211, 153, 0.2) 0%, transparent 70%);
+.card-sentinel .card-bg { background: radial-gradient(circle, rgba(76,183,130,0.15) 0%, transparent 70%); }
+.card-aegis .card-bg    { background: radial-gradient(circle, rgba(96,128,224,0.15) 0%, transparent 70%); }
+.card-acheron .card-bg  { background: radial-gradient(circle, rgba(160,122,192,0.12) 0%, transparent 70%); }
+.card:not(.card-disabled):hover {
+  transform: translateY(-4px);
+  border-color: var(--border-med);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.3);
 }
-.module-aegis .card-glow {
-  background: radial-gradient(circle, rgba(167, 139, 250, 0.2) 0%, transparent 70%);
-}
-.module-acheron .card-glow {
-  background: radial-gradient(circle, rgba(129, 140, 248, 0.15) 0%, transparent 70%);
-}
-.module-card:not(.module-disabled):hover .card-glow {
+.card:not(.card-disabled):hover .card-bg {
   opacity: 1;
-}
-
-/* Shine sweep on hover */
-.card-shine {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    105deg,
-    transparent 40%,
-    rgba(255, 255, 255, 0.03) 45%,
-    rgba(255, 255, 255, 0.06) 50%,
-    rgba(255, 255, 255, 0.03) 55%,
-    transparent 60%
-  );
-  background-size: 200% 100%;
-  background-position: 100% 0;
-  opacity: 0;
-  transition: opacity 0.3s ease, background-position 0s;
-  pointer-events: none;
-  z-index: 0;
-}
-.module-card:not(.module-disabled):hover .card-shine {
-  opacity: 1;
-  background-position: -100% 0;
-  transition: opacity 0.3s ease, background-position 0.6s ease;
 }
 
 .card-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
   background: var(--surface-2);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
   border: 1px solid var(--border);
   transition: all 0.3s ease;
   position: relative;
   z-index: 1;
 }
 .card-icon svg {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   transition: transform 0.3s ease;
 }
-.module-card:not(.module-disabled):hover .card-icon {
+.card:not(.card-disabled):hover .card-icon {
   border-color: var(--accent);
-  box-shadow: 0 0 20px var(--accent-dim);
+  box-shadow: 0 0 16px var(--accent-dim);
 }
-.module-card:not(.module-disabled):hover .card-icon svg {
+.card:not(.card-disabled):hover .card-icon svg {
   transform: scale(1.1);
 }
 
-.module-sentinel { --accent: #34d399; --accent-dim: rgba(52,211,153,0.12); }
-.module-sentinel .card-icon svg { color: #34d399; }
-.module-aegis    { --accent: #a78bfa; --accent-dim: rgba(167,139,250,0.12); }
-.module-aegis .card-icon svg    { color: #a78bfa; }
-.module-acheron  { --accent: #818cf8; --accent-dim: rgba(129,140,248,0.10); }
-.module-acheron .card-icon svg  { color: #818cf8; }
+.card-sentinel { --accent: #4cb782; --accent-dim: rgba(76,183,130,0.10); }
+.card-sentinel .card-icon svg { color: #4cb782; }
+.card-aegis    { --accent: #6080e0; --accent-dim: rgba(96,128,224,0.10); }
+.card-aegis .card-icon svg    { color: #6080e0; }
+.card-acheron  { --accent: #a07ac0; --accent-dim: rgba(160,122,192,0.08); }
+.card-acheron .card-icon svg  { color: #a07ac0; }
 
-.card-content {
-  flex: 1;
-  position: relative;
-  z-index: 1;
-}
 .card-title {
-  font-size: 1.35rem;
+  font-size: 1.15rem;
   font-weight: 700;
   color: var(--text);
-  margin-bottom: 0.5rem;
-  letter-spacing: -0.01em;
+  margin-bottom: 0.4rem;
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
 }
 .card-desc {
-  font-size: 0.92rem;
-  color: var(--text-muted);
+  font-size: 0.82rem;
+  color: var(--text-dim);
   line-height: 1.6;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
+  flex: 1;
 }
 
 .card-meta {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
 }
-
-.card-badge {
+.card-status {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.7rem;
-  border-radius: 20px;
-  font-size: 0.75rem;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
   font-weight: 600;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
 }
-.badge-dot {
-  width: 6px;
-  height: 6px;
+.status-dot {
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: currentColor;
-  animation: seq-pulse 2s ease-in-out infinite;
 }
-.card-badge--active {
+.status-active {
   background: var(--success-dim);
   color: var(--success);
-  border: 1px solid rgba(52, 211, 153, 0.2);
+  border: 1px solid rgba(76,183,130,0.15);
 }
-.card-badge--later {
+.status-later {
   background: var(--warn-dim);
   color: var(--warn);
-  border: 1px solid rgba(251, 191, 36, 0.2);
+  border: 1px solid rgba(212,160,74,0.15);
 }
-
-.card-count {
-  font-size: 0.75rem;
+.card-info {
+  font-size: 0.7rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
-.card-arrow {
-  position: absolute;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  color: var(--text-muted);
-  opacity: 0.5;
-  transition: all 0.3s ease;
-  z-index: 1;
-}
-.card-arrow svg {
-  width: 20px;
-  height: 20px;
-}
-.module-card:not(.module-disabled):hover .card-arrow {
-  opacity: 1;
-  color: var(--accent);
-  transform: translateX(3px);
-}
-
-/* Disabled module */
-.module-disabled {
-  opacity: 0.45;
+.card-disabled {
+  opacity: 0.4;
   pointer-events: none;
   cursor: default;
 }
-.wip-overlay {
+.card-wip {
   position: absolute;
   top: 0;
   right: 0;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.65rem 0.85rem;
+  gap: 0.3rem;
+  padding: 0.55rem 0.7rem;
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 500;
-  border-radius: 16px 0 16px 0;
+  border-radius: 0 12px 0 12px;
+  background: rgba(255,255,255,0.02);
   pointer-events: none;
 }
+.card-wip svg { width: 14px; height: 14px; }
 
-/* ═══════════════════════════════════════════════════════════
-   FOOTER
-   ═══════════════════════════════════════════════════════════ */
+/* Footer */
 .hub-footer {
   text-align: center;
-  padding: 1.75rem;
-  font-size: 0.8rem;
+  padding: 1.5rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
   position: relative;
@@ -757,27 +577,21 @@ function logout() {
   letter-spacing: 0.03em;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   RESPONSIVE
-   ═══════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
-  .hub-grid {
+  .hub-cards {
     grid-template-columns: 1fr;
     padding: 0 1rem 2rem;
     gap: 1rem;
   }
-  .module-card {
-    min-height: 200px;
-    padding: 1.5rem;
+  .card {
+    min-height: 190px;
+    padding: 1.25rem;
   }
-  .hub-header {
-    padding: 3rem 1rem 1.5rem;
+  .hub-hero {
+    padding: 2.5rem 1rem 1.5rem;
   }
-  .logo-text {
-    font-size: 2rem;
-  }
-  .profile-sidebar {
-    width: 260px;
+  .hero-text {
+    font-size: 1.8rem;
   }
 }
 </style>

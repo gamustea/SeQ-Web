@@ -151,7 +151,7 @@ export const useAuthStore = defineStore('auth', () => {
       const res = await fetch('/oauth/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ grantType: 'refresh_token', refreshToken: refreshToken.value }),
+        body: JSON.stringify({ grantType: 'refresh_token', refresh_token: refreshToken.value }),
       })
       if (!res.ok) return false
       const data = await res.json()

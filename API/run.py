@@ -58,10 +58,8 @@ def _graceful_shutdown(signum, *args) -> None:
     """
     Manejador de señales para shutdown graceful de la aplicación.
 
-    Cancela todas las tareas de escaneo en ejecución antes de terminar
-    el proceso, asegurando que los escaneos no queden huérfanos. Usa una
-    bandera a nivel de módulo para evitar re-entrada y forzar salida
-    inmediata si se recibe una segunda señal durante el apagado.
+    Cancela todas las tareas en segundo plano antes de terminar
+    el proceso, asegurando que los workers y subprocesses no queden huérfanos.
 
     Args:
         signum: Número de señal recibida (SIGTERM o SIGINT).
@@ -70,17 +68,10 @@ def _graceful_shutdown(signum, *args) -> None:
     Behavior:
         1. Protege contra re-entrada: fuerza os._exit(1) si ya se está apagando.
         2. Registra la señal recibida.
-        3. Cancela todas las tareas de escaneo activas (ScanManager).
-        4. Espera hasta SHUTDOWN_TIMEOUT segundos a que terminen.
-        5. Detiene el scheduler de tareas programadas.
-        6. Cierra las sesiones de base de datos.
-        7. Termina el proceso con os._exit(0).
-
-    Note:
-        Este manejador se registra para SIGTERM y SIGINT al inicio del módulo.
-        os._exit(0) garantiza terminación inmediata sin volver a disparar
-        el handler, rompiendo el bucle de recursión que causaba la versión
-        anterior con _os.kill().
+        3. Detiene SeQueue (cancela todas las tareas en todas las categorías).
+        4. Detiene el scheduler de tareas programadas.
+        5. Cierra las sesiones de base de datos.
+        6. Termina el proceso con os._exit(0).
     """
     global _IS_SHUTTING_DOWN
 
@@ -95,15 +86,12 @@ def _graceful_shutdown(signum, *args) -> None:
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
     try:
-        from src.modules.sentinel import ScanManager
-        _logger.info("Cancelando tarea(s) activa(s)...")
-        ScanManager.cancel_all_running(
-            logger=_logger,
-            timeout=APP_CONTEXT.shutdown_time
-        )
-        _logger.info("Todas las tareas finalizadas.")
+        from src.modules.system.sequeue import SeQueue
+        _logger.info("Cancelando tareas en segundo plano...")
+        SeQueue.get_instance().cancel_all()
+        _logger.info("Tareas canceladas.")
     except Exception as e:
-        _logger.error(f"Error durante el apagado: {e}")
+        _logger.error(f"Error cancelando tareas: {e}")
 
     _logger.info("[Shutdown] Deteniendo scheduler...")
     try:
@@ -183,6 +171,10 @@ def create_app(fresh_db_init: bool = False) -> Flask:
 
     _logger.info("Arrancando scheduler de tareas programadas...")
     Scheduler.start()
+
+    _logger.info("Arrancando cola de tareas en segundo plano (SeQueue)...")
+    from src.modules.system.sequeue import SeQueue
+    SeQueue.get_instance().start()
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app

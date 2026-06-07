@@ -425,6 +425,22 @@ def save_full_config(new_config: dict) -> dict:
 
 
 # =============================================================================
+# CONFIGURACIÓN DE SEQUEUE
+# =============================================================================
+
+@_lazy_load
+def get_sequeue_config() -> dict:
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
+    cfg = _configs.get("general", {}).get("sequeue", {})
+    max_workers_env = os.getenv("SEQUEUE_MAX_WORKERS")
+    if max_workers_env is not None:
+        cfg["max_workers"] = int(max_workers_env)
+
+    return cfg
+
+# =============================================================================
 # ENTORNO
 # =============================================================================
 

@@ -47,7 +47,7 @@ OAUTH_MANAGER = OAuthTokenManager()
 
 def get_current_user() -> "User":
     if not hasattr(request, 'current_user'):
-        user_id = request.current_user_id
+        user_id = request.current_user_id # type: ignore
         user = UserManager().get_user_by_id(user_id)
         if user is None:
             raise IllegalStateError("'user' detectado como None")
@@ -106,7 +106,7 @@ def oauth_token(data: dict[str, Any]):
         if not user:
             raise InvalidCredentialsError()
 
-        access_token = OAUTH_MANAGER.create_access_token(uid, user.username, user.role)
+        access_token = OAUTH_MANAGER.create_access_token(uid, user.username, user.role) # type: ignore
         user_attrs = USER_MANAGER.get_user_attributes(uid)
 
         _logger.info(f"Access token renovado para usuario ID: {uid}")

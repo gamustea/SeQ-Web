@@ -2,109 +2,104 @@
 
 ## Architecture
 
-Monorepo with three components:
-- **API** (`API/`) — Python/Flask REST backend (the core)
-- **web** (`web/`) — Vue 3 SPA in `web/app/` (Vite + Pinia + Vue Router), built to static files and served by Nginx in production or the Vite dev server in development
-- **mobile** (`mobile/AcheronMobile/`) — Android/Kotlin app with AcheronCore Java module
-
-The `API/` directory is the primary work area. The web and mobile dirs are separate projects with their own builds.
+Monorepo:
+- **API** (`API/`) — Python/Flask REST backend (primary work area)
+- **web** (`web/app/`) — Vue 3 SPA (Vite + Pinia + Vue Router)
+- **mobile** (`mobile/AcheronMobile/`) — Android/Kotlin + AcheronCore Java
 
 ## Entry Point
 
-`API/run.py` → `create_app()` factory. Registers blueprints then adds a catch-all UI route.
+`API/run.py` → `create_app()` factory. Does this in order:
+1. Register CORS, rate limiter, FlaskSmorest API
+2. Register blueprints (system, oauth, users, sentinel, acheron, aegis, pages)
+3. Init DB engine + create tables
+4. **Start APScheduler** (`Scheduler.start()`)
+5. **Start SeQueue** (`SeQueue.get_instance().start()`)
+6. Signal handlers (SIGTERM/SIGINT) → cancel SeQueue → stop Scheduler → close DB
 
 ```bash
-docker compose --profile dev up -d   # postgres (15432), ollama, openvas
-cd API && python run.py               # starts on 0.0.0.0:5000
+docker compose --profile dev up -d   # postgres(15432), ollama, openvas
+cd API && python run.py               # 0.0.0.0:5000
 ```
 
-Development — Vue frontend (separate terminal):
-```bash
-cd web/app && pnpm dev               # Vite dev server on :5173, proxies API to :5000
-```
+## SeQueue — Background Task Queue
 
-Docker compose has two profiles:
-- `dev` — infrastructure only (postgres, ollama, openvas). Use for local Python development.
-- `container` — everything including the API container and web. Use for full deployment.
+Central async task system at `API/src/modules/system/sequeue/`.
 
-The `.env` at the repo root is for docker-compose (PostgreSQL and OpenVAS credentials). The `API/.env` is for local development only; the containerised API does **not** load it.
+Key files: **`task.py`** (SeQueueTask dataclass + SeQueueTaskStatus enum), **`queue.py`** (SeQueue singleton with thread pool).
 
-## Database
-
-- PostgreSQL on port **15432** (not 5432). Container maps 15432→5432.
-- DB init: set `CREATE_DATABASE=True` in `API/.env`, then run the app. The `_init_db()` function in `run.py` drops and recreates everything. The `init_db.py` script referenced in README no longer exists.
-- SQLAlchemy models are in each module's `model.py`. Base class comes from `src.modules.shared`.
+Facts:
+- Thread-safe singleton: `SeQueue.get_instance()`
+- Config: `general.sequeue` in `SecOpsConfig.json` (`max_workers`, `history_max_items`, `history_ttl_seconds`). Override `max_workers` via env `SEQUEUE_MAX_WORKERS`.
+- Submit: `SeQueue.get_instance().submit(func, name=, category=, external_id=, args=, on_cancel=, on_complete=, on_error=)`
+- Categories in use: `"sentinel.scan"`, `"sentinel.report"`, `"aegis.generate"`
+- external_id patterns: `f"scan:{scan_id}"`, `f"sentinel-doc:{doc_id}"`, `f"aegis-doc:{document_id}"`
+- CamelCase in `to_dict()`: `externalId`, `createdAt`, `startedAt`, `finishedAt`
+- REST API (admin-only, `/system/sequeue/*`): status, list tasks, detail, cancel, resize workers
+- Separate `TaskStatus` enum exists in `sentinel/services/tasks.py` — not the same as `SeQueueTaskStatus`
 
 ## Config System
 
-Two sources, merged via lazy loading in `API/src/modules/system/config_reading.py` (imported as `CR`):
-1. `API/SecOpsConfig.json` — JSON config: DB credentials (fallback), prompts, color palettes, directory paths, module-specific settings.
-2. `API/.env` — environment variables override JSON config. Required for OAuth (JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRY_MINUTES, REFRESH_TOKEN_EXPIRY_DAYS) and database connection (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, etc.).
+`API/src/modules/system/config_reading.py` (imported as `CR`):
+1. `API/SecOpsConfig.json` — JSON config (DB fallback, prompts, directories, sequeue)
+2. `API/.env` — env vars override JSON. Required for OAuth (JWT_SECRET_KEY, JWT_ALGORITHM, etc.) and DB.
+3. Root `.env` — for docker-compose only (Postgres + OpenVAS creds). Not for the API.
 
-The root `.env` (at repo top level) is for docker-compose (PostgreSQL and OpenVAS credentials). The `API/.env` is read by python-dotenv **only when running locally** (`python run.py`). Inside the container, environment variables come directly from the `docker-compose.yml` `environment` section.
-
-## Modules
-
-All under `API/src/modules/`:
-- **shared/** — Base classes: `BaseManager`, `Base` (SQLAlchemy), `AIWriter`, `Document`, `ExceptionHandler`, rate limiter, decorators (`require_json`, `require_arg`, `normalize_target`)
-- **system/** — `config_reading` (`CR`), logging (`SecOpsLogger`), health endpoints
-- **users/** — ORM, auth (OAuth 2.0 + JWT), user management
-- **sentinel/** — Port scanning (Nmap), web scanning (Nikto), vulnerability scanning (OpenVAS), PDF/IA report generation. Sub-modules in `services/`
-- **aegis/** — AI-powered cybersecurity awareness content via Ollama
-- **acheron/** — Encrypted secret vault (Accounts, CreditCards)
-- **pages/** — Static HTML page serving
-- **infrastructure/** — Internal utilities
+All config keys lazily loaded via `@_lazy_load` decorator.
 
 ## Auth
 
-OAuth 2.0 with JWT. **JSON keys use camelCase** (`grantType`, `refresh_token`), not snake_case.
+OAuth 2.0 + JWT. **JSON keys use camelCase** (`grantType`, `refresh_token`).
 
 ```
 POST /oauth/token  {"grantType": "password", "username": "root", "password": "admin"}
 ```
 
-All protected endpoints require `Authorization: Bearer <access_token>`.
+Protected endpoints require `Authorization: Bearer <access_token>`. Roles checked via `require_role()`.
 
-## Dev Commands
+## Database
 
-No test files exist yet (`pytest`, `flake8`, `mypy`, `black` are listed as dependencies but no tests are written).
+- PostgreSQL port **15432** (container maps 15432→5432)
+- Init: set `CREATE_DATABASE=True` in `API/.env`, then run the app. `_init_db()` in `run.py` is destructive (drops + recreates DB + inserts root user and Topic rows).
+- Models: SQLAlchemy, each module has `model.py`, base from `src.modules.shared`.
+- All DB ops use `UnitOfWork` + repository pattern. No direct session management outside repos.
 
-```bash
-cd API && python run.py           # Run the app
-cd API && pip install -r requirements.txt   # Install deps (NOT REQUIREMENTS.txt)
-```
+## Scan System (sentinel)
 
-Linting/formatting (when tests exist):
-```bash
-cd API && flake8 .
-cd API && mypy .
-cd API && black --check .
-```
+- `sentinel/services/tasks.py`: `_Task` base class → `NmapScanTask`, `NiktoScanTask`, `OpenVASTask`
+- Each scan manager (NmapScanManager, NiktoScanManager, OpenVASScanManager) submits to SeQueue with `category="sentinel.scan"` and `external_id=f"scan:{scan_id}"`
+- `on_cancel=task.cancel` — cancels the subprocess / GMP task
+- OpenVAS: GMP API (not CLI). Uses `python-gvm`. Targets, port lists, scan configs auto-managed.
+- Scheduled scans via APScheduler (`sentinel/services/scheduling.py`). `Scheduler` class with interval/cron triggers. Synced from DB.
 
-## Ollama
+## Aegis
 
-Default model is **llama3.2** (set in `config_reading.py`), not llama3.1 (README is outdated). Override with `OLLAMA_MODEL` env var.
+- `aegis/managers.py`: `AegisManager` submits to SeQueue with `category="aegis.generate"`, `external_id=f"aegis-doc:{doc_id}"`
+- Uses Ollama (`llama3.2` default, override via `OLLAMA_MODEL` env var)
 
 ## Ports
 
 | Service | Port | Note |
 |---|---|---|
 | API | 5000 | `0.0.0.0:5000` |
-| PostgreSQL | 15432 | Mapped from container's 5432 |
-| OpenVAS | 9390/9392 | ~15min first start (NVT feed download) |
+| PostgreSQL | 15432 | Container maps 5432→15432 |
+| OpenVAS | 9390/9392 | ~15min first start (NVT feed) |
 | Ollama | 11434 | |
+
+## Docker
+
+Two profiles:
+- `dev` — infrastructure only (postgres, ollama, openvas)
+- `container` — everything including API and web containers
+
+GPU: `-f docker-compose.gpu-nvidia.yml / .gpu-intel.yml / .gpu-amd.yml`
 
 ## Things That Bite
 
-- `.env` contains credentials — never commit. `API/.env` is gitignored.
-- `API/src/data/` is gitignored (scan outputs, generated content).
-- `docs/` is gitignored (auto-generated by CI on push to main).
-- The `Interface/` directory referenced in README no longer exists — web files are in `web/` at repo root.
-- Docker files are colocated with their components: `API/Dockerfile` and `web/Dockerfile`. The old `API/docker/` directory has been removed.
+- `.env` files contain credentials — never commit. `API/.env` is gitignored.
+- `API/src/data/` and `docs/` are gitignored.
+- `_init_db()` is destructive — drops and recreates everything.
 - OpenVAS only accepts a single host per scan (not CIDR ranges).
-- `_init_db()` is destructive — it drops and recreates the entire database.
-
-## CI
-
-- Push to `main` → `sync-docs.yml` generates Python docs via `pdoc` → pushes to `docs` branch
-- Push to `docs` branch → `static.yml` deploys to GitHub Pages
+- `SecOpsConfig.json` values are lazily cached — changes require app restart unless written via `PUT /system` endpoint.
+- `sentinel/services/tasks.py` has its own `TaskStatus` enum separate from `SeQueueTaskStatus`.
+- API version is **3.2** (not from config, hardcoded in `create_app()`).
