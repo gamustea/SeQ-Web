@@ -610,7 +610,7 @@ class PDFCreator:
         doc.creator = "SeQ PDF Generator v2.0"
 
     def _on_page(self, canv, doc):
-        """Callback for rendering page elements (header, footer, sidebar).
+        """Callback for rendering page elements (header, footer, sidebar, small logo).
 
         Args:
             canv: Canvas instance.
@@ -634,7 +634,19 @@ class PDFCreator:
         canv.setLineWidth(0.5)
         canv.line(36, height - 42, width - 36, height - 42)
 
+        # Small logo in top-right corner (skipping cover page)
         page_num = canv.getPageNumber()
+        if page_num > 1:
+            logo_path = getattr(self, "_header_logo_path", None)
+            if logo_path is None:
+                directory_type = CR.DirectoryType.RESOURCES_SENTINEL
+                resource_directory = CR.get_directory_of(directory_type)
+                picture_name = self.printing_strategy.get_picture_name()
+                logo_path = os.path.join(resource_directory, picture_name)
+                self._header_logo_path = logo_path
+            if os.path.exists(logo_path):
+                canv.drawImage(logo_path, width - 50, height - 36, width=0.3 * inch, height=0.3 * inch, preserveAspectRatio=True)
+
         canv.setFont("Helvetica", 8)
         canv.setFillColor(colors.HexColor("#999999"))
         canv.drawRightString(width - 40, 28, f"Página {page_num}")
@@ -671,19 +683,9 @@ class PDFCreator:
         white = colors.HexColor(palette[ColorType.WHITE])
         black = colors.HexColor(palette[ColorType.BLACK])
 
-        self.append_logo(elements, is_cover=True)
-
-        doc_type_style = ParagraphStyle(
-            "CoverDocType",
-            parent=theme.styles["Normal"],
-            fontSize=11,
-            textColor=main,
-            alignment=TA_CENTER,
-            fontName="Helvetica-Bold",
-            spaceAfter=10,
-        )
-        elements.append(Paragraph(document_type.upper(), doc_type_style))
-        elements.append(Spacer(1, 0.25 * inch))
+        # --- Header band: logo badge + document type ---
+        elements.append(self._make_logo_badge())
+        elements.append(Spacer(1, 0.15 * inch))
 
         title_style = ParagraphStyle(
             "CoverTitle",
@@ -698,8 +700,8 @@ class PDFCreator:
         title_table = Table([[title_paragraph]], colWidths=[6 * inch])
         title_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), main),
-            ("TOPPADDING", (0, 0), (-1, -1), 24),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 24),
+            ("TOPPADDING", (0, 0), (-1, -1), 16),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
             ("LEFTPADDING", (0, 0), (-1, -1), 24),
             ("RIGHTPADDING", (0, 0), (-1, -1), 24),
         ]))
@@ -747,15 +749,22 @@ class PDFCreator:
         elements.append(decoration)
         elements.append(PageBreak())
 
-    def append_logo(self, elements: list, is_cover: bool = False) -> None:
-        """Append logo image to the document.
+    def append_logo(self, elements: list) -> None:
+        """Append the logo as a standalone themed badge (useful for cover pages).
 
         Args:
             elements: List of flowable elements.
-            is_cover: Whether this is for the cover page (larger logo).
         """
+        badge = self._make_logo_badge()
+        elements.append(badge)
+        elements.append(Spacer(1, 0.2 * inch))
 
+    def _make_logo_badge(self) -> Table:
+        """Build a header-band badge: themed square container with the tool logo.
 
+        Returns:
+            A Table flowable (full-width, main-colored) with the logo centred inside.
+        """
         directory_type = CR.DirectoryType.RESOURCES_SENTINEL
         resource_directory = CR.get_directory_of(directory_type)
         picture_name = self.printing_strategy.get_picture_name()
@@ -763,18 +772,49 @@ class PDFCreator:
 
         if not os.path.exists(image_filename):
             self.logger.error(f"No se ha encontrado la imagen {image_filename}")
-            return
+            dummy = Table([[""]], colWidths=[0.9 * inch], rowHeights=[0.9 * inch])
+            dummy.hAlign = "CENTER"
+            return dummy
 
-        if is_cover:
-            logo = Image(image_filename, width=3 * inch, height=3 * inch)
-            logo.hAlign = "CENTER"
-            elements.append(logo)
-            elements.append(Spacer(1, 0.3 * inch))
-        else:
-            logo = Image(image_filename, width=1.2 * inch, height=1.2 * inch)
-            logo.hAlign = "LEFT"
-            elements.append(logo)
-            elements.append(Spacer(1, 0.15 * inch))
+        palette = self.printing_strategy.color_palette
+        main_color = colors.HexColor(palette[ColorType.MAIN])
+
+        logo = Image(image_filename, width=0.9 * inch, height=0.9 * inch)
+        container = Table([[logo]], colWidths=[1.3 * inch], rowHeights=[1.3 * inch])
+        container.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), main_color),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        container.hAlign = "CENTER"
+
+        doc_type_style = ParagraphStyle(
+            "CoverDocType",
+            parent=getSampleStyleSheet()["Normal"],
+            fontSize=13,
+            textColor=colors.HexColor(palette[ColorType.WHITE]),
+            alignment=TA_LEFT,
+            fontName="Helvetica-Bold",
+        )
+        doc_para = Paragraph(self.printing_strategy.get_report_title().upper(), doc_type_style)
+
+        band = Table([[container, doc_para]], colWidths=[1.8 * inch, 4.2 * inch])
+        band.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), main_color),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, 0), "CENTER"),
+            ("ALIGN", (1, 0), (1, 0), "LEFT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        band.hAlign = "CENTER"
+        return band
 
     def append_consent(self, elements: list, theme: ReportTheme) -> None:
         """Append consent declaration page to the document.
@@ -892,7 +932,6 @@ class PDFCreator:
             client_name=client_name,
         )
 
-        self.append_logo(elements, is_cover=False)
         self.printing_strategy.append_body(theme=theme, elements=elements, ai_report=ai_report)
 
         self.append_consent(elements, theme)
