@@ -136,7 +136,7 @@ class AIWriter(ABC):
                 )
             return "\n".join(lines)
         except Exception as exc:
-            self.logger.error(f"Error búsqueda web: {exc}")
+            self.logger.error(f"Error búsqueda web: {exc}", exc_info=True)
             return f"[ERROR BÚSQUEDA] {exc}"
 
 
@@ -230,7 +230,7 @@ class AIWriter(ABC):
             )
             self.logger.info("Response received successfully")
         except Exception as e:
-            self.logger.error("Error connecting to {self.host}: {e}")
+            self.logger.error(f"Error connecting to {self.host}: {e}", exc_info=True)
             raise
 
         if getattr(resp.message, "tool_calls", None):  # pylint: disable=no-member
@@ -383,7 +383,7 @@ def safe_delete_file(filename: str, logger: Any = None) -> bool:
         return True
     except Exception as exc:
         if logger:
-            logger.warning(f"No se pudo eliminar el archivo {filename}: {exc}")
+            logger.warning(f"No se pudo eliminar el archivo {filename}: {exc}", exc_info=True)
         return False
 
 

@@ -626,9 +626,9 @@ class PDFCreator:
         canv.setFillColor(main)
         canv.rect(20, 20, 6, height - 40, stroke=0, fill=1)
 
-        canv.setFont("Helvetica-Bold", 9)
+        canv.setFont("Helvetica-Bold", 12)
         canv.setFillColor(dark)
-        canv.drawString(40, height - 30, "SecOps Security Report")
+        canv.drawString(40, height - 30, "SeQ Security Report")
 
         canv.setStrokeColor(colors.HexColor("#e0e0e0"))
         canv.setLineWidth(0.5)
@@ -683,9 +683,7 @@ class PDFCreator:
         white = colors.HexColor(palette[ColorType.WHITE])
         black = colors.HexColor(palette[ColorType.BLACK])
 
-        # --- Header band: logo badge + document type ---
-        elements.append(self._make_logo_badge())
-        elements.append(Spacer(1, 0.15 * inch))
+        elements.append(Spacer(1, 2.5 * inch))
 
         title_style = ParagraphStyle(
             "CoverTitle",

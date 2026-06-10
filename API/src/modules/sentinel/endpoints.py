@@ -331,7 +331,7 @@ def retrieve_all_scans(args):
             for scan in mgr.get_scans_for_user(uid):
                 all_results.append(mgr.format_scan(scan.id))
         except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo scans: {exc}")
+            _logger.error(f"Error obteniendo scans: {exc}", exc_info=True)
 
     return {
         "message": "Escaneos obtenidos correctamente",

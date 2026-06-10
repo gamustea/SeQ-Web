@@ -230,5 +230,6 @@ def _parse_dt(value):
         return datetime.utcnow()
     try:
         return datetime.fromisoformat(value)
-    except Exception:
+    except Exception as e:
+        _logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
         return datetime.utcnow()
