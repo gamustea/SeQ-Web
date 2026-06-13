@@ -7,7 +7,7 @@ import time
 
 from urllib.parse import urlparse
 from pathlib import Path
-from typing import Optional, Any, List
+from typing import Callable, Optional, Any, List
 from enum import Enum
 from abc import ABC, abstractmethod
 
@@ -42,7 +42,12 @@ class _Task(ABC):
     """
     logger = SecOpsLogger(name=__name__).get_logger()
 
-    def __init__(self, target: str, timeout: int = 200000):
+    def __init__(
+        self,
+        target: str,
+        timeout: int = 200000,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ):
         self.timeout = timeout
         self.status: TaskStatus = TaskStatus.PENDING
         self.progress: int = 0
@@ -55,6 +60,7 @@ class _Task(ABC):
         self._started = threading.Event()
         self._cancel_event = threading.Event()
         self._output_file: Optional[Path] = None
+        self._progress_callback = progress_callback
 
     @abstractmethod
     def _build_command(self) -> List[str]:
@@ -92,6 +98,8 @@ class _Task(ABC):
                 if prog != -1:
                     with self._lock:
                         self.progress = prog
+                    if self._progress_callback:
+                        self._progress_callback(prog)
 
         except (OSError, IOError) as e:
             self.logger.error(f"Error leyendo salida: {e}", exc_info=True)
@@ -157,21 +165,33 @@ class _Task(ABC):
             self.logger.error(f"Error iniciando escaneo: {e}", exc_info=True)
             raise
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
+    def wait(self, timeout: Optional[float] = None, cancel_check: Optional[Callable[[], bool]] = None) -> bool:
         """Espera a que termine el escaneo. Llamada BLOQUEANTE para el thread worker."""
         try:
             if not self._started.is_set():
                 self.logger.error("wait() llamado pero scan() nunca se ejecutó")
                 return False
 
-            finished = self._finished.wait(timeout)
-            if not finished:
-                self.status = TaskStatus.TIMEOUT
-                self.logger.error("Timeout agotado")
-                if self._proc and self._proc.poll() is None:
-                    self._proc.kill()
-                    self._proc.wait()
-                return False
+            granularity = 1.0
+            deadline = time.monotonic() + timeout if timeout else None
+
+            while not self._finished.is_set():
+                if cancel_check and cancel_check():
+                    self.cancel()
+                    return False
+
+                if deadline:
+                    remaining = max(0.0, deadline - time.monotonic())
+                    if remaining <= 0:
+                        self.status = TaskStatus.TIMEOUT
+                        self.logger.error("Timeout agotado")
+                        if self._proc and self._proc.poll() is None:
+                            self._proc.kill()
+                            self._proc.wait()
+                        return False
+                    self._finished.wait(min(granularity, remaining))
+                else:
+                    self._finished.wait(granularity)
 
             if self._cancel_event.is_set():
                 self.status = TaskStatus.CANCELLED
@@ -384,9 +404,10 @@ class OpenVASTask(_Task):
         password: str,
         scan_config: Optional[str] = None,
         port_list_id: Optional[str] = None,
-        timeout: int = 14400
+        timeout: int = 14400,
+        progress_callback: Optional[Callable[[int], None]] = None,
     ):
-        super().__init__(target, timeout)
+        super().__init__(target, timeout, progress_callback=progress_callback)
         self.hostname = hostname
         self.port = port
         self.username = username
@@ -414,17 +435,27 @@ class OpenVASTask(_Task):
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
+    def wait(self, timeout: Optional[float] = None, cancel_check: Optional[Callable[[], bool]] = None) -> bool:
         """Override: OpenVAS gestiona su propio ciclo interno."""
         try:
             safe_timeout = min(timeout, 28800) if timeout is not None else None
-            #Bloque el hilo hasta que acaba la ejecucuión del Task, falla o acaba el timeout
-            finished = self._finished.wait(safe_timeout)
+            granularity = 1.0
+            deadline = time.monotonic() + safe_timeout if safe_timeout else None
 
-            if not finished:
-                self.status = TaskStatus.TIMEOUT
-                self.logger.error("Timeout esperando finalización de OpenVAS")
-                return False
+            while not self._finished.is_set():
+                if cancel_check and cancel_check():
+                    self.cancel()
+                    return False
+
+                if deadline:
+                    remaining = max(0.0, deadline - time.monotonic())
+                    if remaining <= 0:
+                        self.status = TaskStatus.TIMEOUT
+                        self.logger.error("Timeout esperando finalización de OpenVAS")
+                        return False
+                    self._finished.wait(min(granularity, remaining))
+                else:
+                    self._finished.wait(granularity)
 
             if self.status in (TaskStatus.CANCELLED, TaskStatus.FAILED):
                 return False

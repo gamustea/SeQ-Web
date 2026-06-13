@@ -31,13 +31,13 @@ import uuid
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
-from src.modules.system.sequeue import SeQueue, SeQueueTask
+from src.modules.system.taskqueue import TaskQueue, Task
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
@@ -99,7 +99,7 @@ class ScanManager(ABC):
     BaseManager. All database access is performed through UnitOfWork and
     ScanRepository, keeping transaction boundaries explicit.
 
-    Task lifecycle is managed by SeQueue (the shared background task queue).
+     Task lifecycle is managed by TaskQueue (the Redis-backed task queue).
 
     Class Attributes:
         _scan_timeout_margin: Seconds added to task timeout for wait().
@@ -204,18 +204,18 @@ class ScanManager(ABC):
         Returns:
             Integer percentage, or None if the scan is not in the task registry.
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
+        tq = TaskQueue.get_instance()
+        sq_task = tq.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
         if sq_task:
-            self.logger.debug(f"Progreso de escaneo {scan_id}: {sq_task.progress}%")
-            return sq_task.progress
+            self.logger.debug(f"Progreso de escaneo {scan_id}: {sq_task.get('progress', 0)}%")
+            return sq_task.get("progress", 0)
         return None
 
     def get_scan_status(self, scan_id: int) -> Optional[str]:
         """
         Return the current status string of a scan.
 
-        Checks the in-memory SeQueue registry first; falls back to the database.
+        Checks the TaskQueue registry first; falls back to the database.
 
         Args:
             scan_id: Primary key of the scan.
@@ -223,10 +223,10 @@ class ScanManager(ABC):
         Returns:
             Status string, or None if not found.
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
+        tq = TaskQueue.get_instance()
+        sq_task = tq.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
         if sq_task:
-            return str(sq_task.status)
+            return sq_task.get("status", "unknown")
         if self.is_scan_finished(scan_id):
             return str(TaskStatus.COMPLETED)
         return None
@@ -409,8 +409,8 @@ class ScanManager(ABC):
                 )
                 return False
 
-            sequeue = SeQueue.get_instance()
-            sq_task = sequeue.get_task_by_external_id(
+            tq = TaskQueue.get_instance()
+            sq_task = tq.get_task_by_external_id(
                 f"scan:{scan_id}", category="sentinel.scan"
             )
 
@@ -420,7 +420,7 @@ class ScanManager(ABC):
                 )
                 return False
 
-            cancelled = sequeue.cancel(sq_task.id)
+            cancelled = tq.cancel(sq_task.get("id"))
             if not cancelled:
                 self.logger.warning(f"No se pudo cancelar la tarea del escaneo {scan_id}")
                 return False
@@ -443,7 +443,7 @@ class ScanManager(ABC):
         """
         Cancel all running scans.
 
-        Delegates to SeQueue.cancel_all() which terminates subprocesses
+        Delegates to TaskQueue.cancel_all() which sets cancel signals
         and returns immediately (signal-safe). Workers exit naturally
         when the process terminates.
 
@@ -451,11 +451,11 @@ class ScanManager(ABC):
             logger:  Logger instance for logging.
             timeout: Ignored — cancel_all() is fire-and-forget.
         """
-        logger.info("Cancelando todas las tareas activas via SeQueue...")
+        logger.info("Cancelando todas las tareas activas via TaskQueue...")
         try:
-            SeQueue.get_instance().cancel_all()
+            TaskQueue.get_instance().cancel_all()
         except Exception as e:
-            logger.error(f"Error cancelando tareas SeQueue: {e}", exc_info=True)
+            logger.error(f"Error cancelando tareas TaskQueue: {e}", exc_info=True)
         logger.info("Tareas canceladas.")
 
 
@@ -463,16 +463,18 @@ class ScanManager(ABC):
     # INTERNAL SCAN EXECUTION
     # =========================================================================
 
-    def _execute_scan_in_thread(self, scan_id: int, task: _Task) -> None:
+    def _execute_scan(
+        self, scan_id: int, task: _Task, skip_normalize: bool = False,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """
-        Execute a scan in a background thread and persist its results.
-
-        Creates a fresh manager instance (and therefore a fresh session) for
-        the thread so that SQLAlchemy sessions are not shared across threads.
+        Execute a scan and persist its results, with cancellation support.
 
         Args:
-            scan_id: Primary key of the scan being executed.
-            task:    Task instance that drives the actual scanning.
+            scan_id:       Primary key of the scan being executed.
+            task:          Task instance that drives the actual scanning.
+            skip_normalize: Skip IP normalization if True.
+            cancel_check:  Optional callable returning True to cancel the scan.
         """
         thread_manager = self.__class__()
         fresh_scan = None
@@ -502,7 +504,10 @@ class ScanManager(ABC):
                     return
 
             task.scan()
-            success = task.wait(timeout=task.timeout + self._scan_timeout_margin)
+            success = task.wait(
+                timeout=task.timeout + self._scan_timeout_margin,
+                cancel_check=cancel_check,
+            )
 
             if not success or task.results is None:
                 if task.status == TaskStatus.CANCELLED:
@@ -576,7 +581,7 @@ class ScanManager(ABC):
                 data = {
                     "duration_sec": round(duration, 2),
                     "status": status,
-                    "concurrent_tasks": SeQueue.get_instance().get_status()["runningCount"],
+                    "concurrent_tasks": TaskQueue.get_instance().get_status()["runningCount"],
                 }
 
                 self.append_csv_data(data, fresh_scan, task)
@@ -1397,19 +1402,14 @@ class NmapScanManager(ScanManager):
             )
             scan_id = scan.id
 
-            task = NmapScanTask(
-                target_host  = target_host,
-                target_ports = target_ports,
-                timeout      = timeout,
-            )
-
-            SeQueue.get_instance().submit(
-                func=self._execute_scan_in_thread,
-                args=(scan_id, task),
+            from src.modules.sentinel.services.rq_tasks import execute_nmap_scan
+            TaskQueue.get_instance().submit(
+                func=execute_nmap_scan,
+                args=(scan_id, target_host, target_ports, timeout),
                 name=f"NmapScan-{scan_id}",
                 category="sentinel.scan",
                 external_id=f"scan:{scan_id}",
-                on_cancel=task.cancel,
+                timeout=timeout + self._scan_timeout_margin,
             )
 
             self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
@@ -1541,15 +1541,14 @@ class NiktoScanManager(ScanManager):
             )
             scan_id = scan.id
 
-            queue = SeQueue.get_instance()
-            task = NiktoScanTask(target_domain=target_domain, timeout=timeout)
-            queue.submit(
-                func=self._execute_scan_in_thread,
-                args=(scan_id, task),
+            from src.modules.sentinel.services.rq_tasks import execute_nikto_scan
+            TaskQueue.get_instance().submit(
+                func=execute_nikto_scan,
+                args=(scan_id, target_domain, timeout),
                 name=f"NiktoScan-{scan_id}",
                 category="sentinel.scan",
                 external_id=f"scan:{scan_id}",
-                on_cancel=task.cancel,
+                timeout=timeout + self._scan_timeout_margin,
             )
 
             self.logger.info(f"Escaneo Nikto {scan_id} iniciado")
@@ -1715,24 +1714,14 @@ class OpenVASScanManager(ScanManager):
             )
             scan_id   = scan.id
 
-            task = OpenVASTask(
-                target      = target,
-                hostname    = self.hostname,
-                port        = self.port,
-                username    = self.username,
-                password    = self.password,
-                scan_config = config_id,
-            )
-
-            queue = SeQueue.get_instance()
-
-            queue.submit(
-                func=self._execute_scan_in_thread,
-                args=(scan_id, task, skip_normalize),
+            from src.modules.sentinel.services.rq_tasks import execute_openvas_scan
+            TaskQueue.get_instance().submit(
+                func=execute_openvas_scan,
+                args=(scan_id, target, config_id, skip_normalize),
                 name=f"OpenVASScan-{scan_id}",
                 category="sentinel.scan",
                 external_id=f"scan:{scan_id}",
-                on_cancel=task.cancel,
+                timeout=14400,
             )
 
             self.logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
@@ -1792,11 +1781,12 @@ class OpenVASScanManager(ScanManager):
         )
         return scans
 
-    def _execute_scan_in_thread(
+    def _execute_scan(
         self,
         scan_id: int,
         task: OpenVASTask,
-        skip_normalize: bool = False
+        skip_normalize: bool = False,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         """
         Override: after the base execution, persist the OpenVAS task/report IDs.
@@ -1805,13 +1795,14 @@ class OpenVASScanManager(ScanManager):
             scan_id:        Primary key of the scan.
             task:           OpenVASTask instance.
             skip_normalize: Skip IP normalization if True.
+            cancel_check:   Optional callable returning True to cancel the scan.
         """
         from src.modules.shared._endpoints import normalize_target
         if not skip_normalize:
             target_ip, _ = normalize_target(task.target)
             task.target  = target_ip # type: ignore
 
-        super()._execute_scan_in_thread(scan_id, task)
+        super()._execute_scan(scan_id, task, skip_normalize, cancel_check)
 
         if task.task_id:
             try:
@@ -2022,8 +2013,9 @@ class SentinelReportManager:
 
         doc_id = self._create_document(scan, ai_report)
 
-        SeQueue.get_instance().submit(
-            func=self._generate_pdf_async,
+        from src.modules.sentinel.services.rq_tasks import execute_report_generation
+        TaskQueue.get_instance().submit(
+            func=execute_report_generation,
             args=(doc_id, scan.id, ai_report),
             name=f"PDFGeneration-Scan-{scan.id}",
             category="sentinel.report",

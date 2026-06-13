@@ -24,7 +24,7 @@ from src.modules.aegis.exceptions import DocumentError
 import src.modules.system.config_reading as CR
 from src.modules.users import User
 from src.modules.system import SecOpsLogger
-from src.modules.system.sequeue import SeQueue
+from src.modules.system.taskqueue import TaskQueue
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
 from src.modules.shared._documents import (
@@ -68,16 +68,14 @@ class AegisManager:
             tweaks      = tweaks or {}
             document_id = self._create_pending_document(topic_id)
 
-            thread_manager = self.__class__(self.user)
-            cancel_event = threading.Event()
+            from src.modules.aegis.services.rq_tasks import execute_aegis_generation
 
-            SeQueue.get_instance().submit(
-                func=thread_manager._run_generation_workflow,
-                args=(document_id, topic_id, tweaks),
+            TaskQueue.get_instance().submit(
+                func=execute_aegis_generation,
+                args=(document_id, topic_id, tweaks, self.user.id),
                 name=f"AegisGen-{document_id}",
                 category="aegis.generate",
                 external_id=f"aegis-doc:{document_id}",
-                on_cancel=cancel_event.set,
             )
 
         return document_id

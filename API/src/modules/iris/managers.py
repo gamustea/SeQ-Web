@@ -1,5 +1,5 @@
 """
-IrisManager — orchestrates email header analysis via SeQueue background tasks.
+IrisManager — orchestrates email header analysis via TaskQueue background tasks.
 
 Coordinates the analysis lifecycle:
 1. Creates an IrisAnalysis record in the database.
@@ -11,8 +11,6 @@ Coordinates the analysis lifecycle:
 
 from __future__ import annotations
 
-import threading
-
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -20,7 +18,7 @@ import src.modules.system.config_reading as CR
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
 from src.modules.system.logging import SecOpsLogger
-from src.modules.system.sequeue import SeQueue
+from src.modules.system.taskqueue import TaskQueue, Task
 
 from .exceptions import (
     IrisAnalysisNotFoundError,
@@ -83,16 +81,14 @@ class IrisManager:
         analysis_id = self._create_analysis_record(raw_headers, user_id, title=title)
         self.logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
 
-        cancel_event = threading.Event()
-        thread_mgr = IrisManager()
+        from src.modules.iris.services.rq_tasks import execute_iris_analysis
 
-        SeQueue.get_instance().submit(
-            func=thread_mgr._run_analysis,
+        TaskQueue.get_instance().submit(
+            func=execute_iris_analysis,
             args=(analysis_id, raw_headers),
             name=f"IrisAnalysis-{analysis_id}",
             category="iris.analyze",
             external_id=f"iris-analysis:{analysis_id}",
-            on_cancel=cancel_event.set,
         )
 
         return analysis_id
@@ -114,12 +110,12 @@ class IrisManager:
         tasks) and falls back to the database record.  Returns None
         if the analysis ID is unknown.
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
+        tq = TaskQueue.get_instance()
+        sq_task = tq.get_task_by_external_id(
             f"iris-analysis:{analysis_id}", category="iris.analyze"
         )
         if sq_task:
-            return str(sq_task.status)
+            return sq_task.get("status")
 
         analysis = self.get_analysis(analysis_id)
         if analysis:
@@ -132,12 +128,12 @@ class IrisManager:
         Only meaningful for analyses in ``running`` state — returns None
         if no SeQueue task is active (e.g. finished or pending).
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
+        tq = TaskQueue.get_instance()
+        sq_task = tq.get_task_by_external_id(
             f"iris-analysis:{analysis_id}", category="iris.analyze"
         )
         if sq_task:
-            return sq_task.progress
+            return sq_task.get("progress", 0)
         return None
 
     def get_analysis_results(self, analysis_id: int) -> Dict[str, Any]:
@@ -231,15 +227,15 @@ class IrisManager:
                 f"Analysis {analysis_id} cannot be cancelled in state: {analysis.status}"
             )
 
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
+        tq = TaskQueue.get_instance()
+        sq_task = tq.get_task_by_external_id(
             f"iris-analysis:{analysis_id}", category="iris.analyze"
         )
         if not sq_task:
             self.logger.warning(f"No active task found for analysis {analysis_id}")
             return False
 
-        cancelled = sequeue.cancel(sq_task.id)
+        cancelled = tq.cancel(sq_task.get("id"))
         if cancelled:
             with UnitOfWork() as uow:
                 repo = IrisAnalysisRepository(uow)
@@ -270,12 +266,12 @@ class IrisManager:
             raise IrisAnalysisNotFoundError(analysis_id)
 
         if analysis.status in _CANCELLABLE_STATES:
-            sequeue = SeQueue.get_instance()
-            sq_task = sequeue.get_task_by_external_id(
+            tq = TaskQueue.get_instance()
+            sq_task = tq.get_task_by_external_id(
                 f"iris-analysis:{analysis_id}", category="iris.analyze"
             )
             if sq_task:
-                sequeue.cancel(sq_task.id)
+                tq.cancel(sq_task.get("id"))
 
         with UnitOfWork() as uow:
             repo = IrisAnalysisRepository(uow)
@@ -408,7 +404,7 @@ class IrisManager:
         rules_defs = iris_rules.get_rules()
         total_rules = len(rules_defs)
         results: List[RuleResult] = []
-        sequeue = SeQueue.get_instance()
+        tq = TaskQueue.get_instance()
 
         for idx, rule_def in enumerate(rules_defs):
             if self._is_cancelled(analysis_id):
@@ -429,11 +425,11 @@ class IrisManager:
             results.append(result)
 
             progress = int(((idx + 1) / total_rules) * 100)
-            sq_task = sequeue.get_task_by_external_id(
+            sq_task = tq.get_task_by_external_id(
                 f"iris-analysis:{analysis_id}", category="iris.analyze"
             )
             if sq_task:
-                sequeue.update_progress(sq_task.id, progress)
+                tq.update_progress(sq_task.get("id"), progress)
 
         total_score = sum(r.score for r in results)
         verdict = self._determine_verdict(total_score)
@@ -514,11 +510,11 @@ class IrisManager:
         Reads from both the SeQueue in-memory state and the database;
         returns True if either indicates ``cancelled``.
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
+        tq = TaskQueue.get_instance()
+        sq_task = tq.get_task_by_external_id(
             f"iris-analysis:{analysis_id}", category="iris.analyze"
         )
-        if sq_task and sq_task.status.value == "cancelled":
+        if sq_task and sq_task.get("status") == "cancelled":
             return True
         try:
             with UnitOfWork() as uow:
