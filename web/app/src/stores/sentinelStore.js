@@ -38,6 +38,15 @@ export const useSentinelStore = defineStore('sentinel', () => {
   const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
   const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
 
+  /* ════════════════════════════════ VISTA DE CARPETAS ══════════════════ */
+  const viewMode = ref('full') // 'full' | 'folders'
+  const folders = reactive({ items: [], loading: false })
+  const folderForms = reactive({
+    create: { show: false, submitting: false },
+    rename: { show: false, folderId: null, name: '', submitting: false },
+  })
+  const moveScan = reactive({ show: false, scanId: null, folderId: null, submitting: false })
+
   /* ── HELPERS ── */
   /** @param {'nmap'|'nikto'|'openvas'} type */
   function _scandata(type) { return scans[type] }
@@ -343,6 +352,113 @@ export const useSentinelStore = defineStore('sentinel', () => {
     scheduling.showForm = !scheduling.showForm
   }
 
+  /* ════════════════════════════════ CARPETAS ═══════════════════════════ */
+  async function loadFolders() {
+    folders.loading = true
+    try {
+      const res = await apiFetch('/sentinel/folders')
+      if (!res?.ok) { folders.items = []; return }
+      const data = await res.json()
+      folders.items = data.folders ?? []
+      // Append the virtual unfoldered group as a folder-like entry
+      if (data.unfoldered) folders.items.push(data.unfoldered)
+    } catch { folders.items = [] }
+    finally { folders.loading = false }
+  }
+
+  function setViewMode(mode) {
+    viewMode.value = mode
+    if (mode === 'folders') loadFolders()
+  }
+
+  async function createFolder(name) {
+    folderForms.create.submitting = true
+    try {
+      const res = await apiFetch('/sentinel/folders', { method: 'POST', body: JSON.stringify({ name }) })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al crear la carpeta.', 'error')
+        return false
+      }
+      toast.show(`Carpeta "${data.name}" creada`, 'success')
+      await loadFolders()
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    } finally { folderForms.create.submitting = false }
+  }
+
+  async function renameFolder(folderId, name) {
+    folderForms.rename.submitting = true
+    try {
+      const res = await apiFetch(`/sentinel/folders/${folderId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name }),
+      })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al renombrar la carpeta.', 'error')
+        return false
+      }
+      toast.show('Carpeta renombrada', 'success')
+      await loadFolders()
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    } finally { folderForms.rename.submitting = false }
+  }
+
+  async function deleteFolder(folderId) {
+    const res = await apiFetch(`/sentinel/folders/${folderId}`, { method: 'DELETE' })
+    if (!res?.ok) { toast.show('No se pudo eliminar la carpeta.', 'error'); return false }
+    toast.show('Carpeta eliminada.', 'success')
+    await loadFolders()
+    return true
+  }
+
+  async function moveScanToFolder(scanId, folderId) {
+    moveScan.submitting = true
+    try {
+      const res = await apiFetch(`/sentinel/folders/${folderId}/scans`, {
+        method: 'POST',
+        body: JSON.stringify({ scanId }),
+      })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al mover el escaneo.', 'error')
+        return false
+      }
+      toast.show('Escaneo movido a la carpeta.', 'success')
+      await loadFolders()
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    } finally { moveScan.submitting = false }
+  }
+
+  async function removeScanFromFolder(scanId, folderId) {
+    const res = await apiFetch(`/sentinel/folders/${folderId}/scans/${scanId}`, { method: 'DELETE' })
+    if (!res?.ok) { toast.show('No se pudo quitar el escaneo de la carpeta.', 'error'); return false }
+    toast.show('Escaneo eliminado de la carpeta.', 'success')
+    await loadFolders()
+    return true
+  }
+
+  function openMoveScan(scanId, currentFolderId) {
+    moveScan.show = true
+    moveScan.scanId = scanId
+    moveScan.folderId = currentFolderId
+  }
+
+  function closeMoveScan() {
+    moveScan.show = false
+    moveScan.scanId = null
+    moveScan.folderId = null
+  }
+
   /* ── UTIL ── */
   function _triggerDownload(blob, filename) {
     const url = URL.createObjectURL(blob)
@@ -358,6 +474,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
     activeTab, stats, loadingStats, scans, launching,
     scheduled, scheduling,
     preview, details,
+    viewMode, folders, folderForms, moveScan,
     loadStats, loadScans, switchTab, refreshCurrent, goToPage,
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
@@ -365,5 +482,9 @@ export const useSentinelStore = defineStore('sentinel', () => {
     openPreview, closePreview, refreshPreviewDocs,
     openDetails, closeDetails, refreshDetailsDocs,
     generatePdf, downloadDocument, deleteDocument,
+    setViewMode, loadFolders,
+    createFolder, renameFolder, deleteFolder,
+    moveScanToFolder, removeScanFromFolder,
+    openMoveScan, closeMoveScan,
   }
 })
