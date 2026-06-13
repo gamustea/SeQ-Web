@@ -172,6 +172,10 @@ export const useSentinelStore = defineStore('sentinel', () => {
     const res = await apiFetch(`/sentinel/${id}`, { method: 'DELETE' })
     if (!res?.ok) { toast.show('No se pudo eliminar el escaneo.', 'error'); return false }
 
+    const s = new Set(selectedScanIds.value)
+    s.delete(id)
+    selectedScanIds.value = s
+
     const hit = _findScanInFolders(id)
     if (hit) {
       hit.folder.scans.splice(hit.idx, 1)
