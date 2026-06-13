@@ -106,7 +106,29 @@ td { padding: 0.55rem 0.85rem; font-size: 0.82rem; border-top: 1px solid var(--b
 tr:hover td { background: rgba(255,255,255,0.012); }
 tr.selected td { background: rgba(99,102,241,0.06); }
 .chk-col { width: 32px; text-align: center; }
-.chk-col input { accent-color: var(--accent); cursor: pointer; }
+.chk-col input {
+  appearance: none; -webkit-appearance: none;
+  width: 14px; height: 14px; flex-shrink: 0;
+  margin: 0; cursor: pointer;
+  border: 1.5px solid var(--border-med);
+  border-radius: 3px;
+  background: var(--surface-2);
+  position: relative;
+  transition: all 0.15s;
+}
+.chk-col input:hover { border-color: var(--accent); }
+.chk-col input:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.chk-col input:checked::after {
+  content: ''; position: absolute;
+  top: 1px; left: 4px;
+  width: 3px; height: 7px;
+  border: solid var(--bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
 .mono { font-family: var(--font-mono); font-size: 0.78rem; }
 .muted { color: var(--text-muted); font-family: var(--font-body); font-size: 0.75rem; }
 .date { font-size: 0.75rem; color: var(--text-dim); white-space: nowrap; }
