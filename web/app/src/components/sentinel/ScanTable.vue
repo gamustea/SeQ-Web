@@ -108,7 +108,7 @@ tr.selected td { background: rgba(99,102,241,0.06); }
 .chk-col { width: 32px; text-align: center; }
 .chk-col input {
   appearance: none; -webkit-appearance: none;
-  width: 14px; height: 14px; flex-shrink: 0;
+  width: 12px; height: 12px; flex-shrink: 0;
   margin: 0; cursor: pointer;
   border: 1.5px solid var(--border-med);
   border-radius: 3px;
@@ -124,9 +124,9 @@ tr.selected td { background: rgba(99,102,241,0.06); }
 .chk-col input:checked::after {
   content: ''; position: absolute;
   top: 1px; left: 4px;
-  width: 3px; height: 7px;
+  width: 3px; height: 6px;
   border: solid var(--bg);
-  border-width: 0 2px 2px 0;
+  border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
 }
 .mono { font-family: var(--font-mono); font-size: 0.78rem; }
