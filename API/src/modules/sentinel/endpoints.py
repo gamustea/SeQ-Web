@@ -484,7 +484,7 @@ def delete_scan(scan_id: int):
     }
 
 
-@sentinel_blp.post("/scans/bulk-delete")
+@sentinel_blp.delete("/scans")
 @sentinel_blp.arguments(BulkDeleteScansSchema)
 @sentinel_blp.response(200, BulkDeleteScansResponseSchema, description="Scans bulk deleted")
 @sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")

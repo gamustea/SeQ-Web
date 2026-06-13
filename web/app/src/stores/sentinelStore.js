@@ -112,7 +112,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
     const d = _scandata(type)
     d.page = 1
     loadScans(type)
-    loadFolders()
   }
 
   /** Refresca la pestaña activa y las estadísticas. */
@@ -555,8 +554,8 @@ export const useSentinelStore = defineStore('sentinel', () => {
   /** Elimina multiples escaneos de forma masiva. */
   async function bulkDeleteScans(scanIds) {
     try {
-      const res = await apiFetch('/sentinel/scans/bulk-delete', {
-        method: 'POST',
+      const res = await apiFetch('/sentinel/scans', {
+        method: 'DELETE',
         body: JSON.stringify({ scanIds }),
       })
       const data = await res?.json().catch(() => ({}))

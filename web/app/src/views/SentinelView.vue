@@ -140,6 +140,7 @@ watch(activeBatchAction, (val) => {
 })
 
 function openBatchAction(action) {
+  if (action === 'add-to-folder') store.loadFolders()
   activeBatchAction.value = action
 }
 
