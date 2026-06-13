@@ -144,10 +144,10 @@
       "logdir": "..",
       "tempdir": "C:/tmp/secapp"
     },
-    "sequeue": {
-      "history_max_items": 100,
+    "taskqueue": {
+      "history_max_items": 200,
       "history_ttl_seconds": 3600,
-      "max_workers": 6
+      "max_workers": 4
     }
   },
     "sentinel": {
