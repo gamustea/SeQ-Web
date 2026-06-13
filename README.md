@@ -8,7 +8,7 @@
 - **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades, potenciado por IA local (operativo).
 - **SeQ Web** — Interfaz web SPA (Vue 3 + Vite + Pinia) para interactuar con todos los módulos.
 - **AcheronMobile** — App Android/Kotlin con módulo de cifrado AcheronCore (Java).
-- **SeQ Hub** — Dashboard central con terminal interactiva de comandos y acceso rápido a todos los módulos.
+- **SeQ Hub** — Dashboard central con acceso rápido a todos los módulos.
 
 ---
 
@@ -44,14 +44,22 @@
       - [Otros endpoints Aegis](#otros-endpoints-aegis)
       - [Arquitectura de IA en Aegis](#arquitectura-de-ia-en-aegis)
   - [Módulo Iris — Análisis Anti-Phishing](#módulo-iris--análisis-anti-phishing)
-    - [Endpoints](#endpoints-1)
-  - [Módulo Acheron — Vault](#módulo-acheron--vault)
     - [Endpoints](#endpoints)
+    - [Iniciar un análisis](#iniciar-un-análisis)
+    - [Consultar estado](#consultar-estado)
+    - [Informe completo](#informe-completo)
+    - [Reglas de análisis](#reglas-de-análisis)
+    - [Validación de entrada](#validación-de-entrada)
+    - [Frontend web](#frontend-web)
+  - [Módulo Acheron — Vault](#módulo-acheron--vault)
+    - [Endpoints](#endpoints-1)
       - [Vault](#vault)
       - [Storables (objetos del vault)](#storables-objetos-del-vault)
       - [Ejemplo: añadir una cuenta](#ejemplo-añadir-una-cuenta)
       - [Ejemplo: añadir una tarjeta de crédito](#ejemplo-añadir-una-tarjeta-de-crédito)
     - [Componentes](#componentes)
+  - [Web Frontend — SeQ Hub](#web-frontend--seq-hub)
+    - [Dashboard Hub (`/hub`)](#dashboard-hub-hub)
   - [Infraestructura Docker](#infraestructura-docker)
     - [Servicios principales](#servicios-principales)
     - [Levantamiento de servicios](#levantamiento-de-servicios)
@@ -258,7 +266,7 @@ Content-Type: application/json
 }
 ```
 
-> Configuraciones disponibles: `full_fast`, `full_deep`, `full_ultimate`.  
+> Configuraciones disponibles: `full_fast`, `full_deep`, `full_ultimate`.
 > OpenVAS solo acepta **un host** por escaneo.
 
 **Resultado de un escaneo OpenVAS:**
@@ -673,7 +681,7 @@ La interfaz web SPA (Vue 3 + Vite + Pinia + Vue Router) cuenta con un **hub cent
 
 ### Dashboard Hub (`/hub`)
 
-- **Layout partido 2/3 + 1/3**: Columna izquierda con hero `[ SeQ ]` + terminal interactiva; columna derecha con fichas de módulos scrolleables.
+- **Layout partido 2/3 + 1/3**: Columna izquierda con hero `[ SeQ ]`; columna derecha con fichas de módulos scrolleables.
 - **Terminal de comandos**: Panel con efecto glass morphism (`backdrop-filter: blur(16px)`) y borde neón dorado. Reproduce escaneos reales (nikto, nmap, openvas) con typewriter y highlight sintáctico de JSON. Indicador LIVE pulsante en la barra de título.
 - **Fondo animado**: Orbes de color con blur 150px, rejilla hexagonal SVG, partículas flotantes, scan-lines CRT y granulado SVG — todo con animación CSS.
 - **Módulos glass**: Fichas con `backdrop-filter: blur(12px)`, borde izquierdo neón de 3px por módulo (verde Sentinel, azul Aegis, naranja Iris, púrpura Acheron). Hover con elevación y glow expansivo.
@@ -780,7 +788,7 @@ SeQ/
 | Generación de PDFs | ReportLab + Pillow |
 | Concienciación y generación de contenido | Ollama (IA local, llama3.2) + prompts especializados |
 | Obtención de vulnerabilidades recientes | INCIBE-CERT + API pública CIRCL/NVD |
-| Análisis anti-phishing | Iris (reglas atómicas con registro por decorador + SeQueue) |
+| Análisis anti-phishing | Iris (reglas atómicas con registro por decorador) |
 | Frontend web | Vue 3 (Vite + Pinia + Vue Router) |
 | App móvil | Android / Kotlin + Jetpack Compose |
 | Lógica de vault | AcheronCore (Java) |
