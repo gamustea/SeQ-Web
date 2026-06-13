@@ -172,3 +172,49 @@ class ScheduledScanActionResponseSchema(Schema):
     programedScanId = fields.Integer()
     scanType = fields.String()
     user = fields.String()
+
+
+# =========================================================================
+# FOLDER SCHEMAS
+# =========================================================================
+
+class CreateFolderSchema(Schema):
+    name = fields.String(required=True, validate=validate.Length(min=1, max=255))
+
+
+class RenameFolderSchema(Schema):
+    name = fields.String(required=True, validate=validate.Length(min=1, max=255))
+
+
+class MoveScanToFolderSchema(Schema):
+    scanId = fields.Integer(required=True)
+
+
+class FolderSchema(Schema):
+    id = fields.Integer(allow_none=True)
+    name = fields.String()
+    createdAt = fields.DateTime(format="iso", allow_none=True)
+    updatedAt = fields.DateTime(format="iso", allow_none=True)
+    scanCount = fields.Integer()
+    scans = fields.List(fields.Dict())
+
+
+class FolderListResponseSchema(Schema):
+    message = fields.String()
+    folders = fields.List(fields.Nested(FolderSchema))
+    unfoldered = fields.Nested(FolderSchema)
+    user = fields.String()
+
+
+class FolderActionResponseSchema(Schema):
+    message = fields.String()
+    folderId = fields.Integer()
+    name = fields.String()
+    user = fields.String()
+
+
+class ScanFolderActionResponseSchema(Schema):
+    message = fields.String()
+    scanId = fields.Integer()
+    folderId = fields.Integer(allow_none=True)
+    user = fields.String()

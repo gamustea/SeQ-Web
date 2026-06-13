@@ -27,6 +27,7 @@ from .managers import (
     OpenVASScanManager,
     ProgramedScanManager,
     SentinelReportManager,
+    ScanFolderManager,
 )
 from .model import ScanType
 from .exceptions import (
@@ -38,6 +39,9 @@ from .exceptions import (
     PrivateIPRequested,
     ProgramedScanError,
     ProgramedScanNotFoundError,
+    FolderNotFoundError,
+    FolderNameInvalidError,
+    ScanAlreadyInFolderError,
 )
 from .schemas import (
     ScanIdQuerySchema,
@@ -63,6 +67,12 @@ from .schemas import (
     ScheduledScanResponseSchema,
     ScheduledScanListResponseSchema,
     ScheduledScanActionResponseSchema,
+    CreateFolderSchema,
+    RenameFolderSchema,
+    MoveScanToFolderSchema,
+    FolderListResponseSchema,
+    FolderActionResponseSchema,
+    ScanFolderActionResponseSchema,
 )
 
 
@@ -830,5 +840,144 @@ def list_scheduled_scans():
         "message": "Escaneos programados obtenidos correctamente",
         "count": len(results),
         "scheduledScans": results,
+        "user": user.username,
+    }
+
+
+# =========================================================================
+# SCAN FOLDERS
+# =========================================================================
+
+@sentinel_blp.post("/folders")
+@sentinel_blp.arguments(CreateFolderSchema)
+@sentinel_blp.response(201, FolderActionResponseSchema, description="Folder created")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_CREATE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=FolderNameInvalidError, logger=_logger)
+def create_folder(data):
+    """Crear una nueva carpeta de escaneos"""
+    user = get_current_user()
+    folder = ScanFolderManager().create_folder(user.id, data["name"])  # type: ignore
+    _logger.info(f"Carpeta {folder.id} creada por {user.username}")
+    return {
+        "message": "Carpeta creada correctamente",
+        "folderId": folder.id,
+        "name": folder.name,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.get("/folders")
+@sentinel_blp.response(200, FolderListResponseSchema, description="User folders with scans")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=FolderNotFoundError, logger=_logger)
+def list_folders():
+    """Listar todas las carpetas del usuario con sus escaneos completos"""
+    user = get_current_user()
+    result = ScanFolderManager().get_folders_with_scans(user.id)  # type: ignore
+    _logger.info(f"Carpetas obtenidas para usuario {user.username}")
+    return {
+        "message": "Carpetas obtenidas correctamente",
+        "folders": result["folders"],
+        "unfoldered": result["unfoldered"],
+        "user": user.username,
+    }
+
+
+@sentinel_blp.put("/folders/<int:folder_id>")
+@sentinel_blp.arguments(RenameFolderSchema)
+@sentinel_blp.response(200, FolderActionResponseSchema, description="Folder renamed")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=FolderNotFoundError, logger=_logger)
+def rename_folder(data, folder_id: int):
+    """Renombrar una carpeta existente"""
+    user = get_current_user()
+    folder = ScanFolderManager().rename_folder(folder_id, user.id, data["name"])  # type: ignore
+    _logger.info(f"Carpeta {folder_id} renombrada por {user.username}")
+    return {
+        "message": "Carpeta renombrada correctamente",
+        "folderId": folder.id,
+        "name": folder.name,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.delete("/folders/<int:folder_id>")
+@sentinel_blp.response(200, FolderActionResponseSchema, description="Folder deleted")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_DELETE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=FolderNotFoundError, logger=_logger)
+def delete_folder(folder_id: int):
+    """Eliminar una carpeta (los escaneos quedan sin carpeta)"""
+    user = get_current_user()
+    ScanFolderManager().delete_folder(folder_id, user.id)  # type: ignore
+    _logger.info(f"Carpeta {folder_id} eliminada por {user.username}")
+    return {
+        "message": "Carpeta eliminada correctamente",
+        "folderId": folder_id,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.post("/folders/<int:folder_id>/scans")
+@sentinel_blp.arguments(MoveScanToFolderSchema)
+@sentinel_blp.response(200, ScanFolderActionResponseSchema, description="Scan moved to folder")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder or scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("120 per hour; 400 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+def move_scan_to_folder(data, folder_id: int):
+    """Añadir o mover un escaneo a una carpeta"""
+    user = get_current_user()
+    scan = ScanFolderManager().move_scan_to_folder(data["scanId"], folder_id, user.id)  # type: ignore
+    _logger.info(f"Escaneo {scan.id} movido a carpeta {folder_id} por {user.username}")
+    return {
+        "message": "Escaneo añadido a la carpeta correctamente",
+        "scanId": scan.id,
+        "folderId": folder_id,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.delete("/folders/<int:folder_id>/scans/<int:scan_id>")
+@sentinel_blp.response(200, ScanFolderActionResponseSchema, description="Scan removed from folder")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("120 per hour; 400 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+def remove_scan_from_folder(folder_id: int, scan_id: int):
+    """Sacar un escaneo de una carpeta (lo deja sin carpeta)"""
+    user = get_current_user()
+    scan = ScanFolderManager().remove_scan_from_folder(scan_id, user.id)  # type: ignore
+    _logger.info(f"Escaneo {scan_id} sacado de carpeta {folder_id} por {user.username}")
+    return {
+        "message": "Escaneo eliminado de la carpeta correctamente",
+        "scanId": scan_id,
+        "folderId": None,
         "user": user.username,
     }
