@@ -132,7 +132,8 @@ class SeQueue:
                         task.on_cancel()
                     except Exception as exc:
                         self.logger.warning(
-                            "Error in on_cancel for task %s: %s", task.id, exc
+                            "Error in on_cancel for task %s: %s", task.id, exc,
+                            exc_info=True
                         )
                 task.status = SeQueueTaskStatus.CANCELLED
                 task.finished_at = datetime.now()
@@ -212,7 +213,8 @@ class SeQueue:
                         task.on_cancel()
                     except Exception as exc:
                         self.logger.warning(
-                            "Error in on_cancel for task %s: %s", task_id, exc
+                            "Error in on_cancel for task %s: %s", task_id, exc,
+                            exc_info=True
                         )
                 task.status = SeQueueTaskStatus.CANCELLED
                 task.finished_at = datetime.now()
@@ -374,11 +376,12 @@ class SeQueue:
                     task.on_complete(task)
                 except Exception as exc:
                     self.logger.warning(
-                        "on_complete callback failed for task %s: %s", task.id, exc
+                        "on_complete callback failed for task %s: %s", task.id, exc,
+                        exc_info=True
                     )
 
         except Exception as exc:
-            self.logger.error("Task %s failed: %s", task.id, exc)
+            self.logger.error("Task %s failed: %s", task.id, exc, exc_info=True)
 
             with self._lock:
                 # If cancel() already processed this task, skip overwriting status
@@ -396,7 +399,8 @@ class SeQueue:
                     task.on_error(task, exc)
                 except Exception as cb_exc:
                     self.logger.warning(
-                        "on_error callback failed for task %s: %s", task.id, cb_exc
+                        "on_error callback failed for task %s: %s", task.id, cb_exc,
+                        exc_info=True
                     )
 
     def _remove_pending(self, task: SeQueueTask) -> None:

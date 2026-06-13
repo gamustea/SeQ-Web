@@ -32,15 +32,15 @@ _configs_path: Path | None = None
 
 class DirectoryType(Enum):
     """Enumeración de tipos de directorios disponibles"""
-    TEMP            = "tempdir"
-    LOG             = "logdir"
-    RESOURCE        = "resourcedir"
+    TEMP               = "tempdir"
+    LOG                = "logdir"
 
-    STACK_AEGIS     = "aegis.stack"
-    OUTPUT_AEGIS    = "aegis.output"
+    STACK_AEGIS        = "aegis.stack"
+    OUTPUT_AEGIS       = "aegis.output"
 
-    OUTPUT_SENTINEL = "sentinel.output"
-    CSV_SENTINEL    = "sentinel.csv"
+    OUTPUT_SENTINEL    = "sentinel.output"
+    CSV_SENTINEL       = "sentinel.csv"
+    RESOURCES_SENTINEL = "sentinel.resources"
 
 
 # =============================================================================
@@ -231,7 +231,6 @@ def get_directory_of(directory_type) -> str:
         "logdir": "LOG_DIR",
         "output": "OUTPUT_DIR",
         "stack": "OUTPUT_DIR",
-        "resourcedir": "RESOURCE_DIR",
         "sentinel.csv": "CSV_SENTINEL_DIR",
     }
 

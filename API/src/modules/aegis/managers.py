@@ -397,7 +397,7 @@ class AegisManager:
                     content = content[:50_000] + "\n... [truncado]"
                 contents.append(content)
             except Exception as exc:
-                self.logger.warning(f"No se pudo leer {f}: {exc}")
+                self.logger.warning(f"No se pudo leer {f}: {exc}", exc_info=True)
 
         return "\n\n---\n\n".join(contents)
 

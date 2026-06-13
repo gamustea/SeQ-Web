@@ -361,7 +361,7 @@ def require_attributes(
                 return f(*args, **kwargs)
 
             except Exception as exc:
-                _logger.error(f"Error en require_permissions: {exc}")
+                _logger.error(f"Error en require_permissions: {exc}", exc_info=True)
                 return jsonify({
                     "error": "server_error",
                     "error_description": "AttributeType check failed",

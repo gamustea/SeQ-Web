@@ -398,7 +398,7 @@ class IrisManager:
                     fresh.started_at = datetime.now() # type: ignore
                     repo.update(fresh)
         except Exception as e:
-            self.logger.error(f"Failed to mark analysis {analysis_id} as running: {e}")
+            self.logger.error(f"Failed to mark analysis {analysis_id} as running: {e}", exc_info=True)
             self._fail_analysis(analysis_id)
             return
 
@@ -418,7 +418,7 @@ class IrisManager:
             try:
                 result = rule_def["func"](headers)
             except Exception as e:
-                self.logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}")
+                self.logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}", exc_info=True)
                 result = RuleResult(
                     score=0, verdict="error",
                     details={"error": str(e)},
@@ -449,7 +449,7 @@ class IrisManager:
                     fresh.finished_at = datetime.now() # type: ignore
                     repo.update(fresh)
         except Exception as e:
-            self.logger.error(f"Failed to finalise analysis {analysis_id}: {e}")
+            self.logger.error(f"Failed to finalise analysis {analysis_id}: {e}", exc_info=True)
             self._fail_analysis(analysis_id)
             return
 
@@ -477,7 +477,7 @@ class IrisManager:
                 )
                 repo.save(rr)
         except Exception as e:
-            self.logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}")
+            self.logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}", exc_info=True)
 
     def _determine_verdict(self, total_score: float) -> str:
         """Map a numeric total score to a textual verdict.
@@ -506,7 +506,7 @@ class IrisManager:
                     fresh.finished_at = datetime.now() # type: ignore
                     repo.update(fresh)
         except Exception as e:
-            self.logger.error(f"Failed to mark analysis {analysis_id} as failed: {e}")
+            self.logger.error(f"Failed to mark analysis {analysis_id} as failed: {e}", exc_info=True)
 
     def _is_cancelled(self, analysis_id: int) -> bool:
         """Check whether the analysis has been cancelled since we started.
@@ -526,6 +526,6 @@ class IrisManager:
                 analysis = repo.get_by_id(analysis_id)
                 if analysis and analysis.status == "cancelled":
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"Error checking cancellation for analysis {analysis_id}", exc_info=True)
         return False # type: ignore

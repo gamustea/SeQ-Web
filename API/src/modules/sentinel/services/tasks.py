@@ -94,7 +94,7 @@ class _Task(ABC):
                         self.progress = prog
 
         except (OSError, IOError) as e:
-            self.logger.error(f"Error leyendo salida: {e}")
+            self.logger.error(f"Error leyendo salida: {e}", exc_info=True)
 
         finally:
             if self._proc:
@@ -102,7 +102,7 @@ class _Task(ABC):
                     self._proc.wait(timeout=10)
                     self.logger.debug(f"Proceso terminó con código: {self._proc.returncode}")
                 except subprocess.TimeoutExpired:
-                    self.logger.error("Timeout esperando fin del proceso")
+                    self.logger.error("Timeout esperando fin del proceso", exc_info=True)
                     self._proc.kill()
                     self._proc.wait()
 
@@ -154,7 +154,7 @@ class _Task(ABC):
         except (OSError, IOError, RuntimeError) as e:
             if self.status != TaskStatus.CANCELLED:
                 self.status = TaskStatus.FAILED
-            self.logger.error(f"Error iniciando escaneo: {e}")
+            self.logger.error(f"Error iniciando escaneo: {e}", exc_info=True)
             raise
 
     def wait(self, timeout: Optional[float] = None) -> bool:
@@ -217,7 +217,7 @@ class _Task(ABC):
                 self._proc.terminate()
                 self._proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                self.logger.warning("terminate() no fue suficiente, haciendo kill()")
+                self.logger.warning("terminate() no fue suficiente, haciendo kill()", exc_info=True)
                 self._proc.kill()
                 self._proc.wait()
 
@@ -411,7 +411,7 @@ class OpenVASTask(_Task):
             self.logger.info(f"Escaneo OpenVAS iniciado para {self.target}")
         except (OSError, RuntimeError) as e:
             self.status = TaskStatus.FAILED
-            self.logger.error(f"Error iniciando escaneo OpenVAS: {e}")
+            self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
     def wait(self, timeout: Optional[float] = None) -> bool:
@@ -664,7 +664,7 @@ class OpenVASTask(_Task):
                         gmp.stop_task(self.task_id)
                         self.logger.info(f"Tarea {self.task_id} detenida en OpenVAS")
                 except (OSError, RuntimeError) as e:
-                    self.logger.error(f"Error deteniendo tarea: {e}")
+                    self.logger.error(f"Error deteniendo tarea: {e}", exc_info=True)
                 self.status = TaskStatus.CANCELLED
                 break
 
@@ -674,7 +674,8 @@ class OpenVASTask(_Task):
                     task = gmp.get_task(self.task_id)
             except (OSError, RuntimeError) as e:
                 self.logger.warning(
-                    f"Error consultando tarea, reintentando en {check_interval}s: {e}"
+                    f"Error consultando tarea, reintentando en {check_interval}s: {e}",
+                    exc_info=True
                 )
                 time.sleep(check_interval)
                 continue
@@ -693,8 +694,8 @@ class OpenVASTask(_Task):
             try:
                 with self._lock:
                     self.progress = max(0, int(float(progress_text)))
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                self.logger.warning(f"Error parsing progress '{progress_text}': {e}", exc_info=True)
 
             self.logger.info(f"Estado: {status} | Progreso: {progress_text}%")
 

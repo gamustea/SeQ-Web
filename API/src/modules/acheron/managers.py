@@ -43,7 +43,8 @@ class VaultManager:
             return datetime.utcnow()
         try:
             return datetime.fromisoformat(value)
-        except Exception:
+        except Exception as e:
+            self.logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
             return datetime.utcnow()
 
     def _ensure_vault_ownership(self, vault: Vault) -> None:
@@ -157,7 +158,7 @@ class VaultManager:
             return vault, created
 
         except IntegrityError as ie:
-            self.logger.error(f"Error de integridad en upsert de vault: {ie}")
+            self.logger.error(f"Error de integridad en upsert de vault: {ie}", exc_info=True)
             raise
         except Exception as e:
             self.logger.error(
@@ -329,7 +330,7 @@ class VaultManager:
             self.logger.info(f"Storable {st.id} creado en vault {vault_id}")
             return st
         except IntegrityError as ie:
-            self.logger.error(f"Error de integridad añadiendo storable: {ie}")
+            self.logger.error(f"Error de integridad añadiendo storable: {ie}", exc_info=True)
             raise
         except Exception as e:
             self.logger.error(f"Error añadiendo storable: {e}", exc_info=True)
@@ -403,7 +404,7 @@ class VaultManager:
                 return st
 
             except IntegrityError as ie:
-                self.logger.error(f"Error de integridad actualizando storable {storable_id}: {ie}")
+                self.logger.error(f"Error de integridad actualizando storable {storable_id}: {ie}", exc_info=True)
                 raise
             except Exception as e:
                 self.logger.error(

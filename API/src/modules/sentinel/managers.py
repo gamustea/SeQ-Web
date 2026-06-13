@@ -269,7 +269,7 @@ class ScanManager(ABC):
                             os.remove(doc.filename) # type: ignore
                             self.logger.info(f"Archivo eliminado: {doc.filename}")
                         except (OSError, IOError) as e:
-                            self.logger.warning(f"No se pudo eliminar archivo {doc.filename}: {e}")
+                            self.logger.warning(f"No se pudo eliminar archivo {doc.filename}: {e}", exc_info=True)
                     doc_repo.delete(doc)
 
                 scan_repo.delete(scan)
@@ -279,7 +279,7 @@ class ScanManager(ABC):
             return True
 
         except (OSError, RuntimeError) as e:
-            self.logger.error(f"Error eliminando escaneo {scan_id}: {e}")
+            self.logger.error(f"Error eliminando escaneo {scan_id}: {e}", exc_info=True)
             raise
 
 
@@ -408,7 +408,7 @@ class ScanManager(ABC):
         try:
             SeQueue.get_instance().cancel_all()
         except Exception as e:
-            logger.error(f"Error cancelando tareas SeQueue: {e}")
+            logger.error(f"Error cancelando tareas SeQueue: {e}", exc_info=True)
         logger.info("Tareas canceladas.")
 
 
@@ -505,7 +505,7 @@ class ScanManager(ABC):
                 if scan:
                     repo.update_status(scan, status)
         except (OSError, RuntimeError) as update_err:
-            self.logger.error(f"Error actualizando estado de escaneo {scan_id}: {update_err}")
+            self.logger.error(f"Error actualizando estado de escaneo {scan_id}: {update_err}", exc_info=True)
 
     def _log_to_csv(self, scan_id: int, scan: Scan, task: "_Task") -> None:
         """
@@ -538,7 +538,7 @@ class ScanManager(ABC):
             logger_obj.log(data)
             self.logger.debug(f"Escaneo {scan_id} registrado en CSV ({scan_type})")
         except Exception as csv_err:
-            self.logger.warning(f"Error registrando escaneo {scan_id} en CSV: {csv_err}")
+            self.logger.warning(f"Error registrando escaneo {scan_id} en CSV: {csv_err}", exc_info=True)
 
 
     # =========================================================================
@@ -1604,7 +1604,8 @@ class OpenVASScanManager(ScanManager):
                         scan.report_id = task.report_id
             except (OSError, RuntimeError) as e:
                 self.logger.error(
-                    f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}"
+                    f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}",
+                    exc_info=True
                 )
 
     def _persist_scan_results(self, uow, scan, domain_data) -> None:
@@ -1754,7 +1755,7 @@ class SentinelReportManager:
                 try:
                     os.remove(doc.filename)  # type: ignore
                 except (OSError, IOError) as e:
-                    self.logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}")
+                    self.logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}", exc_info=True)
 
             doc_repo.delete(doc)
 
@@ -1847,5 +1848,5 @@ class SentinelReportManager:
                 doc = SentinelReportRepository(uow).get_by_id(document_id)
                 if doc:
                     doc.status = status  # type: ignore
-        except (OSError, RuntimeError):
-            pass
+        except (OSError, RuntimeError) as e:
+            self.logger.exception(f"Error updating document status for document {document_id}")

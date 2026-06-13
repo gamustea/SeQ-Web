@@ -32,10 +32,13 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 
 import time
@@ -251,6 +254,7 @@ class UnitOfWork:
             self.session.commit()
         except SQLAlchemyError as e:
             self.rollback()
+            logger.error("Commit failed", exc_info=True)
             raise SQLAlchemyError(f"Commit failed: {e}") from e
 
     def rollback(self) -> None:
@@ -264,12 +268,13 @@ class UnitOfWork:
             if self.session is not None:
                 self.session.rollback()
         except Exception as rollback_err:
+            logger.error("Rollback failed", exc_info=True)
             if self._owns_session:
                 try:
                     self.session.close()
                     self.session = get_session()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception("Failed to recreate session after close")
             raise RuntimeError(
                 f"Rollback failed, session has been recreated: {rollback_err}"
             ) from rollback_err

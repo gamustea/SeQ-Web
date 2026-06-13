@@ -129,7 +129,6 @@ services:
       TEMP_DIR: /app/temp
       LOG_DIR: /app/logs
       OUTPUT_DIR: /app/data
-      RESOURCE_DIR: /app/resources
     volumes:
       - seq_data:/app/data
       - scan_temp:/app/temp
