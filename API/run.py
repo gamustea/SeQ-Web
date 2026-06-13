@@ -69,7 +69,7 @@ def _graceful_shutdown(signum, *args) -> None:
     Behavior:
         1. Protege contra re-entrada: fuerza os._exit(1) si ya se está apagando.
         2. Registra la señal recibida.
-        3. Detiene SeQueue (cancela todas las tareas en todas las categorías).
+        3. Detiene TaskQueue (cancela todas las tareas en todas las categorías).
         4. Detiene el scheduler de tareas programadas.
         5. Cierra las sesiones de base de datos.
         6. Termina el proceso con os._exit(0).
@@ -87,9 +87,9 @@ def _graceful_shutdown(signum, *args) -> None:
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
     try:
-        from src.modules.system.sequeue import SeQueue
+        from src.modules.system.taskqueue import TaskQueue
         _logger.info("Cancelando tareas en segundo plano...")
-        SeQueue.get_instance().cancel_all()
+        TaskQueue.get_instance().cancel_all()
         _logger.info("Tareas canceladas.")
     except Exception as e:
         _logger.error(f"Error cancelando tareas: {e}")
@@ -110,7 +110,7 @@ def _graceful_shutdown(signum, *args) -> None:
     _logger.info("[Shutdown] Proceso terminado.")
     os._exit(0)
 
-def create_app(fresh_db_init: bool = False) -> Flask:
+def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Flask:
     """
     Factory de la aplicación Flask SeQ.
 
@@ -171,12 +171,26 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     from src.modules.infrastructure.session import shutdown_request_session
     app.teardown_request(shutdown_request_session)
 
-    _logger.info("Arrancando scheduler de tareas programadas...")
-    Scheduler.start()
+    if start_scheduler:
+        _logger.info("Arrancando scheduler de tareas programadas...")
+        Scheduler.start()
 
-    _logger.info("Arrancando cola de tareas en segundo plano (SeQueue)...")
-    from src.modules.system.sequeue import SeQueue
-    SeQueue.get_instance().start()
+    _logger.info("Verificando conexion a Redis...")
+    import redis as redis_lib
+    try:
+        redis_cfg = CR.get_redis_config()
+        r = redis_lib.Redis(
+            host=redis_cfg["host"],
+            port=redis_cfg["port"],
+            db=redis_cfg["db"],
+            password=redis_cfg["password"],
+            socket_connect_timeout=5,
+        )
+        r.ping()
+        r.close()
+        _logger.info("Redis conectado correctamente")
+    except Exception as e:
+        _logger.warning("Redis no disponible — la cola de tareas no funcionara: %s", e)
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
