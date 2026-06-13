@@ -400,6 +400,17 @@ def get_host_reachability_check_port() -> int:
 def get_sentinel_csv_dir() -> str:
     return get_directory_of(DirectoryType.CSV_SENTINEL)
 
+
+@_lazy_load
+def get_sentinel_default_folder_name() -> str:
+    """Devuelve el nombre mostrado para la carpeta virtual de escaneos sueltos."""
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
+    sentinel = _configs.get("sentinel", {})
+    return sentinel.get("folders", {}).get("defaultFolderName", "Sin carpeta")
+
+
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
 # =============================================================================

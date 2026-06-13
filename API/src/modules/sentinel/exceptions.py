@@ -644,3 +644,60 @@ class InvalidProgramedTaskArgumentError(ProgramedScanError):
             user_message=f"Falta el argumento '{field}' para el escaneo de "
                          f"tipo '{scan_type}'."
         )
+
+
+# =========================================================================
+# EXCEPCIONES DE CARPETAS DE ESCANEOS
+# =========================================================================
+
+class FolderError(ScanError):
+    """Base exception for scan folder related errors."""
+
+    default_code = ErrorCode.SCAN_ERROR
+    default_status_code = 500
+    default_severity = ErrorSeverity.MEDIUM
+
+
+class FolderNotFoundError(FolderError):
+    """Raised when a folder does not exist or is not owned by the user."""
+
+    default_code = ErrorCode.SCAN_NOT_FOUND
+    default_status_code = 404
+    default_severity = ErrorSeverity.LOW
+
+    def __init__(self, folder_id: int):
+        super().__init__(
+            message=f"Carpeta con ID {folder_id} no encontrada",
+            details={"folder_id": folder_id},
+            user_message=f"La carpeta #{folder_id} no existe."
+        )
+
+
+class FolderNameInvalidError(FolderError):
+    """Raised when a folder name contains invalid characters."""
+
+    default_code = ErrorCode.VALIDATION_ERROR
+    default_status_code = 400
+    default_severity = ErrorSeverity.LOW
+
+    def __init__(self, name: str):
+        super().__init__(
+            message=f"Nombre de carpeta inválido: '{name}'",
+            details={"name": name},
+            user_message="El nombre de carpeta solo puede contener letras, números, espacios, guiones y guiones bajos."
+        )
+
+
+class ScanAlreadyInFolderError(FolderError):
+    """Raised when trying to move a scan to the folder it already belongs to."""
+
+    default_code = ErrorCode.SCAN_ERROR
+    default_status_code = 409
+    default_severity = ErrorSeverity.LOW
+
+    def __init__(self, scan_id: int, folder_id: int):
+        super().__init__(
+            message=f"El escaneo {scan_id} ya está en la carpeta {folder_id}",
+            details={"scan_id": scan_id, "folder_id": folder_id},
+            user_message="El escaneo ya pertenece a esta carpeta."
+        )

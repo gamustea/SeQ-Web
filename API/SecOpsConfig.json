@@ -152,6 +152,9 @@
   },
     "sentinel": {
     "areLocalIpsAllowed": true,
+    "folders": {
+      "defaultFolderName": "Sin carpeta"
+    },
     "directories": {
       "csv": "data/sentinel/csv",
       "output": "data/sentinel/output",

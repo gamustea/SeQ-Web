@@ -21,6 +21,7 @@ from .model import (
     Port,
     ProgramedScan,
     Scan,
+    ScanFolder,
     ScanIncident,
     ScanStatus,
     SentinelDocument,
@@ -33,6 +34,7 @@ from .managers import (
     OpenVASScanManager,
     ProgramedScanManager,
     ScanManager,
+    ScanFolderManager,
 )
 
 from .repositories import (
@@ -54,11 +56,12 @@ from .endpoints import sentinel_blp
 __all__ = [
     "Host", "NiktoIncident", "NiktoScan", "NmapScan", "OpenPort",
     "OpenVASScan", "OpenVASScanResult", "OpenVASVulnerability", "Port",
-    "ProgramedScan", "Scan", "ScanIncident", "ScanStatus", "SentinelDocument",
-    "TargetPort",
+    "ProgramedScan", "Scan", "ScanFolder", "ScanIncident", "ScanStatus",
+    "SentinelDocument", "TargetPort",
     "NmapScanManager", "NiktoScanManager", "OpenVASScanManager",
-    "ProgramedScanManager", "ScanManager",
-    "ProgramedScanRepository", "ScanRepository", "SentinelReportRepository",
+    "ProgramedScanManager", "ScanManager", "ScanFolderManager",
+    "ProgramedScanRepository", "ScanRepository", "ScanFolderRepository",
+    "SentinelReportRepository",
     "sentinel_blp",
     "PDFCreator", "NmapPrintingStrategy", "NiktoPrintingStrategy",
     "OpenVASPrintingStrategy",

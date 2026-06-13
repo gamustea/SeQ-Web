@@ -81,6 +81,11 @@ class AttributeType(Enum):
     SENTINEL_UPDATE = "sentinel_update"
     SENTINEL_DELETE = "sentinel_delete"
 
+    SENTINEL_FOLDER_CREATE = "sentinel_folder_create"
+    SENTINEL_FOLDER_READ   = "sentinel_folder_read"
+    SENTINEL_FOLDER_UPDATE = "sentinel_folder_update"
+    SENTINEL_FOLDER_DELETE = "sentinel_folder_delete"
+
     ACHERON_CREATE  = "acheron_create"
     ACHERON_READ    = "acheron_read"
     ACHERON_UPDATE  = "acheron_update"
@@ -104,6 +109,10 @@ class AttributeType(Enum):
         "sentinel_read":   "Read access for Sentinel security scans",
         "sentinel_update": "Update access for Sentinel security scans",
         "sentinel_delete": "Delete access for Sentinel security scans",
+        "sentinel_folder_create": "Create access for Sentinel scan folders",
+        "sentinel_folder_read":   "Read access for Sentinel scan folders",
+        "sentinel_folder_update": "Update access for Sentinel scan folders",
+        "sentinel_folder_delete": "Delete access for Sentinel scan folders",
         "acheron_create":  "Create access for Acheron vault secrets",
         "acheron_read":    "Read access for Acheron vault secrets",
         "acheron_update":  "Update access for Acheron vault secrets",
@@ -143,6 +152,10 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
         AttributeType.ACHERON_READ,
         AttributeType.IRIS_READ,
         AttributeType.SENTINEL_SCHEDULE_READ,
+        AttributeType.SENTINEL_FOLDER_CREATE,
+        AttributeType.SENTINEL_FOLDER_READ,
+        AttributeType.SENTINEL_FOLDER_UPDATE,
+        AttributeType.SENTINEL_FOLDER_DELETE,
     },
     Role.ADMIN: {
         AttributeType.AEGIS_CREATE,
@@ -153,6 +166,10 @@ ROLE_PERMISSIONS: dict[Role, Set[AttributeType]] = {
         AttributeType.SENTINEL_READ,
         AttributeType.SENTINEL_UPDATE,
         AttributeType.SENTINEL_DELETE,
+        AttributeType.SENTINEL_FOLDER_CREATE,
+        AttributeType.SENTINEL_FOLDER_READ,
+        AttributeType.SENTINEL_FOLDER_UPDATE,
+        AttributeType.SENTINEL_FOLDER_DELETE,
         AttributeType.ACHERON_READ,
         AttributeType.IRIS_CREATE,
         AttributeType.IRIS_READ,

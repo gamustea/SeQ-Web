@@ -88,14 +88,12 @@ const router = createRouter({
  * - Si la ruta es de invitado (login) y ya hay sesión → redirige a /hub.
  * - En cualquier otro caso, deja pasar la navegación.
  */
-router.beforeEach((to, from, next) => {
+router.beforeEach((to) => {
   const auth = useAuthStore()
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
-    next('/login')
+    return '/login'
   } else if (to.meta.guest && auth.isAuthenticated) {
-    next('/hub')
-  } else {
-    next()
+    return '/hub'
   }
 })
 
