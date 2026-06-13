@@ -102,11 +102,7 @@
           <div class="card-bg"></div>
           <div class="card-accent"></div>
           <div class="card-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="11" cy="11" r="8"/>
-              <path d="M21 21l-4.35-4.35"/>
-              <path d="M11 8v3l2 2"/>
-            </svg>
+            <img :src="sentinelIcon" alt="Sentinel" class="card-icon-img" />
           </div>
           <div class="card-body">
             <h2 class="card-title">Sentinel</h2>
@@ -125,10 +121,7 @@
           <div class="card-bg"></div>
           <div class="card-accent"></div>
           <div class="card-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"/>
-              <path d="M9 12l2 2 4-4"/>
-            </svg>
+            <img :src="aegisIcon" alt="Aegis" class="card-icon-img" />
           </div>
           <div class="card-body">
             <h2 class="card-title">Aegis</h2>
@@ -147,10 +140,7 @@
           <div class="card-bg"></div>
           <div class="card-accent"></div>
           <div class="card-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              <path d="M9 12l2 2 4-4"/>
-            </svg>
+            <img :src="irisIcon" alt="Iris" class="card-icon-img" />
           </div>
           <div class="card-body">
             <h2 class="card-title">Iris</h2>
@@ -169,11 +159,7 @@
           <div class="card-bg"></div>
           <div class="card-accent"></div>
           <div class="card-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="3" y="11" width="18" height="11" rx="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-              <circle cx="12" cy="16" r="1"/>
-            </svg>
+            <img :src="acheronIcon" alt="Acheron" class="card-icon-img" />
           </div>
           <div class="card-body">
             <h2 class="card-title">Acheron</h2>
@@ -202,6 +188,11 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProfileStore } from '@/stores/profileStore'
 import StarBackground from '@/components/shared/StarBackground.vue'
 import TerminalConsole from '@/components/shared/TerminalConsole.vue'
+
+import sentinelIcon from '@/assets/images/sentinel/Sentinel-Turqoise-BgN.png'
+import aegisIcon from '@/assets/images/aegis/SeQ-Aegis-Blue-BgN.png'
+import irisIcon from '@/assets/images/iris/Iris-Red-BgN.png'
+import acheronIcon from '@/assets/images/acheron/Acheron-Purple-BgN.png'
 
 const auth = useAuthStore()
 const profileStore = useProfileStore()
@@ -674,21 +665,19 @@ function logout() {
   position: relative;
   z-index: 1;
 }
-.card-icon svg {
-  width: 22px;
-  height: 22px;
+.card-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
   transition: transform 0.35s ease;
 }
-.card-sentinel .card-icon svg { color: #4cb782; }
-.card-aegis .card-icon svg    { color: #6080e0; }
-.card-iris .card-icon svg     { color: #e07a5f; }
-.card-acheron .card-icon svg  { color: #a07ac0; }
 .card:not(.card-disabled):hover .card-icon {
   border-color: rgba(255,255,255,0.12);
   box-shadow: 0 0 20px var(--accent-dim);
   background: rgba(255,255,255,0.06);
 }
-.card:not(.card-disabled):hover .card-icon svg {
+.card:not(.card-disabled):hover .card-icon-img {
   transform: scale(1.1);
 }
 
