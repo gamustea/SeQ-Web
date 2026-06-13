@@ -66,6 +66,8 @@ import ScanTable from '@/components/sentinel/ScanTable.vue'
 import ScanFolderView from '@/components/sentinel/ScanFolderView.vue'
 import ScanPreviewModal from '@/components/sentinel/ScanPreviewModal.vue'
 import ScanDetailsModal from '@/components/sentinel/ScanDetailsModal.vue'
+import FolderFormModal from '@/components/sentinel/FolderFormModal.vue'
+import MoveScanModal from '@/components/sentinel/MoveScanModal.vue'
 import ScheduledScansPanel from '@/components/sentinel/ScheduledScansPanel.vue'
 import { useSentinelStore } from '@/stores/sentinelStore'
 
