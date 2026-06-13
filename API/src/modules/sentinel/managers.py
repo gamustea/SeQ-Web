@@ -1264,8 +1264,8 @@ class ScanFolderManager:
                 result_folders.append({
                     "id": folder.id,
                     "name": folder.name,
-                    "createdAt": folder.created_at.isoformat() if folder.created_at else None,
-                    "updatedAt": folder.updated_at.isoformat() if folder.updated_at else None,
+                    "createdAt": folder.created_at,
+                    "updatedAt": folder.updated_at,
                     "scanCount": len(scans),
                     "scans": [self._format_scan(scan) for scan in scans],
                 })
