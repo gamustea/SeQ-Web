@@ -108,26 +108,21 @@ tr.selected td { background: rgba(99,102,241,0.06); }
 .chk-col { width: 32px; text-align: center; }
 .chk-col input {
   appearance: none; -webkit-appearance: none;
-  width: 12px; height: 12px; flex-shrink: 0;
+  width: 12px; height: 12px;
   margin: 0; cursor: pointer;
   border: 1.5px solid var(--border-med);
   border-radius: 3px;
   background: var(--surface-2);
-  position: relative;
   transition: all 0.15s;
 }
 .chk-col input:hover { border-color: var(--accent); }
 .chk-col input:checked {
-  background: var(--accent);
+  background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%230b0c10' stroke-width='2' d='M3 6l2 2 4-4'/%3E%3C/svg%3E") center/8px no-repeat;
   border-color: var(--accent);
 }
-.chk-col input:checked::after {
-  content: ''; position: absolute;
-  top: 1px; left: 4px;
-  width: 3px; height: 6px;
-  border: solid var(--bg);
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
+.chk-col input:indeterminate {
+  background: var(--accent-dim) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cline x1='3' y1='6' x2='9' y2='6' stroke='%23d4a04a' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center/8px no-repeat;
+  border-color: var(--border-med);
 }
 .mono { font-family: var(--font-mono); font-size: 0.78rem; }
 .muted { color: var(--text-muted); font-family: var(--font-body); font-size: 0.75rem; }
