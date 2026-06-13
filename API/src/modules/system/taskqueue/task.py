@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -37,7 +37,7 @@ class Task:
     external_id: Optional[str] = None
     status: TaskStatus = TaskStatus.PENDING
     progress: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
@@ -57,7 +57,7 @@ class Task:
             external_id=external_id or meta.get("external_id"),
             status=cls._rq_status_to_task_status(job.get_status(refresh=False)),
             progress=meta.get("progress", 0),
-            created_at=job.created_at or datetime.now(),
+            created_at=job.created_at or datetime.now(timezone.utc),
             started_at=job.started_at,
             finished_at=job.ended_at,
             error=job.exc_info,
@@ -68,9 +68,9 @@ class Task:
         if rq_status is None:
             return TaskStatus.PENDING
         rq_status = rq_status.lower()
-        if rq_status in ("queued", "scheduled"):
+        if rq_status in ("queued", "scheduled", "deferred"):
             return TaskStatus.PENDING
-        if rq_status in ("started", "deferred"):
+        if rq_status == "started":
             return TaskStatus.RUNNING
         if rq_status == "finished":
             return TaskStatus.COMPLETED

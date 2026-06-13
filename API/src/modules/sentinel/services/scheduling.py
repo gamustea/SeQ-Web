@@ -1,5 +1,5 @@
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler as _BgScheduler
@@ -264,7 +264,7 @@ class Scheduler:
         schedule_config: dict,
         last_run: Optional[datetime] = None,
     ) -> datetime:
-        reference = last_run if last_run is not None else datetime.utcnow()
+        reference = last_run if last_run is not None else datetime.now(timezone.utc)
 
         if schedule_type == "interval":
             every = int(schedule_config["every"])

@@ -150,7 +150,7 @@
       "max_workers": 4
     }
   },
-    "sentinel": {
+  "sentinel": {
     "areLocalIpsAllowed": true,
     "folders": {
       "defaultFolderName": "Sin carpeta"

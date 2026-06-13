@@ -161,14 +161,14 @@ def taskqueue_tasks(query_args):
         history = tq.get_history(category=category)
         tasks = [t for t in history if t.get("status") == status]
     else:
-        tasks = (
-            tq.get_pending(category=category)
-            + tq.get_running(category=category)
-            + tq.get_history(category=category)
-        )
+        pending = tq.get_pending(category=category)
+        running = tq.get_running(category=category)
+        history = tq.get_history(category=category)
+        tasks = pending + running + history
 
     start = (page - 1) * per_page
-    return tasks[start:start + per_page]
+    end = start + per_page
+    return tasks[start:end]
 
 
 @system_blp.get("/tasks/<string:task_id>")
@@ -224,4 +224,5 @@ def taskqueue_update_config(json_data):
     cfg.setdefault("general", {}).setdefault("taskqueue", {})["max_workers"] = max_workers
     CR.save_full_config(cfg)
     CR.reload()
+    TaskQueue._reset_instance()
     return TaskQueue.get_instance().get_status()

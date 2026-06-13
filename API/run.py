@@ -16,6 +16,9 @@ estático.
 
 import os
 import signal
+import logging
+import subprocess
+import sys
 import warnings
 
 from flask                  import Flask, jsonify, request
@@ -51,8 +54,11 @@ APP_CONTEXT = CR.get_app_context()
 _logger = SecOpsLogger(name="APIMain").get_logger()
 
 warnings.filterwarnings("ignore", message="Multiple schemas resolved to the name")
+logging.getLogger("redis").setLevel(logging.WARNING)
+logging.getLogger("rq").setLevel(logging.WARNING)
 
 _IS_SHUTTING_DOWN = False
+_WORKER = {"proc": None}
 
 
 def _graceful_shutdown(signum, *args) -> None:
@@ -76,6 +82,8 @@ def _graceful_shutdown(signum, *args) -> None:
     """
     global _IS_SHUTTING_DOWN
 
+    print(f"\n[SeQ] Signal {signum} received, starting graceful shutdown...", flush=True)
+
     if _IS_SHUTTING_DOWN:
         _logger.warning(
             "Segunda señal recibida durante el apagado — forzando salida inmediata."
@@ -86,6 +94,25 @@ def _graceful_shutdown(signum, *args) -> None:
 
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
+
+    worker_proc = _WORKER["proc"]
+    if worker_proc is not None:
+        _logger.info("Deteniendo worker...")
+        try:
+            worker_proc.terminate()
+            worker_proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            _logger.warning("Worker no respondió a SIGTERM, forzando con SIGKILL...")
+            worker_proc.kill()
+            worker_proc.wait(timeout=2)
+        except Exception as e:
+            _logger.warning(f"Error deteniendo worker: {e}, forzando kill...")
+            try:
+                worker_proc.kill()
+                worker_proc.wait(timeout=2)
+            except Exception:
+                pass
+        _WORKER["proc"] = None
     try:
         from src.modules.system.taskqueue import TaskQueue
         _logger.info("Cancelando tareas en segundo plano...")
@@ -468,6 +495,11 @@ def _init_db() -> None:
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="SeQ API server")
+    parser.add_argument("--with-worker", action="store_true", help="Start RQ worker as subprocess")
+    _args, _ = parser.parse_known_args()
+
     signal.signal(
         signal.SIGTERM,
         _graceful_shutdown
@@ -478,8 +510,21 @@ if __name__ == "__main__":
     )
 
     app = create_app(APP_CONTEXT.create_database)
-    app.run(
-        debug=APP_CONTEXT.debug,
-        host=APP_CONTEXT.host,
-        port=APP_CONTEXT.port
-    )
+
+    if _args.with_worker:
+        _WORKER["proc"] = subprocess.Popen(
+            [sys.executable, "-m", "src.modules.system.taskqueue.worker"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        _logger.info("Worker iniciado como subproceso (PID %d)", _WORKER["proc"].pid)
+
+    try:
+        app.run(
+            debug=APP_CONTEXT.debug,
+            host=APP_CONTEXT.host,
+            port=APP_CONTEXT.port,
+            use_reloader=False
+        )
+    except KeyboardInterrupt:
+        _logger.info("KeyboardInterrupt caught, initiating shutdown...")
+        _graceful_shutdown(signal.SIGINT)
