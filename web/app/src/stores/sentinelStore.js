@@ -129,6 +129,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
       const id = data.scanIds ? data.scanIds.join(', ') : data.scanId
       toast.show(`Escaneo ${type.toUpperCase()} iniciado (ID: ${id})`, 'success')
       await refreshCurrent()
+      await loadFolders()
       return true
     } catch {
       toast.show('No se pudo conectar con la API.', 'error')
@@ -142,6 +143,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
     const res = await apiFetch(`/sentinel/${id}`, { method: 'DELETE' })
     if (!res?.ok) { toast.show('No se pudo eliminar el escaneo.', 'error'); return false }
     await refreshCurrent()
+    await loadFolders()
     return true
   }
 
@@ -154,6 +156,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
       return false
     }
     await refreshCurrent()
+    await loadFolders()
     return true
   }
 
@@ -369,6 +372,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
   function setViewMode(mode) {
     viewMode.value = mode
     if (mode === 'folders') loadFolders()
+    else refreshCurrent()
   }
 
   async function createFolder(name) {

@@ -5,7 +5,7 @@
 
     <main class="main">
       <StatsRow :total="store.stats.total" :nmap="store.stats.nmap" :nikto="store.stats.nikto" :openvas="store.stats.openvas" />
-      <ViewToggle v-model="store.viewMode" />
+      <ViewToggle :model-value="store.viewMode" @update:model-value="store.setViewMode" />
       <template v-if="store.viewMode === 'full'">
         <ScanTabs :active="store.activeTab" @switch="store.switchTab" />
         <ScanForm :type="store.activeTab" :launching="store.launching" @launch="handleLaunch" />
