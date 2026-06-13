@@ -207,8 +207,8 @@ class ScanManager(ABC):
         tq = TaskQueue.get_instance()
         sq_task = tq.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
         if sq_task:
-            self.logger.debug(f"Progreso de escaneo {scan_id}: {sq_task.get('progress', 0)}%")
-            return sq_task.get("progress", 0)
+            self.logger.debug(f"Progreso de escaneo {scan_id}: {sq_task.progress}%")
+            return sq_task.progress
         return None
 
     def get_scan_status(self, scan_id: int) -> Optional[str]:
@@ -226,7 +226,7 @@ class ScanManager(ABC):
         tq = TaskQueue.get_instance()
         sq_task = tq.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
         if sq_task:
-            return sq_task.get("status", "unknown")
+            return str(sq_task.status)
         if self.is_scan_finished(scan_id):
             return str(TaskStatus.COMPLETED)
         return None
@@ -420,7 +420,7 @@ class ScanManager(ABC):
                 )
                 return False
 
-            cancelled = tq.cancel(sq_task.get("id"))
+            cancelled = tq.cancel(sq_task.id)
             if not cancelled:
                 self.logger.warning(f"No se pudo cancelar la tarea del escaneo {scan_id}")
                 return False
@@ -1676,9 +1676,9 @@ class OpenVASScanManager(ScanManager):
     def __init__(self) -> None:
         super().__init__()
 
-        self.scan_type = NmapScan
+        self.scan_type = OpenVASScan
 
-        config         = CR.get_openvas_environment()
+        config = CR.get_openvas_environment()
         self.hostname  = config["hostname"]
         self.port      = config["port"]
         self.username  = config["username"]

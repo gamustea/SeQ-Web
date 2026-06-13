@@ -247,8 +247,8 @@ class _Task(ABC):
 class NmapScanTask(_Task):
     """Implementación concreta para escaneos Nmap."""
 
-    def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300):
-        super().__init__(target_host, timeout)
+    def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300, progress_callback: Optional[Callable[[int], None]] = None):
+        super().__init__(target_host, timeout, progress_callback=progress_callback)
         temp_dir = CR.get_directory_of(CR.DirectoryType.TEMP)
 
         timestamp = int(time.time() * 1000)
@@ -314,8 +314,8 @@ class NmapScanTask(_Task):
 class NiktoScanTask(_Task):
     """Implementación concreta para escaneos Nikto."""
 
-    def __init__(self, target_domain, timeout: int = 120):
-        super().__init__(target_domain, timeout)
+    def __init__(self, target_domain, timeout: int = 120, progress_callback: Optional[Callable[[int], None]] = None):
+        super().__init__(target_domain, timeout, progress_callback=progress_callback)
 
         timestamp = int(time.time() * 1000)
         self.temp_path = (
@@ -725,6 +725,8 @@ class OpenVASTask(_Task):
             try:
                 with self._lock:
                     self.progress = max(0, int(float(progress_text)))
+                if self._progress_callback:
+                    self._progress_callback(self.progress)
             except (ValueError, TypeError) as e:
                 self.logger.warning(f"Error parsing progress '{progress_text}': {e}", exc_info=True)
 

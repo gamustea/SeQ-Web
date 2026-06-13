@@ -115,7 +115,7 @@ class IrisManager:
             f"iris-analysis:{analysis_id}", category="iris.analyze"
         )
         if sq_task:
-            return sq_task.get("status")
+            return str(sq_task.status)
 
         analysis = self.get_analysis(analysis_id)
         if analysis:
@@ -133,7 +133,7 @@ class IrisManager:
             f"iris-analysis:{analysis_id}", category="iris.analyze"
         )
         if sq_task:
-            return sq_task.get("progress", 0)
+            return sq_task.progress
         return None
 
     def get_analysis_results(self, analysis_id: int) -> Dict[str, Any]:
@@ -235,7 +235,7 @@ class IrisManager:
             self.logger.warning(f"No active task found for analysis {analysis_id}")
             return False
 
-        cancelled = tq.cancel(sq_task.get("id"))
+        cancelled = tq.cancel(sq_task.id)
         if cancelled:
             with UnitOfWork() as uow:
                 repo = IrisAnalysisRepository(uow)
@@ -271,7 +271,7 @@ class IrisManager:
                 f"iris-analysis:{analysis_id}", category="iris.analyze"
             )
             if sq_task:
-                tq.cancel(sq_task.get("id"))
+                tq.cancel(sq_task.id)
 
         with UnitOfWork() as uow:
             repo = IrisAnalysisRepository(uow)
@@ -429,7 +429,7 @@ class IrisManager:
                 f"iris-analysis:{analysis_id}", category="iris.analyze"
             )
             if sq_task:
-                tq.update_progress(sq_task.get("id"), progress)
+                tq.update_progress(sq_task.id, progress)
 
         total_score = sum(r.score for r in results)
         verdict = self._determine_verdict(total_score)
@@ -514,7 +514,7 @@ class IrisManager:
         sq_task = tq.get_task_by_external_id(
             f"iris-analysis:{analysis_id}", category="iris.analyze"
         )
-        if sq_task and sq_task.get("status") == "cancelled":
+        if sq_task and str(sq_task.status) == "cancelled":
             return True
         try:
             with UnitOfWork() as uow:
