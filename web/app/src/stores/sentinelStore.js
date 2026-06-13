@@ -183,8 +183,11 @@ export const useSentinelStore = defineStore('sentinel', () => {
     if (tableIdx !== -1) {
       d.results.splice(tableIdx, 1)
       d.totalCount = Math.max(0, d.totalCount - 1)
+
       if (d.results.length === 0 && d.totalCount > 0 && d.page > 1) {
         d.page--
+        await loadScans(activeTab.value)
+      } else if (d.results.length < d.perPage && d.totalCount > d.page * d.perPage) {
         await loadScans(activeTab.value)
       }
     }
