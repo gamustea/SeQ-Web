@@ -139,6 +139,43 @@ class Host(Base):
 
 
 # =========================================================================
+# SCAN FOLDER
+# =========================================================================
+
+class ScanFolder(Base):
+    """
+    Logical grouping of scans created by a user.
+
+    A scan may belong to zero or one folder. Deleting a folder leaves its
+    scans orphaned (folder_id becomes NULL) so they appear in the default
+    virtual folder.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        user_id: Owner user foreign key.
+        name: Folder name (max 255 characters).
+        created_at: Creation timestamp (automatic).
+        updated_at: Last update timestamp (automatic).
+
+    Relationships:
+        scans: Scan objects contained in this folder.
+    """
+
+    __tablename__ = "ScanFolder"
+
+    id         = Column(Integer,    primary_key=True, autoincrement=True)
+    user_id    = Column(Integer,    ForeignKey("User.id"), nullable=False)
+    name       = Column(String(255), nullable=False)
+    created_at = Column(DateTime,   nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime,   nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    scans = relationship("Scan", back_populates="folder")
+
+    def __repr__(self) -> str:
+        return f"<ScanFolder(id={self.id}, name='{self.name}', user_id={self.user_id})>"
+
+
+# =========================================================================
 # SCAN BASE
 # =========================================================================
 
@@ -190,6 +227,9 @@ class Scan(Base):
 
     programed_scan_id = Column(Integer, ForeignKey("ProgramedScan.id"), nullable=True)
     programed_scan = relationship("ProgramedScan", back_populates="scans")
+
+    folder_id = Column(Integer, ForeignKey("ScanFolder.id"), nullable=True)
+    folder = relationship("ScanFolder", back_populates="scans")
 
     sentinel_document = relationship(
         "SentinelDocument",

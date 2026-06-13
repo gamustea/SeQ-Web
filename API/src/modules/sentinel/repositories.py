@@ -42,6 +42,7 @@ from .model import (
     Port,
     ProgramedScan,
     Scan,
+    ScanFolder,
     ScanStatus,
     ScanType,
     SentinelDocument,
@@ -235,6 +236,44 @@ class ScanRepository(BaseRepository[Scan]):
         return self.get_all_by_field("host_id", host_id)
 
     # =========================================================================
+    # FOLDER QUERIES
+    # =========================================================================
+
+    def get_by_folder(self, folder_id: int, user_id: int) -> List[Scan]:
+        """Return scans inside a folder, ordered by start time descending."""
+        return (
+            self._session.query(Scan)
+            .filter(
+                Scan.folder_id == folder_id,
+                Scan.user_id == user_id,
+            )
+            .order_by(Scan.started_at.desc())
+            .all()
+        )
+
+    def get_unfoldered_by_user(self, user_id: int) -> List[Scan]:
+        """Return scans without a folder, ordered by start time descending."""
+        return (
+            self._session.query(Scan)
+            .filter(
+                Scan.user_id == user_id,
+                Scan.folder_id.is_(None),
+            )
+            .order_by(Scan.started_at.desc())
+            .all()
+        )
+
+    def set_folder(self, scan: Scan, folder: ScanFolder) -> Scan:
+        """Assign a scan to a folder."""
+        scan.folder = folder
+        return self.update(scan)
+
+    def unset_folder(self, scan: Scan) -> Scan:
+        """Remove a scan from its folder."""
+        scan.folder_id = None
+        return self.update(scan)
+
+    # =========================================================================
     # STATUS TRANSITIONS
     # =========================================================================
 
@@ -412,6 +451,39 @@ class SentinelReportRepository(BaseRepository[SentinelDocument]):
             .filter(SentinelDocument.scan_id == scan_id)
             .order_by(SentinelDocument.created_at.desc())
             .all()
+        )
+
+
+class ScanFolderRepository(BaseRepository[ScanFolder]):
+    """
+    Repository for the ScanFolder entity.
+
+    Manages user-created folders that group security scans. A scan can belong
+    to at most one folder; deleting a folder leaves its scans unassigned.
+
+    Attributes:
+        _model:  ScanFolder (inherited from BaseRepository).
+        _uow:    Active Unit of Work (inherited from BaseRepository).
+    """
+
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(ScanFolder, uow=uow, session=session)
+
+    def get_by_user(self, user_id: int) -> List[ScanFolder]:
+        """Return all folders for a user, newest first."""
+        return (
+            self._session.query(ScanFolder)
+            .filter(ScanFolder.user_id == user_id)
+            .order_by(ScanFolder.created_at.desc())
+            .all()
+        )
+
+    def get_by_id_and_user(self, folder_id: int, user_id: int) -> Optional[ScanFolder]:
+        """Return a folder only if it belongs to the given user."""
+        return (
+            self._session.query(ScanFolder)
+            .filter(ScanFolder.id == folder_id, ScanFolder.user_id == user_id)
+            .one_or_none()
         )
 
 
