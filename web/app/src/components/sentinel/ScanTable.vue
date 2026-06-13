@@ -105,11 +105,12 @@ th { padding: 0.55rem 0.85rem; text-align: left; font-size: 0.68rem; font-weight
 td { padding: 0.55rem 0.85rem; font-size: 0.82rem; border-top: 1px solid var(--border); color: var(--text); }
 tr:hover td { background: rgba(255,255,255,0.012); }
 tr.selected td { background: rgba(99,102,241,0.06); }
-.chk-col { width: 32px; text-align: center; }
+.chk-col { width: 32px; text-align: center; vertical-align: middle; }
 .chk-col input {
   appearance: none; -webkit-appearance: none;
   width: 12px; height: 12px;
-  margin: 0; cursor: pointer;
+  display: block; margin: 0 auto;
+  cursor: pointer;
   border: 1.5px solid var(--border-med);
   border-radius: 3px;
   background: var(--surface-2);
