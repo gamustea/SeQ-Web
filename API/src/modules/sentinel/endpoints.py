@@ -74,6 +74,8 @@ from .schemas import (
     FolderListResponseSchema,
     FolderActionResponseSchema,
     ScanFolderActionResponseSchema,
+    BulkDeleteScansSchema,
+    BulkDeleteScansResponseSchema,
 )
 
 
@@ -478,6 +480,30 @@ def delete_scan(scan_id: int):
         "message": "Escaneo eliminado correctamente",
         "scanId": scan_id,
         "scanType": scan.scan_type,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.post("/scans/bulk-delete")
+@sentinel_blp.arguments(BulkDeleteScansSchema)
+@sentinel_blp.response(200, BulkDeleteScansResponseSchema, description="Scans bulk deleted")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(500, schema=ErrorSchema, description="Deletion failed")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_DELETE])
+@limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+def bulk_delete_scans(data):
+    """Eliminar multiples escaneos de forma masiva"""
+    user = get_current_user()
+    result = ScanManager.bulk_delete_scans(data["scanIds"], user.id)
+    _logger.info(f"Bulk delete: {result['deletedCount']} eliminados, {result['failedCount']} fallidos por {user.username}")
+    return {
+        "message": f"{result['deletedCount']} escaneo(s) eliminado(s), {result['failedCount']} fallido(s)",
+        "deletedCount": result["deletedCount"],
+        "failedCount": result["failedCount"],
+        "results": result["results"],
         "user": user.username,
     }
 

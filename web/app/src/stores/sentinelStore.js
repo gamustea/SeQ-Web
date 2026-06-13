@@ -38,10 +38,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
   const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
   const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
 
-  /* ════════════════════════════════ SELECCION MULTIPLE ══════════════════ */
-  const selectedScanIds = ref(new Set())
-  const addToFolder = reactive({ show: false, submitting: false })
-
   /* ════════════════════════════════ VISTA DE CARPETAS ══════════════════ */
   const viewMode = ref('full') // 'full' | 'folders'
   const folders = reactive({ items: [], loading: false })
@@ -171,10 +167,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
   async function deleteScan(id) {
     const res = await apiFetch(`/sentinel/${id}`, { method: 'DELETE' })
     if (!res?.ok) { toast.show('No se pudo eliminar el escaneo.', 'error'); return false }
-
-    const s = new Set(selectedScanIds.value)
-    s.delete(id)
-    selectedScanIds.value = s
 
     const hit = _findScanInFolders(id)
     if (hit) {
@@ -540,25 +532,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
     return true
   }
 
-  /* ── SELECCION MULTIPLE ── */
-  function toggleScanSelection(scanId) {
-    const s = new Set(selectedScanIds.value)
-    if (s.has(scanId)) s.delete(scanId); else s.add(scanId)
-    selectedScanIds.value = s
-  }
-
-  function selectAllScans(ids) {
-    const s = new Set(selectedScanIds.value)
-    const allSelected = ids.every(id => s.has(id))
-    if (allSelected) ids.forEach(id => s.delete(id))
-    else ids.forEach(id => s.add(id))
-    selectedScanIds.value = s
-  }
-
-  function clearSelection() { selectedScanIds.value = new Set() }
-
   async function addScansToFolder(scanIds, folderId) {
-    addToFolder.submitting = true
     try {
       const res = await apiFetch(`/sentinel/folders/${folderId}/scans/batch`, {
         method: 'POST',
@@ -571,12 +545,34 @@ export const useSentinelStore = defineStore('sentinel', () => {
       }
       toast.show(`${scanIds.length} escaneo(s) añadido(s) a la carpeta.`, 'success')
       await loadFolders()
-      clearSelection()
       return true
     } catch {
       toast.show('No se pudo conectar con la API.', 'error')
       return false
-    } finally { addToFolder.submitting = false }
+    }
+  }
+
+  /** Elimina multiples escaneos de forma masiva. */
+  async function bulkDeleteScans(scanIds) {
+    try {
+      const res = await apiFetch('/sentinel/scans/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ scanIds }),
+      })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al eliminar escaneos.', 'error')
+        return false
+      }
+      toast.show(`${data.deletedCount ?? scanIds.length} escaneo(s) eliminado(s).`, 'success')
+      await refreshCurrent()
+      await loadFolders()
+      await loadStats()
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    }
   }
 
   function openMoveScan(scanId, currentFolderId) {
@@ -607,7 +603,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
     scheduled, scheduling,
     preview, details,
     viewMode, folders, folderForms, moveScan,
-    selectedScanIds, addToFolder,
     loadStats, loadScans, switchTab, refreshCurrent, goToPage,
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
@@ -619,6 +614,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
     createFolder, renameFolder, deleteFolder,
     moveScanToFolder, removeScanFromFolder,
     openMoveScan, closeMoveScan,
-    toggleScanSelection, selectAllScans, clearSelection, addScansToFolder,
+    addScansToFolder, bulkDeleteScans,
   }
 })

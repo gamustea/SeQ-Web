@@ -3,10 +3,7 @@
     <div class="table-toolbar">
       <span class="toolbar-title">Resultados {{ type.toUpperCase() }}</span>
       <div class="toolbar-actions">
-        <button v-if="selectedIds.size > 0" class="btn-folder" @click="$emit('add-to-folder')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-          Añadir a carpeta ({{ selectedIds.size }})
-        </button>
+        <slot name="batch-actions" :selected-count="selectedIds.length" :selected-ids="selectedIds" />
         <button class="btn-refresh" :disabled="loading" @click="$emit('refresh')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{ spin: loading }"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           Actualizar
@@ -32,8 +29,8 @@
           <th>Fecha</th><th>Acciones</th>
         </tr></thead>
         <tbody>
-          <tr v-for="row in rows" :key="row.id" :class="{ selected: selectedIds.has(row.id) }">
-            <td class="chk-col"><input type="checkbox" :checked="selectedIds.has(row.id)" @change="$emit('toggle-select', row.id)" /></td>
+          <tr v-for="row in rows" :key="row.id" :class="{ selected: _selectedSet.has(row.id) }">
+            <td class="chk-col"><input type="checkbox" :checked="_selectedSet.has(row.id)" @change="$emit('toggle-select', row.id)" /></td>
             <td class="mono">#{{ row.id }}</td>
             <td class="target">{{ row.target }}</td>
             <td><StatusBadge :status="row.status" /></td>
@@ -71,16 +68,18 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import StatusBadge from './StatusBadge.vue'
 import AppPagination from '@/components/shared/AppPagination.vue'
 
-const props = defineProps({ type: { type: String, required: true }, rows: { type: Array, default: () => [] }, loading: { type: Boolean, default: false }, currentPage: { type: Number, default: 1 }, totalCount: { type: Number, default: 0 }, perPage: { type: Number, default: 10 }, selectedIds: { type: Set, default: () => new Set() } })
-const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh', 'page-change', 'toggle-select', 'select-all', 'add-to-folder'])
+const props = defineProps({ type: { type: String, required: true }, rows: { type: Array, default: () => [] }, loading: { type: Boolean, default: false }, currentPage: { type: Number, default: 1 }, totalCount: { type: Number, default: 0 }, perPage: { type: Number, default: 10 }, selectedIds: { type: Array, default: () => [] } })
+const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh', 'page-change', 'toggle-select', 'select-all'])
+
+const _selectedSet = computed(() => new Set(props.selectedIds))
 
 const showLoading = ref(false)
 let loadingTimer = null
 watch(() => props.loading, (val) => { clearTimeout(loadingTimer); if (val) loadingTimer = setTimeout(() => { showLoading.value = true }, 200); else showLoading.value = false })
 onUnmounted(() => clearTimeout(loadingTimer))
 
-const allSelected = computed(() => props.rows.length > 0 && props.rows.every(r => props.selectedIds.has(r.id)))
-const someSelected = computed(() => props.rows.some(r => props.selectedIds.has(r.id)) && !allSelected.value)
+const allSelected = computed(() => props.rows.length > 0 && props.rows.every(r => _selectedSet.value.has(r.id)))
+const someSelected = computed(() => props.rows.some(r => _selectedSet.value.has(r.id)) && !allSelected.value)
 
 function isActive(s) { const st = (s ?? '').toLowerCase(); return st === 'running' || st === 'pending' }
 function confirmCancel(id) { if (confirm(`¿Cancelar el escaneo #${id}?`)) emit('cancel', id) }
@@ -97,9 +96,6 @@ function formatDate(iso) { if (!iso) return '—'; return new Date(iso).toLocale
 .btn-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-refresh svg { width: 11px; height: 11px; }
 .toolbar-actions { display: flex; gap: 0.5rem; align-items: center; }
-.btn-folder { display: flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.6rem; background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; color: #fff; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; }
-.btn-folder:hover { opacity: 0.9; }
-.btn-folder svg { width: 11px; height: 11px; }
 table { width: 100%; border-collapse: collapse; }
 th { padding: 0.55rem 0.85rem; text-align: left; font-size: 0.68rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2); }
 td { padding: 0.55rem 0.85rem; font-size: 0.82rem; border-top: 1px solid var(--border); color: var(--text); }

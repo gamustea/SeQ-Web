@@ -222,3 +222,21 @@ class ScanFolderActionResponseSchema(Schema):
     scanId = fields.Integer(allow_none=True)
     folderId = fields.Integer(allow_none=True)
     user = fields.String()
+
+
+class BulkDeleteScansSchema(Schema):
+    scanIds = fields.List(fields.Integer(), required=True, validate=validate.Length(min=1, max=100))
+
+
+class BulkDeleteResultSchema(Schema):
+    scanId = fields.Integer()
+    status = fields.String()
+    error = fields.String(allow_none=True)
+
+
+class BulkDeleteScansResponseSchema(Schema):
+    message = fields.String()
+    deletedCount = fields.Integer()
+    failedCount = fields.Integer()
+    results = fields.List(fields.Nested(BulkDeleteResultSchema))
+    user = fields.String()

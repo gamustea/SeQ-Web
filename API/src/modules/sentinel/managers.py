@@ -289,6 +289,47 @@ class ScanManager(ABC):
             raise
 
 
+    @classmethod
+    def bulk_delete_scans(cls, scan_ids: list[int], user_id: int) -> dict:
+        """
+        Delete multiple scans and their documents in a single operation.
+
+        Cancels running scans before deleting. Returns per-scan status.
+
+        Args:
+            scan_ids: List of scan primary keys.
+            user_id:  Owner user primary key.
+
+        Returns:
+            Dict with ``deletedCount``, ``failedCount``, and ``results`` list.
+        """
+        results = []
+        for scan_id in scan_ids:
+            try:
+                mgr = cls.resolve_manager(scan_id)
+                cls.assert_scan_ownership(scan_id, user_id)
+                scan = mgr.get_scan_by_id(scan_id)
+                if not scan:
+                    results.append({"scanId": scan_id, "status": "error", "error": "not_found"})
+                    continue
+
+                if scan.status in ("pending", "running"):
+                    mgr.cancel_scan(scan_id, user_id)
+
+                mgr.delete_scan(scan_id)
+                results.append({"scanId": scan_id, "status": "ok", "error": None})
+            except Exception as e:
+                results.append({"scanId": scan_id, "status": "error", "error": str(e)})
+
+        deleted = sum(1 for r in results if r["status"] == "ok")
+        failed = len(results) - deleted
+        return {
+            "deletedCount": deleted,
+            "failedCount": failed,
+            "results": results,
+        }
+
+
     # =========================================================================
     # OWNERSHIP ASSERTIONS
     # =========================================================================
