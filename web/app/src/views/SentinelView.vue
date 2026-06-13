@@ -9,8 +9,9 @@
       <template v-if="store.viewMode === 'full'">
         <ScanTabs :active="store.activeTab" @switch="store.switchTab" />
         <ScanForm :type="store.activeTab" :launching="store.launching" @launch="handleLaunch" />
-        <ScanTable :type="store.activeTab" :rows="currentData.results" :loading="currentData.loading" :current-page="currentData.page" :total-count="currentData.totalCount" :per-page="currentData.perPage"
-          @preview="(id, type) => store.openPreview(id, type)" @cancel="handleCancel" @delete="handleDelete" @refresh="store.refreshCurrent()" @page-change="page => store.goToPage(store.activeTab, page)" />
+        <ScanTable :type="store.activeTab" :rows="currentData.results" :loading="currentData.loading" :current-page="currentData.page" :total-count="currentData.totalCount" :per-page="currentData.perPage" :selected-ids="store.selectedScanIds"
+          @preview="(id, type) => store.openPreview(id, type)" @cancel="handleCancel" @delete="handleDelete" @refresh="store.refreshCurrent()" @page-change="page => store.goToPage(store.activeTab, page)"
+          @toggle-select="store.toggleScanSelection" @select-all="store.selectAllScans" @add-to-folder="store.addToFolder.show = true" />
       </template>
       <ScanFolderView v-else
         :folders="store.folders.items" :loading="store.folders.loading"
@@ -54,6 +55,13 @@
       :submitting="store.moveScan.submitting"
       @close="store.closeMoveScan()"
       @move="async folderId => { if (await store.moveScanToFolder(store.moveScan.scanId, folderId)) store.closeMoveScan() }" />
+    <AddToFolderModal
+      :show="store.addToFolder.show"
+      :scan-count="store.selectedScanIds.size"
+      :folders="store.folders.items"
+      :submitting="store.addToFolder.submitting"
+      @close="store.addToFolder.show = false"
+      @add="async folderId => { if (await store.addScansToFolder([...store.selectedScanIds], folderId)) store.addToFolder.show = false }" />
   </div>
 </template>
 
@@ -71,13 +79,14 @@ import ScanPreviewModal from '@/components/sentinel/ScanPreviewModal.vue'
 import ScanDetailsModal from '@/components/sentinel/ScanDetailsModal.vue'
 import FolderFormModal from '@/components/sentinel/FolderFormModal.vue'
 import MoveScanModal from '@/components/sentinel/MoveScanModal.vue'
+import AddToFolderModal from '@/components/sentinel/AddToFolderModal.vue'
 import ScheduledScansPanel from '@/components/sentinel/ScheduledScansPanel.vue'
 import { useSentinelStore } from '@/stores/sentinelStore'
 
 const store = useSentinelStore()
 const currentData = computed(() => store.scans[store.activeTab])
 
-onMounted(() => { store.loadStats(); store.loadScans(store.activeTab); store.loadScheduledScans() })
+onMounted(() => { store.loadStats(); store.loadScans(store.activeTab); store.loadScheduledScans(); store.loadFolders() })
 
 async function handleCancel(id) { await store.cancelScan(id) }
 async function handleDelete(id) { await store.deleteScan(id) }

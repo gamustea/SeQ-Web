@@ -70,6 +70,7 @@ from .schemas import (
     CreateFolderSchema,
     RenameFolderSchema,
     MoveScanToFolderSchema,
+    AddScansToFolderSchema,
     FolderListResponseSchema,
     FolderActionResponseSchema,
     ScanFolderActionResponseSchema,
@@ -956,6 +957,30 @@ def move_scan_to_folder(data, folder_id: int):
     return {
         "message": "Escaneo añadido a la carpeta correctamente",
         "scanId": scan.id,
+        "folderId": folder_id,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.post("/folders/<int:folder_id>/scans/batch")
+@sentinel_blp.arguments(AddScansToFolderSchema)
+@sentinel_blp.response(200, ScanFolderActionResponseSchema, description="Scans added to folder")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder or scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+def add_scans_to_folder(data, folder_id: int):
+    """Añadir varios escaneos a una carpeta de una sola vez"""
+    user = get_current_user()
+    scans = ScanFolderManager().add_scans_to_folder(data["scanIds"], folder_id, user.id)
+    _logger.info(f"{len(scans)} escaneos añadidos a carpeta {folder_id} por {user.username}")
+    return {
+        "message": f"{len(scans)} escaneo(s) añadido(s) a la carpeta correctamente",
+        "scanId": scans[0].id if scans else None,
         "folderId": folder_id,
         "user": user.username,
     }

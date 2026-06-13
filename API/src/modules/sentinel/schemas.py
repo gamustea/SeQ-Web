@@ -190,6 +190,10 @@ class MoveScanToFolderSchema(Schema):
     scanId = fields.Integer(required=True)
 
 
+class AddScansToFolderSchema(Schema):
+    scanIds = fields.List(fields.Integer(), required=True, validate=validate.Length(min=1))
+
+
 class FolderSchema(Schema):
     id = fields.Integer(allow_none=True)
     name = fields.String()
@@ -215,6 +219,6 @@ class FolderActionResponseSchema(Schema):
 
 class ScanFolderActionResponseSchema(Schema):
     message = fields.String()
-    scanId = fields.Integer()
+    scanId = fields.Integer(allow_none=True)
     folderId = fields.Integer(allow_none=True)
     user = fields.String()

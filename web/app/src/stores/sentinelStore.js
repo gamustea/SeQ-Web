@@ -38,6 +38,10 @@ export const useSentinelStore = defineStore('sentinel', () => {
   const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
   const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
 
+  /* ════════════════════════════════ SELECCION MULTIPLE ══════════════════ */
+  const selectedScanIds = ref(new Set())
+  const addToFolder = reactive({ show: false, submitting: false })
+
   /* ════════════════════════════════ VISTA DE CARPETAS ══════════════════ */
   const viewMode = ref('full') // 'full' | 'folders'
   const folders = reactive({ items: [], loading: false })
@@ -50,6 +54,30 @@ export const useSentinelStore = defineStore('sentinel', () => {
   /* ── HELPERS ── */
   /** @param {'nmap'|'nikto'|'openvas'} type */
   function _scandata(type) { return scans[type] }
+
+  /** Busca un escaneo por ID en todas las carpetas (incluyendo unfoldered). Retorna { folder, idx } o null. */
+  function _findScanInFolders(scanId) {
+    for (const folder of folders.items) {
+      const idx = (folder.scans || []).findIndex(s => s.id === scanId)
+      if (idx !== -1) return { folder, idx }
+    }
+    return null
+  }
+
+  /** Busca una carpeta por ID. */
+  function _findFolder(folderId) {
+    return folders.items.find(f => f.id === folderId)
+  }
+
+  /** Obtiene (o crea) la pseudo-carpeta unfoldered. Siempre la sitúa primera. */
+  function _getUnfoldered() {
+    let unf = folders.items.find(f => f.id === null)
+    if (!unf) {
+      unf = { id: null, name: 'Sin carpeta', scans: [], scanCount: 0 }
+      folders.items.unshift(unf)
+    }
+    return unf
+  }
 
   /* ════════════════════════════════ STATS ══════════════════════════════ */
   /** Carga los contadores de escaneos desde el endpoint de stats. */
@@ -88,6 +116,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
     const d = _scandata(type)
     d.page = 1
     loadScans(type)
+    loadFolders()
   }
 
   /** Refresca la pestaña activa y las estadísticas. */
@@ -138,16 +167,33 @@ export const useSentinelStore = defineStore('sentinel', () => {
   }
 
   /* ════════════════════════════════ ACCIONES DE FILA ══════════════════ */
-  /** Elimina un escaneo por ID y refresca. */
+  /** Elimina un escaneo por ID. Actualiza el estado local sin refetch completo. */
   async function deleteScan(id) {
     const res = await apiFetch(`/sentinel/${id}`, { method: 'DELETE' })
     if (!res?.ok) { toast.show('No se pudo eliminar el escaneo.', 'error'); return false }
-    await refreshCurrent()
-    await loadFolders()
+
+    const hit = _findScanInFolders(id)
+    if (hit) {
+      hit.folder.scans.splice(hit.idx, 1)
+      hit.folder.scanCount = Math.max(0, (hit.folder.scanCount || 0) - 1)
+    }
+
+    const d = _scandata(activeTab.value)
+    const tableIdx = d.results.findIndex(s => s.id === id)
+    if (tableIdx !== -1) {
+      d.results.splice(tableIdx, 1)
+      d.totalCount = Math.max(0, d.totalCount - 1)
+      if (d.results.length === 0 && d.totalCount > 0 && d.page > 1) {
+        d.page--
+        await loadScans(activeTab.value)
+      }
+    }
+
+    await loadStats()
     return true
   }
 
-  /** Cancela un escaneo en ejecución. */
+  /** Cancela un escaneo en ejecución. Actualiza el badge local sin refetch. */
   async function cancelScan(id) {
     const res = await apiFetch(`/sentinel/scans/${id}/cancel`, { method: 'POST' })
     if (!res?.ok) {
@@ -155,8 +201,14 @@ export const useSentinelStore = defineStore('sentinel', () => {
       toast.show(data.message || 'No se pudo cancelar el escaneo.', 'error')
       return false
     }
-    await refreshCurrent()
-    await loadFolders()
+
+    const hit = _findScanInFolders(id)
+    if (hit) hit.folder.scans[hit.idx].status = 'cancelled'
+
+    const d = _scandata(activeTab.value)
+    const tableHit = d.results.find(s => s.id === id)
+    if (tableHit) tableHit.status = 'cancelled'
+
     return true
   }
 
@@ -371,8 +423,11 @@ export const useSentinelStore = defineStore('sentinel', () => {
 
   function setViewMode(mode) {
     viewMode.value = mode
-    if (mode === 'folders') loadFolders()
-    else refreshCurrent()
+    if (mode === 'folders') {
+      if (!folders.items.length) loadFolders()
+    } else {
+      refreshCurrent()
+    }
   }
 
   async function createFolder(name) {
@@ -384,8 +439,11 @@ export const useSentinelStore = defineStore('sentinel', () => {
         toast.show(data.error_description || data.message || 'Error al crear la carpeta.', 'error')
         return false
       }
-      toast.show(`Carpeta "${data.name}" creada`, 'success')
-      await loadFolders()
+      const now = new Date().toISOString()
+      folders.items.splice(folders.items.findIndex(f => f.id === null) + 1, 0, {
+        id: data.folderId, name, scans: [], scanCount: 0, createdAt: now, updatedAt: now,
+      })
+      toast.show(`Carpeta "${name}" creada`, 'success')
       return true
     } catch {
       toast.show('No se pudo conectar con la API.', 'error')
@@ -405,8 +463,9 @@ export const useSentinelStore = defineStore('sentinel', () => {
         toast.show(data.error_description || data.message || 'Error al renombrar la carpeta.', 'error')
         return false
       }
+      const folder = _findFolder(folderId)
+      if (folder) folder.name = name
       toast.show('Carpeta renombrada', 'success')
-      await loadFolders()
       return true
     } catch {
       toast.show('No se pudo conectar con la API.', 'error')
@@ -417,8 +476,19 @@ export const useSentinelStore = defineStore('sentinel', () => {
   async function deleteFolder(folderId) {
     const res = await apiFetch(`/sentinel/folders/${folderId}`, { method: 'DELETE' })
     if (!res?.ok) { toast.show('No se pudo eliminar la carpeta.', 'error'); return false }
+
+    const idx = folders.items.findIndex(f => f.id === folderId)
+    if (idx !== -1) {
+      const folder = folders.items[idx]
+      if (folder.scans?.length) {
+        const unf = _getUnfoldered()
+        unf.scans.push(...folder.scans)
+        unf.scanCount = (unf.scanCount || 0) + folder.scans.length
+      }
+      folders.items.splice(idx, 1)
+    }
+
     toast.show('Carpeta eliminada.', 'success')
-    await loadFolders()
     return true
   }
 
@@ -446,9 +516,60 @@ export const useSentinelStore = defineStore('sentinel', () => {
   async function removeScanFromFolder(scanId, folderId) {
     const res = await apiFetch(`/sentinel/folders/${folderId}/scans/${scanId}`, { method: 'DELETE' })
     if (!res?.ok) { toast.show('No se pudo quitar el escaneo de la carpeta.', 'error'); return false }
+
+    const folder = _findFolder(folderId)
+    if (folder) {
+      const idx = (folder.scans || []).findIndex(s => s.id === scanId)
+      if (idx !== -1) {
+        const [scan] = folder.scans.splice(idx, 1)
+        folder.scanCount = Math.max(0, (folder.scanCount || 0) - 1)
+        const unf = _getUnfoldered()
+        unf.scans.push(scan)
+        unf.scanCount = (unf.scanCount || 0) + 1
+      }
+    }
+
     toast.show('Escaneo eliminado de la carpeta.', 'success')
-    await loadFolders()
     return true
+  }
+
+  /* ── SELECCION MULTIPLE ── */
+  function toggleScanSelection(scanId) {
+    const s = new Set(selectedScanIds.value)
+    if (s.has(scanId)) s.delete(scanId); else s.add(scanId)
+    selectedScanIds.value = s
+  }
+
+  function selectAllScans(ids) {
+    const s = new Set(selectedScanIds.value)
+    const allSelected = ids.every(id => s.has(id))
+    if (allSelected) ids.forEach(id => s.delete(id))
+    else ids.forEach(id => s.add(id))
+    selectedScanIds.value = s
+  }
+
+  function clearSelection() { selectedScanIds.value = new Set() }
+
+  async function addScansToFolder(scanIds, folderId) {
+    addToFolder.submitting = true
+    try {
+      const res = await apiFetch(`/sentinel/folders/${folderId}/scans/batch`, {
+        method: 'POST',
+        body: JSON.stringify({ scanIds }),
+      })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.error_description || data.message || 'Error al añadir escaneos a la carpeta.', 'error')
+        return false
+      }
+      toast.show(`${scanIds.length} escaneo(s) añadido(s) a la carpeta.`, 'success')
+      await loadFolders()
+      clearSelection()
+      return true
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+      return false
+    } finally { addToFolder.submitting = false }
   }
 
   function openMoveScan(scanId, currentFolderId) {
@@ -479,6 +600,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
     scheduled, scheduling,
     preview, details,
     viewMode, folders, folderForms, moveScan,
+    selectedScanIds, addToFolder,
     loadStats, loadScans, switchTab, refreshCurrent, goToPage,
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
@@ -490,5 +612,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
     createFolder, renameFolder, deleteFolder,
     moveScanToFolder, removeScanFromFolder,
     openMoveScan, closeMoveScan,
+    toggleScanSelection, selectAllScans, clearSelection, addScansToFolder,
   }
 })

@@ -2,10 +2,16 @@
   <div class="table-wrap">
     <div class="table-toolbar">
       <span class="toolbar-title">Resultados {{ type.toUpperCase() }}</span>
-      <button class="btn-refresh" :disabled="loading" @click="$emit('refresh')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{ spin: loading }"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        Actualizar
-      </button>
+      <div class="toolbar-actions">
+        <button v-if="selectedIds.size > 0" class="btn-folder" @click="$emit('add-to-folder')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Añadir a carpeta ({{ selectedIds.size }})
+        </button>
+        <button class="btn-refresh" :disabled="loading" @click="$emit('refresh')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{ spin: loading }"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Actualizar
+        </button>
+      </div>
     </div>
     <div v-if="showLoading" class="empty-state">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -18,6 +24,7 @@
     <template v-else>
       <table>
         <thead><tr>
+          <th class="chk-col"><input type="checkbox" :checked="allSelected" :indeterminate="someSelected" @change="$emit('select-all', rows.map(r => r.id))" /></th>
           <th>ID</th><th>Target</th><th>Estado</th>
           <th v-if="type === 'nmap'">Puertos</th>
           <th v-if="type === 'nikto'">Incidencias</th>
@@ -25,7 +32,8 @@
           <th>Fecha</th><th>Acciones</th>
         </tr></thead>
         <tbody>
-          <tr v-for="row in rows" :key="row.id">
+          <tr v-for="row in rows" :key="row.id" :class="{ selected: selectedIds.has(row.id) }">
+            <td class="chk-col"><input type="checkbox" :checked="selectedIds.has(row.id)" @change="$emit('toggle-select', row.id)" /></td>
             <td class="mono">#{{ row.id }}</td>
             <td class="target">{{ row.target }}</td>
             <td><StatusBadge :status="row.status" /></td>
@@ -59,17 +67,20 @@
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import StatusBadge from './StatusBadge.vue'
 import AppPagination from '@/components/shared/AppPagination.vue'
 
-const props = defineProps({ type: { type: String, required: true }, rows: { type: Array, default: () => [] }, loading: { type: Boolean, default: false }, currentPage: { type: Number, default: 1 }, totalCount: { type: Number, default: 0 }, perPage: { type: Number, default: 10 } })
-const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh', 'page-change'])
+const props = defineProps({ type: { type: String, required: true }, rows: { type: Array, default: () => [] }, loading: { type: Boolean, default: false }, currentPage: { type: Number, default: 1 }, totalCount: { type: Number, default: 0 }, perPage: { type: Number, default: 10 }, selectedIds: { type: Set, default: () => new Set() } })
+const emit = defineEmits(['preview', 'cancel', 'delete', 'refresh', 'page-change', 'toggle-select', 'select-all', 'add-to-folder'])
 
 const showLoading = ref(false)
 let loadingTimer = null
 watch(() => props.loading, (val) => { clearTimeout(loadingTimer); if (val) loadingTimer = setTimeout(() => { showLoading.value = true }, 200); else showLoading.value = false })
 onUnmounted(() => clearTimeout(loadingTimer))
+
+const allSelected = computed(() => props.rows.length > 0 && props.rows.every(r => props.selectedIds.has(r.id)))
+const someSelected = computed(() => props.rows.some(r => props.selectedIds.has(r.id)) && !allSelected.value)
 
 function isActive(s) { const st = (s ?? '').toLowerCase(); return st === 'running' || st === 'pending' }
 function confirmCancel(id) { if (confirm(`¿Cancelar el escaneo #${id}?`)) emit('cancel', id) }
@@ -85,10 +96,17 @@ function formatDate(iso) { if (!iso) return '—'; return new Date(iso).toLocale
 .btn-refresh:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .btn-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-refresh svg { width: 11px; height: 11px; }
+.toolbar-actions { display: flex; gap: 0.5rem; align-items: center; }
+.btn-folder { display: flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.6rem; background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; color: #fff; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; }
+.btn-folder:hover { opacity: 0.9; }
+.btn-folder svg { width: 11px; height: 11px; }
 table { width: 100%; border-collapse: collapse; }
 th { padding: 0.55rem 0.85rem; text-align: left; font-size: 0.68rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2); }
 td { padding: 0.55rem 0.85rem; font-size: 0.82rem; border-top: 1px solid var(--border); color: var(--text); }
 tr:hover td { background: rgba(255,255,255,0.012); }
+tr.selected td { background: rgba(99,102,241,0.06); }
+.chk-col { width: 32px; text-align: center; }
+.chk-col input { accent-color: var(--accent); cursor: pointer; }
 .mono { font-family: var(--font-mono); font-size: 0.78rem; }
 .muted { color: var(--text-muted); font-family: var(--font-body); font-size: 0.75rem; }
 .date { font-size: 0.75rem; color: var(--text-dim); white-space: nowrap; }

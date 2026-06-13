@@ -1230,6 +1230,27 @@ class ScanFolderManager:
         self.logger.info(f"Escaneo {scan_id} movido a carpeta {folder_id}")
         return scan
 
+    def add_scans_to_folder(self, scan_ids: list[int], folder_id: int, user_id: int) -> list[Scan]:
+        """Add multiple scans to a folder at once."""
+        with UnitOfWork() as uow:
+            scan_repo = ScanRepository(uow)
+            folder_repo = ScanFolderRepository(uow)
+
+            folder = folder_repo.get_by_id_and_user(folder_id, user_id)
+            self._assert_folder_ownership(folder, user_id)
+
+            added = []
+            for scan_id in scan_ids:
+                scan = scan_repo.get_by_id(scan_id)
+                self._assert_scan_ownership(scan, user_id)
+                if scan.folder_id == folder_id:
+                    continue
+                scan_repo.set_folder(scan, folder)
+                added.append(scan)
+
+        self.logger.info(f"{len(added)} escaneos añadidos a carpeta {folder_id}")
+        return added
+
     def remove_scan_from_folder(self, scan_id: int, user_id: int) -> Scan:
         """Remove a scan from its current folder."""
         with UnitOfWork() as uow:
