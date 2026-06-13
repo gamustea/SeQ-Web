@@ -31,12 +31,14 @@
     <ScanDetailsModal :show="store.details.show" :scan="store.details.scan" :type="store.details.type" :docs="store.details.docs" :docs-loading="store.details.docsLoading"
       @close="store.closeDetails()" @refresh-docs="store.refreshDetailsDocs()" @download-doc="store.downloadDocument" @delete-doc="handleDeleteDetailsDoc" @generate-pdf="handleDetailsPdf" />
     <FolderFormModal
+      :key="'create-folder'"
       :show="store.folderForms.create.show"
       title="Nueva carpeta"
       :submitting="store.folderForms.create.submitting"
       @close="store.folderForms.create.show = false"
       @submit="async name => { if (await store.createFolder(name)) store.folderForms.create.show = false }" />
     <FolderFormModal
+      :key="'rename-folder'"
       :show="store.folderForms.rename.show"
       title="Renombrar carpeta"
       :initial-name="store.folderForms.rename.name"
@@ -44,6 +46,7 @@
       @close="store.folderForms.rename.show = false"
       @submit="async name => { if (await store.renameFolder(store.folderForms.rename.folderId, name)) store.folderForms.rename.show = false }" />
     <MoveScanModal
+      :key="'move-scan'"
       :show="store.moveScan.show"
       :scan-id="store.moveScan.scanId"
       :current-folder-id="store.moveScan.folderId"
