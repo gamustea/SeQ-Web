@@ -55,13 +55,18 @@
       <!-- Left column -->
       <section class="hub-left" style="animation-delay: 0.1s">
         <div class="hero-block">
-          <div class="hero-logo">
-            <span class="hero-bracket hero-bracket--left">[</span>
-            <span class="hero-text">SeQ</span>
-            <span class="hero-bracket hero-bracket--right">]</span>
-          </div>
-          <div class="hero-sub">
-            <span class="hero-sub-badge">Security Operations Platform</span>
+          <div class="hero-head">
+            <img :src="seqLogo" alt="SeQ" class="hero-logo-img" />
+            <div class="hero-head-body">
+              <div class="hero-logo">
+                <span class="hero-bracket hero-bracket--left">[</span>
+                <span class="hero-text">SeQ</span>
+                <span class="hero-bracket hero-bracket--right">]</span>
+              </div>
+              <div class="hero-sub">
+                <span class="hero-sub-badge">Security Operations Platform</span>
+              </div>
+            </div>
           </div>
           <div class="hero-divider"></div>
         </div>
@@ -193,6 +198,7 @@ import sentinelIcon from '@/assets/images/sentinel/Sentinel-Turqoise-BgN.png'
 import aegisIcon from '@/assets/images/aegis/SeQ-Aegis-Blue-BgN.png'
 import irisIcon from '@/assets/images/iris/Iris-Red-BgN.png'
 import acheronIcon from '@/assets/images/acheron/Acheron-Purple-BgN.png'
+import seqLogo from '@/assets/images/seq/SeQ-BgN.png'
 
 const auth = useAuthStore()
 const profileStore = useProfileStore()
@@ -450,6 +456,21 @@ function logout() {
   gap: 0.5rem;
 }
 
+.hero-head {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+}
+.hero-head-body {
+  display: flex;
+  flex-direction: column;
+}
+.hero-logo-img {
+  height: 6rem;
+  width: auto;
+  display: block;
+  flex-shrink: 0;
+}
 .hero-bracket {
   font-size: 4.2rem;
   font-weight: 200;
@@ -813,6 +834,12 @@ function logout() {
   .hub-dashboard {
     padding: 1rem 1rem 0;
     gap: 1.25rem;
+  }
+  .hero-logo-img {
+    height: 4rem;
+  }
+  .hero-head {
+    gap: 0.8rem;
   }
   .hero-text {
     font-size: 2.8rem;
