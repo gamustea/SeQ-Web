@@ -17,21 +17,14 @@
         </button>
         <transition name="form-fade">
           <div v-if="scheduling.showForm" class="create-form">
-            <div class="form-row">
-              <div class="field field-sm"><label>Tipo</label>
-                <select v-model="form.scanType">
-                  <option value="nmap">Nmap</option><option value="nikto">Nikto</option><option value="openvas">OpenVAS</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-row" v-if="form.scanType === 'nmap'">
+            <div class="form-row" v-if="activeTab === 'nmap'">
               <div class="field field-lg"><label>Host</label><input v-model="form.args.target_host" placeholder="192.168.1.0/24" /></div>
               <div class="field field-md"><label>Puertos</label><input v-model="form.args.target_ports" placeholder="80,443 o 1-1000" /></div>
             </div>
-            <div class="form-row" v-if="form.scanType === 'nikto'">
+            <div class="form-row" v-if="activeTab === 'nikto'">
               <div class="field field-lg"><label>Dominio</label><input v-model="form.args.target_domain" placeholder="example.com" /></div>
             </div>
-            <div class="form-row" v-if="form.scanType === 'openvas'">
+            <div class="form-row" v-if="activeTab === 'openvas'">
               <div class="field field-lg"><label>Target (IP)</label><input v-model="form.args.target" placeholder="192.168.1.1" /></div>
             </div>
             <div class="form-row">
@@ -92,12 +85,16 @@ const emit = defineEmits(['create', 'deactivate', 'delete', 'toggleForm'])
 const expanded = ref(false)
 
 const filtered = computed(() => props.scheduled.scans.filter(s => s.scanType === props.activeTab))
-const DEFAULTS = { nmap: { target_host: '', target_ports: '1-1000' }, nikto: { target_domain: '' }, openvas: { target: '' } }
-const form = reactive({ scanType: 'nmap', args: { ...DEFAULTS.nmap }, scheduleType: 'interval', scheduleConfig: { every: 60, unit: 'minutes' } })
+const form = reactive({ args: {}, scheduleType: 'interval', scheduleConfig: { every: 60, unit: 'minutes' } })
 
-watch(() => form.scanType, (type) => { form.args = { ...DEFAULTS[type] } })
+const ARGS_MAP = { nmap: { target_host: '', target_ports: '1-1000' }, nikto: { target_domain: '' }, openvas: { target: '' } }
+watch(() => props.activeTab, (type) => {
+  form.args = { ...ARGS_MAP[type] }
+  form.scheduleType = 'interval'
+  form.scheduleConfig = { every: 60, unit: 'minutes' }
+}, { immediate: true })
 
-function handleCreate() { emit('create', { scan_type: form.scanType, arguments: { ...form.args }, schedule_type: form.scheduleType, schedule_config: { ...form.scheduleConfig } }) }
+function handleCreate() { emit('create', { scan_type: props.activeTab, arguments: { ...form.args }, schedule_type: form.scheduleType, schedule_config: { ...form.scheduleConfig } }) }
 function handleDeactivate(id) { if (confirm('Desactivar este escaneo programado?')) emit('deactivate', id) }
 function handleDelete(id) { if (confirm('Eliminar permanentemente este escaneo programado?')) emit('delete', id) }
 function formatArgs(type, args) {
