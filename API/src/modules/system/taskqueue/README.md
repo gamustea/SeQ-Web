@@ -212,33 +212,43 @@ class IrisManager(TaskTrackingMixin):
 
 ## Cómo Crear una Nueva Tarea
 
-### Paso 1: Definir la función ejecutable
+### Paso 1: Definir el entry point en el manager
 
-En `src/modules/mymodule/services/rq_tasks.py`:
+El punto de entrada que RQ invoca es un `@staticmethod` del propio manager —
+no hace falta un módulo `rq_tasks.py` separado. Como `@staticmethod`, RQ lo
+serializa por referencia (`modulo.Clase.metodo`) sin necesidad de picklear
+ninguna instancia. El staticmethod construye su propia instancia del manager
+y delega en un método interno que usa `job_context()` para progreso/cancelación:
 
 ```python
 from src.modules.system.taskqueue import job_context
 
-def execute_my_analysis(analysis_id: int, config: dict):
-    """Ejecutada en el worker. Usa job_context para progreso/cancelación."""
-    with job_context() as job:
-        analysis = get_analysis(analysis_id)
-        
-        for step_idx, step in enumerate(analysis.steps):
-            # Cancelación cooperativa
-            if job.cancelled():
-                break
-            
-            # Procesar step
-            result = process_step(step, config)
-            
-            # Actualizar progreso
-            progress_pct = (step_idx + 1) * 100 // len(analysis.steps)
-            job.progress(progress_pct)
-        
-        # Persistir resultado
-        analysis.result = result
-        analysis.save()
+class MyAnalysisManager(TaskTrackingMixin):
+    @staticmethod
+    def execute_my_analysis(analysis_id: int, config: dict) -> None:
+        """Entry point enviado a la TaskQueue."""
+        MyAnalysisManager()._run_analysis(analysis_id, config)
+
+    def _run_analysis(self, analysis_id: int, config: dict) -> None:
+        """Ejecutada en el worker. Usa job_context para progreso/cancelación."""
+        with job_context() as job:
+            analysis = get_analysis(analysis_id)
+
+            for step_idx, step in enumerate(analysis.steps):
+                # Cancelación cooperativa
+                if job.cancelled():
+                    break
+
+                # Procesar step
+                result = process_step(step, config)
+
+                # Actualizar progreso
+                progress_pct = (step_idx + 1) * 100 // len(analysis.steps)
+                job.progress(progress_pct)
+
+            # Persistir resultado
+            analysis.result = result
+            analysis.save()
 ```
 
 ### Paso 2: Registrar la categoría de cola
@@ -277,11 +287,9 @@ class MyAnalysisManager(TaskTrackingMixin):
         analysis = MyAnalysis(user_id=self.user.id, config=config)
         analysis.save()
         
-        # Enviar tarea
-        from src.modules.mymodule.services.rq_tasks import execute_my_analysis
-        
+        # Enviar tarea (referencia directa al staticmethod del manager)
         self._tq.submit(
-            func=execute_my_analysis,
+            func=MyAnalysisManager.execute_my_analysis,
             args=(analysis.id, config),
             name=f"Analysis-{analysis.id}",
             category=self.TASK_CATEGORY,
@@ -349,18 +357,19 @@ def cancel_analysis(analysis_id):
 ### Ejemplo 1: Tarea simple sin progreso
 
 ```python
-# En rq_tasks.py
-def execute_simple_job(param: str):
-    # Sin job_context, porque no necesitamos progreso ni cancelación
-    result = expensive_computation(param)
-    persist_result(result)
+class MyManager(TaskTrackingMixin):
+    @staticmethod
+    def execute_simple_job(param: str) -> None:
+        # Sin job_context, porque no necesitamos progreso ni cancelación
+        result = expensive_computation(param)
+        persist_result(result)
 
-# En manager.py
-self._tq.submit(
-    func=execute_simple_job,
-    args=(param,),
-    category="mymodule.simple",
-)
+    def start(self, param: str) -> None:
+        self._tq.submit(
+            func=MyManager.execute_simple_job,
+            args=(param,),
+            category="mymodule.simple",
+        )
 ```
 
 ### Ejemplo 2: Tarea con bucle y progreso
@@ -601,7 +610,7 @@ En `SecOpsConfig.json`:
 
 | Tarea | Dónde | Cómo |
 |-------|-------|------|
-| **Crear tarea** | `services/rq_tasks.py` | Define función, usa `job_context()` |
+| **Crear tarea** | `managers.py` | `@staticmethod` entry point + método interno con `job_context()` |
 | **Registrar cola** | `modules/__init__.py` | `QueueRegistry.register("cat.subcat")` |
 | **Manager** | `managers.py` | Extiende `TaskTrackingMixin`, inyecta `ITaskQueue` |
 | **Enviar** | `manager.submit_*()` | Usa `self._tq.submit(...)` |
