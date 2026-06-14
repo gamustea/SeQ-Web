@@ -126,13 +126,8 @@ class ScanManager(TaskTrackingMixin, ABC):
                 defecto, el singleton ``TaskQueue``.
         """
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
-        self.scan_type = None
         self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
-    @abstractmethod
-    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
-        """Añade datos específicos del tipo de scan al diccionario data para el CSV."""
-        pass
 
     # =========================================================================
     # SCAN QUERIES
@@ -203,23 +198,22 @@ class ScanManager(TaskTrackingMixin, ABC):
         """
         Return the progress percentage (0-100) of a running scan.
 
+        Delegates to the TaskQueue registry via ``TaskTrackingMixin``.
+
         Args:
             scan_id: Primary key of the scan.
 
         Returns:
             Integer percentage, or None if the scan is not in the task registry.
         """
-        sq_task = self.find_task(scan_id)
-        if sq_task:
-            self.logger.debug(f"Progreso de escaneo {scan_id}: {sq_task.progress}%")
-            return sq_task.progress
-        return None
+        return self.task_progress_of(scan_id)
 
     def get_scan_status(self, scan_id: int) -> Optional[str]:
         """
         Return the current status string of a scan.
 
-        Checks the TaskQueue registry first; falls back to the database.
+        Checks the TaskQueue registry first (via ``TaskTrackingMixin``); falls
+        back to the database.
 
         Args:
             scan_id: Primary key of the scan.
@@ -227,9 +221,9 @@ class ScanManager(TaskTrackingMixin, ABC):
         Returns:
             Status string, or None if not found.
         """
-        sq_task = self.find_task(scan_id)
-        if sq_task:
-            return str(sq_task.status)
+        status = self.task_status_of(scan_id)
+        if status is not None:
+            return status
         if self.is_scan_finished(scan_id):
             return str(TaskStatus.COMPLETED)
         return None
@@ -385,25 +379,9 @@ class ScanManager(TaskTrackingMixin, ABC):
             True if cancelled successfully, False otherwise.
         """
         try:
-            scan = self.get_scan_by_id(scan_id)
-            from src.modules.users.exceptions import UserNotFoundError
-            from src.modules.users import UserManager
-            user = UserManager().get_user_by_id(user_id)
-            self.assert_scan_ownership(scan_id, user_id)
-            if not scan:
-                self.logger.warning(f"Escaneo {scan_id} no encontrado, no se puede cancelar")
-                return False
-
-            if not user:
-                self.logger.warning(f"El usuario con id {user_id} no existe")
-                raise UserNotFoundError(user_id)
-
-            if scan.user_id != user.id: # type: ignore
-                self.logger.warning(
-                    f"El usuario {user.username} no tiene permisos "
-                    f"para cancelar el escaneo {scan_id}"
-                )
-                return False
+            # Valida existencia del escaneo, del usuario y la propiedad en un
+            # único punto (lanza ScanNotFoundError/UserNotFoundError si falla).
+            scan = self.assert_scan_ownership(scan_id, user_id)
 
             if scan.status not in ("pending", "running"):
                 self.logger.warning(
@@ -438,33 +416,15 @@ class ScanManager(TaskTrackingMixin, ABC):
             self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
             return False
 
-    @classmethod
-    def cancel_all_running(cls, logger, timeout: int = 30) -> None:
-        """
-        Cancel all running scans.
-
-        Delegates to TaskQueue.cancel_all() which sets cancel signals
-        and returns immediately (signal-safe). Workers exit naturally
-        when the process terminates.
-
-        Args:
-            logger:  Logger instance for logging.
-            timeout: Ignored — cancel_all() is fire-and-forget.
-        """
-        logger.info("Cancelando todas las tareas activas via TaskQueue...")
-        try:
-            TaskQueue.get_instance().cancel_all()
-        except Exception as e:
-            logger.error(f"Error cancelando tareas TaskQueue: {e}", exc_info=True)
-        logger.info("Tareas canceladas.")
-
-
     # =========================================================================
     # INTERNAL SCAN EXECUTION
     # =========================================================================
 
     def _execute_scan(
-        self, scan_id: int, task: _Task, skip_normalize: bool = False,
+        self,
+        scan_id: int,
+        task: _Task,
+        skip_normalize: bool = False,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         """
@@ -492,11 +452,11 @@ class ScanManager(TaskTrackingMixin, ABC):
 
                 if CR.is_host_reachability_check_enabled():
                     raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
-                    parsed_target = urlparse(raw_target)
+                    parsed_target = urlparse(url=raw_target) # type: ignore
                     host = parsed_target.hostname or scan.target
                     reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
                     reachable_timeout = CR.get_host_reachability_check_timeout()
-                    if not self.is_host_reachable(host, port=reachable_port, timeout=reachable_timeout):
+                    if not self.is_host_reachable(host=host, port=reachable_port, timeout=reachable_timeout): # type: ignore
                         thread_manager.logger.warning(
                             f"Host '{host}' inalcanzable en puerto {reachable_port}. "
                             f"Marcando escaneo {scan_id} como FAILED"
@@ -510,7 +470,8 @@ class ScanManager(TaskTrackingMixin, ABC):
                     cancel_check=job.cancelled,
                 )
 
-                if not success or task.results is None:
+                no_results = task.results is None
+                if not success or no_results:
                     if task.status == TaskStatus.CANCELLED:
                         thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
                         thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
@@ -521,7 +482,7 @@ class ScanManager(TaskTrackingMixin, ABC):
 
                 thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
 
-                processor  = thread_manager.result_processor
+                processor  = thread_manager.result_processor # type: ignore
                 scan_type = scan.scan_type
                 domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
 
@@ -1052,6 +1013,11 @@ class ScanManager(TaskTrackingMixin, ABC):
             Diccionario con los datos del escaneo en formato JSON.
         """
 
+    @abstractmethod
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        """Añade datos específicos del tipo de scan al diccionario data para el CSV."""
+        pass
+
 
 class ProgramedScanManager():
 
@@ -1366,7 +1332,6 @@ class ScanFolderManager:
 class NmapScanManager(ScanManager):
     SCAN_TYPE = ScanType.NMAP
     _strategy_class = NmapPrintingStrategy
-    _scan_type: type[Scan] = NmapScan
 
     """
     Manager for Nmap network security scans.
@@ -1380,10 +1345,16 @@ class NmapScanManager(ScanManager):
 
     def __init__(self):
         super().__init__()
-        self.scan_type = NmapScan
         self.result_processor = NmapResultProcessor(self.logger)
 
-    def run_scan(self, target_host: str, target_ports: str, user_id: int, timeout: int = 300, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
+    def run_scan(
+            self,
+            target_host: str,
+            target_ports: str,
+            user_id: int,
+            timeout: int = 300,
+            programed_scan_id: Optional[int] = None
+    ) -> int:  # pylint: disable=arguments-differ
         """
         Start an Nmap scan in a background thread.
 
@@ -1403,9 +1374,8 @@ class NmapScanManager(ScanManager):
             )
             scan_id = scan.id
 
-            from src.modules.sentinel.services.rq_tasks import execute_nmap_scan
             self._tq.submit(
-                func=execute_nmap_scan,
+                func=NmapScanManager.execute_nmap_scan,
                 args=(scan_id, target_host, target_ports, timeout),
                 name=f"NmapScan-{scan_id}",
                 category=self.TASK_CATEGORY,
@@ -1414,13 +1384,15 @@ class NmapScanManager(ScanManager):
             )
 
             self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
-            return scan_id # type: ignore
 
         except (OSError, RuntimeError) as e:
             self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
 
-    def execute_nmap_scan_internal(self, scan_id: int, target_host: str, target_ports: str, timeout: int) -> None:
-        """Internal: Execute Nmap scan with progress and cancellation support."""
+        return scan_id # type: ignore
+
+    @staticmethod
+    def execute_nmap_scan(scan_id: int, target_host: str, target_ports: str, timeout: int) -> None:
+        """Entry point submitted to the TaskQueue. Executes the Nmap scan with progress and cancellation support."""
         with job_context() as job:
             from src.modules.sentinel.services.tasks import NmapScanTask
 
@@ -1430,8 +1402,7 @@ class NmapScanManager(ScanManager):
                 timeout=timeout,
                 progress_callback=job.progress,
             )
-            self._execute_scan(scan_id, task)
-            raise
+            NmapScanManager()._execute_scan(scan_id, task)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NmapScan: # pylint: disable=arguments-differ
         """Create and persist an NmapScan row."""
@@ -1521,7 +1492,6 @@ class NmapScanManager(ScanManager):
 class NiktoScanManager(ScanManager):
     SCAN_TYPE = ScanType.NIKTO
     _strategy_class = NiktoPrintingStrategy
-    _scan_type: type[Scan] = NiktoScan
 
     """
     Manager for Nikto web vulnerability scans.
@@ -1533,7 +1503,6 @@ class NiktoScanManager(ScanManager):
 
     def __init__(self):
         super().__init__()
-        self.scan_type = NiktoScan
         self.result_processor = NiktoResultProcessor(self.logger)
 
     def run_scan(self, target_domain: str, user_id: int, timeout: int = 6000, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
@@ -1555,9 +1524,8 @@ class NiktoScanManager(ScanManager):
             )
             scan_id = scan.id
 
-            from src.modules.sentinel.services.rq_tasks import execute_nikto_scan
             self._tq.submit(
-                func=execute_nikto_scan,
+                func=NiktoScanManager.execute_nikto_scan,
                 args=(scan_id, target_domain, timeout),
                 name=f"NiktoScan-{scan_id}",
                 category=self.TASK_CATEGORY,
@@ -1572,8 +1540,9 @@ class NiktoScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
             raise
 
-    def execute_nikto_scan_internal(self, scan_id: int, target_domain: str, timeout: int) -> None:
-        """Internal: Execute Nikto scan with progress and cancellation support."""
+    @staticmethod
+    def execute_nikto_scan(scan_id: int, target_domain: str, timeout: int) -> None:
+        """Entry point submitted to the TaskQueue. Executes the Nikto scan with progress and cancellation support."""
         with job_context() as job:
             from src.modules.sentinel.services.tasks import NiktoScanTask
 
@@ -1582,7 +1551,7 @@ class NiktoScanManager(ScanManager):
                 timeout=timeout,
                 progress_callback=job.progress,
             )
-            self._execute_scan(scan_id, task)
+            NiktoScanManager()._execute_scan(scan_id, task)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NiktoScan: # pylint: disable=arguments-differ
         """Create and persist a NiktoScan row."""
@@ -1702,8 +1671,6 @@ class OpenVASScanManager(ScanManager):
     def __init__(self) -> None:
         super().__init__()
 
-        self.scan_type = OpenVASScan
-
         config = CR.get_openvas_environment()
         self.hostname  = config["hostname"]
         self.port      = config["port"]
@@ -1740,9 +1707,8 @@ class OpenVASScanManager(ScanManager):
             )
             scan_id   = scan.id
 
-            from src.modules.sentinel.services.rq_tasks import execute_openvas_scan
             self._tq.submit(
-                func=execute_openvas_scan,
+                func=OpenVASScanManager.execute_openvas_scan,
                 args=(scan_id, target, config_id, skip_normalize),
                 name=f"OpenVASScan-{scan_id}",
                 category=self.TASK_CATEGORY,
@@ -1757,21 +1723,23 @@ class OpenVASScanManager(ScanManager):
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
-    def execute_openvas_scan_internal(self, scan_id: int, target: str, scan_config_id: str, skip_normalize: bool) -> None:
-        """Internal: Execute OpenVAS scan with progress and cancellation support."""
+    @staticmethod
+    def execute_openvas_scan(scan_id: int, target: str, scan_config_id: str, skip_normalize: bool) -> None:
+        """Entry point submitted to the TaskQueue. Executes the OpenVAS scan with progress and cancellation support."""
         with job_context() as job:
             from src.modules.sentinel.services.tasks import OpenVASTask
 
+            manager = OpenVASScanManager()
             task = OpenVASTask(
                 target=target,
-                hostname=self.hostname,
-                port=self.port,
-                username=self.username,
-                password=self.password,
+                hostname=manager.hostname,
+                port=manager.port,
+                username=manager.username,
+                password=manager.password,
                 scan_config=scan_config_id,
                 progress_callback=job.progress,
             )
-            self._execute_scan(scan_id, task, skip_normalize)
+            manager._execute_scan(scan_id, task, skip_normalize)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> OpenVASScan: # pylint: disable=arguments-differ
         """Create and persist an OpenVASScan row with placeholder task/report IDs."""
@@ -2056,15 +2024,19 @@ class SentinelReportManager:
 
         doc_id = self._create_document(scan, ai_report)
 
-        from src.modules.sentinel.services.rq_tasks import execute_report_generation
         self._tq.submit(
-            func=execute_report_generation,
+            func=SentinelReportManager.execute_report_generation,
             args=(doc_id, scan.id, ai_report),
             name=f"PDFGeneration-Scan-{scan.id}",
             category="sentinel.report",
             external_id=f"sentinel-doc:{doc_id}",
         )
         return doc_id  # type: ignore
+
+    @staticmethod
+    def execute_report_generation(doc_id: int, scan_id: int, ai_report: bool) -> None:
+        """Entry point submitted to the TaskQueue for background PDF generation."""
+        SentinelReportManager()._generate_pdf_async(doc_id, scan_id, ai_report)
 
     def _generate_pdf_async(
         self,

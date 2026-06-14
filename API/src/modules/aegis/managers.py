@@ -69,10 +69,8 @@ class AegisManager:
             tweaks      = tweaks or {}
             document_id = self._create_pending_document(topic_id)
 
-            from src.modules.aegis.services.rq_tasks import execute_aegis_generation
-
             self._tq.submit(
-                func=execute_aegis_generation,
+                func=AegisManager.execute_aegis_generation,
                 args=(document_id, topic_id, tweaks, self.user.id),
                 name=f"AegisGen-{document_id}",
                 category="aegis.generate",
@@ -105,7 +103,7 @@ class AegisManager:
                 "tips": [t.to_dict() for t in doc.tips],
             },
             "alerts": [a.to_dict() for a in doc.alerts],
-            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None,
+            "generatedAt": doc.generated_at.isoformat() if doc.generated_at else None, # type: ignore
         }
 
         if doc.status == "done": # type: ignore
@@ -116,7 +114,7 @@ class AegisManager:
 
     def get_document_path(self, document_id: int) -> Path:
         """Devuelve la ruta al archivo generado, validando propiedad y existencia."""
-        assert_document_ownership(document_id, self.user.id)
+        self.assert_document_ownership(document_id)
 
         doc = get_document_by_id(document_id)
         if not doc:
@@ -204,6 +202,17 @@ class AegisManager:
     # =========================================================================
     # WORKFLOW DE GENERACIÓN (privado)
     # =========================================================================
+
+    @staticmethod
+    def execute_aegis_generation(document_id: int, topic_id: int, tweaks: dict, user_id: int) -> None:
+        """Entry point submitted to the TaskQueue for background generation."""
+        from src.modules.users.managers import UserManager
+
+        user = UserManager().get_user_by_id(user_id)
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+
+        AegisManager(user)._run_generation_workflow(document_id, topic_id, tweaks)
 
     def _run_generation_workflow(
         self,

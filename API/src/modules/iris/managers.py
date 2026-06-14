@@ -85,10 +85,8 @@ class IrisManager(TaskTrackingMixin):
         analysis_id = self._create_analysis_record(raw_headers, user_id, title=title)
         self.logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
 
-        from src.modules.iris.services.rq_tasks import execute_iris_analysis
-
         self._tq.submit(
-            func=execute_iris_analysis,
+            func=IrisManager.execute_iris_analysis,
             args=(analysis_id, raw_headers),
             name=f"IrisAnalysis-{analysis_id}",
             category=self.TASK_CATEGORY,
@@ -357,6 +355,11 @@ class IrisManager(TaskTrackingMixin):
                 "Tras parsear se obtuvieron %d cabeceras (m\u00ednimo: %d). "
                 "El contenido no contiene suficientes cabeceras de correo v\u00e1lidas." % (len(parsed), min_h)
             )
+
+    @staticmethod
+    def execute_iris_analysis(analysis_id: int, raw_headers: str) -> None:
+        """Entry point submitted to the TaskQueue for background analysis."""
+        IrisManager()._run_analysis(analysis_id, raw_headers)
 
     def _run_analysis(self, analysis_id: int, raw_headers: str) -> None:
         """Background task: execute all rules and persist results.
