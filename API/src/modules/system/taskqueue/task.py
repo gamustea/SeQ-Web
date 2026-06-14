@@ -22,6 +22,7 @@ class TaskStatus(Enum):
     COMPLETED = "completed"
     FAILED    = "failed"
     CANCELLED = "cancelled"
+    TIMEOUT   = "timeout"
 
     def __str__(self) -> str:
         return self.value

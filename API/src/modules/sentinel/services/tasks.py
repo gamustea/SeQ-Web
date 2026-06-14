@@ -8,7 +8,6 @@ import time
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Callable, Optional, Any, List
-from enum import Enum
 from abc import ABC, abstractmethod
 
 import lxml.etree as lxml_etree
@@ -19,21 +18,7 @@ from gvm.protocols.gmp.requests.v226 import AliveTest
 
 import src.modules.system.config_reading as CR
 from src.modules.system import PlatformDetector, SecOpsLogger
-
-
-class TaskStatus(Enum):
-    """
-    Enum que representa los diferentes estados en los que puede estar una tarea de escaneo.
-    """
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    TIMEOUT = "timeout"
-
-    def __str__(self):
-        return self.value
+from src.modules.system.taskqueue import TaskStatus
 
 
 class _Task(ABC):
