@@ -23,7 +23,7 @@ def check_from_header(headers: dict) -> RuleResult:
         )
 
     return RuleResult(
-        score=0, verdict="pass",
+        score=1, verdict="pass",
         details={"from": from_addr},
         recommendation=None,
     )

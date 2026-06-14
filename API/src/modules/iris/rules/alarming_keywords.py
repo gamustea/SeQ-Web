@@ -78,7 +78,7 @@ def check_alarming_keywords(headers: dict) -> RuleResult:
 
     if severity == "pass":
         return RuleResult(
-            score=0, verdict="pass",
+            score=1, verdict="pass",
             details={"subject": subject, "display_name": display_name, "alarming_keywords_found": []},
             recommendation=None,
         )

@@ -40,7 +40,7 @@ def check_url_in_subject(headers: dict) -> RuleResult:
 
     if not urls_found:
         return RuleResult(
-            score=0, verdict="pass",
+            score=1, verdict="pass",
             details={"subject": subject, "urls_found": []},
             recommendation=None,
         )

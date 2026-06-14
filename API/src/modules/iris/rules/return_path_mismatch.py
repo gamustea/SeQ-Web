@@ -46,7 +46,7 @@ def check_return_path(headers: dict) -> RuleResult:
         )
 
     return RuleResult(
-        score=0, verdict="pass",
+        score=2, verdict="pass",
         details={"return_path_domain": rp_domain, "from_domain": from_domain, "match": True},
         recommendation=None,
     )
