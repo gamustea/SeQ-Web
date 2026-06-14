@@ -25,8 +25,11 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import socket
 import threading
 import uuid
+
+import psutil
 
 logging.getLogger("rq").setLevel(logging.WARNING)
 logging.getLogger("rq.scheduler").setLevel(logging.WARNING)
@@ -84,7 +87,9 @@ def _worker_thread(worker_num: int):
     # registro de categorías en QueueRegistry antes de construir las colas.
     app = create_app(start_scheduler=False)
     with app.app_context():
-        conn = RedisConnectionFactory.raw()
+        # blocking=True: el bucle del worker saca jobs con BLPOP; un
+        # socket_timeout abortaría el dequeue bloqueante.
+        conn = RedisConnectionFactory.raw(blocking=True)
         queues = [Queue(name, connection=conn) for name in QueueRegistry.names()]
         worker_name = f"worker-{worker_num}-{uuid.uuid4().hex[:8]}"
         worker = _ThreadSafeWorker(queues, name=worker_name)
@@ -98,13 +103,56 @@ def _worker_thread(worker_num: int):
                     _workers.remove(worker)
 
 def _stop_workers():
+    """Desregistra los workers de Redis antes de salir.
+
+    ``register_death`` elimina la entrada del worker tanto del set global
+    ``rq:workers`` como de los sets por-cola. Es clave para que, al reiniciar
+    la app, no se acumulen "workers fantasma" en el contador. Tras esto el
+    proceso hace ``os._exit(0)``, por lo que los hilos no llegan a re-registrarse.
+    """
     logging.info("Stopping all workers...")
     with _workers_lock:
         for worker in list(_workers):
             try:
-                worker.request_stop(signal.SIGTERM, None)
+                worker.register_death()
             except Exception as exc:
-                logging.warning("Failed to stop worker %s: %s", worker.name, exc)
+                logging.warning("Failed to deregister worker %s: %s", worker.name, exc)
+
+
+def _purge_dead_workers() -> None:
+    """Reconcilia el registro ``rq:workers`` eliminando workers ya muertos.
+
+    Si un worker murió de forma abrupta (``kill -9``, crash) sin desregistrarse,
+    su nombre queda en el set global ``rq:workers`` indefinidamente e infla el
+    contador. Antes de arrancar los nuevos workers se elimina toda entrada cuya
+    clave de heartbeat (``rq:worker:<name>``) ya no exista o cuyo PID (en este
+    mismo host) ya no esté vivo. Misma lógica de liveness que
+    ``TaskQueue._worker_alive``.
+    """
+    try:
+        conn = RedisConnectionFactory.decoded()
+        worker_keys = conn.smembers("rq:workers")
+    except Exception as exc:
+        logging.warning("No se pudo purgar workers obsoletos: %s", exc)
+        return
+
+    hostname = socket.gethostname()
+    for key in worker_keys:
+        try:
+            data = conn.hgetall(key)
+        except Exception:
+            continue
+        if not data:
+            conn.srem("rq:workers", key)
+            continue
+        pid = data.get("pid")
+        whost = data.get("hostname")
+        if pid and whost == hostname:
+            try:
+                if not psutil.pid_exists(int(pid)):
+                    conn.srem("rq:workers", key)
+            except (ValueError, TypeError):
+                pass
 
 def start_worker() -> None:
     """Entry point para iniciar los workers.
@@ -149,6 +197,10 @@ def start_worker() -> None:
     signal.signal(signal.SIGTERM, _signal_handler)
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, _signal_handler)
+
+    # Reconciliar el registro: limpiar workers de arranques anteriores que no
+    # se desregistraron (p. ej. tras un kill -9) antes de crear los nuevos.
+    _purge_dead_workers()
 
     taskqueue_cfg = CR.get_taskqueue_config()
     max_workers = int(taskqueue_cfg.get("max_workers", 4))

@@ -1,6 +1,7 @@
 
 
 import subprocess
+import sys
 import threading
 import re
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional, Any, List
 from abc import ABC, abstractmethod
 
+import psutil
 import lxml.etree as lxml_etree
 from gvm.connections import TLSConnection
 from gvm.protocols.gmp import Gmp
@@ -19,6 +21,44 @@ from gvm.protocols.gmp.requests.v226 import AliveTest
 import src.modules.system.config_reading as CR
 from src.modules.system import PlatformDetector, SecOpsLogger
 from src.modules.system.taskqueue import TaskStatus
+
+
+# Flags de creación para que los subprocesos de escaneo NO compartan la consola
+# de run.py. ``wsl.exe`` modifica el modo de la consola que comparte; si lo
+# matamos a mitad (al cancelar), la deja corrupta y Windows deja de entregar
+# CTRL+C al proceso principal. ``CREATE_NO_WINDOW`` le da su propia consola
+# oculta, así matarlo nunca afecta a la consola de run.py.
+_NO_CONSOLE_FLAGS = 0
+if sys.platform == "win32":
+    _NO_CONSOLE_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+
+
+def _kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 3.0) -> None:
+    """Mata el proceso y TODOS sus descendientes (terminate → kill con timeout).
+
+    Necesario porque los escaneos se lanzan vía ``wsl.exe``/``sudo``: matar solo
+    el proceso padre deja hijos huérfanos (p. ej. ``nmap``) que siguen vivos y,
+    en Windows, enganchados a la consola. Con ``psutil`` recorremos el árbol
+    completo y nunca bloqueamos sin límite (``wait_procs`` lleva timeout).
+    """
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        parent = psutil.Process(proc.pid)
+    except psutil.NoSuchProcess:
+        return
+    targets = parent.children(recursive=True) + [parent]
+    for p in targets:
+        try:
+            p.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(targets, timeout=timeout)
+    for p in alive:
+        try:
+            p.kill()
+        except psutil.NoSuchProcess:
+            pass
 
 
 class _Task(ABC):
@@ -46,10 +86,42 @@ class _Task(ABC):
         self._cancel_event = threading.Event()
         self._output_file: Optional[Path] = None
         self._progress_callback = progress_callback
+        # Nombre del binario real bajo WSL (lo fijan las subclases) para poder
+        # matar el proceso dentro de la VM, que no es hijo Windows de wsl.exe.
+        self._wsl_process_name: Optional[str] = None
 
     @abstractmethod
     def _build_command(self) -> List[str]:
         """Construye el comando a ejecutar."""
+
+    def _terminate_proc(self) -> None:
+        """Detiene el proceso de escaneo: árbol completo + huérfanos en WSL."""
+        _kill_process_tree(self._proc)
+        self._kill_wsl_orphans()
+
+    def _kill_wsl_orphans(self) -> None:
+        """Best-effort: mata el proceso real dentro de la VM de WSL.
+
+        Matar el árbol Windows de ``wsl.exe`` no garantiza matar el proceso
+        Linux (``nmap``/``nikto``) que corre dentro de la VM, porque no es un
+        hijo Windows. Se intenta un ``pkill`` como root. Errores ignorados.
+        """
+        name = self._wsl_process_name
+        platform = getattr(self, "platform", None)
+        if not name or platform is None:
+            return
+        if not (platform.is_windows and platform.wsl_available):
+            return
+        try:
+            subprocess.run(
+                ["wsl", "-u", "root", "pkill", "-f", name],
+                timeout=5,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_NO_CONSOLE_FLAGS,
+            )
+        except Exception as e:  # noqa: BLE001 - limpieza best-effort
+            self.logger.debug(f"pkill WSL de '{name}' falló (ignorado): {e}")
 
     def _process_results(self) -> None:
         """Procesa los resultados del escaneo. Override en subclases si es necesario."""
@@ -119,13 +191,21 @@ class _Task(ABC):
             cmd = self._build_command()
             self.logger.info(f"Iniciando escaneo con comando: {' '.join(cmd)}")
 
-            self._proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
+            # Consola/grupo de proceso propios: el escaneo no comparte la consola
+            # de run.py, así matarlo (al cancelar) no corrompe el manejo de
+            # CTRL+C del proceso principal.
+            popen_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "bufsize": 1,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = _NO_CONSOLE_FLAGS
+            else:
+                popen_kwargs["start_new_session"] = True
+
+            self._proc = subprocess.Popen(cmd, **popen_kwargs)
 
             time.sleep(0.1)
             returncode = self._proc.poll()
@@ -170,9 +250,7 @@ class _Task(ABC):
                     if remaining <= 0:
                         self.status = TaskStatus.TIMEOUT
                         self.logger.error("Timeout agotado")
-                        if self._proc and self._proc.poll() is None:
-                            self._proc.kill()
-                            self._proc.wait()
+                        self._terminate_proc()
                         return False
                     self._finished.wait(min(granularity, remaining))
                 else:
@@ -217,14 +295,7 @@ class _Task(ABC):
         self.status = TaskStatus.CANCELLED
         self._finished.set()
 
-        if self._proc and self._proc.poll() is None:
-            try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.logger.warning("terminate() no fue suficiente, haciendo kill()", exc_info=True)
-                self._proc.kill()
-                self._proc.wait()
+        self._terminate_proc()
 
         self.logger.info("Escaneo cancelado")
 
@@ -243,6 +314,7 @@ class NmapScanTask(_Task):
         self.target_ports = target_ports
         self._output_file = Path(f"{temp_dir}/{file_name}")
         self.platform = PlatformDetector()
+        self._wsl_process_name = "nmap"
 
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -310,6 +382,7 @@ class NiktoScanTask(_Task):
         )
         self._output_file = self.temp_path
         self.platform = PlatformDetector()
+        self._wsl_process_name = "nikto"
 
     def _build_command(self) -> List[str]:
         target = self.target

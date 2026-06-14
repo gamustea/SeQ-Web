@@ -19,6 +19,7 @@ import signal
 import logging
 import subprocess
 import sys
+import threading
 import warnings
 
 from flask                  import Flask, jsonify, request
@@ -60,59 +61,62 @@ logging.getLogger("rq").setLevel(logging.WARNING)
 _IS_SHUTTING_DOWN = False
 _WORKER = {"proc": None}
 
+# Tope duro de apagado: pase lo que pase con la limpieza (Redis lento, scheduler
+# bloqueado, subproceso colgado), el proceso SIEMPRE sale antes de este límite.
+_SHUTDOWN_DEADLINE_S = 6
 
-def _graceful_shutdown(signum, *args) -> None:
+
+def _kill_worker_tree() -> None:
+    """Mata el subproceso worker y TODOS sus descendientes (wsl.exe, nmap…).
+
+    ``Popen.terminate()`` solo mata el worker; sus subprocesos de escaneo
+    quedarían huérfanos. Con ``psutil`` se recorre el árbol completo y nunca se
+    bloquea sin límite (``wait_procs`` con timeout).
     """
-    Manejador de señales para shutdown graceful de la aplicación.
-
-    Cancela todas las tareas en segundo plano antes de terminar
-    el proceso, asegurando que los workers y subprocesses no queden huérfanos.
-
-    Args:
-        signum: Número de señal recibida (SIGTERM o SIGINT).
-        *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
-
-    Behavior:
-        1. Protege contra re-entrada: fuerza os._exit(1) si ya se está apagando.
-        2. Registra la señal recibida.
-        3. Detiene TaskQueue (cancela todas las tareas en todas las categorías).
-        4. Detiene el scheduler de tareas programadas.
-        5. Cierra las sesiones de base de datos.
-        6. Termina el proceso con os._exit(0).
-    """
-    global _IS_SHUTTING_DOWN
-
-    print(f"\n[SeQ] Signal {signum} received, starting graceful shutdown...", flush=True)
-
-    if _IS_SHUTTING_DOWN:
-        _logger.warning(
-            "Segunda señal recibida durante el apagado — forzando salida inmediata."
-        )
-        os._exit(1)
-
-    _IS_SHUTTING_DOWN = True
-
-    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-    _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
-
-    worker_proc = _WORKER["proc"]
-    if worker_proc is not None:
-        _logger.info("Deteniendo worker...")
+    proc = _WORKER["proc"]
+    if proc is None:
+        return
+    try:
+        import psutil
         try:
-            worker_proc.terminate()
-            worker_proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            _logger.warning("Worker no respondió a SIGTERM, forzando con SIGKILL...")
-            worker_proc.kill()
-            worker_proc.wait(timeout=2)
-        except Exception as e:
-            _logger.warning(f"Error deteniendo worker: {e}, forzando kill...")
+            parent = psutil.Process(proc.pid)
+        except psutil.NoSuchProcess:
+            return
+        targets = parent.children(recursive=True) + [parent]
+        for p in targets:
             try:
-                worker_proc.kill()
-                worker_proc.wait(timeout=2)
-            except Exception:
+                p.terminate()
+            except psutil.NoSuchProcess:
                 pass
+        _, alive = psutil.wait_procs(targets, timeout=3)
+        for p in alive:
+            try:
+                p.kill()
+            except psutil.NoSuchProcess:
+                pass
+    except Exception as e:
+        _logger.warning(f"Error matando el árbol del worker: {e}")
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    finally:
         _WORKER["proc"] = None
+
+
+def _run_shutdown_cleanup() -> None:
+    """Limpieza de apagado. Se ejecuta en un hilo daemon con deadline.
+
+    Cada paso va aislado en su propio try/except: un fallo o bloqueo de uno no
+    impide intentar los siguientes, y el hilo daemon garantiza que el proceso
+    pueda salir aunque alguno se quede colgado.
+    """
+    _logger.info("Deteniendo worker...")
+    try:
+        _kill_worker_tree()
+    except Exception as e:
+        _logger.error(f"Error deteniendo worker: {e}")
+
     try:
         from src.modules.system.taskqueue import TaskQueue
         _logger.info("Cancelando tareas en segundo plano...")
@@ -134,7 +138,44 @@ def _graceful_shutdown(signum, *args) -> None:
     except Exception as e:
         _logger.error(f"Error cerrando sesiones de BD: {e}")
 
-    _logger.info("[Shutdown] Proceso terminado.")
+
+def _graceful_shutdown(signum, *args) -> None:
+    """
+    Manejador de señales para shutdown graceful de la aplicación.
+
+    Clave: la limpieza (que puede bloquearse en Redis, el scheduler o un
+    subproceso) se ejecuta en un **hilo daemon acotado por un deadline**, de
+    modo que el handler NUNCA se queda atascado en una llamada bloqueante. Si lo
+    hiciera, el hilo principal dejaría de estar en un punto seguro del bucle de
+    bytecode y los CTRL+C siguientes no se procesarían ("CTRL+C no funciona").
+    Pase lo que pase, ``os._exit`` se alcanza en <= ``_SHUTDOWN_DEADLINE_S`` s.
+
+    Args:
+        signum: Número de señal recibida (SIGTERM o SIGINT).
+        *args: Argumentos adicionales (compatibilidad con Werkzeug reloader).
+    """
+    global _IS_SHUTTING_DOWN
+
+    print(f"\n[SeQ] Signal {signum} received, starting graceful shutdown...", flush=True)
+
+    if _IS_SHUTTING_DOWN:
+        # Segundo CTRL+C: salida inmediata sin esperar a la limpieza.
+        os._exit(1)
+
+    _IS_SHUTTING_DOWN = True
+
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
+
+    cleanup = threading.Thread(target=_run_shutdown_cleanup, name="shutdown", daemon=True)
+    cleanup.start()
+    cleanup.join(timeout=_SHUTDOWN_DEADLINE_S)
+    if cleanup.is_alive():
+        _logger.warning(
+            "Limpieza de apagado excedió %ss — forzando salida.", _SHUTDOWN_DEADLINE_S
+        )
+
+    print("[SeQ] Apagado completado.", flush=True)
     os._exit(0)
 
 def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Flask:
@@ -199,6 +240,15 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
     app.teardown_request(shutdown_request_session)
 
     if start_scheduler:
+        _logger.info("Reconciliando escaneos huérfanos...")
+        try:
+            from src.modules.sentinel.managers import ScanManager
+            fixed = ScanManager.reconcile_orphaned_scans()
+            if fixed:
+                _logger.info("Se marcaron %d escaneo(s) huérfano(s) como FAILED", fixed)
+        except Exception as e:
+            _logger.warning("No se pudo reconciliar escaneos huérfanos: %s", e)
+
         _logger.info("Arrancando scheduler de tareas programadas...")
         Scheduler.start()
 
@@ -512,9 +562,19 @@ if __name__ == "__main__":
     app = create_app(APP_CONTEXT.create_database)
 
     if _args.with_worker:
+        # El worker se lanza en su PROPIO grupo de proceso para que el CTRL+C
+        # de la consola NO se le difunda (ni a sus descendientes: wsl.exe, nmap).
+        # Así run.py es el único gestor de la señal y su _graceful_shutdown
+        # termina el worker explícitamente, evitando carreras de señales.
+        popen_kwargs = {"cwd": os.path.dirname(os.path.abspath(__file__))}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
+
         _WORKER["proc"] = subprocess.Popen( # type: ignore
             [sys.executable, "-m", "src.modules.system.taskqueue.worker"],
-            cwd=os.path.dirname(os.path.abspath(__file__)),
+            **popen_kwargs,
         )
         _logger.info("Worker iniciado como subproceso (PID %d)", _WORKER["proc"].pid)
 

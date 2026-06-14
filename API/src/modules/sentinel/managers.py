@@ -416,6 +416,37 @@ class ScanManager(TaskTrackingMixin, ABC):
             self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
             return False
 
+    @classmethod
+    def reconcile_orphaned_scans(cls) -> int:
+        """
+        Marca como FAILED los escaneos huérfanos tras un apagado abrupto.
+
+        Si el proceso se mata mientras un escaneo está en PENDING/RUNNING, no
+        queda ninguna tarea viva en TaskQueue que lo actualice tras reiniciar:
+        el registro se queda en "running" para siempre y bloquea, p. ej., que
+        ``Scheduler`` vuelva a lanzar ese escaneo programado (ver
+        ``scheduling.py``). Se llama una vez al arrancar la API.
+
+        Returns:
+            Número de escaneos marcados como FAILED.
+        """
+        tq = TaskQueue.get_instance()
+        fixed = 0
+        with UnitOfWork() as uow:
+            repo = ScanRepository(uow)
+            for scan in repo.get_active_scans():
+                external_id = f"{cls.EXTERNAL_ID_PREFIX}{scan.id}"
+                task = tq.get_task_by_external_id(external_id, cls.TASK_CATEGORY)
+                # PENDING: el job sigue encolado en Redis y un nuevo worker lo
+                # recogerá normalmente. Cualquier otro caso (None, RUNNING
+                # "started" sin worker vivo, o un estado terminal que no llegó
+                # a sincronizarse) es un huérfano del proceso anterior.
+                if task is not None and task.status == TaskStatus.PENDING:
+                    continue
+                repo.update_status(scan, ScanStatus.FAILED)
+                fixed += 1
+        return fixed
+
     # =========================================================================
     # INTERNAL SCAN EXECUTION
     # =========================================================================

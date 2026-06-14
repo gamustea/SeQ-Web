@@ -647,14 +647,27 @@ class TaskQueue:
         ``rq:workers`` es un *set* que solo se limpia cuando el worker hace un
         shutdown limpio (``register_death``). Si el proceso muere de forma
         abrupta (kill, reload del servidor, etc.) su clave ``rq:worker:<name>``
-        expira por TTL pero el nombre sigue en el set para siempre, inflando
-        el contador ("19/4 workers"). ``clean_worker_registry`` elimina las
-        entradas cuya clave ya no existe antes de contar.
+        puede expirar por TTL pero el nombre sigue en el set, inflando el
+        contador ("19/4 workers"). Por eso ``Worker.count`` no es fiable.
+
+        En su lugar se recorre ``Worker.all`` y se cuentan solo los que están
+        vivos de verdad (misma comprobación de PID que ``_worker_alive``),
+        purgando de paso las entradas muertas del set global → cada lectura de
+        estado auto-sanea el registro.
         """
         try:
             for queue_name in QueueRegistry.names():
                 clean_worker_registry(self._queue_for(queue_name))
-            return Worker.count(connection=self._redis)
+            alive = 0
+            for w in Worker.all(connection=self._redis):
+                if self._worker_alive(w.name):
+                    alive += 1
+                else:
+                    try:
+                        self._redis.srem("rq:workers", w.key)
+                    except Exception:
+                        pass
+            return alive
         except Exception as exc:
             self.logger.debug("No se pudo contar workers vivos: %s", exc)
             return -1
