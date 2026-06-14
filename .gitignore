@@ -69,3 +69,4 @@ Thumbs.db
 API/.mypy_cache/
 API/.pytest_cache/
 PLAN_MEJORAS.md
+.claude
