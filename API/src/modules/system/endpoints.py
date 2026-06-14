@@ -21,6 +21,7 @@ from .schemas import (
     HelloResponseSchema,
     SystemStatusSchema,
     TaskSchema,
+    TaskListResponseSchema,
     TaskQueueStatusSchema,
     TaskQueueConfigSchema,
     TaskPaginationQuerySchema,
@@ -139,7 +140,7 @@ def taskqueue_status():
 
 @system_blp.get("/tasks")
 @system_blp.arguments(TaskPaginationQuerySchema, location="query")
-@system_blp.response(200, TaskSchema(many=True), description="Task list")
+@system_blp.response(200, TaskListResponseSchema, description="Task list")
 @system_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
 @system_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @limiter.limit("60 per minute")
@@ -166,9 +167,10 @@ def taskqueue_tasks(query_args):
         history = tq.get_history(category=category)
         tasks = pending + running + history
 
+    total_count = len(tasks)
     start = (page - 1) * per_page
     end = start + per_page
-    return tasks[start:end]
+    return {"tasks": tasks[start:end], "totalCount": total_count}
 
 
 @system_blp.get("/tasks/<string:task_id>")

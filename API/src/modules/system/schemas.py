@@ -62,6 +62,11 @@ class TaskQueueConfigSchema(Schema):
     max_workers = fields.Integer(required=True)
 
 
+class TaskListResponseSchema(Schema):
+    tasks = fields.List(fields.Nested(TaskSchema))
+    totalCount = fields.Integer()
+
+
 class TaskPaginationQuerySchema(Schema):
     page = fields.Integer(load_default=1, validate=lambda n: n >= 1)
     per_page = fields.Integer(load_default=20, validate=lambda n: 1 <= n <= 100)

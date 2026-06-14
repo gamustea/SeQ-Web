@@ -50,6 +50,7 @@ import rq
 from rq import Worker
 from rq.job import Callback, Job
 from rq.registry import StartedJobRegistry
+from rq.worker_registration import clean_worker_registry
 
 from src.modules.system.logging import SecOpsLogger
 
@@ -149,6 +150,32 @@ class QueueRegistry:
 # =============================================================================
 # CALLBACKS DE RQ (se ejecutan en el worker al terminar el job)
 # =============================================================================
+
+def _record_terminal(job: "Job", status: "TaskStatus", error: str | None = None) -> None:
+    try:
+        tq = TaskQueue.get_instance()
+        data = Task.from_rq_job(job).to_dict()
+        data["status"] = str(status)
+        if error and not data.get("error"):
+            data["error"] = error
+        if not data.get("finishedAt"):
+            data["finishedAt"] = datetime.now(timezone.utc).isoformat()
+        tq._history.record(data)
+        tq._external.remove_by_job_id(job.id)
+    except Exception:  # noqa: BLE001 - un fallo de historial no debe tumbar el job
+        logging.getLogger("TaskQueue").warning(
+            "No se pudo registrar el historial del job %s",
+            getattr(job, "id", "?"), exc_info=True,
+        )
+
+def _on_job_success(job, connection, result, *args, **kwargs):
+    _record_terminal(job, TaskStatus.COMPLETED)
+
+def _on_job_failure(job, connection, exc_type, exc_value, traceback, *args, **kwargs):
+    error = None
+    if exc_type is not None:
+        error = f"{getattr(exc_type, '__name__', exc_type)}: {exc_value}"
+    _record_terminal(job, TaskStatus.FAILED, error=error)
 
 # =============================================================================
 # FACHADA
@@ -345,38 +372,6 @@ class TaskQueue:
             )
         """
 
-        def _record_terminal(job: Job, status: TaskStatus, error: Optional[str] = None) -> None:
-            """Registra el snapshot de un job terminado en el historial.
-
-            Se ejecuta dentro del worker (con contexto Flask activo), por lo que la
-            configuración y Redis están disponibles.
-            """
-            try:
-                tq = TaskQueue.get_instance()
-                data = Task.from_rq_job(job).to_dict()
-                data["status"] = str(status)
-                if error and not data.get("error"):
-                    data["error"] = error
-                if not data.get("finishedAt"):
-                    data["finishedAt"] = datetime.now(timezone.utc).isoformat()
-
-                tq._history.record(data)
-                tq._external.remove_by_job_id(job.id)
-            except Exception:  # noqa: BLE001 - un fallo de historial no debe tumbar el job
-                logging.getLogger("TaskQueue").warning(
-                    "No se pudo registrar el historial del job %s",
-                    getattr(job, "id", "?"), exc_info=True,
-                )
-
-        def _on_job_success(job, connection, result, *args, **kwargs):  # noqa: ANN001
-            _record_terminal(job, TaskStatus.COMPLETED)
-
-        def _on_job_failure(job, connection, exc_type, exc_value, traceback, *args, **kwargs):  # noqa: ANN001
-            error = None
-            if exc_type is not None:
-                error = f"{getattr(exc_type, '__name__', exc_type)}: {exc_value}"
-            _record_terminal(job, TaskStatus.FAILED, error=error)
-
         queue = self._queue_for(category)
 
         job_id = name if name else None
@@ -465,9 +460,16 @@ class TaskQueue:
             return True
 
         if status == "started":
-            self._cancel.signal(task_id)
-            self.logger.info("Task %s cancel signal sent (is running)", task_id)
-            return True
+            if self._worker_alive(job.worker_name):
+                self._cancel.signal(task_id)
+                self.logger.info("Task %s cancel signal sent (is running)", task_id)
+                return True
+
+            self.logger.warning(
+                "Task %s is started but its worker (%s) is gone, force-cancelling",
+                task_id, job.worker_name,
+            )
+            return self._force_cancel_started(job)
 
         self.logger.warning("Task %s cannot be cancelled (status=%s)", task_id, status)
         return False
@@ -482,8 +484,8 @@ class TaskQueue:
 
             started = StartedJobRegistry(name=queue_name, connection=self._redis)
             for job_id in started.get_job_ids():
-                self.logger.info("Sending cancel signal to running job %s", job_id)
-                self._cancel.signal(job_id)
+                self.logger.info("Cancelling running job %s", job_id)
+                self.cancel(job_id)
 
     def is_cancelled(self, task_id: str) -> bool:
         return self._cancel.is_cancelled(task_id)
@@ -640,12 +642,85 @@ class TaskQueue:
         return queue
 
     def _count_alive_workers(self) -> int:
-        """Número real de workers vivos registrados en Redis."""
+        """Número real de workers vivos registrados en Redis.
+
+        ``rq:workers`` es un *set* que solo se limpia cuando el worker hace un
+        shutdown limpio (``register_death``). Si el proceso muere de forma
+        abrupta (kill, reload del servidor, etc.) su clave ``rq:worker:<name>``
+        expira por TTL pero el nombre sigue en el set para siempre, inflando
+        el contador ("19/4 workers"). ``clean_worker_registry`` elimina las
+        entradas cuya clave ya no existe antes de contar.
+        """
         try:
+            for queue_name in QueueRegistry.names():
+                clean_worker_registry(self._queue_for(queue_name))
             return Worker.count(connection=self._redis)
         except Exception as exc:
             self.logger.debug("No se pudo contar workers vivos: %s", exc)
             return -1
+
+    def _worker_alive(self, worker_name: Optional[str]) -> bool:
+        """Comprueba si el worker que tomó un job sigue vivo de verdad.
+
+        No basta con que exista la clave ``rq:worker:<name>``: cuando un
+        worker muere abruptamente (kill -9, crash) sin pasar por
+        ``register_death``, su registro queda en Redis con el TTL completo
+        (cientos/miles de segundos) aunque el proceso ya no exista. Si solo
+        miráramos la clave, una cancelación cooperativa para ese job nunca
+        sería leída y el job quedaría "started" para siempre.
+
+        Por eso, si el worker corre en este mismo host (mismo hostname),
+        se comprueba además que su PID siga existiendo.
+        """
+        if not worker_name:
+            return False
+        try:
+            data = self._decoded.hgetall(f"rq:worker:{worker_name}")
+        except Exception:
+            return False
+        if not data:
+            return False
+
+        pid = data.get("pid")
+        hostname = data.get("hostname")
+        if pid and hostname:
+            import socket
+            import psutil
+            if hostname == socket.gethostname():
+                try:
+                    return psutil.pid_exists(int(pid))
+                except (ValueError, TypeError):
+                    pass
+        return True
+
+    def _force_cancel_started(self, job: Job) -> bool:
+        """Cancela un job "started" cuyo worker ya no existe.
+
+        No hay nadie que vaya a leer la señal cooperativa, así que se quita
+        directamente del ``StartedJobRegistry``, se borra el job y se registra
+        como CANCELLED en el historial.
+        """
+        task_id = job.id
+        snapshot = Task.from_rq_job(job).to_dict()
+        snapshot["status"] = str(TaskStatus.CANCELLED)
+        snapshot["finishedAt"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            registry = StartedJobRegistry(name=job.origin, connection=self._redis)
+            registry.remove(job)
+        except Exception:
+            pass
+
+        try:
+            job.delete()
+        except Exception:
+            pass
+
+        self._cancel.clear(task_id)
+        self._external.remove_by_job_id(task_id)
+        self._history.record(snapshot)
+        self.logger.info("Task %s force-cancelled (worker was gone)", task_id)
+        return True
 
     def _try_fetch_job(self, task_id: str) -> Optional[Job]:
         try:
