@@ -37,7 +37,7 @@ from urllib.parse import urlparse
 
 import src.modules.system.config_reading as CR
 from src.modules.system.logging import SecOpsLogger
-from src.modules.system.taskqueue import TaskQueue, Task
+from src.modules.system.taskqueue import ITaskQueue, TaskQueue, Task, TaskTrackingMixin, job_context
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
@@ -91,7 +91,7 @@ from .exceptions import (
 )
 
 
-class ScanManager(ABC):
+class ScanManager(TaskTrackingMixin, ABC):
     """
     Base class for scan managers.
 
@@ -114,15 +114,20 @@ class ScanManager(ABC):
 
     SCAN_TYPE: Optional[ScanType] = None
 
-    def __init__(self) -> None:
+    EXTERNAL_ID_PREFIX = "scan:"
+    TASK_CATEGORY = "sentinel.scan"
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
         """
         Initialize the scan manager.
 
         Args:
-            user: User performing the scan operations.
+            task_queue: Cola de tareas a usar (inyectable para tests). Por
+                defecto, el singleton ``TaskQueue``.
         """
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
         self.scan_type = None
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
     @abstractmethod
     def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
@@ -204,8 +209,7 @@ class ScanManager(ABC):
         Returns:
             Integer percentage, or None if the scan is not in the task registry.
         """
-        tq = TaskQueue.get_instance()
-        sq_task = tq.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
+        sq_task = self.find_task(scan_id)
         if sq_task:
             self.logger.debug(f"Progreso de escaneo {scan_id}: {sq_task.progress}%")
             return sq_task.progress
@@ -223,8 +227,7 @@ class ScanManager(ABC):
         Returns:
             Status string, or None if not found.
         """
-        tq = TaskQueue.get_instance()
-        sq_task = tq.get_task_by_external_id(f"scan:{scan_id}", category="sentinel.scan")
+        sq_task = self.find_task(scan_id)
         if sq_task:
             return str(sq_task.status)
         if self.is_scan_finished(scan_id):
@@ -371,7 +374,7 @@ class ScanManager(ABC):
         """
         Cancel a running scan.
 
-        Signals the in-memory task to stop and marks the scan as CANCELLED
+        Signals the TaskQueue task to stop and marks the scan as CANCELLED
         in the database.
 
         Args:
@@ -409,10 +412,7 @@ class ScanManager(ABC):
                 )
                 return False
 
-            tq = TaskQueue.get_instance()
-            sq_task = tq.get_task_by_external_id(
-                f"scan:{scan_id}", category="sentinel.scan"
-            )
+            sq_task = self.find_task(scan_id)
 
             if sq_task is None:
                 self.logger.warning(
@@ -420,7 +420,7 @@ class ScanManager(ABC):
                 )
                 return False
 
-            cancelled = tq.cancel(sq_task.id)
+            cancelled = self._tq.cancel(sq_task.id)
             if not cancelled:
                 self.logger.warning(f"No se pudo cancelar la tarea del escaneo {scan_id}")
                 return False
@@ -476,71 +476,72 @@ class ScanManager(ABC):
             skip_normalize: Skip IP normalization if True.
             cancel_check:  Optional callable returning True to cancel the scan.
         """
-        thread_manager = self.__class__()
-        fresh_scan = None
+        with job_context() as job:
+            thread_manager = self.__class__()
+            fresh_scan = None
 
-        try:
-            with UnitOfWork() as uow:
-                scan = ScanRepository(uow).get_by_id(scan_id)
-            if not scan:
-                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
-                return
-
-            thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
-            thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
-
-            if CR.is_host_reachability_check_enabled():
-                raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
-                parsed_target = urlparse(raw_target)
-                host = parsed_target.hostname or scan.target
-                reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
-                reachable_timeout = CR.get_host_reachability_check_timeout()
-                if not self.is_host_reachable(host, port=reachable_port, timeout=reachable_timeout):
-                    thread_manager.logger.warning(
-                        f"Host '{host}' inalcanzable en puerto {reachable_port}. "
-                        f"Marcando escaneo {scan_id} como FAILED"
-                    )
-                    thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+            try:
+                with UnitOfWork() as uow:
+                    scan = ScanRepository(uow).get_by_id(scan_id)
+                if not scan:
+                    thread_manager.logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
                     return
 
-            task.scan()
-            success = task.wait(
-                timeout=task.timeout + self._scan_timeout_margin,
-                cancel_check=cancel_check,
-            )
+                thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
+                thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
 
-            if not success or task.results is None:
+                if CR.is_host_reachability_check_enabled():
+                    raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
+                    parsed_target = urlparse(raw_target)
+                    host = parsed_target.hostname or scan.target
+                    reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
+                    reachable_timeout = CR.get_host_reachability_check_timeout()
+                    if not self.is_host_reachable(host, port=reachable_port, timeout=reachable_timeout):
+                        thread_manager.logger.warning(
+                            f"Host '{host}' inalcanzable en puerto {reachable_port}. "
+                            f"Marcando escaneo {scan_id} como FAILED"
+                        )
+                        thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+                        return
+
+                task.scan()
+                success = task.wait(
+                    timeout=task.timeout + self._scan_timeout_margin,
+                    cancel_check=job.cancelled,
+                )
+
+                if not success or task.results is None:
+                    if task.status == TaskStatus.CANCELLED:
+                        thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                        thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
+                    else:
+                        thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
+                        thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+                    return
+
+                thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
+
+                processor  = thread_manager.result_processor
+                scan_type = scan.scan_type
+                domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
+
+                with UnitOfWork() as uow:
+                    fresh_scan              = ScanRepository(uow).get_by_id(scan_id)
+                    thread_manager._persist_scan_results(uow, fresh_scan, domain_data)
+                    fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
+                    fresh_scan.finished_at  = datetime.now() # type: ignore
+
+                thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
+                thread_manager._log_to_csv(scan_id, fresh_scan, task)
+
+            except (OSError, RuntimeError) as e:
                 if task.status == TaskStatus.CANCELLED:
                     thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
                     thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
                 else:
-                    thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
+                    thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
                     thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
-                return
-
-            thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
-
-            processor  = thread_manager.result_processor
-            scan_type = scan.scan_type
-            domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
-
-            with UnitOfWork() as uow:
-                fresh_scan              = ScanRepository(uow).get_by_id(scan_id)
-                thread_manager._persist_scan_results(uow, fresh_scan, domain_data)
-                fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
-                fresh_scan.finished_at  = datetime.now() # type: ignore
-
-            thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
-            thread_manager._log_to_csv(scan_id, fresh_scan, task)
-
-        except (OSError, RuntimeError) as e:
-            if task.status == TaskStatus.CANCELLED:
-                thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
-                thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
-            else:
-                thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
-                thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
-            thread_manager._log_to_csv(scan_id, fresh_scan, task)
+                thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
     def update_scan_status(self, scan_id: int, status: ScanStatus) -> None:
         """
@@ -581,7 +582,7 @@ class ScanManager(ABC):
                 data = {
                     "duration_sec": round(duration, 2),
                     "status": status,
-                    "concurrent_tasks": TaskQueue.get_instance().get_status()["runningCount"],
+                    "concurrent_tasks": self._tq.get_status()["runningCount"],
                 }
 
                 self.append_csv_data(data, fresh_scan, task)
@@ -1403,12 +1404,12 @@ class NmapScanManager(ScanManager):
             scan_id = scan.id
 
             from src.modules.sentinel.services.rq_tasks import execute_nmap_scan
-            TaskQueue.get_instance().submit(
+            self._tq.submit(
                 func=execute_nmap_scan,
                 args=(scan_id, target_host, target_ports, timeout),
                 name=f"NmapScan-{scan_id}",
-                category="sentinel.scan",
-                external_id=f"scan:{scan_id}",
+                category=self.TASK_CATEGORY,
+                external_id=self.external_id_for(scan_id),
                 timeout=timeout + self._scan_timeout_margin,
             )
 
@@ -1417,6 +1418,19 @@ class NmapScanManager(ScanManager):
 
         except (OSError, RuntimeError) as e:
             self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
+
+    def execute_nmap_scan_internal(self, scan_id: int, target_host: str, target_ports: str, timeout: int) -> None:
+        """Internal: Execute Nmap scan with progress and cancellation support."""
+        with job_context() as job:
+            from src.modules.sentinel.services.tasks import NmapScanTask
+
+            task = NmapScanTask(
+                target_host=target_host,
+                target_ports=target_ports,
+                timeout=timeout,
+                progress_callback=job.progress,
+            )
+            self._execute_scan(scan_id, task)
             raise
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NmapScan: # pylint: disable=arguments-differ
@@ -1542,12 +1556,12 @@ class NiktoScanManager(ScanManager):
             scan_id = scan.id
 
             from src.modules.sentinel.services.rq_tasks import execute_nikto_scan
-            TaskQueue.get_instance().submit(
+            self._tq.submit(
                 func=execute_nikto_scan,
                 args=(scan_id, target_domain, timeout),
                 name=f"NiktoScan-{scan_id}",
-                category="sentinel.scan",
-                external_id=f"scan:{scan_id}",
+                category=self.TASK_CATEGORY,
+                external_id=self.external_id_for(scan_id),
                 timeout=timeout + self._scan_timeout_margin,
             )
 
@@ -1557,6 +1571,18 @@ class NiktoScanManager(ScanManager):
         except (OSError, RuntimeError) as e:
             self.logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
             raise
+
+    def execute_nikto_scan_internal(self, scan_id: int, target_domain: str, timeout: int) -> None:
+        """Internal: Execute Nikto scan with progress and cancellation support."""
+        with job_context() as job:
+            from src.modules.sentinel.services.tasks import NiktoScanTask
+
+            task = NiktoScanTask(
+                target_domain=target_domain,
+                timeout=timeout,
+                progress_callback=job.progress,
+            )
+            self._execute_scan(scan_id, task)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NiktoScan: # pylint: disable=arguments-differ
         """Create and persist a NiktoScan row."""
@@ -1715,12 +1741,12 @@ class OpenVASScanManager(ScanManager):
             scan_id   = scan.id
 
             from src.modules.sentinel.services.rq_tasks import execute_openvas_scan
-            TaskQueue.get_instance().submit(
+            self._tq.submit(
                 func=execute_openvas_scan,
                 args=(scan_id, target, config_id, skip_normalize),
                 name=f"OpenVASScan-{scan_id}",
-                category="sentinel.scan",
-                external_id=f"scan:{scan_id}",
+                category=self.TASK_CATEGORY,
+                external_id=self.external_id_for(scan_id),
                 timeout=14400,
             )
 
@@ -1730,6 +1756,22 @@ class OpenVASScanManager(ScanManager):
         except (OSError, RuntimeError) as e:
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
+
+    def execute_openvas_scan_internal(self, scan_id: int, target: str, scan_config_id: str, skip_normalize: bool) -> None:
+        """Internal: Execute OpenVAS scan with progress and cancellation support."""
+        with job_context() as job:
+            from src.modules.sentinel.services.tasks import OpenVASTask
+
+            task = OpenVASTask(
+                target=target,
+                hostname=self.hostname,
+                port=self.port,
+                username=self.username,
+                password=self.password,
+                scan_config=scan_config_id,
+                progress_callback=job.progress,
+            )
+            self._execute_scan(scan_id, task, skip_normalize)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> OpenVASScan: # pylint: disable=arguments-differ
         """Create and persist an OpenVASScan row with placeholder task/report IDs."""
@@ -1889,8 +1931,9 @@ class SentinelReportManager:
         logger:      Logger instance.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
         self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
     @staticmethod
     def _create_document(scan, ai_report: bool) -> int:
@@ -2014,7 +2057,7 @@ class SentinelReportManager:
         doc_id = self._create_document(scan, ai_report)
 
         from src.modules.sentinel.services.rq_tasks import execute_report_generation
-        TaskQueue.get_instance().submit(
+        self._tq.submit(
             func=execute_report_generation,
             args=(doc_id, scan.id, ai_report),
             name=f"PDFGeneration-Scan-{scan.id}",

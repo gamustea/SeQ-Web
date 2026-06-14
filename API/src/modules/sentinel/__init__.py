@@ -9,6 +9,8 @@ Exponente:
     - Endpoints: sentinel_bp
 """
 
+from src.modules.system.taskqueue import QueueRegistry
+
 from .model import (
     Host,
     NiktoIncident,
@@ -52,6 +54,9 @@ from .services import (
 )
 
 from .endpoints import sentinel_blp
+
+# Registro de las categorías de cola de este módulo (OCP).
+QueueRegistry.register("sentinel.scan", "sentinel.report")
 
 __all__ = [
     "Host", "NiktoIncident", "NiktoScan", "NmapScan", "OpenPort",

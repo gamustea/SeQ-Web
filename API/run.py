@@ -512,7 +512,7 @@ if __name__ == "__main__":
     app = create_app(APP_CONTEXT.create_database)
 
     if _args.with_worker:
-        _WORKER["proc"] = subprocess.Popen(
+        _WORKER["proc"] = subprocess.Popen( # type: ignore
             [sys.executable, "-m", "src.modules.system.taskqueue.worker"],
             cwd=os.path.dirname(os.path.abspath(__file__)),
         )

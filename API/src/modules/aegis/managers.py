@@ -24,7 +24,7 @@ from src.modules.aegis.exceptions import DocumentError
 import src.modules.system.config_reading as CR
 from src.modules.users import User
 from src.modules.system import SecOpsLogger
-from src.modules.system.taskqueue import TaskQueue
+from src.modules.system.taskqueue import ITaskQueue, TaskQueue, job_context
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
 from src.modules.shared._documents import (
@@ -50,10 +50,11 @@ class AegisManager:
 
     _lock = threading.Lock()
 
-    def __init__(self, user: User) -> None:
+    def __init__(self, user: User, task_queue: ITaskQueue | None = None) -> None:
         self.user = user
         self.logger = SecOpsLogger(f"AegisManager[{user.id}]").get_logger()
         self.alert_fetcher = AegisAlertFetcher(logger=self.logger) # type: ignore
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
     # =========================================================================
     # API PÚBLICA
@@ -70,7 +71,7 @@ class AegisManager:
 
             from src.modules.aegis.services.rq_tasks import execute_aegis_generation
 
-            TaskQueue.get_instance().submit(
+            self._tq.submit(
                 func=execute_aegis_generation,
                 args=(document_id, topic_id, tweaks, self.user.id),
                 name=f"AegisGen-{document_id}",
@@ -211,79 +212,80 @@ class AegisManager:
         tweaks:      dict[str, Any],
     ) -> None:
         """Orquesta todos los pasos de generación en el thread secundario."""
-        cfg = self._read_cfg()
+        with job_context():
+            cfg = self._read_cfg()
 
-        if not cfg["enabled"]:
-            raise RuntimeError("Aegis deshabilitado en configuración")
+            if not cfg["enabled"]:
+                raise RuntimeError("Aegis deshabilitado en configuración")
 
-        # El campo company es el único requerido en tweaks
-        if not tweaks.get("company"):
-            raise ValueError("El campo 'company' es obligatorio en tweaks")
+            # El campo company es el único requerido en tweaks
+            if not tweaks.get("company"):
+                raise ValueError("El campo 'company' es obligatorio en tweaks")
 
-        try:
-            # 1. Resolución de topic
-            topic, was_random = self._get_topic_from_db(topic_id)
-            if topic is None:
-                topic_note     = "No hay topics en BD. Contenido genérico."
-                resolved_id    = topic_id or 0
-                resolved_title = tweaks.get("topicFocus", "Ciberseguridad General")
-            elif was_random:
-                topic_note     = f"Topic {topic_id} no encontrado. Usado: '{topic.title}'"
-                resolved_id    = topic.id
-                resolved_title = topic.title
-            else:
-                topic_note     = ""
-                resolved_id    = topic.id
-                resolved_title = topic.title
+            try:
+                # 1. Resolución de topic
+                topic, was_random = self._get_topic_from_db(topic_id)
+                if topic is None:
+                    topic_note     = "No hay topics en BD. Contenido genérico."
+                    resolved_id    = topic_id or 0
+                    resolved_title = tweaks.get("topicFocus", "Ciberseguridad General")
+                elif was_random:
+                    topic_note     = f"Topic {topic_id} no encontrado. Usado: '{topic.title}'"
+                    resolved_id    = topic.id
+                    resolved_title = topic.title
+                else:
+                    topic_note     = ""
+                    resolved_id    = topic.id
+                    resolved_title = topic.title
 
-            # 2. Carga de referencias de disco
-            reference = self._load_reference_stack(cfg["stack_dir"])
+                # 2. Carga de referencias de disco
+                reference = self._load_reference_stack(cfg["stack_dir"])
 
-            # 3. Generación de contenido con el modelo
-            writer = AegisAIWriter()
-            content: AegisContent = writer.generate(
-                topic             = topic,
-                resolved_topic_id = resolved_id,
-                topic_title       = resolved_title,
-                topic_note        = topic_note,
-                reference         = reference,
-                tweaks            = tweaks,
-            )
+                # 3. Generación de contenido con el modelo
+                writer = AegisAIWriter()
+                content: AegisContent = writer.generate(
+                    topic             = topic,
+                    resolved_topic_id = resolved_id,
+                    topic_title       = resolved_title,
+                    topic_note        = topic_note,
+                    reference         = reference,
+                    tweaks            = tweaks,
+                )
 
-            # 4. Fetch de alertas
-            alerts = self.alert_fetcher.fetch_alerts(
-                brands        = tweaks.get("associatedBrands", []),
-                max_per_brand = 2,
-            )
+                # 4. Fetch de alertas
+                alerts = self.alert_fetcher.fetch_alerts(
+                    brands        = tweaks.get("associatedBrands", []),
+                    max_per_brand = 2,
+                )
 
-            # 5. Persistencia
-            self._persist_content_atomic(document_id, content, tweaks.get("mentionContact"))
-            self._persist_alerts_atomic(document_id, alerts)
+                # 5. Persistencia
+                self._persist_content_atomic(document_id, content, tweaks.get("mentionContact"))
+                self._persist_alerts_atomic(document_id, alerts)
 
-            # 6. Escritura del archivo de archivo
-            ts       = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            filename = f"{ts}_{self.user.id}_{resolved_id}.json"
-            filepath = cfg["output_dir"] / filename
+                # 6. Escritura del archivo de archivo
+                ts       = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                filename = f"{ts}_{self.user.id}_{resolved_id}.json"
+                filepath = cfg["output_dir"] / filename
 
-            with open(filepath, "w", encoding="utf-8") as fh:
-                json.dump(content.to_json_dict(document_id, alerts), fh, ensure_ascii=False, indent=2)
+                with open(filepath, "w", encoding="utf-8") as fh:
+                    json.dump(content.to_json_dict(document_id, alerts), fh, ensure_ascii=False, indent=2)
 
-            # 7. Actualización del estado a 'done'
-            self._update_document_status(
-                document_id = document_id,
-                status      = "done",
-                title       = content.subtitle,
-                filename    = filename,
-            )
-            self.logger.info(f"Documento {document_id} generado: {filename}")
+                # 7. Actualización del estado a 'done'
+                self._update_document_status(
+                    document_id = document_id,
+                    status      = "done",
+                    title       = content.subtitle,
+                    filename    = filename,
+                )
+                self.logger.info(f"Documento {document_id} generado: {filename}")
 
-        except Exception as exc:
-            self.logger.error(f"Error en workflow {document_id}: {exc}", exc_info=True)
-            self._update_document_status(
-                document_id=document_id,
-                status="error",
-                error=str(exc)[:100],
-            )
+            except Exception as exc:
+                self.logger.error(f"Error en workflow {document_id}: {exc}", exc_info=True)
+                self._update_document_status(
+                    document_id=document_id,
+                    status="error",
+                    error=str(exc)[:100],
+                )
 
     def _persist_content_atomic(
         self, document_id: int, content: AegisContent, contact_email_from_tweaks: str | None = None

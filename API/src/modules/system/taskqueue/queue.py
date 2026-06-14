@@ -1,76 +1,119 @@
 """
 taskqueue/queue.py
 ──────────────────
-RQ-backed task queue with Redis persistence.
+Cola de tareas respaldada por RQ + Redis.
 
-TaskQueue replaces SeQueue as the central background task system:
-- Persists job state in Redis (survives crashes/restarts)
-- Workers run in separate processes (isolated from the API)
-- External ID mapping stored in Redis hashes
-- Cancellation via Redis keys checked cooperatively by workers
-- History stored as Redis sorted set with TTL
+``TaskQueue`` es una **fachada** delgada que orquesta colaboradores con una
+única responsabilidad cada uno (SRP):
+
+- ``ExternalIdStore``   mapa external_id -> job_id.
+- ``CancellationStore`` señales de cancelación cooperativa.
+- ``HistoryStore``      historial de tareas terminadas (snapshots).
+- ``ProgressStore``     progreso almacenado en ``job.meta``.
+- ``QueueRegistry``     categorías/colas registrables por módulo (OCP).
+- ``RedisConnectionFactory`` única fuente de conexiones Redis.
+
+Frente a SeQueue (la cola en memoria anterior), persiste el estado en Redis
+(sobrevive a reinicios), los workers corren en procesos separados y el
+historial recoge tareas completadas, fallidas y canceladas vía callbacks de
+RQ.
 """
 
 from __future__ import annotations
 
+import logging
 import threading
-import time
 from datetime import datetime, timezone
-from typing import Any, Callable, ClassVar, Dict, List, Optional
+from typing import Callable, ClassVar, Dict, List, Optional
 
 import redis as redis_lib
 import rq
-from rq.job import Job
+from rq import Worker
+from rq.job import Callback, Job
 from rq.registry import StartedJobRegistry
 
 from src.modules.system.logging import SecOpsLogger
 
 import src.modules.system.config_reading as CR
 
+from .connection import RedisConnectionFactory
+from .registry import DEFAULT_QUEUE, QueueRegistry
+from .stores import (
+    CancellationStore,
+    ExternalIdStore,
+    HistoryStore,
+    ProgressStore,
+)
 from .task import Task, TaskStatus
 
+_DEFAULT_TIMEOUT = 600
+
+
+# =============================================================================
+# CALLBACKS DE RQ (se ejecutan en el worker al terminar el job)
+# =============================================================================
+
+def _record_terminal(job: Job, status: TaskStatus, error: Optional[str] = None) -> None:
+    """Registra el snapshot de un job terminado en el historial.
+
+    Se ejecuta dentro del worker (con contexto Flask activo), por lo que la
+    configuración y Redis están disponibles.
+    """
+    try:
+        tq = TaskQueue.get_instance()
+        data = Task.from_rq_job(job).to_dict()
+        data["status"] = str(status)
+        if error and not data.get("error"):
+            data["error"] = error
+        if not data.get("finishedAt"):
+            data["finishedAt"] = datetime.now(timezone.utc).isoformat()
+
+        tq._history.record(data)
+        tq._external.remove_by_job_id(job.id)
+    except Exception:  # noqa: BLE001 - un fallo de historial no debe tumbar el job
+        logging.getLogger("TaskQueue").warning(
+            "No se pudo registrar el historial del job %s",
+            getattr(job, "id", "?"), exc_info=True,
+        )
+
+
+def _on_job_success(job, connection, result, *args, **kwargs):  # noqa: ANN001
+    _record_terminal(job, TaskStatus.COMPLETED)
+
+
+def _on_job_failure(job, connection, exc_type, exc_value, traceback, *args, **kwargs):  # noqa: ANN001
+    error = None
+    if exc_type is not None:
+        error = f"{getattr(exc_type, '__name__', exc_type)}: {exc_value}"
+    _record_terminal(job, TaskStatus.FAILED, error=error)
+
+
+# =============================================================================
+# FACHADA
+# =============================================================================
 
 class TaskQueue:
-    """Singleton task queue backed by RQ + Redis."""
+    """Singleton fachada de la cola de tareas (RQ + Redis)."""
 
     _instance: ClassVar[Optional[TaskQueue]] = None
     _instance_lock = threading.Lock()
 
-    QUEUE_NAMES = [
-        "sentinel.scan",
-        "sentinel.report",
-        "aegis.generate",
-        "iris.analyze",
-        "default",
-    ]
-
     def __init__(self) -> None:
-        redis_cfg = CR.get_redis_config()
         taskqueue_cfg = CR.get_taskqueue_config()
 
-        redis_kwargs = {
-            "host": redis_cfg["host"],
-            "port": redis_cfg["port"],
-            "db": redis_cfg["db"],
-            "password": redis_cfg["password"],
-        }
-        self._redis = redis_lib.Redis(**redis_kwargs, decode_responses=False)
-        self._redis_decoded = redis_lib.Redis(**redis_kwargs, decode_responses=True)
-        self._queues: Dict[str, rq.Queue] = {
-            name: rq.Queue(name=name, connection=self._redis, default_timeout=600)
-            for name in self.QUEUE_NAMES
-        }
-        self._queue = self._queues["default"]
-        self._history_max = int(taskqueue_cfg.get("history_max_items", 200))
-        self._history_ttl = int(taskqueue_cfg.get("history_ttl_seconds", 3600))
+        self._redis = RedisConnectionFactory.raw()
+        self._decoded = RedisConnectionFactory.decoded()
 
+        self._external = ExternalIdStore(self._decoded)
+        self._cancel = CancellationStore(self._decoded)
+        self._history = HistoryStore(
+            self._decoded,
+            int(taskqueue_cfg.get("history_max_items", 200)),
+            int(taskqueue_cfg.get("history_ttl_seconds", 3600)),
+        )
+
+        self._queue_cache: Dict[str, rq.Queue] = {}
         self.logger = SecOpsLogger("TaskQueue").get_logger()
-
-        self._external_id_hash = "taskqueue:external_ids"
-        self._cancel_prefix = "taskqueue:cancel:"
-        self._history_key = "taskqueue:history"
-
-        self._migrate_history_key()
 
     # =========================================================================
     # SINGLETON
@@ -101,10 +144,9 @@ class TaskQueue:
         args: tuple = (),
         kwargs: Optional[dict] = None,
         external_id: Optional[str] = None,
-        timeout: int = 600,
+        timeout: int = _DEFAULT_TIMEOUT,
     ) -> Task:
-        queue_name = category if category in self._queues else "default"
-        queue = self._queues[queue_name]
+        queue = self._queue_for(category)
 
         job_id = name if name else None
         if job_id:
@@ -130,6 +172,8 @@ class TaskQueue:
                 kwargs=kwargs or {},
                 job_id=job_id,
                 job_timeout=timeout,
+                on_success=Callback(_on_job_success),
+                on_failure=Callback(_on_job_failure),
                 meta={
                     "category": category,
                     "external_id": external_id,
@@ -141,7 +185,7 @@ class TaskQueue:
             raise
 
         if external_id:
-            self._redis_decoded.hset(self._external_id_hash, external_id, job.id)
+            self._external.set(external_id, job.id)
 
         self.logger.debug(
             "Task %s submitted [category=%s, external=%s]",
@@ -160,19 +204,22 @@ class TaskQueue:
             return False
 
         if status in ("queued", "scheduled"):
+            snapshot = Task.from_rq_job(job).to_dict()
+            snapshot["status"] = str(TaskStatus.CANCELLED)
+            snapshot["finishedAt"] = datetime.now(timezone.utc).isoformat()
             try:
                 job.cancel()
                 job.delete()
             except Exception:
                 pass
-            self._redis_decoded.delete(self._cancel_prefix + task_id)
-            self._remove_external_id_by_job_id(task_id)
-            self._add_to_history(task_id, TaskStatus.CANCELLED)
+            self._cancel.clear(task_id)
+            self._external.remove_by_job_id(task_id)
+            self._history.record(snapshot)
             self.logger.info("Task %s cancelled (was pending)", task_id)
             return True
 
         if status == "started":
-            self._redis_decoded.set(self._cancel_prefix + task_id, "1", ex=3600)
+            self._cancel.signal(task_id)
             self.logger.info("Task %s cancel signal sent (is running)", task_id)
             return True
 
@@ -182,20 +229,21 @@ class TaskQueue:
     def cancel_all(self) -> None:
         self.logger.info("TaskQueue cancel_all")
 
-        for queue_name, queue in self._queues.items():
+        for queue_name in QueueRegistry.names():
+            queue = self._queue_for(queue_name)
             for job_id in queue.get_job_ids():
                 self.cancel(job_id)
 
             started = StartedJobRegistry(name=queue_name, connection=self._redis)
             for job_id in started.get_job_ids():
                 self.logger.info("Sending cancel signal to running job %s", job_id)
-                self._redis_decoded.set(self._cancel_prefix + job_id, "1", ex=3600)
+                self._cancel.signal(job_id)
 
     def is_cancelled(self, task_id: str) -> bool:
-        return bool(self._redis_decoded.exists(self._cancel_prefix + task_id))
+        return self._cancel.is_cancelled(task_id)
 
     def clear_cancel_signal(self, task_id: str) -> None:
-        self._redis_decoded.delete(self._cancel_prefix + task_id)
+        self._cancel.clear(task_id)
 
     def get_task(self, task_id: str) -> Optional[Task]:
         job = self._try_fetch_job(task_id)
@@ -206,7 +254,7 @@ class TaskQueue:
     def get_task_by_external_id(
         self, external_id: str, category: Optional[str] = None
     ) -> Optional[Task]:
-        job_id = self._redis_decoded.hget(self._external_id_hash, external_id)
+        job_id = self._external.get(external_id)
         if job_id is None:
             self.logger.debug("get_task_by_external_id: no job_id for external_id=%s", external_id)
             return None
@@ -227,7 +275,7 @@ class TaskQueue:
 
     def get_running(self, category: Optional[str] = None) -> List[dict]:
         all_job_ids = []
-        for queue_name in self._queues:
+        for queue_name in QueueRegistry.names():
             started = StartedJobRegistry(name=queue_name, connection=self._redis)
             all_job_ids.extend(started.get_job_ids())
         tasks = self._jobs_to_tasks(all_job_ids, category)
@@ -235,7 +283,8 @@ class TaskQueue:
 
     def get_pending(self, category: Optional[str] = None) -> List[dict]:
         all_pending_ids = []
-        for queue_name, queue in self._queues.items():
+        for queue_name in QueueRegistry.names():
+            queue = self._queue_for(queue_name)
             started_ids = set(
                 StartedJobRegistry(name=queue_name, connection=self._redis).get_job_ids()
             )
@@ -246,17 +295,7 @@ class TaskQueue:
         return sorted(tasks, key=lambda t: t.get("createdAt") or "")
 
     def get_history(self, category: Optional[str] = None) -> List[dict]:
-        items = self._redis_decoded.zrevrange(self._history_key, 0, -1)
-        tasks = []
-        for task_id in items:
-            t = self.get_task(task_id)
-            if t is None:
-                continue
-            data = t.to_dict()
-            if category is not None and data.get("category") != category:
-                continue
-            tasks.append(data)
-
+        tasks = self._history.list(category)
         return sorted(
             tasks,
             key=lambda t: t.get("finishedAt") or t.get("startedAt") or t.get("createdAt") or "",
@@ -264,10 +303,11 @@ class TaskQueue:
         )
 
     def get_status(self) -> dict:
+        running_count = 0
+        pending_count = 0
         try:
-            running_count = 0
-            pending_count = 0
-            for queue_name, queue in self._queues.items():
+            for queue_name in QueueRegistry.names():
+                queue = self._queue_for(queue_name)
                 started = StartedJobRegistry(name=queue_name, connection=self._redis)
                 running_count += started.count
                 pending_count += queue.count
@@ -276,14 +316,12 @@ class TaskQueue:
             running_count = 0
             pending_count = 0
 
-        history_count = self._redis_decoded.zcard(self._history_key)
-
         return {
             "maxWorkers":    CR.get_taskqueue_config().get("max_workers", 4),
-            "aliveWorkers":  -1,
+            "aliveWorkers":  self._count_alive_workers(),
             "runningCount":  running_count,
             "pendingCount":  pending_count,
-            "historyCount":  history_count,
+            "historyCount":  self._history.count(),
         }
 
     def update_progress(self, task_id: str, progress: int) -> None:
@@ -292,8 +330,7 @@ class TaskQueue:
         job = self._try_fetch_job(task_id)
         if job is None:
             return
-        job.meta["progress"] = progress
-        job.save_meta()
+        ProgressStore.write(job, progress)
 
     # =========================================================================
     # REDIS ACCESS
@@ -307,6 +344,24 @@ class TaskQueue:
     # INTERNAL
     # =========================================================================
 
+    def _queue_for(self, category: str) -> rq.Queue:
+        """Resuelve la cola de una categoría (cae a ``default`` si no está
+        registrada) y la cachea."""
+        name = category if QueueRegistry.is_registered(category) else DEFAULT_QUEUE
+        queue = self._queue_cache.get(name)
+        if queue is None:
+            queue = rq.Queue(name=name, connection=self._redis, default_timeout=_DEFAULT_TIMEOUT)
+            self._queue_cache[name] = queue
+        return queue
+
+    def _count_alive_workers(self) -> int:
+        """Número real de workers vivos registrados en Redis."""
+        try:
+            return Worker.count(connection=self._redis)
+        except Exception as exc:
+            self.logger.debug("No se pudo contar workers vivos: %s", exc)
+            return -1
+
     def _try_fetch_job(self, task_id: str) -> Optional[Job]:
         try:
             return rq.job.Job.fetch(task_id, connection=self._redis)
@@ -317,61 +372,14 @@ class TaskQueue:
             self.logger.warning("_try_fetch_job: unexpected error for %s: %s", task_id, exc)
             return None
 
-    def _migrate_history_key(self) -> None:
-        key_type = self._redis_decoded.type(self._history_key)
-        if key_type == "hash":
-            self.logger.info("Migrating history key from Hash to Sorted Set")
-            self._redis_decoded.delete(self._history_key)
-            self._redis_decoded.delete(f"{self._history_key}:status")
-
     def _jobs_to_tasks(self, job_ids: List[str], category: Optional[str] = None) -> List[dict]:
         tasks = []
         for jid in job_ids:
             job = self._try_fetch_job(jid)
             if job is None:
                 continue
-            t = Task.from_rq_job(job)
-            data = t.to_dict()
+            data = Task.from_rq_job(job).to_dict()
             if category is not None and data.get("category") != category:
                 continue
             tasks.append(data)
         return tasks
-
-    def _remove_external_id_by_job_id(self, job_id: str) -> None:
-        cursor = 0
-        while True:
-            cursor, items = self._redis_decoded.hscan(self._external_id_hash, cursor=cursor)
-            for key, val in items.items():
-                if val == job_id:
-                    self._redis_decoded.hdel(self._external_id_hash, key)
-                    return
-            if cursor == 0:
-                break
-
-    def _add_to_history(self, task_id: str, status: TaskStatus) -> None:
-        score = time.time()
-        self._redis_decoded.zadd(self._history_key, {task_id: score})
-        self._redis_decoded.hset(f"{self._history_key}:status", task_id, status.value)
-
-        if self._history_ttl > 0:
-            self._redis_decoded.expire(self._history_key, self._history_ttl)
-            self._redis_decoded.expire(f"{self._history_key}:status", self._history_ttl)
-
-        if self._history_max > 0 and self._redis_decoded.zcard(self._history_key) > self._history_max:
-            self._trim_history()
-
-    def _trim_history(self) -> None:
-        total = self._redis_decoded.zcard(self._history_key)
-        excess = total - self._history_max
-        if excess <= 0:
-            return
-
-        to_remove = self._redis_decoded.zrange(self._history_key, 0, excess - 1)
-        if not to_remove:
-            return
-
-        pipe = self._redis_decoded.pipeline()
-        for task_id in to_remove:
-            pipe.zrem(self._history_key, task_id)
-            pipe.hdel(f"{self._history_key}:status", task_id)
-        pipe.execute()

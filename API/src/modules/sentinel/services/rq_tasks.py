@@ -3,42 +3,17 @@ sentinel/services/rq_tasks.py
 ─────────────────────────────
 Standalone module-level functions submitted to the RQ task queue.
 
-These functions are designed to be serialized by pickle and executed
-within RQ worker processes. They reconstruct the necessary objects,
-execute scan/report logic, and update Redis metadata (progress,
-cancellation). Flask application context is pushed by the worker
-at startup, so DB sessions work transparently.
+These functions are simple entry points that delegate to managers.
+The managers internally handle job_context() for progress and cancellation support.
+El contexto de aplicación Flask es empujado por el worker al arrancar, así que las
+sesiones de BD funcionan de forma transparente.
 """
 
 from __future__ import annotations
 
 import logging
 
-from rq import get_current_job
-
-from src.modules.system.taskqueue import TaskQueue
-
 _logger = logging.getLogger(__name__)
-
-
-def _update_progress(progress: int) -> None:
-    job = get_current_job()
-    if job:
-        job.meta["progress"] = progress
-        job.save_meta()
-
-
-def _cancel_check() -> bool:
-    job = get_current_job()
-    if job:
-        return TaskQueue.get_instance().is_cancelled(job.id)
-    return False
-
-
-def _clear_cancel() -> None:
-    job = get_current_job()
-    if job:
-        TaskQueue.get_instance().clear_cancel_signal(job.id)
 
 
 def execute_nmap_scan(
@@ -47,23 +22,15 @@ def execute_nmap_scan(
     target_ports: str,
     timeout: int,
 ) -> None:
+    """Execute Nmap scan. Already wrapped with job_context in the manager."""
     try:
-        from src.modules.sentinel.services.tasks import NmapScanTask
         from src.modules.sentinel.managers import NmapScanManager
 
-        task = NmapScanTask(
-            target_host=target_host,
-            target_ports=target_ports,
-            timeout=timeout,
-            progress_callback=_update_progress,
-        )
         manager = NmapScanManager()
-        manager._execute_scan(scan_id, task, cancel_check=_cancel_check)
+        manager.execute_nmap_scan_internal(scan_id, target_host, target_ports, timeout)
     except Exception as exc:
         _logger.error("Nmap scan %d failed: %s", scan_id, exc, exc_info=True)
         raise
-    finally:
-        _clear_cancel()
 
 
 def execute_nikto_scan(
@@ -71,22 +38,15 @@ def execute_nikto_scan(
     target_domain: str,
     timeout: int,
 ) -> None:
+    """Execute Nikto scan. Already wrapped with job_context in the manager."""
     try:
-        from src.modules.sentinel.services.tasks import NiktoScanTask
         from src.modules.sentinel.managers import NiktoScanManager
 
-        task = NiktoScanTask(
-            target_domain=target_domain,
-            timeout=timeout,
-            progress_callback=_update_progress,
-        )
         manager = NiktoScanManager()
-        manager._execute_scan(scan_id, task, cancel_check=_cancel_check)
+        manager.execute_nikto_scan_internal(scan_id, target_domain, timeout)
     except Exception as exc:
         _logger.error("Nikto scan %d failed: %s", scan_id, exc, exc_info=True)
         raise
-    finally:
-        _clear_cancel()
 
 
 def execute_openvas_scan(
@@ -95,29 +55,15 @@ def execute_openvas_scan(
     scan_config_id: str,
     skip_normalize: bool,
 ) -> None:
+    """Execute OpenVAS scan. Already wrapped with job_context in the manager."""
     try:
-        from src.modules.sentinel.services.tasks import OpenVASTask
         from src.modules.sentinel.managers import OpenVASScanManager
-        from src.modules.system.config_reading import get_openvas_environment
 
-        environ = get_openvas_environment()
-
-        task = OpenVASTask(
-            target=target,
-            hostname=environ["hostname"],
-            port=environ["port"],
-            username=environ["username"],
-            password=environ["password"],
-            scan_config=scan_config_id,
-            progress_callback=_update_progress,
-        )
         manager = OpenVASScanManager()
-        manager._execute_scan(scan_id, task, skip_normalize, cancel_check=_cancel_check)
+        manager.execute_openvas_scan_internal(scan_id, target, scan_config_id, skip_normalize)
     except Exception as exc:
         _logger.error("OpenVAS scan %d failed: %s", scan_id, exc, exc_info=True)
         raise
-    finally:
-        _clear_cancel()
 
 
 def execute_report_generation(
@@ -125,6 +71,7 @@ def execute_report_generation(
     scan_id: int,
     ai_report: bool,
 ) -> None:
+    """Generate PDF report."""
     try:
         from src.modules.sentinel.managers import SentinelReportManager
 
