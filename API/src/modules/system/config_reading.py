@@ -435,16 +435,30 @@ def save_full_config(new_config: dict) -> dict:
 
 
 # =============================================================================
-# CONFIGURACIÓN DE SEQUEUE
+# CONFIGURACI�N DE TASKQUEUE
 # =============================================================================
 
+def get_redis_config() -> dict:
+    """Devuelve la configuracion de conexion Redis desde variables de entorno."""
+    host = os.getenv("REDIS_HOST", "localhost")
+    port = int(os.getenv("REDIS_PORT", "6379"))
+    db = int(os.getenv("REDIS_DB", "0"))
+    password = os.getenv("REDIS_PASSWORD", "")
+
+    return {
+        "host": host,
+        "port": port,
+        "db": db,
+        "password": password or None,
+    }
+
 @_lazy_load
-def get_sequeue_config() -> dict:
+def get_taskqueue_config() -> dict:
     if _configs is None:
         raise IllegalStateError("'_configs' detectado como nulo")
 
-    cfg = _configs.get("general", {}).get("sequeue", {})
-    max_workers_env = os.getenv("SEQUEUE_MAX_WORKERS")
+    cfg = _configs.get("general", {}).get("taskqueue", {})
+    max_workers_env = os.getenv("TASKQUEUE_MAX_WORKERS")
     if max_workers_env is not None:
         cfg["max_workers"] = int(max_workers_env)
 

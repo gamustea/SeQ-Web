@@ -37,7 +37,7 @@ class ConfigUpdateSchema(Schema):
     new_config = fields.Dict(required=True)
 
 
-class SeQueueTaskSchema(Schema):
+class TaskSchema(Schema):
     id = fields.String()
     name = fields.String()
     category = fields.String()
@@ -50,7 +50,7 @@ class SeQueueTaskSchema(Schema):
     error = fields.String(allow_none=True)
 
 
-class SeQueueStatusSchema(Schema):
+class TaskQueueStatusSchema(Schema):
     maxWorkers = fields.Integer()
     aliveWorkers = fields.Integer()
     runningCount = fields.Integer()
@@ -58,11 +58,16 @@ class SeQueueStatusSchema(Schema):
     historyCount = fields.Integer()
 
 
-class SeQueueConfigSchema(Schema):
+class TaskQueueConfigSchema(Schema):
     max_workers = fields.Integer(required=True)
 
 
-class SeQueuePaginationQuerySchema(Schema):
+class TaskListResponseSchema(Schema):
+    tasks = fields.List(fields.Nested(TaskSchema))
+    totalCount = fields.Integer()
+
+
+class TaskPaginationQuerySchema(Schema):
     page = fields.Integer(load_default=1, validate=lambda n: n >= 1)
     per_page = fields.Integer(load_default=20, validate=lambda n: 1 <= n <= 100)
     category = fields.String(load_default=None)

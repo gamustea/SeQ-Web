@@ -1,16 +1,17 @@
 
 
 import subprocess
+import sys
 import threading
 import re
 import time
 
 from urllib.parse import urlparse
 from pathlib import Path
-from typing import Optional, Any, List
-from enum import Enum
+from typing import Callable, Optional, Any, List
 from abc import ABC, abstractmethod
 
+import psutil
 import lxml.etree as lxml_etree
 from gvm.connections import TLSConnection
 from gvm.protocols.gmp import Gmp
@@ -19,21 +20,45 @@ from gvm.protocols.gmp.requests.v226 import AliveTest
 
 import src.modules.system.config_reading as CR
 from src.modules.system import PlatformDetector, SecOpsLogger
+from src.modules.system.taskqueue import TaskStatus
 
 
-class TaskStatus(Enum):
+# Flags de creación para que los subprocesos de escaneo NO compartan la consola
+# de run.py. ``wsl.exe`` modifica el modo de la consola que comparte; si lo
+# matamos a mitad (al cancelar), la deja corrupta y Windows deja de entregar
+# CTRL+C al proceso principal. ``CREATE_NO_WINDOW`` le da su propia consola
+# oculta, así matarlo nunca afecta a la consola de run.py.
+_NO_CONSOLE_FLAGS = 0
+if sys.platform == "win32":
+    _NO_CONSOLE_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+
+
+def _kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 3.0) -> None:
+    """Mata el proceso y TODOS sus descendientes (terminate → kill con timeout).
+
+    Necesario porque los escaneos se lanzan vía ``wsl.exe``/``sudo``: matar solo
+    el proceso padre deja hijos huérfanos (p. ej. ``nmap``) que siguen vivos y,
+    en Windows, enganchados a la consola. Con ``psutil`` recorremos el árbol
+    completo y nunca bloqueamos sin límite (``wait_procs`` lleva timeout).
     """
-    Enum que representa los diferentes estados en los que puede estar una tarea de escaneo.
-    """
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    TIMEOUT = "timeout"
-
-    def __str__(self):
-        return self.value
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        parent = psutil.Process(proc.pid)
+    except psutil.NoSuchProcess:
+        return
+    targets = parent.children(recursive=True) + [parent]
+    for p in targets:
+        try:
+            p.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(targets, timeout=timeout)
+    for p in alive:
+        try:
+            p.kill()
+        except psutil.NoSuchProcess:
+            pass
 
 
 class _Task(ABC):
@@ -42,7 +67,12 @@ class _Task(ABC):
     """
     logger = SecOpsLogger(name=__name__).get_logger()
 
-    def __init__(self, target: str, timeout: int = 200000):
+    def __init__(
+        self,
+        target: str,
+        timeout: int = 200000,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ):
         self.timeout = timeout
         self.status: TaskStatus = TaskStatus.PENDING
         self.progress: int = 0
@@ -55,10 +85,43 @@ class _Task(ABC):
         self._started = threading.Event()
         self._cancel_event = threading.Event()
         self._output_file: Optional[Path] = None
+        self._progress_callback = progress_callback
+        # Nombre del binario real bajo WSL (lo fijan las subclases) para poder
+        # matar el proceso dentro de la VM, que no es hijo Windows de wsl.exe.
+        self._wsl_process_name: Optional[str] = None
 
     @abstractmethod
     def _build_command(self) -> List[str]:
         """Construye el comando a ejecutar."""
+
+    def _terminate_proc(self) -> None:
+        """Detiene el proceso de escaneo: árbol completo + huérfanos en WSL."""
+        _kill_process_tree(self._proc)
+        self._kill_wsl_orphans()
+
+    def _kill_wsl_orphans(self) -> None:
+        """Best-effort: mata el proceso real dentro de la VM de WSL.
+
+        Matar el árbol Windows de ``wsl.exe`` no garantiza matar el proceso
+        Linux (``nmap``/``nikto``) que corre dentro de la VM, porque no es un
+        hijo Windows. Se intenta un ``pkill`` como root. Errores ignorados.
+        """
+        name = self._wsl_process_name
+        platform = getattr(self, "platform", None)
+        if not name or platform is None:
+            return
+        if not (platform.is_windows and platform.wsl_available):
+            return
+        try:
+            subprocess.run(
+                ["wsl", "-u", "root", "pkill", "-f", name],
+                timeout=5,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_NO_CONSOLE_FLAGS,
+            )
+        except Exception as e:  # noqa: BLE001 - limpieza best-effort
+            self.logger.debug(f"pkill WSL de '{name}' falló (ignorado): {e}")
 
     def _process_results(self) -> None:
         """Procesa los resultados del escaneo. Override en subclases si es necesario."""
@@ -92,6 +155,8 @@ class _Task(ABC):
                 if prog != -1:
                     with self._lock:
                         self.progress = prog
+                    if self._progress_callback:
+                        self._progress_callback(prog)
 
         except (OSError, IOError) as e:
             self.logger.error(f"Error leyendo salida: {e}", exc_info=True)
@@ -126,13 +191,21 @@ class _Task(ABC):
             cmd = self._build_command()
             self.logger.info(f"Iniciando escaneo con comando: {' '.join(cmd)}")
 
-            self._proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
+            # Consola/grupo de proceso propios: el escaneo no comparte la consola
+            # de run.py, así matarlo (al cancelar) no corrompe el manejo de
+            # CTRL+C del proceso principal.
+            popen_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "bufsize": 1,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = _NO_CONSOLE_FLAGS
+            else:
+                popen_kwargs["start_new_session"] = True
+
+            self._proc = subprocess.Popen(cmd, **popen_kwargs)
 
             time.sleep(0.1)
             returncode = self._proc.poll()
@@ -157,21 +230,31 @@ class _Task(ABC):
             self.logger.error(f"Error iniciando escaneo: {e}", exc_info=True)
             raise
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
+    def wait(self, timeout: Optional[float] = None, cancel_check: Optional[Callable[[], bool]] = None) -> bool:
         """Espera a que termine el escaneo. Llamada BLOQUEANTE para el thread worker."""
         try:
             if not self._started.is_set():
                 self.logger.error("wait() llamado pero scan() nunca se ejecutó")
                 return False
 
-            finished = self._finished.wait(timeout)
-            if not finished:
-                self.status = TaskStatus.TIMEOUT
-                self.logger.error("Timeout agotado")
-                if self._proc and self._proc.poll() is None:
-                    self._proc.kill()
-                    self._proc.wait()
-                return False
+            granularity = 1.0
+            deadline = time.monotonic() + timeout if timeout else None
+
+            while not self._finished.is_set():
+                if cancel_check and cancel_check():
+                    self.cancel()
+                    return False
+
+                if deadline:
+                    remaining = max(0.0, deadline - time.monotonic())
+                    if remaining <= 0:
+                        self.status = TaskStatus.TIMEOUT
+                        self.logger.error("Timeout agotado")
+                        self._terminate_proc()
+                        return False
+                    self._finished.wait(min(granularity, remaining))
+                else:
+                    self._finished.wait(granularity)
 
             if self._cancel_event.is_set():
                 self.status = TaskStatus.CANCELLED
@@ -212,14 +295,7 @@ class _Task(ABC):
         self.status = TaskStatus.CANCELLED
         self._finished.set()
 
-        if self._proc and self._proc.poll() is None:
-            try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.logger.warning("terminate() no fue suficiente, haciendo kill()", exc_info=True)
-                self._proc.kill()
-                self._proc.wait()
+        self._terminate_proc()
 
         self.logger.info("Escaneo cancelado")
 
@@ -227,8 +303,8 @@ class _Task(ABC):
 class NmapScanTask(_Task):
     """Implementación concreta para escaneos Nmap."""
 
-    def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300):
-        super().__init__(target_host, timeout)
+    def __init__(self, target_host="127.0.0.1", target_ports="1-6000", timeout: int = 300, progress_callback: Optional[Callable[[int], None]] = None):
+        super().__init__(target_host, timeout, progress_callback=progress_callback)
         temp_dir = CR.get_directory_of(CR.DirectoryType.TEMP)
 
         timestamp = int(time.time() * 1000)
@@ -238,6 +314,7 @@ class NmapScanTask(_Task):
         self.target_ports = target_ports
         self._output_file = Path(f"{temp_dir}/{file_name}")
         self.platform = PlatformDetector()
+        self._wsl_process_name = "nmap"
 
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -294,8 +371,8 @@ class NmapScanTask(_Task):
 class NiktoScanTask(_Task):
     """Implementación concreta para escaneos Nikto."""
 
-    def __init__(self, target_domain, timeout: int = 120):
-        super().__init__(target_domain, timeout)
+    def __init__(self, target_domain, timeout: int = 120, progress_callback: Optional[Callable[[int], None]] = None):
+        super().__init__(target_domain, timeout, progress_callback=progress_callback)
 
         timestamp = int(time.time() * 1000)
         self.temp_path = (
@@ -305,6 +382,7 @@ class NiktoScanTask(_Task):
         )
         self._output_file = self.temp_path
         self.platform = PlatformDetector()
+        self._wsl_process_name = "nikto"
 
     def _build_command(self) -> List[str]:
         target = self.target
@@ -384,9 +462,10 @@ class OpenVASTask(_Task):
         password: str,
         scan_config: Optional[str] = None,
         port_list_id: Optional[str] = None,
-        timeout: int = 14400
+        timeout: int = 14400,
+        progress_callback: Optional[Callable[[int], None]] = None,
     ):
-        super().__init__(target, timeout)
+        super().__init__(target, timeout, progress_callback=progress_callback)
         self.hostname = hostname
         self.port = port
         self.username = username
@@ -414,17 +493,27 @@ class OpenVASTask(_Task):
             self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
+    def wait(self, timeout: Optional[float] = None, cancel_check: Optional[Callable[[], bool]] = None) -> bool:
         """Override: OpenVAS gestiona su propio ciclo interno."""
         try:
             safe_timeout = min(timeout, 28800) if timeout is not None else None
-            #Bloque el hilo hasta que acaba la ejecucuión del Task, falla o acaba el timeout
-            finished = self._finished.wait(safe_timeout)
+            granularity = 1.0
+            deadline = time.monotonic() + safe_timeout if safe_timeout else None
 
-            if not finished:
-                self.status = TaskStatus.TIMEOUT
-                self.logger.error("Timeout esperando finalización de OpenVAS")
-                return False
+            while not self._finished.is_set():
+                if cancel_check and cancel_check():
+                    self.cancel()
+                    return False
+
+                if deadline:
+                    remaining = max(0.0, deadline - time.monotonic())
+                    if remaining <= 0:
+                        self.status = TaskStatus.TIMEOUT
+                        self.logger.error("Timeout esperando finalización de OpenVAS")
+                        return False
+                    self._finished.wait(min(granularity, remaining))
+                else:
+                    self._finished.wait(granularity)
 
             if self.status in (TaskStatus.CANCELLED, TaskStatus.FAILED):
                 return False
@@ -694,6 +783,8 @@ class OpenVASTask(_Task):
             try:
                 with self._lock:
                     self.progress = max(0, int(float(progress_text)))
+                if self._progress_callback:
+                    self._progress_callback(self.progress)
             except (ValueError, TypeError) as e:
                 self.logger.warning(f"Error parsing progress '{progress_text}': {e}", exc_info=True)
 

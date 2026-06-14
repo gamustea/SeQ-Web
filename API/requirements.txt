@@ -53,3 +53,7 @@ python-dotenv>=1.2.2
 APScheduler>=3.10
 croniter>=2.0
 
+# Task Queue & Redis
+redis>=5.0.0
+rq>=1.16.0
+

@@ -152,7 +152,11 @@ def cancel_scan(scan_id: int):
         )
 
     if not manager.cancel_scan(scan_id, user.id): # type: ignore
-        raise ScanExecutionError("No se pudo cancelar")
+        raise ScanExecutionError(
+            scan_type=scan.scan_type,
+            target=scan.target,
+            reason="No se pudo cancelar",
+        )
 
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
@@ -473,7 +477,11 @@ def delete_scan(scan_id: int):
         manager.cancel_scan(scan_id, user.id) # type: ignore
 
     if not manager.delete_scan(scan_id):
-        raise ScanExecutionError("No se pudo eliminar el escaneo")
+        raise ScanExecutionError(
+            scan_type=scan.scan_type,
+            target=scan.target,
+            reason="No se pudo eliminar el escaneo",
+        )
 
     _logger.info(f"Escaneo {scan.scan_type} {scan_id} eliminado por {user.username}")
     return {
