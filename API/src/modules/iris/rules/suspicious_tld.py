@@ -76,7 +76,7 @@ def check_suspicious_tld(headers: dict) -> RuleResult:
 
     if not found_tlds:
         return RuleResult(
-            score=0, verdict="pass",
+            score=1, verdict="pass",
             details={"suspicious_tlds_found": []},
             recommendation=None,
         )

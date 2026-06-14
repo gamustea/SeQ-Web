@@ -78,7 +78,7 @@ def check_date_anomaly(headers: dict) -> RuleResult:
         )
 
     return RuleResult(
-        score=0, verdict="pass",
+        score=1, verdict="pass",
         details={"date": date_str, "parsed": parsed.isoformat()},
         recommendation=None,
     )

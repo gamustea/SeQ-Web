@@ -56,7 +56,7 @@ def _normalize_homoglyphs(text: str) -> str:
 
 def _find_typosquats(text: str) -> list[dict]:
     results: list[dict] = []
-    words = set(re.findall(r"[a-zA-Z0-9@$€]{4,}", text.lower()))
+    words = set(re.findall(r"[a-zA-Z0-9@$€]{5,}", text.lower()))
 
     for word in words:
         # Exact match against a known brand — legitimate, skip
@@ -137,7 +137,7 @@ def check_misspelled_brands(headers: dict) -> RuleResult:
     names = ", ".join(f["found"] for f in found)
 
     return RuleResult(
-        score=-8 * min(count, 3),
+        score=-5 * min(count, 2),
         verdict="fail",
         details={
             "subject": subject,

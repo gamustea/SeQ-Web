@@ -33,6 +33,8 @@ def check_fake_reply_chain(headers: dict) -> RuleResult:
     subject = headers.get("subject", "")
     in_reply_to = headers.get("in-reply-to", "")
     references = headers.get("references", "")
+    thread_index = headers.get("thread-index", "")
+    thread_topic = headers.get("thread-topic", "")
 
     if not subject:
         return RuleResult(
@@ -53,32 +55,37 @@ def check_fake_reply_chain(headers: dict) -> RuleResult:
     reply_prefix = match.group(0).strip()
 
     has_reply_references = bool(in_reply_to.strip()) or bool(references.strip())
+    has_outlook_threading = bool(thread_index.strip()) or bool(thread_topic.strip())
+    has_threading = has_reply_references or has_outlook_threading
 
-    if has_reply_references:
+    if has_threading:
         return RuleResult(
-            score=0, verdict="pass",
+            score=2, verdict="pass",
             details={
                 "subject": subject,
                 "reply_prefix": reply_prefix,
-                "has_reply_references": True,
+                "has_threading_headers": True,
+                "source": "In-Reply-To/References" if has_reply_references else "Thread-Index/Thread-Topic",
             },
             recommendation=None,
         )
 
     return RuleResult(
-        score=-10, verdict="fail",
+        score=-4, verdict="fail",
         details={
             "subject": subject,
             "reply_prefix": reply_prefix,
-            "has_reply_references": False,
+            "has_threading_headers": False,
             "in_reply_to": in_reply_to or "missing",
             "references": references or "missing",
+            "thread_index": thread_index or "missing",
+            "thread_topic": thread_topic or "missing",
         },
         recommendation=(
             f"El asunto del correo comienza con '{reply_prefix}' simulando ser parte de "
-            "una conversación previa, pero no se encontraron los cabeceras In-Reply-To ni "
-            "References que todo mensaje de respuesta legítimo incluye. "
-            "Esto es una táctica común de phishing para generar confianza falsa. "
+            "una conversación previa, pero no se encontraron los cabeceras In-Reply-To, "
+            "References, Thread-Index ni Thread-Topic que los mensajes de respuesta legítimos "
+            "suelen incluir. Esto es una táctica común de phishing para generar confianza falsa. "
             "No asumas que es una respuesta a un hilo real."
         ),
     )

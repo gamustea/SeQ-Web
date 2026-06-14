@@ -79,7 +79,7 @@ def check_undisclosed_recipients(headers: dict) -> RuleResult:
         )
 
     return RuleResult(
-        score=0, verdict="pass",
+        score=2, verdict="pass",
         details={
             "to": to_stripped,
             "cc": cc_stripped,

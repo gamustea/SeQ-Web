@@ -149,7 +149,7 @@ def check_display_name_spoof(headers: dict) -> RuleResult:
 
     if not matched_brands:
         return RuleResult(
-            score=0, verdict="pass",
+            score=2, verdict="pass",
             details={"from": from_addr, "email": email, "display_name": display_name},
             recommendation=None,
         )
