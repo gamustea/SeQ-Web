@@ -13,6 +13,7 @@ Responsabilidades:
 from __future__ import annotations
 
 import json
+import logging
 import random
 import threading
 from datetime import date, datetime
@@ -23,7 +24,6 @@ from typing import Any
 from src.modules.aegis.exceptions import DocumentError
 import src.modules.system.config_reading as CR
 from src.modules.users import User
-from src.modules.system import SecOpsLogger
 from src.modules.system.taskqueue import ITaskQueue, TaskQueue, job_context
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
@@ -39,6 +39,9 @@ from .services import AegisAIWriter, AegisAlertFetcher, AlertSource, AegisAlert,
 from .repositories import AegisDocumentRepository
 
 
+logger = logging.getLogger(__name__)
+
+
 class AegisManager:
     """
     Gestiona el ciclo de vida completo de los documentos Aegis:
@@ -52,8 +55,7 @@ class AegisManager:
 
     def __init__(self, user: User, task_queue: ITaskQueue | None = None) -> None:
         self.user = user
-        self.logger = SecOpsLogger(f"AegisManager[{user.id}]").get_logger()
-        self.alert_fetcher = AegisAlertFetcher(logger=self.logger) # type: ignore
+        self.alert_fetcher = AegisAlertFetcher()
         self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
     # =========================================================================
@@ -135,7 +137,7 @@ class AegisManager:
 
         cfg = self._read_cfg()
         try:
-            delete_document_file(document_id, cfg["output_dir"], self.logger)
+            delete_document_file(document_id, cfg["output_dir"])
         except Exception as exc:
             raise RuntimeError(f"Error eliminando documento: {exc}")
 
@@ -286,10 +288,10 @@ class AegisManager:
                     title       = content.subtitle,
                     filename    = filename,
                 )
-                self.logger.info(f"Documento {document_id} generado: {filename}")
+                logger.info(f"Documento {document_id} generado: {filename}")
 
             except Exception as exc:
-                self.logger.error(f"Error en workflow {document_id}: {exc}", exc_info=True)
+                logger.error(f"Error en workflow {document_id}: {exc}", exc_info=True)
                 self._update_document_status(
                     document_id=document_id,
                     status="error",
@@ -330,7 +332,7 @@ class AegisManager:
                 company=content.company,
             )
             repo.save_tips(document_id, tips_data)
-            self.logger.info(f"Contenido persistido para doc {document_id}: {len(content.tips)} tips")
+            logger.info(f"Contenido persistido para doc {document_id}: {len(content.tips)} tips")
 
     def _persist_alerts_atomic(self, document_id: int, alerts: list[AegisAlert]) -> None:
         """Persiste alertas usando el repositorio."""
@@ -357,7 +359,7 @@ class AegisManager:
         with UnitOfWork() as uow:
             repo = AegisDocumentRepository(uow)
             repo.save_alerts(document_id, alerts_data)
-            self.logger.info(f"Alertas persistidas para doc {document_id}: {len(alerts)}")
+            logger.info(f"Alertas persistidas para doc {document_id}: {len(alerts)}")
 
     def _read_cfg(self) -> dict:
         stack_dir = Path(CR.get_directory_of(CR.DirectoryType.STACK_AEGIS))
@@ -384,7 +386,7 @@ class AegisManager:
                 topic = repo.get_topic_by_id(topic_id)
                 if topic:
                     return topic, False
-                self.logger.warning(f"Topic {topic_id} no encontrado, usando aleatorio")
+                logger.warning(f"Topic {topic_id} no encontrado, usando aleatorio")
 
             all_topics = repo.get_topics()
             if not all_topics:
@@ -406,7 +408,7 @@ class AegisManager:
                     content = content[:50_000] + "\n... [truncado]"
                 contents.append(content)
             except Exception as exc:
-                self.logger.warning(f"No se pudo leer {f}: {exc}", exc_info=True)
+                logger.warning(f"No se pudo leer {f}: {exc}", exc_info=True)
 
         return "\n\n---\n\n".join(contents)
 
@@ -442,7 +444,7 @@ class AegisManager:
         """Actualiza el estado del documento usando el repositorio."""
         doc = get_document_by_id(document_id)
         if not doc:
-            self.logger.error(f"Documento {document_id} no encontrado para actualizar estado")
+            logger.error(f"Documento {document_id} no encontrado para actualizar estado")
             return
 
         set_generated_at = status == "done"

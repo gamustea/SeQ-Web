@@ -35,13 +35,11 @@ import uuid
 
 import psutil
 
-logging.getLogger("rq").setLevel(logging.WARNING)
-logging.getLogger("rq.scheduler").setLevel(logging.WARNING)
-
 from rq import Queue, SimpleWorker
 from rq.timeouts import TimerDeathPenalty
 
 import src.modules.system.config_reading as CR
+from src.modules.system.logging import configure_logging
 
 from .connection import RedisConnectionFactory
 from .queue import QueueRegistry
@@ -205,9 +203,10 @@ def start_worker() -> None:
     - El estado está en Redis (persiste entre reinicios)
     """
 
+    configure_logging()
+
     def _signal_handler(signum, frame):
         sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
-        print(f"\n[WORKER] {sig_name} received, forcing shutdown...", flush=True)
         logging.info("%s received, forcing shutdown...", sig_name)
         _stop_workers()
         os._exit(0)

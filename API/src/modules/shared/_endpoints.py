@@ -32,6 +32,24 @@ from ._exceptions import MissingParameterError, MissingJsonBodyError
 # HELPERS
 # =========================================================================
 
+def current_actor() -> str:
+    """
+    Devuelve una representación legible del usuario que realiza la petición
+    para usar en los logs de contexto de los endpoints.
+
+    Lee los atributos inyectados por ``@require_oauth_token``
+    (``request.current_username`` / ``request.current_user_id``) sin tocar la
+    base de datos. Si la petición es anónima devuelve ``"anonymous"``.
+
+    Formato: ``"<username>(id=<id>)"`` o ``"anonymous"``.
+    """
+    username = getattr(request, "current_username", None)
+    if not username:
+        return "anonymous"
+    uid = getattr(request, "current_user_id", None)
+    return f"{username}(id={uid})"
+
+
 def normalize_target(
     user_input: str,
     resolve_hostname: bool = False

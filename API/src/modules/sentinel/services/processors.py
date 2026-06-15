@@ -1,10 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Tuple, Set
 import json
+import logging
 import re
 import xml.etree.ElementTree as ET
 import lxml.etree as lxml_etree
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 class ScanResultProcessor(ABC):
@@ -13,9 +17,6 @@ class ScanResultProcessor(ABC):
     Responsabilidad única: conversión de formatos externos (XML/JSON) a
     diccionarios/objetos del modelo sin persistencia.
     """
-
-    def __init__(self, logger=None):
-        self.logger = logger
 
     @abstractmethod
     def process(self, raw_data: Any, **context) -> Any:
@@ -405,8 +406,7 @@ class NiktoResultProcessor(ScanResultProcessor):
             return results
 
         except ET.ParseError as e:
-            if self.logger:
-                self.logger.error(f"Error parseando XML Nikto: {e}")
+            logger.error(f"Error parseando XML Nikto: {e}")
             return []
 
     def _normalize_parsed(self, parsed: dict) -> dict:

@@ -12,6 +12,8 @@ Provides:
 
 from __future__ import annotations
 
+import logging
+
 from flask_smorest import Blueprint as SmorestBlueprint
 
 from src.modules.users import (
@@ -42,7 +44,6 @@ from .schemas import (
     AnalysisCancelResponseSchema,
     ResultsQuerySchema,
 )
-from src.modules.system import SecOpsLogger
 
 
 iris_blp = SmorestBlueprint(
@@ -50,7 +51,7 @@ iris_blp = SmorestBlueprint(
     description="Analisis de cabeceras de correo electronico (anti-phishing)"
 )
 
-_logger = SecOpsLogger("IrisAPI").get_logger()
+logger = logging.getLogger(__name__)
 
 CANCELLABLE_STATES = frozenset({"pending", "running"})
 
@@ -64,7 +65,7 @@ CANCELLABLE_STATES = frozenset({"pending", "running"})
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.IRIS_CREATE])
 @limiter.limit("20 per hour; 100 per day")
-@handle_exceptions(default_exception=IrisExecutionError, logger=_logger)
+@handle_exceptions(default_exception=IrisExecutionError, logger=logger)
 def analyze_headers(data):
     """Enviar cabeceras de correo para un analisis anti-phishing"""
     raw_headers = data["headers"]
@@ -81,7 +82,7 @@ def analyze_headers(data):
             "code": e.code.value if e.code else 1100,
         }, 400
 
-    _logger.info(f"Iris analysis {analysis_id} started by user {user.username}")
+    logger.info(f"Iris analysis {analysis_id} started by user {user.username}")
     return {
         "message": "Analisis de cabeceras iniciado correctamente",
         "analysisId": analysis_id,
@@ -98,7 +99,7 @@ def analyze_headers(data):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.IRIS_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=logger)
 def get_analysis_status(args: dict):
     """Estado y progreso de un analisis"""
     analysis_id = args["id"]
@@ -131,7 +132,7 @@ def get_analysis_status(args: dict):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.IRIS_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=logger)
 def list_analyses(args):
     """Listar todos los analisis del usuario con paginacion"""
     page = args["page"]
@@ -159,7 +160,7 @@ def list_analyses(args):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.IRIS_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=logger)
 def get_analysis_result(analysis_id: int):
     """Informe completo de un analisis"""
     user = get_current_user()
@@ -180,7 +181,7 @@ def get_analysis_result(analysis_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.IRIS_UPDATE])
 @limiter.limit("60 per hour; 200 per day")
-@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=logger)
 def cancel_analysis(analysis_id: int):
     """Cancelar un analisis en curso"""
     user = get_current_user()
@@ -192,7 +193,7 @@ def cancel_analysis(analysis_id: int):
         raise IrisExecutionError("No se pudo cancelar el analisis")
 
     analysis = manager.get_analysis(analysis_id)
-    _logger.info(f"Analysis {analysis_id} cancelled by user {user.username}")
+    logger.info(f"Analysis {analysis_id} cancelled by user {user.username}")
     return {
         "message": "Analisis cancelado exitosamente",
         "analysisId": analysis_id,
@@ -208,7 +209,7 @@ def cancel_analysis(analysis_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.IRIS_DELETE])
 @limiter.limit("60 per hour; 200 per day")
-@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=logger)
 def delete_analysis(analysis_id: int):
     """Eliminar un analisis del sistema"""
     user = get_current_user()
@@ -219,7 +220,7 @@ def delete_analysis(analysis_id: int):
     if not manager.delete_analysis(analysis_id):
         raise IrisExecutionError("No se pudo eliminar el analisis")
 
-    _logger.info(f"Analysis {analysis_id} deleted by user {user.username}")
+    logger.info(f"Analysis {analysis_id} deleted by user {user.username}")
     return {
         "message": "Analisis eliminado correctamente",
         "analysisId": analysis_id,

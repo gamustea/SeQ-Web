@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from flask import request
 from flask_smorest import Blueprint as SmorestBlueprint
@@ -9,10 +10,9 @@ from src.modules.shared._exceptions import (
     handle_exceptions,
     ValidationError,
 )
-from src.modules.shared._endpoints import limiter
+from src.modules.shared._endpoints import limiter, current_actor
 from src.modules.shared.schemas import ErrorSchema
 from src.modules.acheron.exceptions import VaultError, VaultNotFoundError, StorableNotFoundError, StorableConflictError
-from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
 from .managers import VaultManager
 from .schemas import (
@@ -30,7 +30,7 @@ acheron_blp = SmorestBlueprint(
     "acheron", __name__,
     description="Gestion de vaults y secretos (Acheron)"
 )
-_logger = SecOpsLogger("acheron").get_logger()
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -47,7 +47,7 @@ def get_vault_manager():
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.ACHERON_READ])
 @limiter.limit("120 per hour; 500 per day")
-@handle_exceptions(default_exception=VaultNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=VaultNotFoundError, logger=logger)
 def get_vault(**kwargs):
     """Obtener el vault del usuario en formato JSON"""
     is_recovery = kwargs.get("isRecovery", False)
@@ -58,7 +58,7 @@ def get_vault(**kwargs):
             raise VaultNotFoundError()
 
         payload = mgr.export_vault_to_json(vault.id)
-    _logger.info(f"Vault {vault.id} devuelto -- user={get_current_user().username}")
+    logger.info("Vault %s devuelto | user=%s", vault.id, current_actor())
     return payload
 
 
@@ -72,7 +72,7 @@ def get_vault(**kwargs):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.ACHERON_CREATE])
 @limiter.limit("60 per hour; 300 per day")
-@handle_exceptions(default_exception=VaultError, logger=_logger)
+@handle_exceptions(default_exception=VaultError, logger=logger)
 def upsert_vault(**kwargs):
     """Crear o reemplazar completamente el vault del usuario"""
     uid = get_current_user().id
@@ -87,7 +87,7 @@ def upsert_vault(**kwargs):
 
     with get_vault_manager() as mgr:
         vault, created = mgr.upsert_vault_from_json(data, is_recovery=is_recovery)
-        _logger.info(f"Vault {'creado' if created else 'actualizado'} (ID={vault.id}) -- user={get_current_user().username}")
+        logger.info("Vault %s (ID=%s) | user=%s", "creado" if created else "actualizado", vault.id, current_actor())
     result = {
         "message": "Vault created" if created else "Vault updated",
         "vaultId": vault.id,
@@ -107,13 +107,13 @@ def upsert_vault(**kwargs):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.ACHERON_UPDATE])
 @limiter.limit("60 per hour; 300 per day")
-@handle_exceptions(default_exception=VaultError, logger=_logger)
+@handle_exceptions(default_exception=VaultError, logger=logger)
 def patch_vault_storables(data):
     """Actualizar en bulk uno o varios Storables del usuario (array de operaciones)"""
     uid = get_current_user().id
     with get_vault_manager() as mgr:
         results = mgr.bulk_update_storables(operations=data)
-        _logger.info(f"Bulk update: {len(data)} operaciones -- user={get_current_user().username}")
+        logger.info("Bulk update: %s operaciones | user=%s", len(data), current_actor())
     return {"message": "Bulk storable update completed", "results": results}
 
 
@@ -128,7 +128,7 @@ def patch_vault_storables(data):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.ACHERON_CREATE])
 @limiter.limit("60 per hour; 300 per day")
-@handle_exceptions(default_exception=VaultError, logger=_logger)
+@handle_exceptions(default_exception=VaultError, logger=logger)
 def add_vault_storable(data):
     """Anadir un nuevo Account o CreditCard al vault del usuario"""
     kind = data["kind"]
@@ -169,7 +169,7 @@ def add_vault_storable(data):
             title=title, created_at=created_at, updated_at=updated_at,
             **payload,
         )
-    _logger.info(f"Storable {st.id} anadido al vault {vault.id} -- user={get_current_user().username}")
+    logger.info("Storable %s anadido al vault %s | user=%s", st.id, vault.id, current_actor())
     return {
         "message": "Storable created",
         "storableId": st.id,
@@ -190,7 +190,7 @@ def add_vault_storable(data):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.ACHERON_DELETE])
 @limiter.limit("60 per hour; 200 per day")
-@handle_exceptions(default_exception=VaultError, logger=_logger)
+@handle_exceptions(default_exception=VaultError, logger=logger)
 def delete_vault_storable(data):
     """Eliminar un Storable del vault por su internalId"""
     internal_id = data["internalId"]
@@ -210,7 +210,7 @@ def delete_vault_storable(data):
         if not mgr.delete_storable(st.id):
             raise VaultError("Could not delete storable")
 
-        _logger.info(f"Storable {st.id} (internalId={internal_id}) eliminado -- user={get_current_user().username}")
+        logger.info("Storable %s (internalId=%s) eliminado | user=%s", st.id, internal_id, current_actor())
     return {
         "message": "Storable deleted",
         "storableId": st.id,
@@ -231,5 +231,5 @@ def _parse_dt(value):
     try:
         return datetime.fromisoformat(value)
     except Exception as e:
-        _logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
+        logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
         return datetime.utcnow()

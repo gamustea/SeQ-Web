@@ -4,12 +4,12 @@ Módulo de gestión de configuración de SecOps.
 Proporciona endpoints para leer y escribir SecOpsConfig.json.
 """
 
-from .logging import SecOpsLogger
+from .logging import configure_logging
 from .endpoints import system_blp
 from .taskqueue import TaskQueue, Task, TaskStatus
 
 __all__ = [
-    "SecOpsLogger",
+    "configure_logging",
     "system_blp",
     "TaskQueue",
     "Task",

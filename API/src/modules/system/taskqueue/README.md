@@ -77,7 +77,7 @@ from src.modules.system.taskqueue import ITaskQueue
 class MyManager:
     def __init__(self, task_queue: ITaskQueue | None = None):
         self._tq = task_queue or TaskQueue.get_instance()
-    
+
     def submit_work(self):
         self._tq.submit(func=my_work, external_id="mywork:123")
 ```
@@ -147,8 +147,6 @@ task = tq.submit(
 
 # Monitorear
 task = tq.get_task_by_external_id("iris-analysis:42")
-print(task.status, task.progress)
-
 # Cancelar
 tq.cancel(task.id)
 
@@ -177,7 +175,7 @@ def execute_my_task(entity_id):
         # job.progress(pct)     → actualiza el progreso
         # job.cancelled()       → comprueba si se pidió cancelar
         # job.clear_cancel()    → se llama automáticamente al salir
-        
+
         for i, item in enumerate(items):
             if job.cancelled():
                 break
@@ -194,16 +192,16 @@ from src.modules.system.taskqueue import TaskTrackingMixin, ITaskQueue
 class IrisManager(TaskTrackingMixin):
     EXTERNAL_ID_PREFIX = "iris-analysis:"
     TASK_CATEGORY = "iris.analyze"
-    
+
     def __init__(self, task_queue: ITaskQueue | None = None):
         self._tq = task_queue or TaskQueue.get_instance()
-    
+
     def analyze(self, analysis_id):
         self._tq.submit(..., external_id=self.external_id_for(analysis_id))
-    
+
     def get_status(self, analysis_id):
         return self.task_status_of(analysis_id)  # "pending", "running", "completed", etc.
-    
+
     def get_progress(self, analysis_id):
         return self.task_progress_of(analysis_id)  # 0-100
 ```
@@ -276,17 +274,17 @@ from src.modules.system.taskqueue import (
 class MyAnalysisManager(TaskTrackingMixin):
     EXTERNAL_ID_PREFIX = "analysis:"
     TASK_CATEGORY = "mymodule.analysis"
-    
+
     def __init__(self, user: User, task_queue: ITaskQueue | None = None):
         self.user = user
         self._tq = task_queue or TaskQueue.get_instance()
-    
+
     def start_analysis(self, config: dict) -> int:
         """Lanza un análisis asincrónico y devuelve el ID."""
         # Crear entidad en BD
         analysis = MyAnalysis(user_id=self.user.id, config=config)
         analysis.save()
-        
+
         # Enviar tarea (referencia directa al staticmethod del manager)
         self._tq.submit(
             func=MyAnalysisManager.execute_my_analysis,
@@ -296,17 +294,17 @@ class MyAnalysisManager(TaskTrackingMixin):
             external_id=self.external_id_for(analysis.id),
             timeout=1200,
         )
-        
+
         return analysis.id
-    
+
     def get_analysis_status(self, analysis_id: int) -> str | None:
         """Estado de la tarea: 'pending', 'running', 'completed', etc."""
         return self.task_status_of(analysis_id)
-    
+
     def get_analysis_progress(self, analysis_id: int) -> int | None:
         """Progreso 0-100."""
         return self.task_progress_of(analysis_id)
-    
+
     def cancel_analysis(self, analysis_id: int) -> bool:
         """Solicita la cancelación de la tarea."""
         task = self.find_task(analysis_id)
@@ -378,16 +376,16 @@ class MyManager(TaskTrackingMixin):
 def execute_batch_processing(batch_id: int, items: list):
     with job_context() as job:
         batch = get_batch(batch_id)
-        
+
         for idx, item in enumerate(items):
             if job.cancelled():
                 batch.status = "cancelled"
                 batch.save()
                 return
-            
+
             process_item(item)
             job.progress((idx + 1) * 100 // len(items))
-        
+
         batch.status = "completed"
         batch.save()
 ```
@@ -418,27 +416,27 @@ class FakeTaskQueue:
     """Implementación en memoria de ITaskQueue para tests."""
     def __init__(self):
         self.submitted = []
-    
+
     def submit(self, func, **kwargs):
         self.submitted.append(kwargs)
         from src.modules.system.taskqueue import Task, TaskStatus
         return Task(id="fake-1", status=TaskStatus.PENDING)
-    
+
     def cancel(self, task_id):
         return True
-    
+
     def get_task(self, task_id):
         return None
-    
+
     def get_task_by_external_id(self, external_id, category=None):
         return None
-    
+
     def update_progress(self, task_id, progress):
         pass
-    
+
     def is_cancelled(self, task_id):
         return False
-    
+
     def clear_cancel_signal(self, task_id):
         pass
 
@@ -446,9 +444,9 @@ def test_analysis_manager_inyects_queue():
     fake_queue = FakeTaskQueue()
     user = create_test_user()
     mgr = MyAnalysisManager(user, task_queue=fake_queue)
-    
+
     analysis_id = mgr.start_analysis({})
-    
+
     assert len(fake_queue.submitted) == 1
     assert fake_queue.submitted[0]["category"] == "mymodule.analysis"
 ```
@@ -629,5 +627,5 @@ En `SecOpsConfig.json`:
 
 ---
 
-**Última actualización**: 2026-06-14  
+**Última actualización**: 2026-06-14
 **Versión**: RQ 2.9.1 + Redis (compatible con Windows y Linux)

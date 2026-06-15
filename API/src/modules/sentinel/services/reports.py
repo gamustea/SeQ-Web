@@ -41,9 +41,12 @@ from reportlab.platypus import (
     CondPageBreak,
 )
 
+import logging
+
 import src.modules.system.config_reading as CR
-from src.modules.system.logging import SecOpsLogger
 from src.modules.shared._exceptions import IllegalStateError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 from ..model import NmapScan, NiktoScan, Scan, Host, ScanType
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
@@ -340,7 +343,6 @@ class PrintingStrategy(ABC):
         self.scan = scan
         self.writer = None
         self.color_palette: Dict[ColorType, str] = {}
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
     @classmethod
     def register(cls, scan_type: ScanType):
@@ -391,21 +393,21 @@ class PrintingStrategy(ABC):
     def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:
         """Append AI-generated security analysis to the report."""
         scan_type = type(self.scan).__name__
-        self.logger.info(f"[IA] Iniciando para scan {self.scan.id} ({scan_type})")
+        logger.info(f"[IA] Iniciando para scan {self.scan.id} ({scan_type})")
 
         prompts = CR.get_prompts_config()
         tool_key = {'NmapScan': 'nmap', 'NiktoScan': 'nikto', 'OpenVASScan': 'openvas'}.get(scan_type, 'nmap')
         tool_prompts = prompts.get(tool_key, {})
 
         if not tool_prompts.get('system'):
-            self.logger.error(f"[IA] Prompt 'system' no encontrado para {tool_key}")
+            logger.error(f"[IA] Prompt 'system' no encontrado para {tool_key}")
             elements.append(PageBreak())
             elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
             elements.append(Paragraph("Error: Configuración IA no encontrada", theme.body))
             return
 
         if not tool_prompts.get('userTemplate'):
-            self.logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
+            logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
 
         try:
             if self.writer is None:
@@ -413,17 +415,17 @@ class PrintingStrategy(ABC):
 
             ai_analysis = self.writer.generate(self.scan)
         except Exception as e:
-            self.logger.error(f"[IA] Excepción: {e}", exc_info=True)
+            logger.error(f"[IA] Excepción: {e}", exc_info=True)
             ai_analysis = {}
 
         if not ai_analysis:
-            self.logger.warning(f"[IA] Respuesta vacía para scan {self.scan.id}")
+            logger.warning(f"[IA] Respuesta vacía para scan {self.scan.id}")
             elements.append(PageBreak())
             elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
             elements.append(Paragraph("No se pudo generar análisis IA", theme.body))
             return
 
-        self.logger.info(f"[IA] OK - keys: {list(ai_analysis.keys())}")
+        logger.info(f"[IA] OK - keys: {list(ai_analysis.keys())}")
 
         elements.append(PageBreak())
 
@@ -593,7 +595,6 @@ class PDFCreator:
         self.directory = CR.get_directory_of(CR.DirectoryType.OUTPUT_SENTINEL)
         self.printing_strategy = PrintingStrategy.resolve_printing_strategy(scan_id)
         self.scan = self.printing_strategy.scan
-        self.logger = SecOpsLogger().get_logger()
 
     def _set_pdf_metadata(self, doc) -> None:
         """Set PDF document metadata.
@@ -769,7 +770,7 @@ class PDFCreator:
         image_filename = os.path.join(resource_directory, picture_name)
 
         if not os.path.exists(image_filename):
-            self.logger.error(f"No se ha encontrado la imagen {image_filename}")
+            logger.error(f"No se ha encontrado la imagen {image_filename}")
             dummy = Table([[""]], colWidths=[0.9 * inch], rowHeights=[0.9 * inch])
             dummy.hAlign = "CENTER"
             return dummy

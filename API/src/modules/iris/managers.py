@@ -11,13 +11,13 @@ Coordinates the analysis lifecycle:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import src.modules.system.config_reading as CR
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
-from src.modules.system.logging import SecOpsLogger
 from src.modules.system.taskqueue import ITaskQueue, TaskQueue, Task, TaskTrackingMixin, job_context
 
 from .exceptions import (
@@ -32,6 +32,8 @@ from .repositories import IrisAnalysisRepository, IrisRuleResultRepository
 from .rules import iris_rules, RuleResult
 from .services import parse_raw_headers
 
+
+logger = logging.getLogger(__name__)
 
 _CANCELLABLE_STATES = frozenset({"pending", "running"})
 
@@ -51,7 +53,6 @@ class IrisManager(TaskTrackingMixin):
     TASK_CATEGORY = "iris.analyze"
 
     def __init__(self, task_queue: ITaskQueue | None = None) -> None:
-        self.logger = SecOpsLogger("IrisManager").get_logger()
         self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
     # =========================================================================
@@ -83,7 +84,7 @@ class IrisManager(TaskTrackingMixin):
         """
         self._validate_headers_pre(raw_headers)
         analysis_id = self._create_analysis_record(raw_headers, user_id, title=title)
-        self.logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
+        logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
 
         self._tq.submit(
             func=IrisManager.execute_iris_analysis,
@@ -222,7 +223,7 @@ class IrisManager(TaskTrackingMixin):
 
         sq_task = self.find_task(analysis_id)
         if not sq_task:
-            self.logger.warning(f"No active task found for analysis {analysis_id}")
+            logger.warning(f"No active task found for analysis {analysis_id}")
             return False
 
         cancelled = self._tq.cancel(sq_task.id)
@@ -234,7 +235,7 @@ class IrisManager(TaskTrackingMixin):
                     fresh.status = "cancelled"
                     fresh.finished_at = datetime.now()
                     repo.update(fresh)
-            self.logger.info(f"Analysis {analysis_id} cancelled by user {user_id}")
+            logger.info(f"Analysis {analysis_id} cancelled by user {user_id}")
         return cancelled
 
     def delete_analysis(self, analysis_id: int) -> bool:
@@ -265,7 +266,7 @@ class IrisManager(TaskTrackingMixin):
             fresh = repo.get_by_id(analysis_id)
             if fresh:
                 repo.delete(fresh)
-                self.logger.info(f"Analysis {analysis_id} deleted")
+                logger.info(f"Analysis {analysis_id} deleted")
                 return True
         return False
 
@@ -376,7 +377,7 @@ class IrisManager(TaskTrackingMixin):
         exits early without saving results.
         """
         with job_context() as job:
-            self.logger.info(f"Starting analysis {analysis_id}")
+            logger.info(f"Starting analysis {analysis_id}")
 
             try:
                 with UnitOfWork() as uow:
@@ -387,7 +388,7 @@ class IrisManager(TaskTrackingMixin):
                         fresh.started_at = datetime.now() # type: ignore
                         repo.update(fresh)
             except Exception as e:
-                self.logger.error(f"Failed to mark analysis {analysis_id} as running: {e}", exc_info=True)
+                logger.error(f"Failed to mark analysis {analysis_id} as running: {e}", exc_info=True)
                 self._fail_analysis(analysis_id)
                 return
 
@@ -400,13 +401,13 @@ class IrisManager(TaskTrackingMixin):
 
             for idx, rule_def in enumerate(rules_defs):
                 if job.cancelled():
-                    self.logger.info(f"Analysis {analysis_id} was cancelled")
+                    logger.info(f"Analysis {analysis_id} was cancelled")
                     return
 
                 try:
                     result = rule_def["func"](headers)
                 except Exception as e:
-                    self.logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}", exc_info=True)
+                    logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}", exc_info=True)
                     result = RuleResult(
                         score=0, verdict="error",
                         details={"error": str(e)},
@@ -435,11 +436,11 @@ class IrisManager(TaskTrackingMixin):
                         fresh.finished_at = datetime.now() # type: ignore
                         repo.update(fresh)
             except Exception as e:
-                self.logger.error(f"Failed to finalise analysis {analysis_id}: {e}", exc_info=True)
+                logger.error(f"Failed to finalise analysis {analysis_id}: {e}", exc_info=True)
                 self._fail_analysis(analysis_id)
                 return
 
-            self.logger.info(f"Analysis {analysis_id} completed: score={total_score}, verdict={verdict}")
+            logger.info(f"Analysis {analysis_id} completed: score={total_score}, verdict={verdict}")
 
     def _persist_rule_result(self, analysis_id: int, rule_def: dict,
                               result: RuleResult, position: int) -> None:
@@ -463,7 +464,7 @@ class IrisManager(TaskTrackingMixin):
                 )
                 repo.save(rr)
         except Exception as e:
-            self.logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}", exc_info=True)
+            logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}", exc_info=True)
 
     def _determine_verdict(self, total_score: float) -> str:
         """Map a numeric total score to a textual verdict.
@@ -492,7 +493,7 @@ class IrisManager(TaskTrackingMixin):
                     fresh.finished_at = datetime.now() # type: ignore
                     repo.update(fresh)
         except Exception as e:
-            self.logger.error(f"Failed to mark analysis {analysis_id} as failed: {e}", exc_info=True)
+            logger.error(f"Failed to mark analysis {analysis_id} as failed: {e}", exc_info=True)
 
     def _is_cancelled(self, analysis_id: int) -> bool:
         """Check whether the analysis has been cancelled since we started.
@@ -509,5 +510,5 @@ class IrisManager(TaskTrackingMixin):
                 if analysis and analysis.status == "cancelled":
                     return True
         except Exception as e:
-            self.logger.warning(f"Error checking cancellation for analysis {analysis_id}", exc_info=True)
+            logger.warning(f"Error checking cancellation for analysis {analysis_id}", exc_info=True)
         return False # type: ignore

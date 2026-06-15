@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import logging
 import random
 import re
 import threading
@@ -33,8 +34,9 @@ import ollama
 from ddgs import DDGS
 
 import src.modules.system.config_reading as CR
-from src.modules.system.logging import SecOpsLogger
 from src.modules.shared import AIWriter
+
+logger = logging.getLogger(__name__)
 from src.modules.aegis.exceptions import (
     CircuitBreakerOpenError,
     AegisValidationError,
@@ -333,8 +335,7 @@ class AegisAlertFetcher:
     _cache_ttl  = timedelta(minutes=15)
     _lock       = threading.Lock()
 
-    def __init__(self, logger: SecOpsLogger, fallback_brands: list[str] | None = None) -> None:
-        self.logger               = logger
+    def __init__(self, fallback_brands: list[str] | None = None) -> None:
         self._max_alert_age_years = CR.get_aegis_vulnerabilities_antiquity()
 
         brand_catalogue           = CR.get_aegis_brands()
@@ -385,7 +386,7 @@ class AegisAlertFetcher:
             cutoff   = datetime.now(timezone.utc) - timedelta(days=365 * self._max_alert_age_years)
             return pub_date >= cutoff
         except ValueError:
-            self.logger.warning(f"Fecha no parseable '{date_str}', asumiendo reciente")
+            logger.warning(f"Fecha no parseable '{date_str}', asumiendo reciente")
             return True
 
     # ── Fuentes externas ──────────────────────────────────────────────────────
@@ -470,7 +471,7 @@ class AegisAlertFetcher:
                         brands=matched[:MAX_BRANDS],
                     ))
                 except ValueError as e:
-                    self.logger.debug(f"Alerta INCIBE inválida descartada: {e}")
+                    logger.debug(f"Alerta INCIBE inválida descartada: {e}")
 
         self._set_cached(cache_key, alerts)
         return alerts
@@ -507,7 +508,7 @@ class AegisAlertFetcher:
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
             except Exception as e:
-                self.logger.warning(f"CIRCL error para '{brand}': {e}")
+                logger.warning(f"CIRCL error para '{brand}': {e}")
                 continue
 
             results = data.get("results", {}) if isinstance(data, dict) else {}
@@ -587,7 +588,7 @@ class AegisAlertFetcher:
                     brand_counts[brand] += 1
 
                 except Exception as e:
-                    self.logger.debug(f"Entrada CIRCL malformada: {e}")
+                    logger.debug(f"Entrada CIRCL malformada: {e}")
                     continue
 
             time.sleep(0.2)
@@ -622,13 +623,13 @@ class AegisAlertFetcher:
                     try:
                         results.extend(future.result())
                     except Exception as exc:
-                        self.logger.error(f"Error fetch {source_name}: {exc}")
+                        logger.error(f"Error fetch {source_name}: {exc}")
         else:
             for fetch_fn, name in [(self._fetch_incibe, "INCIBE"), (self._fetch_circl, "CIRCL")]:
                 try:
                     results.extend(fetch_fn(resolved, max_per_brand))
                 except Exception as exc:
-                    self.logger.error(f"Error fetch {name}: {exc}")
+                    logger.error(f"Error fetch {name}: {exc}")
 
         # Deduplicación por (título, fecha)
         seen:          set[str]         = set()
@@ -745,7 +746,7 @@ class AegisAIWriter(AIWriter):
             try:
                 verified_resources += f"\n{self._web_search(query, max_results=3)}"
             except Exception as exc:
-                self.logger.warning(f"Búsqueda fallida '{query}': {exc}")
+                logger.warning(f"Búsqueda fallida '{query}': {exc}")
 
         prompt = self._build_user_prompt(
             topic, resolved_topic_id, reference, tweaks, verified_resources
@@ -785,7 +786,7 @@ class AegisAIWriter(AIWriter):
                 )
 
                 if getattr(resp.message, "tool_calls", None):
-                    self.logger.info(f"Tool calls: {len(resp.message.tool_calls)}")
+                    logger.info(f"Tool calls: {len(resp.message.tool_calls)}")
                     messages.append({
                         "role":       "assistant",
                         "content":    resp.message.content or "",
@@ -808,7 +809,7 @@ class AegisAIWriter(AIWriter):
                     break
 
             except Exception as exc:
-                self.logger.error(f"Intento {attempt + 1} fallido: {exc}")
+                logger.error(f"Intento {attempt + 1} fallido: {exc}")
                 if attempt == MAX_RETRIES - 1:
                     raise AIFallbackExhaustedError(MAX_RETRIES, str(exc))
                 time.sleep(RETRY_DELAY_BASE ** attempt)
@@ -818,7 +819,7 @@ class AegisAIWriter(AIWriter):
         raw_subtitle = str(data.get("subtitle", "")).strip()
         
         if not raw_subtitle or raw_subtitle.lower() == topic_title.lower():
-            self.logger.warning(
+            logger.warning(
                 f"IA generó subtitle idéntico al tema '{topic_title}' o vacío. "
                 f"Forzando generación creativa..."
             )
@@ -855,7 +856,7 @@ class AegisAIWriter(AIWriter):
                     links    = valid_links[:2],
                 ))
             except AegisValidationError as exc:
-                self.logger.warning(f"Tip {i + 1} descartado: {exc}")
+                logger.warning(f"Tip {i + 1} descartado: {exc}")
 
 
         return AegisContent(
@@ -887,7 +888,7 @@ class AegisAIWriter(AIWriter):
         # Un JSON completo siempre termina en '}' (ignorando whitespace)
         stripped = raw.rstrip()
         if stripped and stripped[-1] != '}':
-            self.logger.warning(
+            logger.warning(
                 f"Respuesta truncada detectada (num_predict alcanzado). "
                 f"\xdaltimos 80 chars: {repr(stripped[-80:])}"
             )
@@ -915,5 +916,5 @@ class AegisAIWriter(AIWriter):
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            self.logger.error(f"No se pudo parsear respuesta: {raw[:500]}")
+            logger.error(f"No se pudo parsear respuesta: {raw[:500]}")
             raise AIResponseError(f"JSON inválido tras limpieza: {exc}")
