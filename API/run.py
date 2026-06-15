@@ -67,7 +67,7 @@ _SHUTDOWN_DEADLINE_S = 6
 
 
 def _kill_worker_tree() -> None:
-    """Mata el subproceso worker y TODOS sus descendientes (wsl.exe, nmap…).
+    """Mata el subproceso worker y TODOS sus descendientes (nmap, nikto…).
 
     ``Popen.terminate()`` solo mata el worker; sus subprocesos de escaneo
     quedarían huérfanos. Con ``psutil`` se recorre el árbol completo y nunca se
@@ -562,15 +562,14 @@ if __name__ == "__main__":
     app = create_app(APP_CONTEXT.create_database)
 
     if _args.with_worker:
-        # El worker se lanza en su PROPIO grupo de proceso para que el CTRL+C
-        # de la consola NO se le difunda (ni a sus descendientes: wsl.exe, nmap).
+        # El worker se lanza en su PROPIA sesión para que el CTRL+C de la
+        # consola NO se le difunda (ni a sus descendientes: nmap, nikto).
         # Así run.py es el único gestor de la señal y su _graceful_shutdown
         # termina el worker explícitamente, evitando carreras de señales.
-        popen_kwargs = {"cwd": os.path.dirname(os.path.abspath(__file__))}
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            popen_kwargs["start_new_session"] = True
+        popen_kwargs = {
+            "cwd": os.path.dirname(os.path.abspath(__file__)),
+            "start_new_session": True,
+        }
 
         _WORKER["proc"] = subprocess.Popen( # type: ignore
             [sys.executable, "-m", "src.modules.system.taskqueue.worker"],
