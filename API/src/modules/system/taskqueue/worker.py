@@ -10,11 +10,15 @@ The worker creates a Flask app instance, pushes an application context
 so that database sessions, config, and all Flask extensions are available
 to every executed job. It then listens on the configured Redis queues.
 
-Modelo de ejecución: **hilos + RQ SimpleWorker** (sin ``fork``). Es la única
-estrategia que funciona de forma idéntica en Windows y Linux: ``fork`` no
-existe en Windows y el worker clásico de RQ depende de él. Cada hilo crea su
-propia app Flask y empuja un contexto de aplicación. No cambiar a un modelo
-basado en ``fork`` sin romper el soporte Windows.
+Modelo de ejecución: **hilos + RQ SimpleWorker** (sin ``fork``). Los jobs son
+I/O-bound (orquestan subprocesos nmap/nikto o llamadas GMP/HTTP a OpenVAS), por
+lo que el aislamiento por-proceso de ``fork`` no aporta frente al aislamiento
+de OS que ya dan esos subprocesos. Cada hilo crea su propia app Flask y empuja
+un contexto de aplicación, evitando los problemas de fork-safety del ``Worker``
+clásico de RQ (el ``engine`` de SQLAlchemy y las conexiones a Redis se crean
+antes del fork y se compartirían entre el padre y cada hijo forkeado salvo que
+se reconfiguren con ``NullPool``/``os.register_at_fork``). No cambiar a un
+modelo basado en ``fork`` sin resolver esos problemas de fork-safety.
 
 Separate process from the API server: if the API crashes, running
 tasks survive; if a task crashes, the API stays healthy.
@@ -74,9 +78,12 @@ def _worker_thread(worker_num: int):
     **Aislamiento**: Cada worker corre en su propio thread con su propia
     app Flask y contexto. Si uno se cuelga, los otros siguen funcionando.
 
-    **Proceso vs Thread**: RQ clásico usa fork() (procesos). Aquí usamos
-    threads para funcionar en Windows (fork no existe). Cada thread tiene
-    su propia app Flask, por lo que DB sessions no se interfieren.
+    **Proceso vs Thread**: RQ clásico usa fork() (procesos) por job. Aquí
+    usamos threads porque los jobs son I/O-bound (subprocesos nmap/nikto,
+    llamadas GMP/HTTP a OpenVAS) y el aislamiento de ``fork`` no aporta frente
+    al que ya dan esos subprocesos. Cada thread tiene su propia app Flask, por
+    lo que DB sessions no se interfieren, sin los problemas de fork-safety que
+    tendría reutilizar conexiones de BD/Redis creadas antes de un fork.
 
     **Error handling**: Si el job crashea, RQ lo atrapa, registra el error,
     y el worker sigue escuchando. La tarea no se reintenta automáticamente
