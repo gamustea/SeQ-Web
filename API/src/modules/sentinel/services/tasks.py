@@ -1,7 +1,6 @@
 
 
 import subprocess
-import sys
 import threading
 import re
 import time
@@ -19,27 +18,17 @@ from gvm.transforms import EtreeTransform
 from gvm.protocols.gmp.requests.v226 import AliveTest
 
 import src.modules.system.config_reading as CR
-from src.modules.system import PlatformDetector, SecOpsLogger
+from src.modules.system import SecOpsLogger
 from src.modules.system.taskqueue import TaskStatus
-
-
-# Flags de creación para que los subprocesos de escaneo NO compartan la consola
-# de run.py. ``wsl.exe`` modifica el modo de la consola que comparte; si lo
-# matamos a mitad (al cancelar), la deja corrupta y Windows deja de entregar
-# CTRL+C al proceso principal. ``CREATE_NO_WINDOW`` le da su propia consola
-# oculta, así matarlo nunca afecta a la consola de run.py.
-_NO_CONSOLE_FLAGS = 0
-if sys.platform == "win32":
-    _NO_CONSOLE_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
 
 
 def _kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 3.0) -> None:
     """Mata el proceso y TODOS sus descendientes (terminate → kill con timeout).
 
-    Necesario porque los escaneos se lanzan vía ``wsl.exe``/``sudo``: matar solo
-    el proceso padre deja hijos huérfanos (p. ej. ``nmap``) que siguen vivos y,
-    en Windows, enganchados a la consola. Con ``psutil`` recorremos el árbol
-    completo y nunca bloqueamos sin límite (``wait_procs`` lleva timeout).
+    Necesario porque los escaneos se lanzan vía ``sudo``: matar solo el proceso
+    padre deja hijos huérfanos (p. ej. ``nmap``) que siguen vivos. Con ``psutil``
+    recorremos el árbol completo y nunca bloqueamos sin límite (``wait_procs``
+    lleva timeout).
     """
     if proc is None or proc.poll() is not None:
         return
@@ -86,42 +75,19 @@ class _Task(ABC):
         self._cancel_event = threading.Event()
         self._output_file: Optional[Path] = None
         self._progress_callback = progress_callback
-        # Nombre del binario real bajo WSL (lo fijan las subclases) para poder
-        # matar el proceso dentro de la VM, que no es hijo Windows de wsl.exe.
-        self._wsl_process_name: Optional[str] = None
 
     @abstractmethod
     def _build_command(self) -> List[str]:
         """Construye el comando a ejecutar."""
 
     def _terminate_proc(self) -> None:
-        """Detiene el proceso de escaneo: árbol completo + huérfanos en WSL."""
-        _kill_process_tree(self._proc)
-        self._kill_wsl_orphans()
+        """Detiene el proceso de escaneo: árbol completo de descendientes.
 
-    def _kill_wsl_orphans(self) -> None:
-        """Best-effort: mata el proceso real dentro de la VM de WSL.
-
-        Matar el árbol Windows de ``wsl.exe`` no garantiza matar el proceso
-        Linux (``nmap``/``nikto``) que corre dentro de la VM, porque no es un
-        hijo Windows. Se intenta un ``pkill`` como root. Errores ignorados.
+        En Linux, con ``start_new_session=True`` los hijos (p. ej. ``nmap``) son
+        descendientes reales del proceso lanzado, así que ``_kill_process_tree``
+        basta para no dejar huérfanos.
         """
-        name = self._wsl_process_name
-        platform = getattr(self, "platform", None)
-        if not name or platform is None:
-            return
-        if not (platform.is_windows and platform.wsl_available):
-            return
-        try:
-            subprocess.run(
-                ["wsl", "-u", "root", "pkill", "-f", name],
-                timeout=5,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=_NO_CONSOLE_FLAGS,
-            )
-        except Exception as e:  # noqa: BLE001 - limpieza best-effort
-            self.logger.debug(f"pkill WSL de '{name}' falló (ignorado): {e}")
+        _kill_process_tree(self._proc)
 
     def _process_results(self) -> None:
         """Procesa los resultados del escaneo. Override en subclases si es necesario."""
@@ -191,19 +157,16 @@ class _Task(ABC):
             cmd = self._build_command()
             self.logger.info(f"Iniciando escaneo con comando: {' '.join(cmd)}")
 
-            # Consola/grupo de proceso propios: el escaneo no comparte la consola
-            # de run.py, así matarlo (al cancelar) no corrompe el manejo de
-            # CTRL+C del proceso principal.
+            # Sesión/grupo de proceso propios: el escaneo arranca en su propia
+            # sesión, así matarlo (al cancelar) no propaga señales al proceso
+            # principal y permite limpiar todo el árbol de descendientes.
             popen_kwargs = {
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.STDOUT,
                 "text": True,
                 "bufsize": 1,
+                "start_new_session": True,
             }
-            if sys.platform == "win32":
-                popen_kwargs["creationflags"] = _NO_CONSOLE_FLAGS
-            else:
-                popen_kwargs["start_new_session"] = True
 
             self._proc = subprocess.Popen(cmd, **popen_kwargs)
 
@@ -313,13 +276,11 @@ class NmapScanTask(_Task):
 
         self.target_ports = target_ports
         self._output_file = Path(f"{temp_dir}/{file_name}")
-        self.platform = PlatformDetector()
-        self._wsl_process_name = "nmap"
 
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _build_command(self) -> List[str]:
-        nmap_cmd = [
+        return [
             "sudo", "-n", "nmap",
             "-sV", "-sT",
             "-p", self.target_ports,
@@ -327,20 +288,6 @@ class NmapScanTask(_Task):
             self.target,
             "--stats-every", "1s"
         ]
-
-        if self.platform.is_windows and self.platform.wsl_available:
-            wsl_output = self.platform.convert_path_to_wsl(str(self._output_file))
-            nmap_cmd = [
-                "sudo", "-n", "nmap",
-                "-sV", "-sT",
-                "-p", self.target_ports,
-                "-oX", wsl_output,
-                self.target,
-                "--stats-every", "1s"
-            ]
-            return self.platform.wrap_wsl_command(nmap_cmd)
-
-        return nmap_cmd
 
     def _process_results(self) -> None:
         try:
@@ -381,8 +328,6 @@ class NiktoScanTask(_Task):
             f"nikto_scan_{timestamp}.xml"
         )
         self._output_file = self.temp_path
-        self.platform = PlatformDetector()
-        self._wsl_process_name = "nikto"
 
     def _build_command(self) -> List[str]:
         target = self.target
@@ -394,21 +339,11 @@ class NiktoScanTask(_Task):
         use_ssl = parsed.scheme.lower() == "https"
         port = parsed.port or (443 if use_ssl else 80)
 
-        use_wsl = self.platform.is_windows and self.platform.wsl_available
-
-        normal_temp_path = str(self.temp_path)
-        wsl_temp_path = self.platform.convert_path_to_wsl(normal_temp_path)
-        output_path = (
-            wsl_temp_path
-            if use_wsl
-            else normal_temp_path
-        )
-
         nikto_cmd = [
             "nikto",
             "-h", host,
             "-port", str(port),
-            "-output", output_path,
+            "-output", str(self.temp_path),
             "-Format", "xml",
             "-timeout", "30",
             "-nointeractive",
@@ -417,8 +352,7 @@ class NiktoScanTask(_Task):
         if use_ssl:
             nikto_cmd.append("-ssl")
 
-        wrapped_command = self.platform.wrap_wsl_command(nikto_cmd)
-        return wrapped_command if use_wsl else nikto_cmd
+        return nikto_cmd
 
     def _process_results(self) -> None:
         try:
