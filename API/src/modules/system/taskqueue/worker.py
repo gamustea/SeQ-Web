@@ -39,6 +39,7 @@ logging.getLogger("rq").setLevel(logging.WARNING)
 logging.getLogger("rq.scheduler").setLevel(logging.WARNING)
 
 from rq import Queue, SimpleWorker
+from rq.timeouts import TimerDeathPenalty
 
 import src.modules.system.config_reading as CR
 
@@ -50,7 +51,18 @@ _workers_lock = threading.Lock()
 
 
 class _ThreadSafeWorker(SimpleWorker):
-    """SimpleWorker that skips signal handler installation in non-main threads."""
+    """SimpleWorker que evita usar señales fuera del hilo principal.
+
+    RQ elige ``death_penalty_class`` según la plataforma
+    (``get_default_death_penalty_class``): en Linux usa
+    ``UnixSignalDeathPenalty`` (``signal.signal(SIGALRM, ...)``), que solo
+    funciona en el hilo principal del intérprete. Cada worker corre en su
+    propio ``threading.Thread``, así que forzamos ``TimerDeathPenalty``
+    (basado en ``threading.Timer``), que es thread-safe en cualquier
+    plataforma.
+    """
+
+    death_penalty_class = TimerDeathPenalty
 
     def _install_signal_handlers(self):
         pass
