@@ -26,8 +26,6 @@ import itertools
 import logging
 import os
 import re
-import threading
-import time
 import uuid
 
 from abc import ABC, abstractmethod
@@ -64,13 +62,10 @@ from .services import (
     NiktoResultProcessor,
     NmapResultProcessor,
     OpenVASResultProcessor,
-    ScanResultProcessor,
     NiktoPrintingStrategy,
     NmapPrintingStrategy,
     OpenVASPrintingStrategy,
     PDFCreator,
-    NiktoScanTask,
-    NmapScanTask,
     OpenVASTask,
     TaskStatus,
     _Task,
