@@ -54,6 +54,7 @@ def _kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 3.0) -
             pass
 
 
+
 class _Task(ABC):
     """
     Clase base abstracta para representar una tarea de escaneo.
@@ -145,6 +146,7 @@ class _Task(ABC):
 
     def scan(self) -> None:
         """Inicia el escaneo de forma ASÍNCRONA."""
+        
         if self._cancel_event.is_set():
             self.status = TaskStatus.CANCELLED
             self._finished.set()

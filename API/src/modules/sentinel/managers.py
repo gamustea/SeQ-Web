@@ -35,7 +35,7 @@ from urllib.parse import urlparse
 
 
 import src.modules.system.config_reading as CR
-from src.modules.system.taskqueue import ITaskQueue, TaskQueue, Task, TaskTrackingMixin, job_context
+from src.modules.system.taskqueue import ITaskQueue, TaskQueue, TaskTrackingMixin, job_context
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
@@ -77,7 +77,6 @@ from .exceptions import (
     MaxHostsExceededError,
     PortValidationError,
     PrivateIPRequested,
-    HostUnreachableError,
     InvalidProgramedTaskArgumentError,
     ProgramedScanNotFoundError,
     FolderNotFoundError,
@@ -464,73 +463,72 @@ class ScanManager(TaskTrackingMixin, ABC):
             skip_normalize: Skip IP normalization if True.
             cancel_check:  Optional callable returning True to cancel the scan.
         """
-        with job_context() as job:
-            thread_manager = self.__class__()
-            fresh_scan = None
+        thread_manager = self.__class__()
+        fresh_scan = None
 
-            try:
-                with UnitOfWork() as uow:
-                    scan = ScanRepository(uow).get_by_id(scan_id)
-                if not scan:
-                    logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
+        try:
+            with UnitOfWork() as uow:
+                scan = ScanRepository(uow).get_by_id(scan_id)
+            if not scan:
+                logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
+                return
+
+            thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
+            logger.info(f"Iniciando escaneo {scan_id}")
+
+            if CR.is_host_reachability_check_enabled():
+                raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
+                parsed_target = urlparse(url=raw_target) # type: ignore
+                host = parsed_target.hostname or scan.target
+                reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
+                reachable_timeout = CR.get_host_reachability_check_timeout()
+                if not self.is_host_reachable(host=host, port=reachable_port, timeout=reachable_timeout): # type: ignore
+                    logger.warning(
+                        f"Host '{host}' inalcanzable en puerto {reachable_port}. "
+                        f"Marcando escaneo {scan_id} como FAILED"
+                    )
+                    thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
                     return
 
-                thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
-                logger.info(f"Iniciando escaneo {scan_id}")
+            task.scan()
+            success = task.wait(
+                timeout=task.timeout + self._scan_timeout_margin,
+                cancel_check=cancel_check,
+            )
 
-                if CR.is_host_reachability_check_enabled():
-                    raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
-                    parsed_target = urlparse(url=raw_target) # type: ignore
-                    host = parsed_target.hostname or scan.target
-                    reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
-                    reachable_timeout = CR.get_host_reachability_check_timeout()
-                    if not self.is_host_reachable(host=host, port=reachable_port, timeout=reachable_timeout): # type: ignore
-                        logger.warning(
-                            f"Host '{host}' inalcanzable en puerto {reachable_port}. "
-                            f"Marcando escaneo {scan_id} como FAILED"
-                        )
-                        thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
-                        return
-
-                task.scan()
-                success = task.wait(
-                    timeout=task.timeout + self._scan_timeout_margin,
-                    cancel_check=job.cancelled,
-                )
-
-                no_results = task.results is None
-                if not success or no_results:
-                    if task.status == TaskStatus.CANCELLED:
-                        logger.info(f"Escaneo {scan_id} cancelado por el usuario")
-                        thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
-                    else:
-                        logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
-                        thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
-                    return
-
-                logger.info(f"Procesando resultados de escaneo {scan_id}")
-
-                processor  = thread_manager.result_processor # type: ignore
-                scan_type = scan.scan_type
-                domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
-
-                with UnitOfWork() as uow:
-                    fresh_scan              = ScanRepository(uow).get_by_id(scan_id)
-                    thread_manager._persist_scan_results(uow, fresh_scan, domain_data)
-                    fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
-                    fresh_scan.finished_at  = datetime.now() # type: ignore
-
-                logger.info(f"Escaneo {scan_id} completado exitosamente")
-                thread_manager._log_to_csv(scan_id, fresh_scan, task)
-
-            except (OSError, RuntimeError) as e:
+            no_results = task.results is None
+            if not success or no_results:
                 if task.status == TaskStatus.CANCELLED:
                     logger.info(f"Escaneo {scan_id} cancelado por el usuario")
                     thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
                 else:
-                    logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
+                    logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
                     thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
-                thread_manager._log_to_csv(scan_id, fresh_scan, task)
+                return
+
+            logger.info(f"Procesando resultados de escaneo {scan_id}")
+
+            processor  = thread_manager.result_processor # type: ignore
+            scan_type = scan.scan_type
+            domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
+
+            with UnitOfWork() as uow:
+                fresh_scan              = ScanRepository(uow).get_by_id(scan_id)
+                thread_manager._persist_scan_results(uow, fresh_scan, domain_data)
+                fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
+                fresh_scan.finished_at  = datetime.now() # type: ignore
+
+            logger.info(f"Escaneo {scan_id} completado exitosamente")
+            thread_manager._log_to_csv(scan_id, fresh_scan, task)
+
+        except (OSError, RuntimeError) as e:
+            if task.status == TaskStatus.CANCELLED:
+                logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
+            else:
+                logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
+                thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+            thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
     def update_scan_status(self, scan_id: int, status: ScanStatus) -> None:
         """
@@ -1451,7 +1449,7 @@ class NmapScanManager(ScanManager):
                 timeout=timeout,
                 progress_callback=job.progress,
             )
-            NmapScanManager()._execute_scan(scan_id, task)
+            NmapScanManager()._execute_scan(scan_id, task, cancel_check=job.cancelled)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NmapScan: # pylint: disable=arguments-differ
         """Create and persist an NmapScan row."""
@@ -1600,7 +1598,7 @@ class NiktoScanManager(ScanManager):
                 timeout=timeout,
                 progress_callback=job.progress,
             )
-            NiktoScanManager()._execute_scan(scan_id, task)
+            NiktoScanManager()._execute_scan(scan_id, task, cancel_check=job.cancelled)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NiktoScan: # pylint: disable=arguments-differ
         """Create and persist a NiktoScan row."""
@@ -1788,7 +1786,7 @@ class OpenVASScanManager(ScanManager):
                 scan_config=scan_config_id,
                 progress_callback=job.progress,
             )
-            manager._execute_scan(scan_id, task, skip_normalize)
+            manager._execute_scan(scan_id, task, skip_normalize, cancel_check=job.cancelled)
 
     def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> OpenVASScan: # pylint: disable=arguments-differ
         """Create and persist an OpenVASScan row with placeholder task/report IDs."""
