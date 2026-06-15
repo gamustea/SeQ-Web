@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 import psutil
@@ -7,14 +8,13 @@ from flask import request
 from marshmallow import ValidationError as MarshmallowValidationError
 
 from src.modules.users.services.permissions import Role
-from src.modules.shared._endpoints import limiter
+from src.modules.shared._endpoints import limiter, current_actor
 from src.modules.shared._exceptions import (
     handle_exceptions,
     IllegalStateError,
     ValidationError,
 )
 from src.modules.shared.schemas import ErrorSchema
-from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_role
 from src.modules.system.taskqueue import TaskQueue, Task, TaskStatus
 from .schemas import (
@@ -34,7 +34,7 @@ system_blp = SmorestBlueprint(
     "system", __name__,
     description="Estado, configuración y health check del sistema"
 )
-_logger = SecOpsLogger("system").get_logger()
+logger = logging.getLogger(__name__)
 
 
 @system_blp.get("/say-hello")
@@ -42,7 +42,7 @@ _logger = SecOpsLogger("system").get_logger()
 @limiter.limit("60 per minute")
 def hello():
     """Health check del servicio"""
-    _logger.info("GET /say-hello")
+    logger.info("GET /say-hello")
     return {
         "message": "You did it! You reached an endpoint!",
         "status":  "ok",
@@ -59,7 +59,7 @@ def hello():
 @require_role(minimum_role=Role.ADMIN)
 def status():
     """Métricas en tiempo real del servidor (CPU, memoria, disco)"""
-    _logger.info("GET /status")
+    logger.info("GET /status")
 
     cpu_percent = psutil.cpu_percent(interval=1)
     memory = psutil.virtual_memory()
@@ -91,7 +91,7 @@ def status():
 @limiter.limit("30 per hour; 100 per day")
 @require_oauth_token
 @require_role(minimum_role=Role.ADMIN)
-@handle_exceptions(default_exception=IllegalStateError, logger=_logger)
+@handle_exceptions(default_exception=IllegalStateError, logger=logger)
 def get_config():
     """Obtiene toda la configuración de SecOpsConfig.json"""
     config = CR.get_full_config()
@@ -106,7 +106,7 @@ def get_config():
 @limiter.limit("10 per hour; 20 per day")
 @require_oauth_token
 @require_role(minimum_role=Role.ADMIN)
-@handle_exceptions(default_exception=IllegalStateError, logger=_logger)
+@handle_exceptions(default_exception=IllegalStateError, logger=logger)
 def update_config():
     """Actualiza la configuración de SecOpsConfig.json"""
     if not request.is_json:
@@ -117,7 +117,7 @@ def update_config():
         raise ValidationError("Request body must be JSON")
 
     config = CR.save_full_config(new_config)
-    _logger.info("Configuracion actualizada correctamente")
+    logger.info("Configuracion actualizada correctamente | user=%s", current_actor())
     return config
 
 

@@ -1,10 +1,10 @@
+import logging
 from enum import Enum
 from functools import wraps
 from typing import List, Optional, Set
 
 from flask import request, jsonify
 
-from src.modules.system.logging import SecOpsLogger
 from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError
 
 from ..managers import OAuthTokenManager
@@ -12,7 +12,7 @@ from ..repositories import AttributeRepository
 from src.modules.infrastructure import UnitOfWork
 
 
-_logger = SecOpsLogger().get_logger()
+logger = logging.getLogger(__name__)
 
 
 # =========================================================================
@@ -233,7 +233,7 @@ def require_oauth_token(f):
         except (MissingParameterError, MissingJsonBodyError):
             raise
         except Exception as exc:
-            _logger.exception("Error durante la autenticación")
+            logger.exception("Error durante la autenticación")
             return jsonify({
                 "error": "server_error",
                 "error_description": "Authentication error",
@@ -272,7 +272,7 @@ def require_role(minimum_role: Role):
                 user_role = Role.USER
 
             if user_role.rank() < minimum_role.rank():
-                _logger.warning(
+                logger.warning(
                     f"Usuario {user_id} (rol={user_role_str}) denegado. "
                     f"Se requiere mínimo: {minimum_role.value}"
                 )
@@ -357,7 +357,7 @@ def require_attributes(
                 has_all_required = not all_required or len(missing_all_required) == 0
 
                 if not has_at_least_one or not has_all_required:
-                    _logger.warning(
+                    logger.warning(
                         f"Usuario {user_id} (rol={user_role_str}) denegado en {f.__name__}. "
                         f"at_least_one_missing={[p.db_name for p in missing_at_least_one]}, "
                         f"all_required_missing={[p.db_name for p in missing_all_required]}"
@@ -371,14 +371,14 @@ def require_attributes(
                         },
                     }), 403
 
-                _logger.info(
+                logger.info(
                     f"Usuario {user_id} autorizado para {f.__name__}. "
                     f"at_least_one={at_least_one}, all_required={all_required}"
                 )
                 return f(*args, **kwargs)
 
             except Exception as exc:
-                _logger.error(f"Error en require_permissions: {exc}", exc_info=True)
+                logger.error(f"Error en require_permissions: {exc}", exc_info=True)
                 return jsonify({
                     "error": "server_error",
                     "error_description": "AttributeType check failed",

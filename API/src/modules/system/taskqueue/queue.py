@@ -52,7 +52,8 @@ from rq.job import Callback, Job
 from rq.registry import StartedJobRegistry
 from rq.worker_registration import clean_worker_registry
 
-from src.modules.system.logging import SecOpsLogger
+
+logger = logging.getLogger(__name__)
 
 import src.modules.system.config_reading as CR
 
@@ -163,7 +164,7 @@ def _record_terminal(job: "Job", status: "TaskStatus", error: str | None = None)
         tq._history.record(data)
         tq._external.remove_by_job_id(job.id)
     except Exception:  # noqa: BLE001 - un fallo de historial no debe tumbar el job
-        logging.getLogger("TaskQueue").warning(
+        logger.warning(
             "No se pudo registrar el historial del job %s",
             getattr(job, "id", "?"), exc_info=True,
         )
@@ -314,7 +315,6 @@ class TaskQueue:
         )
 
         self._queue_cache: Dict[str, rq.Queue] = {}
-        self.logger = SecOpsLogger("TaskQueue").get_logger()
 
     # =========================================================================
     # SINGLETON
@@ -380,7 +380,7 @@ class TaskQueue:
             if existing is not None:
                 status = existing.get_status(refresh=True)
                 if status in ("queued", "scheduled", "started"):
-                    self.logger.warning(
+                    logger.warning(
                         "Task %s already exists with status %s, cancelling old job",
                         job_id, status,
                     )
@@ -407,13 +407,13 @@ class TaskQueue:
                 },
             )
         except ValueError as exc:
-            self.logger.error("Failed to submit task %s: %s", name, exc)
+            logger.error("Failed to submit task %s: %s", name, exc)
             raise
 
         if external_id:
             self._external.set(external_id, job.id)
 
-        self.logger.debug(
+        logger.debug(
             "Task %s submitted [category=%s, external=%s]",
             job.id, category, external_id,
         )
@@ -437,7 +437,7 @@ class TaskQueue:
         """
         job = self._try_fetch_job(task_id)
         if job is None:
-            self.logger.warning("Task %s not found for cancellation", task_id)
+            logger.warning("Task %s not found for cancellation", task_id)
             return False
 
         status = job.get_status(refresh=True)
@@ -456,26 +456,26 @@ class TaskQueue:
             self._cancel.clear(task_id)
             self._external.remove_by_job_id(task_id)
             self._history.record(snapshot)
-            self.logger.info("Task %s cancelled (was pending)", task_id)
+            logger.info("Task %s cancelled (was pending)", task_id)
             return True
 
         if status == "started":
             if self._worker_alive(job.worker_name):
                 self._cancel.signal(task_id)
-                self.logger.info("Task %s cancel signal sent (is running)", task_id)
+                logger.info("Task %s cancel signal sent (is running)", task_id)
                 return True
 
-            self.logger.warning(
+            logger.warning(
                 "Task %s is started but its worker (%s) is gone, force-cancelling",
                 task_id, job.worker_name,
             )
             return self._force_cancel_started(job)
 
-        self.logger.warning("Task %s cannot be cancelled (status=%s)", task_id, status)
+        logger.warning("Task %s cannot be cancelled (status=%s)", task_id, status)
         return False
 
     def cancel_all(self) -> None:
-        self.logger.info("TaskQueue cancel_all")
+        logger.info("TaskQueue cancel_all")
 
         for queue_name in QueueRegistry.names():
             queue = self._queue_for(queue_name)
@@ -484,7 +484,7 @@ class TaskQueue:
 
             started = StartedJobRegistry(name=queue_name, connection=self._redis)
             for job_id in started.get_job_ids():
-                self.logger.info("Cancelling running job %s", job_id)
+                logger.info("Cancelling running job %s", job_id)
                 self.cancel(job_id)
 
     def is_cancelled(self, task_id: str) -> bool:
@@ -523,17 +523,17 @@ class TaskQueue:
         """
         job_id = self._external.get(external_id)
         if job_id is None:
-            self.logger.debug("get_task_by_external_id: no job_id for external_id=%s", external_id)
+            logger.debug("get_task_by_external_id: no job_id for external_id=%s", external_id)
             return None
         task = self.get_task(job_id)
         if task is None:
-            self.logger.debug(
+            logger.debug(
                 "get_task_by_external_id: task not found for job_id=%s (external_id=%s)",
                 job_id, external_id,
             )
             return None
         if category is not None and task.category != category:
-            self.logger.debug(
+            logger.debug(
                 "get_task_by_external_id: category mismatch (expected=%s, actual=%s)",
                 category, task.category,
             )
@@ -579,7 +579,7 @@ class TaskQueue:
                 running_count += started.count
                 pending_count += queue.count
         except Exception as exc:
-            self.logger.warning("Error reading queue status from Redis: %s", exc)
+            logger.warning("Error reading queue status from Redis: %s", exc)
             running_count = 0
             pending_count = 0
 
@@ -669,7 +669,7 @@ class TaskQueue:
                         pass
             return alive
         except Exception as exc:
-            self.logger.debug("No se pudo contar workers vivos: %s", exc)
+            logger.debug("No se pudo contar workers vivos: %s", exc)
             return -1
 
     def _worker_alive(self, worker_name: Optional[str]) -> bool:
@@ -732,17 +732,17 @@ class TaskQueue:
         self._cancel.clear(task_id)
         self._external.remove_by_job_id(task_id)
         self._history.record(snapshot)
-        self.logger.info("Task %s force-cancelled (worker was gone)", task_id)
+        logger.info("Task %s force-cancelled (worker was gone)", task_id)
         return True
 
     def _try_fetch_job(self, task_id: str) -> Optional[Job]:
         try:
             return rq.job.Job.fetch(task_id, connection=self._redis)
         except rq.exceptions.NoSuchJobError: # type: ignore
-            self.logger.debug("_try_fetch_job: job %s not found in Redis", task_id)
+            logger.debug("_try_fetch_job: job %s not found in Redis", task_id)
             return None
         except Exception as exc:
-            self.logger.warning("_try_fetch_job: unexpected error for %s: %s", task_id, exc)
+            logger.warning("_try_fetch_job: unexpected error for %s: %s", task_id, exc)
             return None
 
     def _jobs_to_tasks(self, job_ids: List[str], category: Optional[str] = None) -> List[dict]:

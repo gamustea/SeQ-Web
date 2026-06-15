@@ -23,6 +23,7 @@ Usage:
 
 import ipaddress
 import itertools
+import logging
 import os
 import re
 import threading
@@ -36,7 +37,6 @@ from urllib.parse import urlparse
 
 
 import src.modules.system.config_reading as CR
-from src.modules.system.logging import SecOpsLogger
 from src.modules.system.taskqueue import ITaskQueue, TaskQueue, Task, TaskTrackingMixin, job_context
 from src.modules.aegis.exceptions import DocumentError
 from src.modules.shared import Document
@@ -91,6 +91,9 @@ from .exceptions import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class ScanManager(TaskTrackingMixin, ABC):
     """
     Base class for scan managers.
@@ -125,7 +128,6 @@ class ScanManager(TaskTrackingMixin, ABC):
             task_queue: Cola de tareas a usar (inyectable para tests). Por
                 defecto, el singleton ``TaskQueue``.
         """
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
         self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
 
@@ -147,7 +149,7 @@ class ScanManager(TaskTrackingMixin, ABC):
         scan = ScanRepository(session=session).get_by_id(scan_id)
 
         if not scan:
-            self.logger.warning(f"Escaneo {scan_id} no encontrado")
+            logger.warning(f"Escaneo {scan_id} no encontrado")
 
         return scan
 
@@ -164,7 +166,7 @@ class ScanManager(TaskTrackingMixin, ABC):
         session = get_db_session()
         scans = ScanRepository(session=session).get_by_user(user_id) # pyright: ignore[reportArgumentType]
 
-        self.logger.info(
+        logger.info(
             f"Se obtuvieron {len(scans)} escaneos para el usuario {user_id}"
         )
         return scans
@@ -240,7 +242,7 @@ class ScanManager(TaskTrackingMixin, ABC):
         """
         scan = self.get_scan_by_id(scan_id)
         if not scan:
-            self.logger.warning(f"Escaneo {scan_id} no encontrado para verificar finalización")
+            logger.warning(f"Escaneo {scan_id} no encontrado para verificar finalización")
             return False
 
         return scan.status == ScanStatus.FINISHED.value # pyright: ignore[reportReturnType]
@@ -270,19 +272,19 @@ class ScanManager(TaskTrackingMixin, ABC):
                     if doc.filename and os.path.exists(doc.filename): # type: ignore
                         try:
                             os.remove(doc.filename) # type: ignore
-                            self.logger.info(f"Archivo eliminado: {doc.filename}")
+                            logger.info(f"Archivo eliminado: {doc.filename}")
                         except (OSError, IOError) as e:
-                            self.logger.warning(f"No se pudo eliminar archivo {doc.filename}: {e}", exc_info=True)
+                            logger.warning(f"No se pudo eliminar archivo {doc.filename}: {e}", exc_info=True)
                     doc_repo.delete(doc)
 
                 scan_repo.delete(scan)
                 # UnitOfWork commits on __exit__
 
-            self.logger.info(f"Escaneo {scan_id} eliminado")
+            logger.info(f"Escaneo {scan_id} eliminado")
             return True
 
         except (OSError, RuntimeError) as e:
-            self.logger.error(f"Error eliminando escaneo {scan_id}: {e}", exc_info=True)
+            logger.error(f"Error eliminando escaneo {scan_id}: {e}", exc_info=True)
             raise
 
 
@@ -384,7 +386,7 @@ class ScanManager(TaskTrackingMixin, ABC):
             scan = self.assert_scan_ownership(scan_id, user_id)
 
             if scan.status not in ("pending", "running"):
-                self.logger.warning(
+                logger.warning(
                     f"El escaneo {scan_id} no se puede cancelar "
                     f"(estado actual: {scan.status})"
                 )
@@ -393,14 +395,14 @@ class ScanManager(TaskTrackingMixin, ABC):
             sq_task = self.find_task(scan_id)
 
             if sq_task is None:
-                self.logger.warning(
+                logger.warning(
                     f"No se encontro tarea activa para el escaneo {scan_id}"
                 )
                 return False
 
             cancelled = self._tq.cancel(sq_task.id)
             if not cancelled:
-                self.logger.warning(f"No se pudo cancelar la tarea del escaneo {scan_id}")
+                logger.warning(f"No se pudo cancelar la tarea del escaneo {scan_id}")
                 return False
 
             with UnitOfWork() as uow:
@@ -409,11 +411,11 @@ class ScanManager(TaskTrackingMixin, ABC):
                 if fresh_scan:
                     scan_repo.update_status(fresh_scan, ScanStatus.CANCELLED)
 
-            self.logger.info(f"Escaneo {scan_id} cancelado exitosamente")
+            logger.info(f"Escaneo {scan_id} cancelado exitosamente")
             return True
 
         except (OSError, RuntimeError) as e:
-            self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
+            logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
             return False
 
     @classmethod
@@ -475,11 +477,11 @@ class ScanManager(TaskTrackingMixin, ABC):
                 with UnitOfWork() as uow:
                     scan = ScanRepository(uow).get_by_id(scan_id)
                 if not scan:
-                    thread_manager.logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
+                    logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
                     return
 
                 thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
-                thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
+                logger.info(f"Iniciando escaneo {scan_id}")
 
                 if CR.is_host_reachability_check_enabled():
                     raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
@@ -488,7 +490,7 @@ class ScanManager(TaskTrackingMixin, ABC):
                     reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
                     reachable_timeout = CR.get_host_reachability_check_timeout()
                     if not self.is_host_reachable(host=host, port=reachable_port, timeout=reachable_timeout): # type: ignore
-                        thread_manager.logger.warning(
+                        logger.warning(
                             f"Host '{host}' inalcanzable en puerto {reachable_port}. "
                             f"Marcando escaneo {scan_id} como FAILED"
                         )
@@ -504,14 +506,14 @@ class ScanManager(TaskTrackingMixin, ABC):
                 no_results = task.results is None
                 if not success or no_results:
                     if task.status == TaskStatus.CANCELLED:
-                        thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                        logger.info(f"Escaneo {scan_id} cancelado por el usuario")
                         thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
                     else:
-                        thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
+                        logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
                         thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
                     return
 
-                thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
+                logger.info(f"Procesando resultados de escaneo {scan_id}")
 
                 processor  = thread_manager.result_processor # type: ignore
                 scan_type = scan.scan_type
@@ -523,15 +525,15 @@ class ScanManager(TaskTrackingMixin, ABC):
                     fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
                     fresh_scan.finished_at  = datetime.now() # type: ignore
 
-                thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
+                logger.info(f"Escaneo {scan_id} completado exitosamente")
                 thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
             except (OSError, RuntimeError) as e:
                 if task.status == TaskStatus.CANCELLED:
-                    thread_manager.logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                    logger.info(f"Escaneo {scan_id} cancelado por el usuario")
                     thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
                 else:
-                    thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
+                    logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
                     thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
                 thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
@@ -550,7 +552,7 @@ class ScanManager(TaskTrackingMixin, ABC):
                 if scan:
                     repo.update_status(scan, status)
         except (OSError, RuntimeError) as update_err:
-            self.logger.error(f"Error actualizando estado de escaneo {scan_id}: {update_err}", exc_info=True)
+            logger.error(f"Error actualizando estado de escaneo {scan_id}: {update_err}", exc_info=True)
 
     def _log_to_csv(self, scan_id: int, scan: Scan, task: "_Task") -> None:
         """
@@ -581,9 +583,9 @@ class ScanManager(TaskTrackingMixin, ABC):
 
             logger_obj = ScanLoggerFactory.get(scan_type) # type: ignore
             logger_obj.log(data)
-            self.logger.debug(f"Escaneo {scan_id} registrado en CSV ({scan_type})")
+            logger.debug(f"Escaneo {scan_id} registrado en CSV ({scan_type})")
         except Exception as csv_err:
-            self.logger.warning(f"Error registrando escaneo {scan_id} en CSV: {csv_err}", exc_info=True)
+            logger.warning(f"Error registrando escaneo {scan_id} en CSV: {csv_err}", exc_info=True)
 
 
     # =========================================================================
@@ -1222,9 +1224,6 @@ class ScanFolderManager:
 
     _FOLDER_NAME_RE = re.compile(r"^[a-zA-Z0-9\s_-]+$")
 
-    def __init__(self) -> None:
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
-
     @staticmethod
     def _validate_name(name: str) -> str:
         """Strip and validate a folder name, raising FolderNameInvalidError if invalid."""
@@ -1251,7 +1250,7 @@ class ScanFolderManager:
         with UnitOfWork() as uow:
             folder = ScanFolder(user_id=user_id, name=validated_name)
             ScanFolderRepository(uow).save(folder)
-        self.logger.info(f"Carpeta '{validated_name}' creada para usuario {user_id}")
+        logger.info(f"Carpeta '{validated_name}' creada para usuario {user_id}")
         return folder
 
     def rename_folder(self, folder_id: int, user_id: int, name: str) -> ScanFolder:
@@ -1263,7 +1262,7 @@ class ScanFolderManager:
             self._assert_folder_ownership(folder, user_id)
             folder.name = validated_name  # type: ignore
             repo.update(folder)
-        self.logger.info(f"Carpeta {folder_id} renombrada a '{validated_name}'")
+        logger.info(f"Carpeta {folder_id} renombrada a '{validated_name}'")
         return folder
 
     def delete_folder(self, folder_id: int, user_id: int) -> None:
@@ -1278,7 +1277,7 @@ class ScanFolderManager:
                 scan_repo.unset_folder(scan)
 
             folder_repo.delete(folder)
-        self.logger.info(f"Carpeta {folder_id} eliminada por usuario {user_id}")
+        logger.info(f"Carpeta {folder_id} eliminada por usuario {user_id}")
 
     def move_scan_to_folder(self, scan_id: int, folder_id: int, user_id: int) -> Scan:
         """Move a scan into a folder, replacing any previous folder assignment."""
@@ -1295,7 +1294,7 @@ class ScanFolderManager:
                 raise ScanAlreadyInFolderError(scan_id, folder_id)
 
             scan_repo.set_folder(scan, folder)
-        self.logger.info(f"Escaneo {scan_id} movido a carpeta {folder_id}")
+        logger.info(f"Escaneo {scan_id} movido a carpeta {folder_id}")
         return scan
 
     def add_scans_to_folder(self, scan_ids: list[int], folder_id: int, user_id: int) -> list[Scan]:
@@ -1316,7 +1315,7 @@ class ScanFolderManager:
                 scan_repo.set_folder(scan, folder)
                 added.append(scan)
 
-        self.logger.info(f"{len(added)} escaneos añadidos a carpeta {folder_id}")
+        logger.info(f"{len(added)} escaneos añadidos a carpeta {folder_id}")
         return added
 
     def remove_scan_from_folder(self, scan_id: int, user_id: int) -> Scan:
@@ -1330,7 +1329,7 @@ class ScanFolderManager:
                 return scan
 
             scan_repo.unset_folder(scan)
-        self.logger.info(f"Escaneo {scan_id} sacado de su carpeta")
+        logger.info(f"Escaneo {scan_id} sacado de su carpeta")
         return scan
 
     def get_folders_with_scans(self, user_id: int) -> dict:
@@ -1400,7 +1399,7 @@ class NmapScanManager(ScanManager):
 
     def __init__(self):
         super().__init__()
-        self.result_processor = NmapResultProcessor(self.logger)
+        self.result_processor = NmapResultProcessor()
 
     def run_scan(
             self,
@@ -1438,10 +1437,10 @@ class NmapScanManager(ScanManager):
                 timeout=timeout + self._scan_timeout_margin,
             )
 
-            self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
+            logger.info(f"Escaneo Nmap {scan_id} iniciado")
 
         except (OSError, RuntimeError) as e:
-            self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
+            logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
 
         return scan_id # type: ignore
 
@@ -1483,7 +1482,7 @@ class NmapScanManager(ScanManager):
         scan = ScanRepository(session=session).get_by_id_and_type(NmapScan, scan_id)
 
         if not scan:
-            self.logger.warning(f"Escaneo Nmap {scan_id} no encontrado")
+            logger.warning(f"Escaneo Nmap {scan_id} no encontrado")
 
         return scan
 
@@ -1497,7 +1496,7 @@ class NmapScanManager(ScanManager):
         session = get_db_session()
         scans = ScanRepository(session=session).get_by_type_and_user(NmapScan, user_id) # type: ignore
 
-        self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
+        logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
         return scans
 
     def _persist_scan_results(self, uow, scan, domain_data) -> None:
@@ -1558,7 +1557,7 @@ class NiktoScanManager(ScanManager):
 
     def __init__(self):
         super().__init__()
-        self.result_processor = NiktoResultProcessor(self.logger)
+        self.result_processor = NiktoResultProcessor()
 
     def run_scan(self, target_domain: str, user_id: int, timeout: int = 6000, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
         """
@@ -1588,11 +1587,11 @@ class NiktoScanManager(ScanManager):
                 timeout=timeout + self._scan_timeout_margin,
             )
 
-            self.logger.info(f"Escaneo Nikto {scan_id} iniciado")
+            logger.info(f"Escaneo Nikto {scan_id} iniciado")
             return scan_id # type: ignore
 
         except (OSError, RuntimeError) as e:
-            self.logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
+            logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
             raise
 
     @staticmethod
@@ -1632,7 +1631,7 @@ class NiktoScanManager(ScanManager):
         scan = ScanRepository(session=session).get_by_id_and_type(NiktoScan, scan_id)
 
         if not scan:
-            self.logger.warning(f"Escaneo Nikto {scan_id} no encontrado")
+            logger.warning(f"Escaneo Nikto {scan_id} no encontrado")
 
         return scan
 
@@ -1647,7 +1646,7 @@ class NiktoScanManager(ScanManager):
         repo    = ScanRepository(session=session)
         scans   = repo.get_by_type_and_user(NiktoScan, user_id)
 
-        self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
+        logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
         return scans
 
     def _persist_scan_results(self, uow, scan, domain_data) -> None:
@@ -1732,7 +1731,7 @@ class OpenVASScanManager(ScanManager):
         self.username  = config["username"]
         self.password  = config["password"]
 
-        self.result_processor = OpenVASResultProcessor(self.logger)
+        self.result_processor = OpenVASResultProcessor()
 
     def run_scan(               # pylint: disable=arguments-differ
         self,
@@ -1771,11 +1770,11 @@ class OpenVASScanManager(ScanManager):
                 timeout=14400,
             )
 
-            self.logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
+            logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
             return scan_id # type: ignore
 
         except (OSError, RuntimeError) as e:
-            self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
+            logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
             raise
 
     @staticmethod
@@ -1827,7 +1826,7 @@ class OpenVASScanManager(ScanManager):
         scan = ScanRepository(session=session).get_by_id_and_type(OpenVASScan, scan_id)
 
         if not scan:
-            self.logger.warning(f"Escaneo OpenVAS {scan_id} no encontrado")
+            logger.warning(f"Escaneo OpenVAS {scan_id} no encontrado")
 
         return scan
 
@@ -1841,7 +1840,7 @@ class OpenVASScanManager(ScanManager):
         session = get_db_session()
         scans = ScanRepository(session=session).get_by_type_and_user(OpenVASScan, user_id)
 
-        self.logger.info(
+        logger.info(
             f"Se obtuvieron {len(scans)} escaneos OpenVAS"
         )
         return scans
@@ -1877,7 +1876,7 @@ class OpenVASScanManager(ScanManager):
                         scan.task_id   = task.task_id
                         scan.report_id = task.report_id
             except (OSError, RuntimeError) as e:
-                self.logger.error(
+                logger.error(
                     f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}",
                     exc_info=True
                 )
@@ -1951,11 +1950,9 @@ class SentinelReportManager:
 
     Attributes:
         user: User performing the operations.
-        logger:      Logger instance.
     """
 
     def __init__(self, task_queue: ITaskQueue | None = None) -> None:
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
         self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
     @staticmethod
@@ -1982,7 +1979,7 @@ class SentinelReportManager:
         doc = SentinelReportRepository(session=session).get_by_id(document_id)
 
         if not doc:
-            self.logger.warning(f"Documento {document_id} no encontrado")
+            logger.warning(f"Documento {document_id} no encontrado")
 
         return doc
 
@@ -1998,7 +1995,7 @@ class SentinelReportManager:
         session = get_db_session()
         docs = SentinelReportRepository(session=session).get_documents_by_user(user_id)  # type: ignore
 
-        self.logger.info(f"Se obtuvieron {len(docs)} documentos")
+        logger.info(f"Se obtuvieron {len(docs)} documentos")
         return docs
 
     def get_documents_by_scan_id(self, scan_id: int) -> List[SentinelDocument]:
@@ -2006,7 +2003,7 @@ class SentinelReportManager:
         session = get_db_session()
         docs = SentinelReportRepository(session=session).get_documents_by_scan(scan_id)
 
-        self.logger.info(f"Se obtuvieron {len(docs)} documentos para scan {scan_id}")
+        logger.info(f"Se obtuvieron {len(docs)} documentos para scan {scan_id}")
         return docs
 
     def delete_document(self, document_id: int) -> bool:
@@ -2030,7 +2027,7 @@ class SentinelReportManager:
                 try:
                     os.remove(doc.filename)  # type: ignore
                 except (OSError, IOError) as e:
-                    self.logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}", exc_info=True)
+                    logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}", exc_info=True)
 
             doc_repo.delete(doc)
 
@@ -2112,10 +2109,10 @@ class SentinelReportManager:
                     doc.status       = "done"  # type: ignore
                     doc.generated_at = datetime.utcnow()  # type: ignore
 
-            self.logger.info(f"PDF generado exitosamente para documento {document_id}")
+            logger.info(f"PDF generado exitosamente para documento {document_id}")
 
         except (OSError, RuntimeError) as e:
-            self.logger.error(
+            logger.error(
                 f"Error generando PDF para documento {document_id}: {e}",
                 exc_info=True
             )
@@ -2129,4 +2126,4 @@ class SentinelReportManager:
                 if doc:
                     doc.status = status  # type: ignore
         except (OSError, RuntimeError) as e:
-            self.logger.exception(f"Error updating document status for document {document_id}")
+            logger.exception(f"Error updating document status for document {document_id}")

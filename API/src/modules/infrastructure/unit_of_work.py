@@ -43,11 +43,10 @@ logger = logging.getLogger(__name__)
 
 import time
 import urllib.parse
-from typing import Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, scoped_session, sessionmaker
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 
 ENGINE: Optional[Engine] = None
@@ -232,9 +231,11 @@ class UnitOfWork:
             False — exceptions are never suppressed.
         """
         if exc_type is None:
-            self.commit()
+            if self._owns_session:
+                self.commit()
         else:
-            self.rollback()
+            if self._owns_session:
+                self.rollback()
         self.close()
         return False
 

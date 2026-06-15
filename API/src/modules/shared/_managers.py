@@ -13,6 +13,7 @@ Module Variables:
     SESSION_FACTORY: Scoped session factory for thread-safe sessions.
 """
 
+import logging
 import time
 import urllib.parse
 from typing import Optional, Any, List
@@ -25,6 +26,8 @@ from sqlalchemy.orm import Session, scoped_session, sessionmaker
 ENGINE = None
 SESSION_FACTORY = None
 
+logger = logging.getLogger(__name__)
+
 
 class BaseManager:
     """
@@ -36,7 +39,6 @@ class BaseManager:
 
     Attributes:
         session: SQLAlchemy session instance for database operations.
-        logger: Logger instance for the class.
         _owns_session: Boolean indicating if the manager owns the session.
 
     Example:
@@ -64,9 +66,6 @@ class BaseManager:
         else:
             self.session = SESSION_FACTORY()
             self._owns_session = True
-
-        from src.modules.system.logging import SecOpsLogger
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
 
     # =========================================================================
@@ -117,7 +116,7 @@ class BaseManager:
                 self.session.close()
                 SESSION_FACTORY.remove()
             except Exception as e:
-                self.logger.warning(f"Error al cerrar sesión: {e}", exc_info=True)
+                logger.warning(f"Error al cerrar sesión: {e}", exc_info=True)
 
     @staticmethod
     def _initialize_engine(database_url: Optional[str] = None):
@@ -212,7 +211,7 @@ class BaseManager:
             return obj
 
         except Exception as e:
-            self.logger.error(f"Error obtaining {model.__name__}: {e}", exc_info=True)
+            logger.error(f"Error obtaining {model.__name__}: {e}", exc_info=True)
             raise
 
     def _get_all(self, model) -> List[Any]:
@@ -232,11 +231,11 @@ class BaseManager:
 
         try:
             objects = self.session.query(model).all()
-            self.logger.info(f"Se obtained {len(objects)} {model.__name__}s")
+            logger.info(f"Se obtained {len(objects)} {model.__name__}s")
             return objects
 
         except Exception as e:
-            self.logger.error(f"Error obtaining {model.__name__}s: {e}", exc_info=True)
+            logger.error(f"Error obtaining {model.__name__}s: {e}", exc_info=True)
             raise
 
     def _get_children(self, model, foreign_key, parent_id):
@@ -310,7 +309,7 @@ class BaseManager:
 
         except Exception as e:
             self._safe_rollback()
-            self.logger.error(f"Error deleting {obj}: {e}", exc_info=True)
+            logger.error(f"Error deleting {obj}: {e}", exc_info=True)
             raise
 
 
@@ -342,7 +341,7 @@ class BaseManager:
             self.session.commit()
             return True
         except SQLAlchemyError as err:
-            self.logger.error(f"Error durante commit: {err}", exc_info=True)
+            logger.error(f"Error durante commit: {err}", exc_info=True)
             self._safe_rollback()
             raise
 
@@ -357,15 +356,15 @@ class BaseManager:
         try:
             if self.session is not None:
                 self.session.rollback()
-                self.logger.debug("Rollback ejecutado exitosamente")
+                logger.debug("Rollback ejecutado exitosamente")
         except Exception as e:
-            self.logger.warning(f"Error durante rollback: {e}", exc_info=True)
+            logger.warning(f"Error durante rollback: {e}", exc_info=True)
             try:
                 if self._owns_session:
                     self.session.close()
                     global SESSION_FACTORY
                     if SESSION_FACTORY is not None:
                         self.session = SESSION_FACTORY()
-                        self.logger.info("Sesión recreada después de error en rollback")
+                        logger.info("Sesión recreada después de error en rollback")
             except Exception as recreate_err:
-                self.logger.error(f"No se pudo recrear la sesión: {recreate_err}", exc_info=True)
+                logger.error(f"No se pudo recrear la sesión: {recreate_err}", exc_info=True)
