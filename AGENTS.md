@@ -7,6 +7,13 @@ Monorepo:
 - **web** (`web/app/`) — Vue 3 SPA (Vite + Pinia + Vue Router)
 - **mobile** (`mobile/AcheronMobile/`) — Android/Kotlin + AcheronCore Java
 
+## Platform
+
+The API assumes **Linux** (native, WSL, or Docker). The scan tools (Nmap, Nikto,
+OpenVAS/Greenbone) are Linux-native — there is no Windows/WSL bridge in the code. On Windows,
+run the entrypoint inside WSL or use `docker compose`. Scan subprocesses are launched with
+`start_new_session=True` so cancellation kills the full descendant tree via `psutil`.
+
 ## Entry Point
 
 `API/run.py` → `create_app()` factory. Does this in order:

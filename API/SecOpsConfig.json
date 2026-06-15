@@ -142,7 +142,7 @@
   "general": {
     "directories": {
       "logdir": "..",
-      "tempdir": "C:/tmp/secapp"
+      "tempdir": "./tmp/secapp"
     },
     "taskqueue": {
       "history_max_items": 200,

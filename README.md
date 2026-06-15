@@ -73,6 +73,12 @@
 
 ## Requisitos previos
 
+> **Plataforma:** la API de SeQ asume un entorno **Linux**. Las herramientas de escaneo
+> (Nmap, Nikto y OpenVAS/Greenbone) son nativas de Linux —OpenVAS ni siquiera corre nativo en
+> Windows— por lo que la API debe ejecutarse en **Linux nativo, dentro de WSL, o vía Docker**.
+> En Windows, ejecuta el entrypoint dentro de WSL (`wsl` → `cd .../API && python run.py`) o usa
+> `docker compose`.
+
 Antes de ejecutar el proyecto, asegúrate de tener instalado:
 
 - Python 3.10+

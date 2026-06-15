@@ -41,11 +41,19 @@ Los archivos HTML debe existir previamente en el sistema de archivos.
 """
 
 import os
+from pathlib import Path
 from flask import Blueprint, send_from_directory, jsonify
 
 pages_bp = Blueprint("pages", __name__)
 
-_PAGES_DIR = r"C:\Users\gmiga\Documents\GitHub\SecOps\web\legacy"
+# Directorio de páginas HTML legacy. Se prioriza la variable de entorno
+# ``LEGACY_PAGES_DIR`` (p. ej. dentro de Docker) y, como fallback para
+# desarrollo local, se resuelve de forma portable contra la raíz del repo:
+# .../SecOps/API/src/modules/pages/endpoints.py -> parents[4] == raíz del repo.
+_PAGES_DIR = str(
+    Path(os.getenv("LEGACY_PAGES_DIR")
+         or Path(__file__).resolve().parents[4] / "web" / "legacy")
+)
 
 @pages_bp.route("/login")
 def serve_login():

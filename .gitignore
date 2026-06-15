@@ -68,5 +68,6 @@ Thumbs.db
 .pritierrc.json
 API/.mypy_cache/
 API/.pytest_cache/
+API/src/tmp
 PLAN_MEJORAS.md
 .claude
