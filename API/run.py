@@ -20,6 +20,7 @@ import logging
 import subprocess
 import sys
 import threading
+import time
 import warnings
 
 from flask                  import Flask, jsonify, request
@@ -35,7 +36,7 @@ from src.modules.shared._exceptions import (
     SecOpsException,
     create_error_response
 )
-from src.modules.system     import SecOpsLogger, config_reading, system_blp
+from src.modules.system     import configure_logging, config_reading, system_blp
 from src.modules.users      import (
     UserManager,
     oauth_blp,
@@ -52,11 +53,9 @@ import src.modules.system.config_reading as CR
 
 APP_CONTEXT = CR.get_app_context()
 
-_logger = SecOpsLogger(name="APIMain").get_logger()
+_logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", message="Multiple schemas resolved to the name")
-logging.getLogger("redis").setLevel(logging.WARNING)
-logging.getLogger("rq").setLevel(logging.WARNING)
 
 _IS_SHUTTING_DOWN = False
 _WORKER = {"proc": None}
@@ -156,8 +155,6 @@ def _graceful_shutdown(signum, *args) -> None:
     """
     global _IS_SHUTTING_DOWN
 
-    print(f"\n[SeQ] Signal {signum} received, starting graceful shutdown...", flush=True)
-
     if _IS_SHUTTING_DOWN:
         # Segundo CTRL+C: salida inmediata sin esperar a la limpieza.
         os._exit(1)
@@ -174,8 +171,6 @@ def _graceful_shutdown(signum, *args) -> None:
         _logger.warning(
             "Limpieza de apagado excedió %ss — forzando salida.", _SHUTDOWN_DEADLINE_S
         )
-
-    print("[SeQ] Apagado completado.", flush=True)
     os._exit(0)
 
 def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Flask:
@@ -192,6 +187,8 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
         Flask: Aplicación completamente configurada y lista para servir.
     """
     from src.modules.sentinel.services.scheduling import Scheduler
+
+    configure_logging()
 
     app = Flask(__name__)
 
@@ -226,6 +223,9 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
 
     _logger.info("Registrando manejadores de error globales...")
     _register_error_handlers(app)
+
+    _logger.info("Registrando auditoría de peticiones...")
+    _register_request_audit(app)
 
     if fresh_db_init:
         _init_db()
@@ -353,6 +353,51 @@ def _register_error_handlers(app: Flask) -> None:
             "error_description": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
 
+def _register_request_audit(app: Flask) -> None:
+    """
+    Registra la auditoría de acceso de la API.
+
+    Un único par de hooks ``before_request`` / ``after_request`` garantiza que
+    TODA petición a cualquier endpoint deje una línea de log con: método, ruta,
+    código de estado, usuario que la realizó, IP de origen y duración.
+
+    El usuario se lee de ``request.current_username`` / ``request.current_user_id``,
+    que ``@require_oauth_token`` inyecta durante el dispatch de la vista; por eso
+    el log se emite en ``after_request`` (cuando esos atributos ya existen) y no
+    en ``before_request``. Las peticiones anónimas se registran como ``anonymous``.
+
+    Args:
+        app: Instancia de la aplicación Flask.
+    """
+    audit_logger = logging.getLogger("seq.audit")
+
+    @app.before_request
+    def _audit_start():
+        request._audit_start = time.perf_counter()  # type: ignore[attr-defined]
+
+    @app.after_request
+    def _audit_access(response):
+        # Ignora el preflight CORS y los assets de la documentación OpenAPI.
+        if request.method == "OPTIONS" or request.path.startswith("/api-docs"):
+            return response
+
+        username = getattr(request, "current_username", None) or "anonymous"
+        user_id  = getattr(request, "current_user_id", None)
+        start    = getattr(request, "_audit_start", None)
+        duration_ms = (time.perf_counter() - start) * 1000 if start else -1.0
+
+        audit_logger.info(
+            "%s %s -> %s | user=%s(id=%s) ip=%s %.1fms",
+            request.method,
+            request.path,
+            response.status_code,
+            username,
+            user_id,
+            request.remote_addr,
+            duration_ms,
+        )
+        return response
+
 def _init_db() -> None:
     """
     Inicializa la base de datos completa de SeQ desde cero.
@@ -388,11 +433,9 @@ def _init_db() -> None:
     port = db_creds["port"]
 
     default_db_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/postgres"
-    print(f"[*] Conectando a la base de datos por defecto para configurar '{dbname}'...")
     engine_postgres = create_engine(default_db_url, isolation_level="AUTOCOMMIT")
 
     with engine_postgres.connect() as conn:
-        print(f"[*] Terminando conexiones activas a la base de datos '{dbname}'...")
         conn.execute(text(f"""
             SELECT pg_terminate_backend(pg_stat_activity.pid)
             FROM pg_stat_activity
@@ -400,30 +443,16 @@ def _init_db() -> None:
             AND pid <> pg_backend_pid();
         """))
 
-        # Eliminar y recrear la base de datos
-        print(f"[*] Eliminando la base de datos '{dbname}' si existe...")
         conn.execute(text(f'DROP DATABASE IF EXISTS "{dbname}";'))
-
-        print(f"[*] Creando la base de datos '{dbname}'...")
         conn.execute(text(f'CREATE DATABASE "{dbname}";'))
 
     engine_postgres.dispose()
 
     database_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
-    print(f"[*] Conectando a: {dialect}://{username}:***@{host}:{port}/{dbname}")
     engine = create_engine(database_url)
 
-    # 1. Eliminar las tablas si ya existen (en lugar de borrar toda la DB)
-    print("[*] Eliminando tablas existentes (si las hay)...")
     Base.metadata.drop_all(engine)
-
-    # 2. Creación de las tablas
-    print("[*] Creando tablas en PostgreSQL...")
     Base.metadata.create_all(engine)
-    print("[+] ¡Tablas creadas correctamente!")
-
-    # 3. Inserción de los datos iniciales
-    print("[*] Insertando datos de prueba (User)...")
     with engine.connect() as conn:
         conn.execute(text("""
             INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at, role)
@@ -439,7 +468,6 @@ def _init_db() -> None:
             );
         """))
 
-        print("[*] Insertando atributos al usuario root...")
         root_attributes = UserManager.get_all_available_attributes()
         for attr in root_attributes:
             conn.execute(text(f'''
@@ -540,8 +568,6 @@ def _init_db() -> None:
             ('Cultura de seguridad en la empresa');"""
         )))
         conn.commit()
-
-    print("[+] ¡Datos iniciales insertados con éxito!")
 
 
 if __name__ == "__main__":
