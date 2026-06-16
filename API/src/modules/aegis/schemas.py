@@ -11,12 +11,12 @@ class DocumentIdQuerySchema(Schema):
 
 
 class ExportRequestBodySchema(Schema):
-    format = fields.String(load_default="md", validate=validate.OneOf(["md", "json"]))
+    format = fields.String(load_default="md", validate=validate.OneOf(["md", "json", "html"]))
     options = fields.Dict(load_default={})
 
 
 class ExportDownloadQuerySchema(Schema):
-    format = fields.String(load_default="md", validate=validate.OneOf(["md", "json"]))
+    format = fields.String(load_default="md", validate=validate.OneOf(["md", "json", "html"]))
     inline = fields.Boolean(load_default=False)
 
 

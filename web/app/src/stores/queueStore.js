@@ -4,9 +4,9 @@ import { useApi } from '@/composables/useApi'
 import { useToastStore } from '@/stores/toastStore'
 
 /**
- * Store de gestion de la cola de tareas en segundo plano (SeQueue).
+ * Store de gestion de la cola de tareas en segundo plano (TaskQueue / RQ).
  *
- * Consume los endpoints de /system/sequeue/* para listar, cancelar
+ * Consume los endpoints de /system/tasks/* para listar, cancelar
  * y ajustar la configuracion de la cola.
  *
  * @module queueStore
@@ -39,11 +39,11 @@ export const useQueueStore = defineStore('queue', () => {
   const activeTab = ref('running')
 
   /**
-   * Carga el estado global de la cola desde GET /system/sequeue/status.
+   * Carga el estado global de la cola desde GET /system/tasks/status.
    */
   async function loadStatus() {
     try {
-      const res = await apiFetch('/system/sequeue/status')
+      const res = await apiFetch('/system/tasks/status')
       if (!res?.ok) {
         toast.show('Error al cargar el estado de la cola.', 'error')
         return
@@ -66,14 +66,14 @@ export const useQueueStore = defineStore('queue', () => {
         per_page: String(perPage.value),
         status: activeTab.value,
       })
-      const res = await apiFetch(`/system/sequeue/tasks?${params}`)
+      const res = await apiFetch(`/system/tasks?${params}`)
       if (!res?.ok) {
         toast.show('Error al cargar las tareas.', 'error')
         return
       }
       const data = await res.json()
-      tasks.value = Array.isArray(data) ? data : []
-      totalCount.value = data.totalCount ?? tasks.value.length
+      tasks.value = data.tasks ?? []
+      totalCount.value = data.totalCount ?? 0
     } catch {
       toast.show('Error al conectar con la cola.', 'error')
     } finally {
@@ -82,11 +82,11 @@ export const useQueueStore = defineStore('queue', () => {
   }
 
   /**
-   * Cancela una tarea por su UUID vía POST /system/sequeue/tasks/{id}/cancel.
+   * Cancela una tarea por su UUID vía POST /system/tasks/{id}/cancel.
    */
   async function cancelTask(taskId) {
     try {
-      const res = await apiFetch(`/system/sequeue/tasks/${taskId}/cancel`, {
+      const res = await apiFetch(`/system/tasks/${taskId}/cancel`, {
         method: 'POST',
       })
       if (!res?.ok) {
@@ -105,11 +105,11 @@ export const useQueueStore = defineStore('queue', () => {
   }
 
   /**
-   * Actualiza el numero maximo de workers via PUT /system/sequeue/config.
+   * Actualiza el numero maximo de workers via PUT /system/tasks/config.
    */
   async function updateMaxWorkers(maxWorkers) {
     try {
-      const res = await apiFetch('/system/sequeue/config', {
+      const res = await apiFetch('/system/tasks/config', {
         method: 'PUT',
         body: JSON.stringify({ max_workers: maxWorkers }),
       })

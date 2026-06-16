@@ -22,7 +22,7 @@ def check_message_id(headers: dict) -> RuleResult:
         )
 
     return RuleResult(
-        score=0, verdict="pass",
+        score=1, verdict="pass",
         details={"message_id": message_id, "length": len(message_id.strip())},
         recommendation=None,
     )

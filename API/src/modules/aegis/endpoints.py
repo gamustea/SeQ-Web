@@ -1,11 +1,12 @@
+import logging
+
 from flask import request, send_file, Response
 from flask_smorest import Blueprint as SmorestBlueprint
 
 import src.modules.system.config_reading as CR
-from src.modules.shared import handle_exceptions, limiter
+from src.modules.shared import handle_exceptions, limiter, current_actor
 from src.modules.shared._exceptions import ValidationError
 from src.modules.shared.schemas import ErrorSchema
-from src.modules.system.logging import SecOpsLogger
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, UserManager, get_current_user
 
 from .managers import AegisManager
@@ -41,7 +42,7 @@ aegis_blp = SmorestBlueprint(
     "aegis", __name__,
     description="Generacion y exportacion de pildoras de concienciacion (Aegis)"
 )
-_logger = SecOpsLogger("aegis").get_logger()
+logger = logging.getLogger(__name__)
 
 USER_MANAGER = UserManager()
 
@@ -49,9 +50,9 @@ USER_MANAGER = UserManager()
 def _get_document_checked(manager, doc_id: int, user_id: int) -> dict:
     doc = manager.get_document(doc_id)
     if not doc or doc.get("userId") != user_id:
-        _logger.warning(
-            f"Documento {doc_id} no encontrado o acceso denegado "
-            f"para user {get_current_user().username} (userId={user_id})"
+        logger.warning(
+            "Documento %s no encontrado o acceso denegado | user=%s (userId=%s)",
+            doc_id, current_actor(), user_id
         )
         raise DocumentNotFoundError(doc_id)
     if doc["status"] != "done":
@@ -73,7 +74,7 @@ def _get_document_checked(manager, doc_id: int, user_id: int) -> dict:
 @limiter.limit("10 per hour; 30 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_CREATE])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_generate(data):
     """Iniciar generacion asincrona de una pildora Aegis"""
     topic_id = data["topicId"]
@@ -82,7 +83,7 @@ def aegis_generate(data):
     user = get_current_user()
     mgr = AegisManager(user)
     document_id = mgr.generate(topic_id=topic_id, tweaks=tweaks)
-    _logger.info(
+    logger.info(
         f"Aegis generate lanzado -- topicId={topic_id} "
         f"documentId={document_id} user={get_current_user().username}"
     )
@@ -107,7 +108,7 @@ def aegis_generate(data):
 @limiter.limit("120 per hour; 500 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_READ])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_status(args):
     """Consultar estado de generacion de un documento"""
     doc_id = args["id"]
@@ -136,7 +137,7 @@ def aegis_status(args):
 @limiter.limit("60 per hour; 300 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_READ])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_get_document(args):
     """Obtener contenido estructurado de un documento terminado"""
     doc_id = args["id"]
@@ -164,7 +165,7 @@ def aegis_get_document(args):
 @limiter.limit("30 per hour; 100 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_READ])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_download(args):
     """Descargar archivo original generado (.json o .md)"""
     doc_id = args["id"]
@@ -188,7 +189,7 @@ def aegis_download(args):
     doc_format = doc_info.get("format", "json")
     mimetype = "application/json" if doc_format == "json" else "text/markdown; charset=utf-8"
 
-    _logger.info(f"Descargando Aegis doc {doc_id} ({doc_format}) user={get_current_user().username}")
+    logger.info("Descargando Aegis doc %s (%s) | user=%s", doc_id, doc_format, current_actor())
     return send_file(path, as_attachment=True, download_name=path.name, mimetype=mimetype)
 
 
@@ -201,7 +202,7 @@ def aegis_download(args):
 @limiter.limit("30 per hour; 100 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_DELETE])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_delete_document(args):
     """Eliminar un documento Aegis (BD + archivo en disco)"""
     doc_id = args["id"]
@@ -211,7 +212,7 @@ def aegis_delete_document(args):
     mgr.assert_document_ownership(doc_id)
     mgr.delete_document(doc_id)
 
-    _logger.info(f"Aegis doc {doc_id} eliminado para usuario {user.username}")
+    logger.info("Aegis doc %s eliminado | user=%s", doc_id, current_actor())
     return {"message": "Documento eliminado correctamente", "documentId": doc_id}
 
 
@@ -222,7 +223,7 @@ def aegis_delete_document(args):
 @limiter.limit("60 per hour; 300 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_READ])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_list_user_documents():
     """Listar todos los documentos Aegis del usuario autenticado"""
     user = get_current_user()
@@ -237,7 +238,7 @@ def aegis_list_user_documents():
 @aegis_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
 @limiter.limit("120 per hour; 600 per day")
 @require_oauth_token
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_get_topics():
     """Listar temas disponibles para generar pildoras"""
     user = get_current_user()
@@ -252,7 +253,7 @@ def aegis_get_topics():
 @aegis_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
 @limiter.limit("120 per hour; 600 per day")
 @require_oauth_token
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def aegis_get_brands():
     """Catalogo de marcas disponibles para filtrado de alertas"""
     brands = CR.get_aegis_brands()
@@ -318,7 +319,7 @@ def list_export_formats():
 @limiter.limit("20 per hour; 100 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_READ])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def export_document(data, doc_id):
     """Exportar un documento Aegis al formato solicitado"""
     format_str = data.get("format", "md")
@@ -351,7 +352,7 @@ def export_document(data, doc_id):
 
     result = exporter.export(export_data)
 
-    _logger.info(
+    logger.info(
         f"Exportacion {export_format.value} generada para doc {doc_id} "
         f"-- user={get_current_user().username}, size={result.size_bytes}b"
     )
@@ -379,7 +380,7 @@ def export_document(data, doc_id):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @limiter.limit("30 per hour; 150 per day")
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def download_export(args, doc_id):
     """Descargar una exportacion previamente generada"""
     format_str = args.get("format", "md")
@@ -403,7 +404,7 @@ def download_export(args, doc_id):
     result = exporter.export(export_data)
 
     disposition = "inline" if inline else "attachment"
-    _logger.info(
+    logger.info(
         f"Descarga {export_format.value} doc {doc_id} "
         f"-- user={get_current_user().username}, inline={inline}"
     )
@@ -430,7 +431,7 @@ def download_export(args, doc_id):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.AEGIS_READ])
 @limiter.limit("30 per hour; 150 per day")
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def quick_export_markdown(args, doc_id):
     """Exportacion rapida a Markdown con opciones adicionales"""
     inline = args.get("inline", False)
@@ -452,7 +453,7 @@ def quick_export_markdown(args, doc_id):
     result = exporter.export(export_data)
 
     disposition = "inline" if inline else "attachment"
-    _logger.info(
+    logger.info(
         f"Quick MD export doc {doc_id} "
         f"-- user={get_current_user().username}, inline={inline}, alerts={include_alerts}"
     )

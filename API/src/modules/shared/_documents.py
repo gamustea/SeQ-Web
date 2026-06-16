@@ -18,6 +18,8 @@ Example:
 ...         return self._call_model([{"role": "user", "content": self._build_user_prompt(data)}])
 """
 
+import logging
+
 import ollama
 from ollama import ChatResponse
 
@@ -27,6 +29,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypeVar, Optional, List, Any
 from sqlalchemy import desc
+
+logger = logging.getLogger(__name__)
 
 from src.modules.shared import Document
 from src.modules.infrastructure import UnitOfWork
@@ -85,7 +89,7 @@ class AIWriter(ABC):
                    environment or CR defaults.
         """
 
-        from src.modules.system import SecOpsLogger, config_reading as CR
+        from src.modules.system import config_reading as CR
         env_host, env_model = CR.get_ollama_environment()
 
         if host is None or model is None:
@@ -95,8 +99,7 @@ class AIWriter(ABC):
             self.host = host
             self.model = model
 
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
-        self.logger.info(f"[Ollama] Inicializando cliente con host={self.host}, model={self.model}")
+        logger.info(f"[Ollama] Inicializando cliente con host={self.host}, model={self.model}")
         self._client = ollama.Client(host=self.host, timeout=300)
 
 
@@ -136,7 +139,7 @@ class AIWriter(ABC):
                 )
             return "\n".join(lines)
         except Exception as exc:
-            self.logger.error(f"Error búsqueda web: {exc}")
+            logger.error(f"Error búsqueda web: {exc}", exc_info=True)
             return f"[ERROR BÚSQUEDA] {exc}"
 
 
@@ -217,10 +220,10 @@ class AIWriter(ABC):
             "repeat_penalty": 1.1,
         }
 
-        self.logger.info(f"[Ollama] Calling model={self.model} at {self.host}")
+        logger.info(f"[Ollama] Calling model={self.model} at {self.host}")
 
         try:
-            self.logger.info(f"[Ollama] Sending request to {self.host}/api/chat")
+            logger.info(f"[Ollama] Sending request to {self.host}/api/chat")
             resp = self._client.chat(
                 model    = self.model,
                 messages = messages,
@@ -228,9 +231,9 @@ class AIWriter(ABC):
                 format   = "json",
                 options  = options,
             )
-            self.logger.info("Response received successfully")
+            logger.info("Response received successfully")
         except Exception as e:
-            self.logger.error("Error connecting to {self.host}: {e}")
+            logger.error(f"Error connecting to {self.host}: {e}", exc_info=True)
             raise
 
         if getattr(resp.message, "tool_calls", None):  # pylint: disable=no-member
@@ -359,13 +362,12 @@ def serialize_document_list(
     return result
 
 
-def safe_delete_file(filename: str, logger: Any = None) -> bool:
+def safe_delete_file(filename: str) -> bool:
     """
     Elimina un archivo del sistema de archivos de forma segura.
 
     Args:
         filename: Ruta al archivo a eliminar.
-        logger: Opcional. Instancia de logger para registrar advertencias.
 
     Returns:
         True si el archivo fue eliminado o no existía, False si hubo error.
@@ -382,8 +384,7 @@ def safe_delete_file(filename: str, logger: Any = None) -> bool:
         os.remove(filename)
         return True
     except Exception as exc:
-        if logger:
-            logger.warning(f"No se pudo eliminar el archivo {filename}: {exc}")
+        logger.warning(f"No se pudo eliminar el archivo {filename}: {exc}", exc_info=True)
         return False
 
 
@@ -427,14 +428,13 @@ def get_documents_by_user(user_id: int, limit: int = 100, document_type: str | N
         return serialize_document_list(docs)
 
 
-def delete_document_file(document_id: int, output_dir: Path, logger: Any = None) -> None:
+def delete_document_file(document_id: int, output_dir: Path) -> None:
     """
     Elimina un documento de la base de datos y su archivo en disco.
 
     Args:
         document_id: ID del documento a eliminar.
         output_dir: Directorio donde se encuentran los archivos.
-        logger: Opcional. Instancia de logger para registrar operaciones.
 
     Raises:
         ValueError: Si el documento no existe.
@@ -447,10 +447,8 @@ def delete_document_file(document_id: int, output_dir: Path, logger: Any = None)
         if doc.filename: # type: ignore
             file_path = output_dir / doc.filename
             if file_path.exists():
-                safe_delete_file(str(file_path), logger)
-                if logger:
-                    logger.info(f"Archivo eliminado: {file_path}")
+                safe_delete_file(str(file_path))
+                logger.info(f"Archivo eliminado: {file_path}")
 
         uow.session.delete(doc)
-        if logger:
-            logger.info(f"Documento {document_id} eliminado de BD")
+        logger.info(f"Documento {document_id} eliminado de BD")

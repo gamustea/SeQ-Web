@@ -41,9 +41,12 @@ from reportlab.platypus import (
     CondPageBreak,
 )
 
+import logging
+
 import src.modules.system.config_reading as CR
-from src.modules.system.logging import SecOpsLogger
 from src.modules.shared._exceptions import IllegalStateError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 from ..model import NmapScan, NiktoScan, Scan, Host, ScanType
 from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
@@ -340,7 +343,6 @@ class PrintingStrategy(ABC):
         self.scan = scan
         self.writer = None
         self.color_palette: Dict[ColorType, str] = {}
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
 
     @classmethod
     def register(cls, scan_type: ScanType):
@@ -391,21 +393,21 @@ class PrintingStrategy(ABC):
     def _append_ai_analysis(self, elements: list, theme: ReportTheme) -> None:
         """Append AI-generated security analysis to the report."""
         scan_type = type(self.scan).__name__
-        self.logger.info(f"[IA] Iniciando para scan {self.scan.id} ({scan_type})")
+        logger.info(f"[IA] Iniciando para scan {self.scan.id} ({scan_type})")
 
         prompts = CR.get_prompts_config()
         tool_key = {'NmapScan': 'nmap', 'NiktoScan': 'nikto', 'OpenVASScan': 'openvas'}.get(scan_type, 'nmap')
         tool_prompts = prompts.get(tool_key, {})
 
         if not tool_prompts.get('system'):
-            self.logger.error(f"[IA] Prompt 'system' no encontrado para {tool_key}")
+            logger.error(f"[IA] Prompt 'system' no encontrado para {tool_key}")
             elements.append(PageBreak())
             elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
             elements.append(Paragraph("Error: Configuración IA no encontrada", theme.body))
             return
 
         if not tool_prompts.get('userTemplate'):
-            self.logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
+            logger.warning(f"[IA] Prompt 'userTemplate' no encontrado para {tool_key}")
 
         try:
             if self.writer is None:
@@ -413,17 +415,17 @@ class PrintingStrategy(ABC):
 
             ai_analysis = self.writer.generate(self.scan)
         except Exception as e:
-            self.logger.error(f"[IA] Excepción: {e}", exc_info=True)
+            logger.error(f"[IA] Excepción: {e}", exc_info=True)
             ai_analysis = {}
 
         if not ai_analysis:
-            self.logger.warning(f"[IA] Respuesta vacía para scan {self.scan.id}")
+            logger.warning(f"[IA] Respuesta vacía para scan {self.scan.id}")
             elements.append(PageBreak())
             elements.extend(theme.section_header("Análisis de Seguridad IA", "INTELIGENCIA ARTIFICIAL"))
             elements.append(Paragraph("No se pudo generar análisis IA", theme.body))
             return
 
-        self.logger.info(f"[IA] OK - keys: {list(ai_analysis.keys())}")
+        logger.info(f"[IA] OK - keys: {list(ai_analysis.keys())}")
 
         elements.append(PageBreak())
 
@@ -593,7 +595,6 @@ class PDFCreator:
         self.directory = CR.get_directory_of(CR.DirectoryType.OUTPUT_SENTINEL)
         self.printing_strategy = PrintingStrategy.resolve_printing_strategy(scan_id)
         self.scan = self.printing_strategy.scan
-        self.logger = SecOpsLogger().get_logger()
 
     def _set_pdf_metadata(self, doc) -> None:
         """Set PDF document metadata.
@@ -610,7 +611,7 @@ class PDFCreator:
         doc.creator = "SeQ PDF Generator v2.0"
 
     def _on_page(self, canv, doc):
-        """Callback for rendering page elements (header, footer, sidebar).
+        """Callback for rendering page elements (header, footer, sidebar, small logo).
 
         Args:
             canv: Canvas instance.
@@ -626,15 +627,27 @@ class PDFCreator:
         canv.setFillColor(main)
         canv.rect(20, 20, 6, height - 40, stroke=0, fill=1)
 
-        canv.setFont("Helvetica-Bold", 9)
+        canv.setFont("Helvetica-Bold", 12)
         canv.setFillColor(dark)
-        canv.drawString(40, height - 30, "SecOps Security Report")
+        canv.drawString(40, height - 30, "SeQ Security Report")
 
         canv.setStrokeColor(colors.HexColor("#e0e0e0"))
         canv.setLineWidth(0.5)
         canv.line(36, height - 42, width - 36, height - 42)
 
+        # Small logo in top-right corner (skipping cover page)
         page_num = canv.getPageNumber()
+        if page_num > 1:
+            logo_path = getattr(self, "_header_logo_path", None)
+            if logo_path is None:
+                directory_type = CR.DirectoryType.RESOURCES_SENTINEL
+                resource_directory = CR.get_directory_of(directory_type)
+                picture_name = self.printing_strategy.get_picture_name()
+                logo_path = os.path.join(resource_directory, picture_name)
+                self._header_logo_path = logo_path
+            if os.path.exists(logo_path):
+                canv.drawImage(logo_path, width - 50, height - 36, width=0.3 * inch, height=0.3 * inch, preserveAspectRatio=True)
+
         canv.setFont("Helvetica", 8)
         canv.setFillColor(colors.HexColor("#999999"))
         canv.drawRightString(width - 40, 28, f"Página {page_num}")
@@ -671,19 +684,7 @@ class PDFCreator:
         white = colors.HexColor(palette[ColorType.WHITE])
         black = colors.HexColor(palette[ColorType.BLACK])
 
-        self.append_logo(elements, is_cover=True)
-
-        doc_type_style = ParagraphStyle(
-            "CoverDocType",
-            parent=theme.styles["Normal"],
-            fontSize=11,
-            textColor=main,
-            alignment=TA_CENTER,
-            fontName="Helvetica-Bold",
-            spaceAfter=10,
-        )
-        elements.append(Paragraph(document_type.upper(), doc_type_style))
-        elements.append(Spacer(1, 0.25 * inch))
+        elements.append(Spacer(1, 2.5 * inch))
 
         title_style = ParagraphStyle(
             "CoverTitle",
@@ -698,8 +699,8 @@ class PDFCreator:
         title_table = Table([[title_paragraph]], colWidths=[6 * inch])
         title_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), main),
-            ("TOPPADDING", (0, 0), (-1, -1), 24),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 24),
+            ("TOPPADDING", (0, 0), (-1, -1), 16),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
             ("LEFTPADDING", (0, 0), (-1, -1), 24),
             ("RIGHTPADDING", (0, 0), (-1, -1), 24),
         ]))
@@ -747,34 +748,72 @@ class PDFCreator:
         elements.append(decoration)
         elements.append(PageBreak())
 
-    def append_logo(self, elements: list, is_cover: bool = False) -> None:
-        """Append logo image to the document.
+    def append_logo(self, elements: list) -> None:
+        """Append the logo as a standalone themed badge (useful for cover pages).
 
         Args:
             elements: List of flowable elements.
-            is_cover: Whether this is for the cover page (larger logo).
         """
+        badge = self._make_logo_badge()
+        elements.append(badge)
+        elements.append(Spacer(1, 0.2 * inch))
 
+    def _make_logo_badge(self) -> Table:
+        """Build a header-band badge: themed square container with the tool logo.
 
-        directory_type = CR.DirectoryType.RESOURCE
+        Returns:
+            A Table flowable (full-width, main-colored) with the logo centred inside.
+        """
+        directory_type = CR.DirectoryType.RESOURCES_SENTINEL
         resource_directory = CR.get_directory_of(directory_type)
         picture_name = self.printing_strategy.get_picture_name()
         image_filename = os.path.join(resource_directory, picture_name)
 
         if not os.path.exists(image_filename):
-            self.logger.error(f"No se ha encontrado la imagen {image_filename}")
-            return
+            logger.error(f"No se ha encontrado la imagen {image_filename}")
+            dummy = Table([[""]], colWidths=[0.9 * inch], rowHeights=[0.9 * inch])
+            dummy.hAlign = "CENTER"
+            return dummy
 
-        if is_cover:
-            logo = Image(image_filename, width=3 * inch, height=3 * inch)
-            logo.hAlign = "CENTER"
-            elements.append(logo)
-            elements.append(Spacer(1, 0.3 * inch))
-        else:
-            logo = Image(image_filename, width=1.2 * inch, height=1.2 * inch)
-            logo.hAlign = "LEFT"
-            elements.append(logo)
-            elements.append(Spacer(1, 0.15 * inch))
+        palette = self.printing_strategy.color_palette
+        main_color = colors.HexColor(palette[ColorType.MAIN])
+
+        logo = Image(image_filename, width=0.9 * inch, height=0.9 * inch)
+        container = Table([[logo]], colWidths=[1.3 * inch], rowHeights=[1.3 * inch])
+        container.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), main_color),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        container.hAlign = "CENTER"
+
+        doc_type_style = ParagraphStyle(
+            "CoverDocType",
+            parent=getSampleStyleSheet()["Normal"],
+            fontSize=13,
+            textColor=colors.HexColor(palette[ColorType.WHITE]),
+            alignment=TA_LEFT,
+            fontName="Helvetica-Bold",
+        )
+        doc_para = Paragraph(self.printing_strategy.get_report_title().upper(), doc_type_style)
+
+        band = Table([[container, doc_para]], colWidths=[1.8 * inch, 4.2 * inch])
+        band.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), main_color),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, 0), "CENTER"),
+            ("ALIGN", (1, 0), (1, 0), "LEFT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        band.hAlign = "CENTER"
+        return band
 
     def append_consent(self, elements: list, theme: ReportTheme) -> None:
         """Append consent declaration page to the document.
@@ -892,7 +931,6 @@ class PDFCreator:
             client_name=client_name,
         )
 
-        self.append_logo(elements, is_cover=False)
         self.printing_strategy.append_body(theme=theme, elements=elements, ai_report=ai_report)
 
         self.append_consent(elements, theme)
@@ -1054,7 +1092,7 @@ class NmapPrintingStrategy(PrintingStrategy):
         Returns:
             Logo filename.
         """
-        picture_name = "SecOps-Logo-Blue"
+        picture_name = "Sentinel-Blue-Bg"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
     def get_report_title(self) -> str:
@@ -1411,7 +1449,7 @@ class OpenVASPrintingStrategy(PrintingStrategy):
         Returns:
             Logo filename.
         """
-        picture_name = "SecOps-Logo-Green"
+        picture_name = "Sentinel-Green-Bg"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
     def get_report_title(self) -> str:
@@ -1679,7 +1717,7 @@ class NiktoPrintingStrategy(PrintingStrategy):
         return "_Nikto.pdf"
 
     def get_picture_name(self, dark: bool = False) -> str:
-        picture_name = "SecOps-Logo-Salmon"
+        picture_name = "Sentinel-Salmon-Bg"
         return picture_name + "Dark.png" if dark else picture_name + "Light.png"
 
     def get_report_title(self) -> str:

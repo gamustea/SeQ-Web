@@ -1,5 +1,21 @@
 {
   "appVersion": "3.0.0",
+  "security": {
+    "argon2": {
+      "time_cost": 3,
+      "memory_cost": 65536,
+      "parallelism": 4
+    }
+  },
+  "database": {
+    "isolation_level": "READ COMMITTED"
+  },
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "db": 0,
+    "socket_connect_timeout": 2
+  },
   "aegis": {
     "brands": [
       {
@@ -142,20 +158,23 @@
   "general": {
     "directories": {
       "logdir": "..",
-      "resourcedir": "../../shared/resources/images",
-      "tempdir": "C:/tmp/secapp"
+      "tempdir": "./tmp/secapp"
     },
-    "sequeue": {
-      "history_max_items": 100,
+    "taskqueue": {
+      "history_max_items": 200,
       "history_ttl_seconds": 3600,
-      "max_workers": 6
+      "max_workers": 4
     }
   },
   "sentinel": {
     "areLocalIpsAllowed": true,
+    "folders": {
+      "defaultFolderName": "Sin carpeta"
+    },
     "directories": {
       "csv": "data/sentinel/csv",
-      "output": "data/sentinel/output"
+      "output": "data/sentinel/output",
+      "resources": "../resources/sentinel"
     },
     "enabled": true,
     "hostReachabilityCheck": {

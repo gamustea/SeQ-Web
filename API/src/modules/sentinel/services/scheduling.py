@@ -1,5 +1,7 @@
 
-from datetime import datetime, timedelta
+import logging
+
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler as _BgScheduler
@@ -8,7 +10,6 @@ from apscheduler.triggers.interval import IntervalTrigger
 from croniter import croniter
 
 from src.modules.infrastructure import UnitOfWork
-from src.modules.system.logging import SecOpsLogger
 
 from ..exceptions import (
     InvalidProgramedTaskArgumentError,
@@ -17,7 +18,7 @@ from ..exceptions import (
 from ..repositories import ProgramedScanRepository
 from ..model import ProgramedScan, Scan, ScanStatus, ScanType
 
-_logger = SecOpsLogger("Scheduling").get_logger()
+logger = logging.getLogger(__name__)
 
 
 def _require_args(
@@ -32,7 +33,7 @@ def _require_args(
 def _run_nmap_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target_host", "target_ports"], "nmap")
 
-    _logger.info(
+    logger.info(
         "Nmap scheduled scan #%d: %s ports %s",
         ps.id, arguments["target_host"], arguments["target_ports"],
     )
@@ -47,7 +48,7 @@ def _run_nmap_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
         programed_scan_id=ps.id,
     )
 
-    _logger.info(
+    logger.info(
         "Nmap scheduled scan #%d completed (scan_id=%d)",
         ps.id, scan_id,
     )
@@ -55,7 +56,7 @@ def _run_nmap_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
 def _run_nikto_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target_domain"], "nikto")
 
-    _logger.info(
+    logger.info(
         "Nikto scheduled scan #%d: %s",
         ps.id, arguments["target_domain"],
     )
@@ -69,7 +70,7 @@ def _run_nikto_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
         programed_scan_id=ps.id,
     )
 
-    _logger.info(
+    logger.info(
         "Nikto scheduled scan #%d completed (scan_id=%d)",
         ps.id, scan_id,
     )
@@ -77,7 +78,7 @@ def _run_nikto_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
 def _run_openvas_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
     _require_args(arguments, ["target"], "openvas")
 
-    _logger.info(
+    logger.info(
         "OpenVAS scheduled scan #%d: %s",
         ps.id, arguments["target"],
     )
@@ -91,7 +92,7 @@ def _run_openvas_scan(ps: ProgramedScan, arguments: dict[str, Any]) -> None:
         programed_scan_id=ps.id,
     )
 
-    _logger.info(
+    logger.info(
         "OpenVAS scheduled scan #%d completed (scan_id=%d)",
         ps.id, scan_id,
     )
@@ -106,7 +107,6 @@ class Scheduler:
     }
 
     _scheduler: Optional[_BgScheduler] = None
-    _logger = SecOpsLogger("Scheduler").get_logger()
 
     # =========================================================================
     # JOB HELPERS
@@ -137,7 +137,7 @@ class Scheduler:
             return
         cls._scheduler = _BgScheduler()
         cls._scheduler.start()
-        cls._logger.info("Scheduler started")
+        logger.info("Scheduler started")
         cls._sync_from_db()
 
     @classmethod
@@ -146,7 +146,7 @@ class Scheduler:
             return
         cls._scheduler.shutdown(wait=True)
         cls._scheduler = None
-        cls._logger.info("Scheduler stopped")
+        logger.info("Scheduler stopped")
 
     # =========================================================================
     # JOB MANAGEMENT
@@ -155,7 +155,7 @@ class Scheduler:
     @classmethod
     def schedule(cls, ps: ProgramedScan) -> None:
         if cls._scheduler is None:
-            cls._logger.warning("Scheduler not started, skipping schedule")
+            logger.warning("Scheduler not started, skipping schedule")
             return
 
         job_id = cls._build_job_id(ps.id) # type: ignore
@@ -173,7 +173,7 @@ class Scheduler:
             max_instances=1,
             name=job_name,
         )
-        cls._logger.info(f"Scheduled scan {ps.id}: {ps.scan_type} ({ps.schedule_type})")
+        logger.info(f"Scheduled scan {ps.id}: {ps.scan_type} ({ps.schedule_type})")
 
     @classmethod
     def unschedule(cls, ps_id: int) -> None:
@@ -182,7 +182,7 @@ class Scheduler:
         job = cls._scheduler.get_job(cls._build_job_id(ps_id))
         if job is not None:
             job.remove()
-            cls._logger.info(f"Unscheduled scan {ps_id}")
+            logger.info(f"Unscheduled scan {ps_id}")
 
     # =========================================================================
     # INTERNALS
@@ -197,7 +197,7 @@ class Scheduler:
             active = repo.get_all_active()
             for ps in active:
                 cls.schedule(ps)
-            cls._logger.info(f"Synced {len(active)} active scans from database")
+            logger.info(f"Synced {len(active)} active scans from database")
 
     # =========================================================================
     # EXECUTION
@@ -205,7 +205,7 @@ class Scheduler:
 
     @classmethod
     def execute(cls, ps_id: int) -> None:
-        cls._logger.info("Triggered scan %d", ps_id)
+        logger.info("Triggered scan %d", ps_id)
         try:
             with UnitOfWork() as uow:
                 repo = ProgramedScanRepository(uow)
@@ -230,7 +230,7 @@ class Scheduler:
                     .first()
                 )
                 if active is not None:
-                    cls._logger.info(
+                    logger.info(
                         "Scan %d already active (status=%s) for programed scan %d, skipping",
                         active.id, active.status, ps.id,
                     )
@@ -248,13 +248,13 @@ class Scheduler:
                 )
                 repo.update_next_run(ps, next_run)
 
-            cls._logger.info(
+            logger.info(
                 "Completed scan %d, next run at %s",
                 ps_id, next_run.isoformat() if next_run else "N/A",
             )
 
         except Exception:
-            cls._logger.exception("Scheduled scan %d failed", ps_id)
+            logger.exception("Scheduled scan %d failed", ps_id)
             raise
 
     @classmethod
@@ -264,7 +264,7 @@ class Scheduler:
         schedule_config: dict,
         last_run: Optional[datetime] = None,
     ) -> datetime:
-        reference = last_run if last_run is not None else datetime.utcnow()
+        reference = last_run if last_run is not None else datetime.now(timezone.utc)
 
         if schedule_type == "interval":
             every = int(schedule_config["every"])

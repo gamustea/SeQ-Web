@@ -18,12 +18,15 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Generic, List, Optional, Type, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .unit_of_work import UnitOfWork
+
+logger = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
@@ -252,6 +255,7 @@ class BaseRepository(Generic[T]):
             self._session.refresh(obj)
             return obj
         except SQLAlchemyError as e:
+            logger.error("Error saving %s", self._model.__name__, exc_info=True)
             raise SQLAlchemyError(f"Error saving {self._model.__name__}: {e}") from e
 
     def delete(self, obj: T) -> None:
@@ -271,6 +275,7 @@ class BaseRepository(Generic[T]):
             self._session.delete(obj)
             self._session.flush()
         except SQLAlchemyError as e:
+            logger.error("Error deleting %s", self._model.__name__, exc_info=True)
             raise SQLAlchemyError(f"Error deleting {self._model.__name__}: {e}") from e
 
     def update(self, obj: T) -> T:
@@ -292,4 +297,5 @@ class BaseRepository(Generic[T]):
             self._session.flush()
             return obj
         except SQLAlchemyError as e:
+            logger.error("Error updating %s", self._model.__name__, exc_info=True)
             raise SQLAlchemyError(f"Error updating {self._model.__name__}: {e}") from e

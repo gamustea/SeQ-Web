@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,7 +14,6 @@ from .model import (
 )
 
 from src.modules.users import User
-from src.modules.system.logging import SecOpsLogger
 from src.modules.infrastructure.unit_of_work import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
 
@@ -21,6 +21,8 @@ from .repositories import (
     VaultRepository,
     StorableRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 StorableKind = Literal["account", "creditcard"]
 
@@ -35,7 +37,6 @@ class VaultManager:
 
     def __init__(self, user: User) -> None:
         self.active_user = user
-        self.logger = SecOpsLogger(f"VaultManager[{user.id}]").get_logger()
 
     @staticmethod
     def _parse_dt(value: Optional[str]) -> datetime:
@@ -43,7 +44,8 @@ class VaultManager:
             return datetime.utcnow()
         try:
             return datetime.fromisoformat(value)
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
             return datetime.utcnow()
 
     def _ensure_vault_ownership(self, vault: Vault) -> None:
@@ -57,7 +59,7 @@ class VaultManager:
         repo = VaultRepository(session=session)
         vault = repo.get_by_id(vault_id)
         if vault is None:
-            self.logger.warning(f"Vault {vault_id} no encontrado")
+            logger.warning(f"Vault {vault_id} no encontrado")
             return None
         self._ensure_vault_ownership(vault)
         return vault
@@ -150,17 +152,17 @@ class VaultManager:
                 for cc_data in creditcards_data:
                     uow.session.add(CreditCard(vault=vault, **cc_data))
 
-            self.logger.info(
+            logger.info(
                 f"Vault {vault.id} {'creado' if created else 'actualizado'} "
                 f"para user {self.active_user.id} (is_recovery={is_recovery})"
             )
             return vault, created
 
         except IntegrityError as ie:
-            self.logger.error(f"Error de integridad en upsert de vault: {ie}")
+            logger.error(f"Error de integridad en upsert de vault: {ie}", exc_info=True)
             raise
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 f"Error en upsert de vault desde JSON: {e}", exc_info=True
             )
             raise
@@ -326,13 +328,13 @@ class VaultManager:
             with UnitOfWork() as uow:
                 repo = StorableRepository(uow)
                 repo.save(st)
-            self.logger.info(f"Storable {st.id} creado en vault {vault_id}")
+            logger.info(f"Storable {st.id} creado en vault {vault_id}")
             return st
         except IntegrityError as ie:
-            self.logger.error(f"Error de integridad añadiendo storable: {ie}")
+            logger.error(f"Error de integridad añadiendo storable: {ie}", exc_info=True)
             raise
         except Exception as e:
-            self.logger.error(f"Error añadiendo storable: {e}", exc_info=True)
+            logger.error(f"Error añadiendo storable: {e}", exc_info=True)
             raise
 
     def update_storable(
@@ -396,17 +398,17 @@ class VaultManager:
                 if changed:
                     st.updated_at = datetime.utcnow()
                     repo.update(st)
-                    self.logger.info(f"Storable {st.id} actualizado correctamente")
+                    logger.info(f"Storable {st.id} actualizado correctamente")
                 else:
-                    self.logger.info(f"Storable {st.id}: sin cambios")
+                    logger.info(f"Storable {st.id}: sin cambios")
 
                 return st
 
             except IntegrityError as ie:
-                self.logger.error(f"Error de integridad actualizando storable {storable_id}: {ie}")
+                logger.error(f"Error de integridad actualizando storable {storable_id}: {ie}", exc_info=True)
                 raise
             except Exception as e:
-                self.logger.error(
+                logger.error(
                     f"Error actualizando storable {storable_id}: {e}", exc_info=True
                 )
                 raise
@@ -504,7 +506,7 @@ class VaultManager:
                 })
 
             except Exception as e:
-                self.logger.error(
+                logger.error(
                     f"Error aplicando cambios al storable {internal_id} "
                     f"(is_recovery={is_recovery}): {e}",
                     exc_info=True,
@@ -527,8 +529,8 @@ class VaultManager:
             with UnitOfWork() as uow:
                 repo = StorableRepository(uow)
                 repo.delete(st)
-            self.logger.info(f"Storable {storable_id} eliminado")
+            logger.info(f"Storable {storable_id} eliminado")
             return True
         except Exception as e:
-            self.logger.error(f"Error eliminando storable {storable_id}: {e}", exc_info=True)
+            logger.error(f"Error eliminando storable {storable_id}: {e}", exc_info=True)
             raise

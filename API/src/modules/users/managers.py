@@ -18,8 +18,10 @@ Classes:
     OAuthTokenManager:  JWT access token and refresh token lifecycle.
 """
 
+import logging
 import secrets
 from datetime import datetime, timedelta
+from uuid import uuid4
 from typing import List, Optional, Tuple
 
 import jwt
@@ -34,15 +36,17 @@ from src.modules.users.exceptions import (
 )
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
-from src.modules.system.logging import SecOpsLogger
 
 from .model import AccessToken, RefreshToken, User, UserAttribute
 from .repositories import TokenRepository, UserRepository, AttributeRepository
 from .services import (
     generate_salt,
+    hash_password,
     hash_password_with_salt,
     verify_password
 )
+
+logger = logging.getLogger(__name__)
 
 (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -65,7 +69,7 @@ class UserManager:
     """
 
     def __init__(self) -> None:
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+        pass
 
     # =========================================================================
     # CREDENTIAL VERIFICATION
@@ -93,28 +97,34 @@ class UserManager:
             user = UserRepository(session=session).get_by_username(username)
 
             if user is None:
-                # Perform a dummy comparison to prevent username enumeration
-                # via timing differences.
-                verify_password("dummy", password, "dummy_salt")
-                self.logger.info(f"Usuario '{username}' no encontrado")
+                # Dummy comparison to prevent username enumeration via timing differences.
+                verify_password("dummy_hash", password, "dummy_salt")
+                logger.info(f"Usuario '{username}' no encontrado")
                 return False, None
 
-            is_valid = verify_password(
+            is_valid, needs_rehash = verify_password(
                 stored_hash = user.password_hash,
                 password    = password,
-                salt        = user.password_salt,
+                legacy_salt = user.password_salt or "",
             )
-            user_id = user.id if is_valid else None
 
             if not is_valid:
-                self.logger.warning(f"Contraseña incorrecta para '{username}'")
+                logger.warning(f"Contraseña incorrecta para '{username}'")
                 return False, None
 
-            self.logger.info(f"Credenciales válidas para '{username}' (ID: {user_id})")
-            return True, user_id
+            if needs_rehash:
+                with UnitOfWork() as uow:
+                    u = UserRepository(uow).get_by_id(user.id)
+                    if u is not None:
+                        u.password_hash = hash_password(password)
+                        u.password_salt = ""
+                logger.info(f"Hash actualizado a Argon2 para usuario '{username}'")
+
+            logger.info(f"Credenciales válidas para '{username}' (ID: {user.id})")
+            return True, user.id
 
         except Exception as e:
-            self.logger.error(f"Error verificando credenciales: {e}")
+            logger.error(f"Error verificando credenciales: {e}")
             raise
 
 
@@ -168,7 +178,7 @@ Raises:
 
         if role == "role_admin" and actor_id:
             if not self.can_create_admin(actor_id):
-                self.logger.error(f"El administrador con id {actor_id} ha intentado crear un usuario con rol {role}")
+                logger.error(f"El administrador con id {actor_id} ha intentado crear un usuario con rol {role}")
                 raise PermissionsError("Solo el administrador raíz puede crear administradores")
 
         if role and actor_id:
@@ -186,33 +196,30 @@ Raises:
                 repo = UserRepository(uow)
 
                 if repo.username_exists(username):
-                    self.logger.error(f"Se intentó crear un usuario con un username ({username}) repetido")
+                    logger.error(f"Se intentó crear un usuario con un username ({username}) repetido")
                     raise ExistingUserError(username, None)
                 if repo.email_exists(email):
-                    self.logger.error(f"Se intentó crear un usuario con un email ({email}) repetido")
+                    logger.error(f"Se intentó crear un usuario con un email ({email}) repetido")
                     raise ExistingUserError(None, email)
-
-                salt            = generate_salt()
-                hashed_password = hash_password_with_salt(password, salt)
 
                 new_user = User(
                     username      = username,
                     email         = email,
                     first_name    = first_name,
                     last_name     = last_name,
-                    password_hash = hashed_password,
-                    password_salt = salt,
+                    password_hash = hash_password(password),
+                    password_salt = "",
                     role          = assigned_role,
                 )
                 repo.save(new_user)
 
-            self.logger.info(f"Usuario '{username}' registrado con rol '{assigned_role}' (ID: {new_user.id})")
+            logger.info(f"Usuario '{username}' registrado con rol '{assigned_role}' (ID: {new_user.id})")
             return new_user
 
         except ExistingUserError:
             raise
         except Exception as e:
-            self.logger.error(f"Error registrando usuario '{username}': {e}")
+            logger.error(f"Error registrando usuario '{username}': {e}")
             raise DatabaseError("Error con credenciales. Revísalas e inténtalo de nuevo.")
 
     # =========================================================================
@@ -282,11 +289,10 @@ Raises:
             if user is None:
                 raise UserBindingError(username=str(user_id))
 
-            new_salt = generate_salt()
-            user.password_hash = hash_password_with_salt(new_password, new_salt)
-            user.password_salt = new_salt
+            user.password_hash = hash_password(new_password)
+            user.password_salt = ""
 
-        self.logger.info(f"Contraseña actualizada para usuario {user_id}")
+        logger.info(f"Contraseña actualizada para usuario {user_id}")
 
     def update_user_profile(self, user_id: int, first_name: str, last_name: str) -> User:
         """
@@ -315,13 +321,13 @@ Raises:
                 user.last_name  = last_name
                 # UoW commits on __exit__
 
-            self.logger.info(f"Perfil actualizado para usuario {user_id} ({user.username})")
+            logger.info(f"Perfil actualizado para usuario {user_id} ({user.username})")
             return user
 
         except ProfileUpdateError:
             raise
         except Exception as e:
-            self.logger.error(f"Error actualizando perfil para usuario {user_id}: {e}")
+            logger.error(f"Error actualizando perfil para usuario {user_id}: {e}")
             raise ProfileUpdateError(f"Error al actualizar el perfil: {e}")
 
     def delete_user(self, user_id: int) -> None:
@@ -341,7 +347,7 @@ Raises:
                 raise UserBindingError(username=str(user_id))
             repo.delete(user)
 
-        self.logger.info(f"Usuario {user_id} eliminado")
+        logger.info(f"Usuario {user_id} eliminado")
 
 # =========================================================================
 # ATTRIBUTE MANAGEMENT
@@ -504,7 +510,7 @@ class OAuthTokenManager:
     """
 
     def __init__(self) -> None:
-        self.logger = SecOpsLogger(self.__class__.__name__).get_logger()
+        pass
 
     # =========================================================================
     # TOKEN CREATION
@@ -529,6 +535,7 @@ class OAuthTokenManager:
             "username": username,
             "exp":      expires_at,
             "iat":      datetime.utcnow(),
+            "jti":      uuid4().hex,
             "type":     "access",
             "role":     role,
         }
@@ -600,7 +607,7 @@ class OAuthTokenManager:
         except jwt.InvalidTokenError:
             return None
         except Exception as e:
-            self.logger.error(f"Error verificando access token: {e}")
+            logger.error(f"Error verificando access token: {e}")
             return None
 
     def verify_refresh_token(self, token: str) -> Optional[int]:
@@ -621,7 +628,7 @@ class OAuthTokenManager:
             return record.user_id
 
         except Exception as e:
-            self.logger.error(f"Error verificando refresh token: {e}")
+            logger.error(f"Error verificando refresh token: {e}")
             return None
 
     # =========================================================================
@@ -643,11 +650,11 @@ class OAuthTokenManager:
                 revoked = TokenRepository(uow).revoke_access_token(token)
 
             if revoked:
-                self.logger.info("Access token revocado")
+                logger.info("Access token revocado")
             return revoked
 
         except Exception as e:
-            self.logger.error(f"Error revocando access token: {e}")
+            logger.error(f"Error revocando access token: {e}")
             return False
 
     def revoke_all_user_tokens(self, user_id: int) -> None:
@@ -663,7 +670,7 @@ class OAuthTokenManager:
         with UnitOfWork() as uow:
             TokenRepository(uow).revoke_all_tokens(user_id)
 
-        self.logger.info(f"Todos los tokens revocados para usuario {user_id}")
+        logger.info(f"Todos los tokens revocados para usuario {user_id}")
 
     # =========================================================================
     # MAINTENANCE
@@ -678,7 +685,7 @@ class OAuthTokenManager:
         with UnitOfWork() as uow:
             access_deleted, refresh_deleted = TokenRepository(uow).cleanup_expired_tokens()
 
-        self.logger.info(
+        logger.info(
             f"Tokens expirados eliminados: "
             f"{access_deleted} access, {refresh_deleted} refresh"
         )

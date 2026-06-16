@@ -1,208 +1,253 @@
 <template>
-  <div class="login-page">
-    <!-- Ambient background layers -->
-    <div class="bg-grid" aria-hidden="true"></div>
-    <div class="bg-scanlines" aria-hidden="true"></div>
-    <div class="bg-radar" aria-hidden="true">
-      <div class="radar-sweep"></div>
+  <div
+    class="login-stage"
+    :class="{ booting, granted }"
+    @mousemove="onPointerMove"
+    @mouseleave="resetTilt"
+  >
+    <!-- ───────── Ambient background ───────── -->
+    <div class="bg-orbs" aria-hidden="true">
+      <span class="orb orb--gold"></span>
+      <span class="orb orb--green"></span>
+      <span class="orb orb--blue"></span>
     </div>
-    <div class="bg-glow"></div>
+    <div class="bg-grid" aria-hidden="true"></div>
+    <div class="bg-radar" aria-hidden="true"><span class="radar-sweep"></span></div>
+    <div class="bg-scanlines" aria-hidden="true"></div>
+
+    <!-- Constellation of drifting nodes -->
+    <svg class="bg-constellation" aria-hidden="true" preserveAspectRatio="none">
+      <line
+        v-for="(l, i) in links"
+        :key="'l' + i"
+        :x1="nodes[l[0]].x + '%'"
+        :y1="nodes[l[0]].y + '%'"
+        :x2="nodes[l[1]].x + '%'"
+        :y2="nodes[l[1]].y + '%'"
+      />
+      <circle
+        v-for="(n, i) in nodes"
+        :key="'n' + i"
+        :cx="n.x + '%'"
+        :cy="n.y + '%'"
+        :r="n.r"
+        :style="{ animationDelay: n.delay + 's' }"
+      />
+    </svg>
+
+    <!-- Cursor spotlight -->
+    <div class="spotlight" aria-hidden="true"></div>
 
     <!-- Giant watermark -->
     <div class="watermark" aria-hidden="true">
       <span class="watermark-text">SeQ</span>
-      <span class="watermark-sub">SECURITY OPERATIONS</span>
+      <span class="watermark-sub">SECURITY · OPERATIONS · CLEARANCE</span>
     </div>
 
-    <!-- Decorative side elements -->
-    <div class="side-decor side-decor--left" aria-hidden="true">
-      <div class="vline"></div>
-      <div class="vline-dots">
-        <span></span><span></span><span></span><span></span><span></span>
-      </div>
-      <div class="vline"></div>
-    </div>
-    <div class="side-decor side-decor--right" aria-hidden="true">
-      <div class="vline"></div>
-      <div class="vline-dots">
-        <span></span><span></span><span></span><span></span><span></span>
-      </div>
-      <div class="vline"></div>
-    </div>
+    <!-- ───────── Clearance console card ───────── -->
+    <div class="console" :style="cardStyle">
+      <div class="console-sheen" aria-hidden="true"></div>
+      <div class="console-edge" aria-hidden="true"></div>
 
-    <!-- Main login card -->
-    <div class="login-card">
-      <div class="card-aura"></div>
-      <div class="card-border"></div>
-
-      <div class="terminal-bar">
-        <div class="terminal-dots">
-          <span class="dot dot-r"></span>
-          <span class="dot dot-y"></span>
-          <span class="dot dot-g"></span>
-        </div>
-        <span class="terminal-label">seq@platform: ~/login</span>
-        <span class="terminal-status">
-          <span class="status-pulse"></span>
-          <span class="status-text">LIVE</span>
+      <!-- Terminal bar -->
+      <header class="term-bar">
+        <span class="term-dots" aria-hidden="true">
+          <i class="d d-r"></i><i class="d d-y"></i><i class="d d-g"></i>
         </span>
-      </div>
+        <span class="term-path">seq://clearance/access</span>
+        <span class="term-clock">{{ clock }}</span>
+      </header>
 
-      <div class="login-body">
-        <div class="logo-wrap">
-          <span class="logo-bracket">[</span>
-          <span class="logo-text" data-text="SeQ">SeQ</span>
-          <span class="logo-bracket">]</span>
+      <!-- Boot diagnostics overlay -->
+      <transition name="boot">
+        <div v-if="booting" class="boot" aria-hidden="true">
+          <p v-for="(line, i) in bootShown" :key="i" class="boot-line">
+            <span class="boot-mark">›</span>{{ line }}
+            <span class="boot-ok">OK</span>
+          </p>
+          <p class="boot-cursor"><span class="boot-mark">›</span><span class="caret">▌</span></p>
         </div>
-        <h1 class="login-title">
-          <span class="title-line">Security Operations</span>
-          <span class="title-line">Platform</span>
+      </transition>
+
+      <!-- Body -->
+      <div class="console-body" :inert="booting || granted">
+        <div class="brand">
+          <span class="brand-bracket">[</span>
+          <span class="brand-mark" :class="{ glitch: glitching }" data-text="SeQ">SeQ</span>
+          <span class="brand-bracket">]</span>
+          <span class="brand-shield" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" />
+              <path d="M9 12l2 2 4-4" stroke-width="2" />
+            </svg>
+          </span>
+        </div>
+
+        <h1 class="title">
+          <span class="title-main">Security Operations</span>
+          <span class="title-tag">Acceso restringido</span>
         </h1>
-        <p class="login-subtitle">Introduce tus credenciales de acceso</p>
+        <p class="subtitle">
+          Verificación de identidad requerida para continuar
+        </p>
 
-        <div
-          class="alert"
-          :class="['alert-' + alertType, alertMsg ? 'visible' : '']"
-          role="alert"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
+        <!-- Alert -->
+        <transition name="alert">
+          <div
+            v-if="alertMsg"
+            class="alert"
+            :class="'alert-' + alertType"
+            role="alert"
           >
-            <template v-if="alertType === 'error'">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </template>
-            <template v-else>
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
-            </template>
-          </svg>
-          <span>{{ alertMsg }}</span>
-        </div>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <template v-if="alertType === 'error'">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </template>
+              <template v-else>
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </template>
+            </svg>
+            <span>{{ alertMsg }}</span>
+          </div>
+        </transition>
 
         <form novalidate @submit.prevent="handleSubmit">
-          <div class="form-group" :class="{ focused: usernameFocused }">
+          <!-- Username -->
+          <div class="field" :class="{ focused: focus === 'user', filled: username }">
             <label for="username">
-              <span class="label-text">Usuario</span>
-              <span class="label-cursor" aria-hidden="true">_</span>
+              <span>Identificador</span>
+              <span class="field-cursor">_</span>
             </label>
-            <div class="input-wrap">
+            <div class="field-box">
+              <svg class="field-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
+              </svg>
               <input
-                type="text"
                 id="username"
                 v-model="username"
+                type="text"
                 placeholder="nombre_de_usuario"
                 autocomplete="username"
+                spellcheck="false"
                 required
-                :class="{ 'input-error': usernameError }"
+                :class="{ 'has-error': usernameError }"
                 :disabled="loading"
-                @focus="usernameFocused = true"
-                @blur="usernameFocused = false"
+                @focus="focus = 'user'"
+                @blur="focus = ''"
               />
-              <div class="input-glow"></div>
             </div>
           </div>
 
-          <div class="form-group" :class="{ focused: passwordFocused }">
+          <!-- Password -->
+          <div class="field" :class="{ focused: focus === 'pass', filled: password }">
             <label for="password">
-              <span class="label-text">Contraseña</span>
-              <span class="label-cursor" aria-hidden="true">_</span>
+              <span>Clave de acceso</span>
+              <span class="field-cursor">_</span>
+              <transition name="caps">
+                <span v-if="capsOn" class="caps-warn" role="status">⇪ Mayúsculas activas</span>
+              </transition>
             </label>
-            <div class="input-wrap">
+            <div class="field-box">
+              <svg class="field-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="4" y="11" width="16" height="10" rx="2" />
+                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+              </svg>
               <input
-                :type="showPassword ? 'text' : 'password'"
                 id="password"
                 v-model="password"
-                placeholder="••••••••"
+                :type="showPassword ? 'text' : 'password'"
+                placeholder="••••••••••••"
                 autocomplete="current-password"
                 required
-                :class="{ 'input-error': passwordError }"
+                :class="{ 'has-error': passwordError }"
                 :disabled="loading"
-                @focus="passwordFocused = true"
-                @blur="passwordFocused = false"
+                @focus="focus = 'pass'"
+                @blur="focus = ''"
+                @input="scramble"
+                @keyup="checkCaps"
+                @keydown="checkCaps"
               />
-              <div class="input-glow"></div>
               <button
                 type="button"
-                class="toggle-pw"
+                class="reveal"
+                :aria-label="showPassword ? 'Ocultar clave' : 'Mostrar clave'"
+                :disabled="loading"
                 @click="showPassword = !showPassword"
-                :aria-label="showPassword ? 'Ocultar' : 'Mostrar'"
               >
-                <svg
-                  v-if="!showPassword"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                  />
+                <svg v-if="!showPassword" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                   <circle cx="12" cy="12" r="3" />
                 </svg>
-                <svg
-                  v-else
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"
-                  />
+                <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
                   <line x1="1" y1="1" x2="23" y2="23" />
                 </svg>
               </button>
             </div>
+
+            <!-- Live encryption cipher strip -->
+            <div class="cipher" :class="{ active: password.length }" aria-hidden="true">
+              <span class="cipher-tag">
+                <span class="cipher-lock"></span>{{ password.length ? 'AES-256 · CIFRANDO' : 'EN ESPERA' }}
+              </span>
+              <span class="cipher-stream">{{ cipherText }}</span>
+            </div>
           </div>
 
-          <button
-            type="submit"
-            class="login-btn"
-            :class="{ loading }"
-            :disabled="loading"
-          >
-            <span class="btn-text">Iniciar sesión</span>
-            <span class="btn-shine" aria-hidden="true"></span>
-            <span class="spinner" aria-hidden="true"></span>
+          <button type="submit" class="submit" :class="{ loading }" :disabled="loading">
+            <span class="submit-label">{{ loading ? 'Autorizando…' : 'Solicitar acceso' }}</span>
+            <span class="submit-arrow" aria-hidden="true">→</span>
+            <span class="submit-shine" aria-hidden="true"></span>
+            <span class="submit-spin" aria-hidden="true"></span>
           </button>
         </form>
 
-        <div class="login-meta">
-          <div class="meta-divider" aria-hidden="true">
-            <span></span>
-            <span class="meta-diamond">◆</span>
-            <span></span>
-          </div>
-          <p class="login-footer">
-            <span class="footer-code">v2.5.1</span>
-            <span class="footer-sep">|</span>
-            <span>SeQ &copy; 2025</span>
-          </p>
-        </div>
+        <footer class="console-foot">
+          <span class="foot-pulse"><i></i>Enlace cifrado activo</span>
+          <span class="foot-ver">build 2.6.0 · SeQ © 2026</span>
+        </footer>
       </div>
     </div>
+
+    <!-- ───────── Access granted overlay ───────── -->
+    <transition name="grant">
+      <div v-if="granted" class="grant-screen" aria-live="assertive">
+        <svg class="grant-shield" viewBox="0 0 120 120" fill="none">
+          <path
+            class="grant-shield-body"
+            d="M60 8l40 15v30c0 25-17.5 42.5-40 55C37.5 95.5 20 78 20 53V23L60 8z"
+            stroke="var(--accent-bright)"
+            stroke-width="2.5"
+          />
+          <path
+            class="grant-check"
+            d="M42 60l13 13 24-26"
+            stroke="var(--accent-bright)"
+            stroke-width="4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <p class="grant-title">ACCESO CONCEDIDO</p>
+        <p class="grant-sub">Estableciendo sesión segura…</p>
+      </div>
+    </transition>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
 const auth = useAuthStore()
 
+/* ── reactive form state ── */
 const username = ref('')
 const password = ref('')
 const showPassword = ref(false)
@@ -211,9 +256,122 @@ const alertMsg = ref('')
 const alertType = ref('error')
 const usernameError = ref(false)
 const passwordError = ref(false)
-const usernameFocused = ref(false)
-const passwordFocused = ref(false)
+const focus = ref('')
+const capsOn = ref(false)
+const granted = ref(false)
 
+const reduceMotion =
+  typeof window !== 'undefined' &&
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+/* ── live clock in the terminal bar ── */
+const clock = ref('')
+let clockTimer = null
+function tick() {
+  clock.value = new Date().toLocaleTimeString('es-ES', { hour12: false })
+}
+
+/* ── boot diagnostics sequence ── */
+const bootLines = [
+  'init secure channel',
+  'handshake TLS 1.3',
+  'vault integrity check',
+  'identity module ready',
+]
+const booting = ref(!reduceMotion)
+const bootShown = ref([])
+let bootTimers = []
+
+/* ── brand glitch tease ── */
+const glitching = ref(false)
+let glitchTimer = null
+
+/* ── cursor parallax tilt + spotlight ── */
+const tilt = reactive({ rx: 0, ry: 0, mx: 50, my: 50 })
+let rafId = null
+function onPointerMove(e) {
+  if (reduceMotion) return
+  const { innerWidth: w, innerHeight: h } = window
+  const nx = e.clientX / w - 0.5
+  const ny = e.clientY / h - 0.5
+  if (rafId) cancelAnimationFrame(rafId)
+  rafId = requestAnimationFrame(() => {
+    tilt.ry = nx * 9
+    tilt.rx = -ny * 9
+    tilt.mx = (e.clientX / w) * 100
+    tilt.my = (e.clientY / h) * 100
+  })
+}
+function resetTilt() {
+  tilt.rx = 0
+  tilt.ry = 0
+}
+const cardStyle = computed(() => ({
+  '--rx': tilt.rx + 'deg',
+  '--ry': tilt.ry + 'deg',
+  '--mx': tilt.mx + '%',
+  '--my': tilt.my + '%',
+}))
+
+/* ── live encryption visualization ──
+   Derives a deterministic 24-char hex digest from the password, then
+   briefly scrambles before settling — evokes real-time encryption. */
+const HEX = '0123456789abcdef'
+const cipherText = ref('— — — — — — — —'.replace(/ /g, ''))
+let scrambleRaf = null
+let scrambleFrames = 0
+
+function digest(str) {
+  // simple, fast rolling hash → 24 hex chars (visual only, never sent)
+  const out = []
+  let h = 0x811c9dc5
+  for (let i = 0; i < 24; i++) {
+    const c = str.charCodeAt(i % Math.max(str.length, 1)) || (i * 7 + 13)
+    h ^= c + i * 31
+    h = (h * 0x01000193) >>> 0
+    out.push(HEX[(h >>> (i % 24)) & 15])
+  }
+  return out.join('')
+}
+
+function renderCipher() {
+  if (!password.value.length) {
+    cipherText.value = '························'
+    return
+  }
+  const target = digest(password.value)
+  if (reduceMotion || scrambleFrames <= 0) {
+    cipherText.value = target
+    return
+  }
+  // scramble: random hex blended toward the settled digest
+  const progress = 1 - scrambleFrames / 8
+  cipherText.value = target
+    .split('')
+    .map((ch, i) => (Math.random() < progress ? ch : HEX[(Math.random() * 16) | 0]))
+    .join('')
+  scrambleFrames--
+  scrambleRaf = requestAnimationFrame(renderCipher)
+}
+
+function scramble() {
+  if (reduceMotion) {
+    renderCipher()
+    return
+  }
+  if (scrambleRaf) cancelAnimationFrame(scrambleRaf)
+  scrambleFrames = 8
+  renderCipher()
+}
+
+/* ── caps lock detection ── */
+function checkCaps(e) {
+  if (typeof e.getModifierState === 'function') {
+    capsOn.value = e.getModifierState('CapsLock')
+  }
+}
+
+/* ── submit ── */
 async function handleSubmit() {
   alertMsg.value = ''
   usernameError.value = false
@@ -223,13 +381,13 @@ async function handleSubmit() {
   const pw = password.value
 
   if (!un) {
-    showAlert('El usuario es obligatorio.', 'error')
+    showAlert('El identificador es obligatorio.', 'error')
     usernameError.value = true
     document.getElementById('username')?.focus()
     return
   }
   if (!pw) {
-    showAlert('La contraseña es obligatoria.', 'error')
+    showAlert('La clave de acceso es obligatoria.', 'error')
     passwordError.value = true
     document.getElementById('password')?.focus()
     return
@@ -238,16 +396,17 @@ async function handleSubmit() {
   loading.value = true
   try {
     await auth.login(un, pw)
-    showAlert('Sesión iniciada. Redirigiendo…', 'success')
-    setTimeout(() => router.push('/hub'), 900)
+    granted.value = true
+    const delay = reduceMotion ? 300 : 1500
+    setTimeout(() => router.push('/hub'), delay)
   } catch (err) {
     showAlert(err.message || 'Error desconocido.', 'error')
     if (err.message?.includes('Credenciales')) {
       usernameError.value = true
       passwordError.value = true
       password.value = ''
+      renderCipher()
     }
-  } finally {
     loading.value = false
   }
 }
@@ -256,680 +415,509 @@ function showAlert(msg, type = 'error') {
   alertMsg.value = msg
   alertType.value = type
 }
+
+/* ── lifecycle ── */
+onMounted(() => {
+  tick()
+  clockTimer = setInterval(tick, 1000)
+  renderCipher()
+
+  if (booting.value) {
+    bootLines.forEach((line, i) => {
+      bootTimers.push(
+        setTimeout(() => bootShown.value.push(line), 180 + i * 230)
+      )
+    })
+    bootTimers.push(
+      setTimeout(() => {
+        booting.value = false
+        document.getElementById('username')?.focus()
+      }, 180 + bootLines.length * 230 + 280)
+    )
+  }
+
+  // periodic, subtle brand glitch
+  if (!reduceMotion) {
+    glitchTimer = setInterval(() => {
+      glitching.value = true
+      setTimeout(() => (glitching.value = false), 320)
+    }, 6500)
+  }
+})
+
+onBeforeUnmount(() => {
+  clearInterval(clockTimer)
+  clearInterval(glitchTimer)
+  bootTimers.forEach(clearTimeout)
+  if (rafId) cancelAnimationFrame(rafId)
+  if (scrambleRaf) cancelAnimationFrame(scrambleRaf)
+})
+
+/* ── decorative constellation (computed once) ── */
+const nodes = Array.from({ length: 9 }, () => ({
+  x: 8 + Math.random() * 84,
+  y: 8 + Math.random() * 84,
+  r: 1.2 + Math.random() * 1.8,
+  delay: Math.random() * 4,
+}))
+const links = [
+  [0, 1], [1, 2], [2, 4], [4, 3], [3, 0],
+  [4, 5], [5, 6], [6, 7], [7, 8], [8, 5],
+]
 </script>
 
 <style scoped>
-/* ─── Page shell ─── */
-.login-page {
+/* ════════ Stage ════════ */
+.login-stage {
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  position: relative;
   overflow: hidden;
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse at 50% 0%, #14130f 0%, var(--bg) 55%);
+  perspective: 1400px;
 }
 
-/* ─── Animated background grid ─── */
+/* ════════ Ambient orbs ════════ */
+.bg-orbs { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(140px);
+  animation: orb-drift 26s ease-in-out infinite;
+}
+.orb--gold {
+  width: 640px; height: 640px; top: -22%; left: -14%;
+  background: radial-gradient(circle, rgba(212,160,74,0.18) 0%, transparent 70%);
+}
+.orb--green {
+  width: 480px; height: 480px; bottom: -18%; right: -10%;
+  background: radial-gradient(circle, rgba(76,183,130,0.10) 0%, transparent 70%);
+  animation-delay: -10s;
+}
+.orb--blue {
+  width: 420px; height: 420px; top: 40%; left: 58%;
+  background: radial-gradient(circle, rgba(96,128,224,0.08) 0%, transparent 70%);
+  animation-delay: -18s;
+}
+@keyframes orb-drift {
+  0%, 100% { transform: translate(0,0) scale(1); }
+  33%      { transform: translate(38px,-26px) scale(1.07); }
+  66%      { transform: translate(-26px,30px) scale(0.95); }
+}
+
+/* ════════ Perspective grid ════════ */
 .bg-grid {
-  position: fixed;
-  inset: -50%;
-  z-index: 0;
-  pointer-events: none;
+  position: fixed; inset: -50%; z-index: 0; pointer-events: none;
   background-image:
-    linear-gradient(rgba(212,160,74,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(212,160,74,0.03) 1px, transparent 1px);
-  background-size: 60px 60px;
-  transform: perspective(600px) rotateX(60deg);
-  animation: grid-drift 24s linear infinite;
-  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+    linear-gradient(rgba(212,160,74,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(212,160,74,0.04) 1px, transparent 1px);
+  background-size: 58px 58px;
+  transform: perspective(620px) rotateX(62deg);
+  animation: grid-drift 22s linear infinite;
+  mask-image: radial-gradient(ellipse at center, #000 12%, transparent 68%);
 }
 @keyframes grid-drift {
-  0% { transform: perspective(600px) rotateX(60deg) translateY(0); }
-  100% { transform: perspective(600px) rotateX(60deg) translateY(60px); }
+  from { transform: perspective(620px) rotateX(62deg) translateY(0); }
+  to   { transform: perspective(620px) rotateX(62deg) translateY(58px); }
 }
 
-/* ─── CRT scanlines ─── */
-.bg-scanlines {
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0,0,0,0.15) 2px,
-    rgba(0,0,0,0.15) 4px
-  );
-  opacity: 0.4;
-}
-
-/* ─── Radar sweep ─── */
+/* ════════ Radar ════════ */
 .bg-radar {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
 }
 .radar-sweep {
-  width: 120vmax;
-  height: 120vmax;
-  border-radius: 50%;
+  width: 130vmax; height: 130vmax; border-radius: 50%;
   border: 1px solid rgba(212,160,74,0.04);
   position: relative;
-  animation: radar-rotate 12s linear infinite;
+  animation: radar-rotate 14s linear infinite;
 }
-.radar-sweep::before,
+.radar-sweep::before {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(212,160,74,0.10), transparent 22%);
+}
 .radar-sweep::after {
-  content: '';
-  position: absolute;
-  border-radius: 50%;
-  inset: 0;
-  border: 1px solid rgba(212,160,74,0.03);
+  content: ''; position: absolute; inset: 22%; border-radius: 50%;
+  border: 1px solid rgba(212,160,74,0.04);
 }
-.radar-sweep::before { transform: scale(0.66); }
-.radar-sweep::after  { transform: scale(0.33); }
-@keyframes radar-rotate {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+@keyframes radar-rotate { to { transform: rotate(360deg); } }
+
+/* ════════ Scanlines ════════ */
+.bg-scanlines {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0.35;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.16) 2px, rgba(0,0,0,0.16) 4px);
 }
 
-/* ─── Ambient glow orbs ─── */
-.bg-glow {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 15% 50%, rgba(212,160,74,0.06) 0%, transparent 45%),
-    radial-gradient(circle at 85% 30%, rgba(76,183,130,0.04) 0%, transparent 40%);
+/* ════════ Constellation ════════ */
+.bg-constellation {
+  position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;
+}
+.bg-constellation line { stroke: rgba(212,160,74,0.07); stroke-width: 1; }
+.bg-constellation circle {
+  fill: rgba(232,188,106,0.55);
+  animation: node-twinkle 4s ease-in-out infinite;
+}
+@keyframes node-twinkle {
+  0%, 100% { opacity: 0.2; }
+  50%      { opacity: 0.9; }
 }
 
-/* ─── Giant watermark ─── */
+/* ════════ Cursor spotlight ════════ */
+.spotlight {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%), rgba(212,160,74,0.06), transparent 65%);
+  transition: background 0.18s ease-out;
+}
+
+/* ════════ Watermark ════════ */
 .watermark {
-  position: fixed;
-  top: 50%;
-  left: 50%;
+  position: fixed; top: 50%; left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 0;
-  pointer-events: none;
-  text-align: center;
-  user-select: none;
+  z-index: 0; pointer-events: none; text-align: center; user-select: none;
 }
 .watermark-text {
-  display: block;
-  font-family: var(--font-display);
-  font-size: clamp(12rem, 35vw, 28rem);
-  font-weight: 800;
-  line-height: 0.85;
-  letter-spacing: -0.04em;
-  color: transparent;
+  display: block; font-family: var(--font-display);
+  font-size: clamp(11rem, 34vw, 27rem); font-weight: 800; line-height: 0.82;
+  letter-spacing: -0.04em; color: transparent;
   -webkit-text-stroke: 1px rgba(212,160,74,0.06);
-  opacity: 0.35;
-  animation: watermark-breathe 6s ease-in-out infinite;
+  opacity: 0.4; animation: breathe 7s ease-in-out infinite;
 }
 .watermark-sub {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: clamp(0.7rem, 1.2vw, 1rem);
-  letter-spacing: 1.2em;
-  color: rgba(212,160,74,0.08);
-  margin-top: 1rem;
-  text-indent: 1.2em;
+  display: block; font-family: var(--font-mono);
+  font-size: clamp(0.6rem, 1vw, 0.9rem); letter-spacing: 0.85em;
+  color: rgba(212,160,74,0.09); margin-top: 1rem; text-indent: 0.85em;
 }
-@keyframes watermark-breathe {
-  0%, 100% { opacity: 0.25; transform: translate(-50%, -50%) scale(1); }
-  50%      { opacity: 0.45; transform: translate(-50%, -50%) scale(1.03); }
+@keyframes breathe {
+  0%, 100% { opacity: 0.28; transform: translate(-50%,-50%) scale(1); }
+  50%      { opacity: 0.46; transform: translate(-50%,-50%) scale(1.025); }
 }
 
-/* ─── Side decorations ─── */
-.side-decor {
-  position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.6rem;
-  pointer-events: none;
-}
-.side-decor--left { left: 2rem; }
-.side-decor--right { right: 2rem; }
-.vline {
-  width: 1px;
-  height: 80px;
-  background: linear-gradient(to bottom, transparent, rgba(212,160,74,0.15), transparent);
-}
-.vline-dots {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: center;
-}
-.vline-dots span {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: rgba(212,160,74,0.25);
-  animation: dot-pulse 2s ease-in-out infinite;
-}
-.vline-dots span:nth-child(2) { animation-delay: 0.2s; }
-.vline-dots span:nth-child(3) { animation-delay: 0.4s; }
-.vline-dots span:nth-child(4) { animation-delay: 0.6s; }
-.vline-dots span:nth-child(5) { animation-delay: 0.8s; }
-@keyframes dot-pulse {
-  0%, 100% { opacity: 0.2; transform: scale(0.8); }
-  50%      { opacity: 1;   transform: scale(1.2); }
-}
-
-/* ─── Login card ─── */
-.login-card {
-  position: relative;
-  z-index: 2;
-  width: 100%;
-  max-width: 420px;
-  background: rgba(19, 20, 26, 0.65);
+/* ════════ Console card ════════ */
+.console {
+  position: relative; z-index: 2; width: 100%; max-width: 440px;
+  background: rgba(17, 18, 24, 0.72);
   border: 1px solid var(--border-solid);
-  border-radius: 14px;
-  overflow: hidden;
-  backdrop-filter: blur(24px) saturate(1.2);
+  border-radius: 16px; overflow: hidden;
+  backdrop-filter: blur(26px) saturate(1.25);
   box-shadow:
-    0 32px 80px rgba(0,0,0,0.5),
-    0 0 0 1px rgba(255,255,255,0.03) inset;
-  animation: card-enter 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    0 40px 90px rgba(0,0,0,0.55),
+    0 0 0 1px rgba(255,255,255,0.03) inset,
+    0 1px 0 rgba(255,255,255,0.05) inset;
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transform-style: preserve-3d;
+  transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+  animation: console-enter 1s cubic-bezier(0.16,1,0.3,1) both;
 }
-@keyframes card-enter {
-  from {
-    opacity: 0;
-    transform: translateY(30px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+@keyframes console-enter {
+  from { opacity: 0; transform: translateY(34px) scale(0.96) rotateX(8deg); }
+  to   { opacity: 1; transform: translateY(0) scale(1) rotateX(var(--rx,0)) rotateY(var(--ry,0)); }
 }
 
-/* Animated border glow */
-.card-border {
-  position: absolute;
-  inset: -1px;
-  border-radius: 14px;
-  padding: 1px;
-  background: linear-gradient(
-    135deg,
-    rgba(212,160,74,0.4) 0%,
-    rgba(212,160,74,0) 25%,
-    rgba(212,160,74,0) 50%,
-    rgba(212,160,74,0) 75%,
-    rgba(212,160,74,0.4) 100%
-  );
-  background-size: 300% 300%;
-  animation: border-glow 6s ease infinite;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  -webkit-mask-composite: xor;
+/* moving sheen that follows cursor */
+.console-sheen {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 16px;
+  background: radial-gradient(300px circle at var(--mx,50%) var(--my,50%), rgba(232,188,106,0.08), transparent 60%);
+  opacity: 0.9; mix-blend-mode: screen;
+}
+/* animated gradient edge */
+.console-edge {
+  position: absolute; inset: -1px; z-index: 1; border-radius: 16px; padding: 1px;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.6s ease;
+  background: linear-gradient(135deg, rgba(212,160,74,0.5), transparent 30%, transparent 70%, rgba(212,160,74,0.5));
+  background-size: 300% 300%;
+  animation: edge-flow 7s ease infinite;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0.55;
 }
-.login-card:hover .card-border {
-  opacity: 1;
-}
-@keyframes border-glow {
+@keyframes edge-flow {
   0%, 100% { background-position: 0% 50%; }
   50%      { background-position: 100% 50%; }
 }
 
-/* Soft inner aura */
-.card-aura {
-  position: absolute;
-  inset: 0;
-  border-radius: 14px;
-  pointer-events: none;
-  box-shadow: inset 0 0 60px rgba(212,160,74,0.02);
-}
-
-/* ─── Terminal bar ─── */
-.terminal-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.6rem 1rem;
-  background: rgba(255,255,255,0.015);
+/* ════════ Terminal bar ════════ */
+.term-bar {
+  position: relative; z-index: 4;
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.65rem 1rem;
+  background: rgba(255,255,255,0.018);
   border-bottom: 1px solid var(--border-solid);
-  position: relative;
 }
-.terminal-dots {
-  display: flex;
-  gap: 5px;
-}
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  box-shadow: 0 0 6px currentColor;
-}
-.dot-r { background: #d96c6c; color: #d96c6c; }
-.dot-y { background: #d4a04a; color: #d4a04a; }
-.dot-g { background: #4cb782; color: #4cb782; }
-
-.terminal-label {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  color: var(--text-muted);
-  flex: 1;
+.term-dots { display: flex; gap: 5px; }
+.d { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 7px currentColor; }
+.d-r { background: #d96c6c; color: #d96c6c; }
+.d-y { background: #d4a04a; color: #d4a04a; }
+.d-g { background: #4cb782; color: #4cb782; }
+.term-path { flex: 1; font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-dim); }
+.term-clock {
+  font-family: var(--font-mono); font-size: 0.68rem; color: var(--accent);
+  letter-spacing: 0.06em; opacity: 0.75;
+  font-variant-numeric: tabular-nums;
 }
 
-.terminal-status {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-family: var(--font-mono);
-  font-size: 0.6rem;
-  color: var(--success);
-  letter-spacing: 0.08em;
+/* ════════ Boot diagnostics ════════ */
+.boot {
+  position: absolute; inset: 0; z-index: 6;
+  background: rgba(13,14,18,0.94);
+  backdrop-filter: blur(8px);
+  padding: 3.2rem 2rem; display: flex; flex-direction: column; gap: 0.55rem;
+  font-family: var(--font-mono); font-size: 0.78rem;
 }
-.status-pulse {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 6px var(--success);
-  animation: live-pulse 2s ease-in-out infinite;
+.boot-line, .boot-cursor {
+  display: flex; align-items: center; gap: 0.55rem; color: var(--text-dim);
+  animation: boot-in 0.3s ease both;
 }
-@keyframes live-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%      { opacity: 0.4; transform: scale(0.7); }
+.boot-mark { color: var(--accent); }
+.boot-ok {
+  margin-left: auto; color: var(--success);
+  font-size: 0.62rem; letter-spacing: 0.15em;
 }
+.boot-cursor .caret { color: var(--accent); animation: blink 1s step-end infinite; }
+@keyframes boot-in { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+.boot-leave-active { transition: opacity 0.4s ease, transform 0.4s ease; }
+.boot-leave-to { opacity: 0; transform: scale(1.02); }
 
-/* ─── Login body ─── */
-.login-body {
-  padding: 2.5rem 2.25rem 2rem;
-  position: relative;
-}
+/* ════════ Body ════════ */
+.console-body { position: relative; z-index: 2; padding: 2.4rem 2.25rem 1.7rem; }
 
-/* Logo */
-.logo-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-  margin-bottom: 1rem;
+/* Brand */
+.brand {
+  display: flex; align-items: center; justify-content: center; gap: 0.35rem;
+  margin-bottom: 1.1rem;
   animation: fade-up 0.7s 0.15s cubic-bezier(0.16,1,0.3,1) both;
 }
-.logo-bracket {
-  color: var(--accent);
-  font-size: 1.7rem;
-  font-weight: 300;
-  opacity: 0.5;
-  font-family: var(--font-mono);
+.brand-bracket { color: var(--accent); font-size: 1.8rem; font-weight: 300; opacity: 0.45; font-family: var(--font-mono); }
+.brand-mark {
+  position: relative; color: var(--text);
+  font-family: var(--font-display); font-size: 2.1rem; font-weight: 800; letter-spacing: 2px;
 }
-.logo-text {
-  color: var(--text);
-  font-size: 2rem;
-  font-weight: 800;
-  font-family: var(--font-display);
-  letter-spacing: 3px;
-  position: relative;
+.brand-mark::after {
+  content: attr(data-text); position: absolute; left: 0; top: 0; color: transparent;
+  -webkit-text-stroke: 1px rgba(212,160,74,0.18); transform: translate(2px,2px); pointer-events: none;
 }
-.logo-text::after {
-  content: attr(data-text);
-  position: absolute;
-  left: 0;
-  top: 0;
-  color: transparent;
-  -webkit-text-stroke: 1px rgba(212,160,74,0.15);
-  transform: translate(2px, 2px);
-  pointer-events: none;
+.brand-mark.glitch { animation: glitch 0.32s steps(2) both; }
+@keyframes glitch {
+  0%   { text-shadow: 2px 0 #d96c6c, -2px 0 #4cb782; transform: translateX(0); }
+  25%  { text-shadow: -2px 0 #d96c6c, 2px 0 #6080e0; transform: translateX(1px); }
+  50%  { text-shadow: 2px 0 #4cb782, -2px 0 #d4a04a; transform: translateX(-1px); }
+  100% { text-shadow: none; transform: none; }
+}
+.brand-shield {
+  color: var(--accent); width: 22px; height: 22px; margin-left: 0.4rem; opacity: 0.8;
+  filter: drop-shadow(0 0 6px rgba(212,160,74,0.4));
 }
 
 /* Title */
-.login-title {
-  text-align: center;
-  margin-bottom: 0.4rem;
-  font-family: var(--font-display);
-  animation: fade-up 0.7s 0.25s cubic-bezier(0.16,1,0.3,1) both;
-}
-.title-line {
-  display: block;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: 0.04em;
-  line-height: 1.4;
-}
-.title-line:last-child {
-  font-size: 0.85rem;
-  font-weight: 500;
+.title { text-align: center; font-family: var(--font-display); margin-bottom: 0.4rem; animation: fade-up 0.7s 0.25s cubic-bezier(0.16,1,0.3,1) both; }
+.title-main { display: block; font-size: 1.05rem; font-weight: 600; color: var(--text); letter-spacing: 0.03em; }
+.title-tag {
+  display: inline-block; margin-top: 0.45rem; font-family: var(--font-mono);
+  font-size: 0.6rem; font-weight: 500; letter-spacing: 0.28em; text-transform: uppercase;
   color: var(--accent);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  opacity: 0.9;
+  padding: 0.2rem 0.6rem; border: 1px solid rgba(212,160,74,0.22); border-radius: 100px;
+  background: rgba(212,160,74,0.05);
 }
-
-.login-subtitle {
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-bottom: 1.75rem;
-  animation: fade-up 0.7s 0.35s cubic-bezier(0.16,1,0.3,1) both;
+.subtitle {
+  text-align: center; font-size: 0.8rem; color: var(--text-dim);
+  margin: 0.4rem 0 1.6rem; animation: fade-up 0.7s 0.35s cubic-bezier(0.16,1,0.3,1) both;
 }
+@keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 
-@keyframes fade-up {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* ─── Alert ─── */
+/* ════════ Alert ════════ */
 .alert {
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  font-size: 0.82rem;
-  margin-bottom: 1.25rem;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition: opacity 0.3s ease, transform 0.3s ease;
-  pointer-events: none;
-  font-family: var(--font-body);
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  border-radius: 9px; padding: 0.7rem 0.9rem; font-size: 0.8rem;
+  margin-bottom: 1.1rem; font-family: var(--font-body);
 }
-.alert.visible {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
-  animation: fade-up 0.5s cubic-bezier(0.16,1,0.3,1) both;
-}
-.alert.alert-error {
-  background: rgba(217,108,108,0.06);
-  border: 1px solid rgba(217,108,108,0.2);
-  color: #e09090;
-  box-shadow: 0 0 20px rgba(217,108,108,0.06);
-}
-.alert.alert-success {
-  background: rgba(76,183,130,0.06);
-  border: 1px solid rgba(76,183,130,0.2);
-  color: #6ed9a0;
-  box-shadow: 0 0 20px rgba(76,183,130,0.06);
-}
-.alert svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
+.alert svg { flex-shrink: 0; margin-top: 1px; }
+.alert-error { background: rgba(217,108,108,0.07); border: 1px solid rgba(217,108,108,0.22); color: #e09090; box-shadow: 0 0 22px rgba(217,108,108,0.07); }
+.alert-success { background: rgba(76,183,130,0.07); border: 1px solid rgba(76,183,130,0.22); color: #6ed9a0; box-shadow: 0 0 22px rgba(76,183,130,0.07); }
+.alert-enter-active { transition: opacity 0.35s ease, transform 0.35s ease; }
+.alert-enter-from { opacity: 0; transform: translateY(-6px); }
 
-/* ─── Form ─── */
-form {
-  animation: fade-up 0.7s 0.45s cubic-bezier(0.16,1,0.3,1) both;
+/* ════════ Fields ════════ */
+form { animation: fade-up 0.7s 0.45s cubic-bezier(0.16,1,0.3,1) both; }
+.field { margin-bottom: 1.15rem; }
+.field label {
+  display: flex; align-items: center; gap: 0.25rem;
+  font-size: 0.68rem; font-weight: 600; color: var(--text-dim);
+  margin-bottom: 0.45rem; text-transform: uppercase; letter-spacing: 0.1em;
+  transition: color 0.25s ease; font-family: var(--font-mono);
 }
+.field.focused label { color: var(--accent); }
+.field-cursor { color: var(--accent); opacity: 0; }
+.field.focused .field-cursor { opacity: 1; animation: blink 1s step-end infinite; }
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 
-.form-group {
-  margin-bottom: 1.2rem;
-  position: relative;
+.caps-warn {
+  margin-left: auto; font-size: 0.58rem; letter-spacing: 0.06em;
+  color: #e0b060; text-transform: none; font-family: var(--font-mono);
 }
-.form-group label {
-  display: flex;
-  align-items: baseline;
-  gap: 0.25rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-dim);
-  margin-bottom: 0.45rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  transition: color 0.25s ease;
-}
-.form-group.focused label {
-  color: var(--accent);
-}
-.label-cursor {
-  font-family: var(--font-mono);
-  color: var(--accent);
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-.form-group.focused .label-cursor {
-  opacity: 1;
-  animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0; }
-}
+.caps-enter-active, .caps-leave-active { transition: opacity 0.2s ease; }
+.caps-enter-from, .caps-leave-to { opacity: 0; }
 
-.input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
+.field-box { position: relative; display: flex; align-items: center; }
+.field-ico {
+  position: absolute; left: 0.85rem; color: var(--text-muted);
+  transition: color 0.25s ease; pointer-events: none;
 }
-.input-wrap input {
-  flex: 1;
-  width: 100%;
-  padding: 0.8rem 1rem;
-  padding-right: 2.6rem;
+.field.focused .field-ico { color: var(--accent); }
+.field-box input {
+  width: 100%; padding: 0.82rem 2.7rem 0.82rem 2.5rem;
   background: rgba(27, 29, 38, 0.6);
-  border: 1px solid var(--border-solid);
-  border-radius: 10px;
-  color: var(--text);
-  font-size: 0.92rem;
-  font-family: var(--font-body);
-  outline: none;
-  transition: border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+  border: 1px solid var(--border-solid); border-radius: 11px;
+  color: var(--text); font-size: 0.92rem; font-family: var(--font-body); outline: none;
+  transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
 }
-.input-wrap input::placeholder {
-  color: var(--text-muted);
-  opacity: 0.25;
+.field-box input::placeholder { color: var(--text-muted); opacity: 0.3; }
+.field-box input:focus {
+  border-color: rgba(212,160,74,0.45);
+  background: rgba(27,29,38,0.9);
+  box-shadow: 0 0 0 3px rgba(212,160,74,0.09), 0 6px 22px rgba(0,0,0,0.25);
 }
-.input-wrap input:focus {
-  border-color: rgba(212,160,74,0.4);
-  background: rgba(27, 29, 38, 0.85);
-  box-shadow: 0 0 0 3px rgba(212,160,74,0.08), 0 4px 20px rgba(0,0,0,0.2);
-}
-.input-wrap input.input-error {
-  border-color: rgba(217,108,108,0.5);
-  box-shadow: 0 0 0 3px rgba(217,108,108,0.08);
+.field-box input.has-error {
+  border-color: rgba(217,108,108,0.55);
+  box-shadow: 0 0 0 3px rgba(217,108,108,0.09);
   animation: shake 0.4s ease-in-out;
 }
-.input-wrap input:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.input-glow {
-  position: absolute;
-  inset: -1px;
-  border-radius: 10px;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
-  background: linear-gradient(135deg, rgba(212,160,74,0.15), transparent 60%);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  -webkit-mask-composite: xor;
-  padding: 1px;
-}
-.input-wrap input:focus ~ .input-glow {
-  opacity: 1;
-}
-
+.field-box input:disabled { opacity: 0.4; cursor: not-allowed; }
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-4px); }
-  40% { transform: translateX(4px); }
-  60% { transform: translateX(-3px); }
-  80% { transform: translateX(3px); }
+  0%,100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); } 40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); } 80% { transform: translateX(3px); }
 }
+.reveal {
+  position: absolute; right: 8px; display: flex; padding: 7px;
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  border-radius: 7px; transition: color 0.2s, background 0.2s;
+}
+.reveal:hover:not(:disabled) { color: var(--accent); background: rgba(212,160,74,0.08); }
+.reveal:disabled { cursor: not-allowed; opacity: 0.4; }
 
-.toggle-pw {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 6px;
-  display: flex;
-  border-radius: 6px;
-  transition: color 0.2s, background 0.2s;
+/* ════════ Cipher strip ════════ */
+.cipher {
+  display: flex; align-items: center; gap: 0.6rem;
+  margin-top: 0.5rem; padding: 0 0.2rem;
+  font-family: var(--font-mono); font-size: 0.62rem;
+  opacity: 0.5; transition: opacity 0.3s ease;
 }
-.toggle-pw:hover {
-  color: var(--accent);
-  background: rgba(212,160,74,0.08);
+.cipher.active { opacity: 1; }
+.cipher-tag {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  color: var(--text-muted); letter-spacing: 0.08em; white-space: nowrap;
+  transition: color 0.3s ease;
 }
-.toggle-pw svg {
-  display: block;
+.cipher.active .cipher-tag { color: var(--success); }
+.cipher-lock {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted);
+  transition: background 0.3s ease;
 }
+.cipher.active .cipher-lock {
+  background: var(--success); box-shadow: 0 0 7px var(--success);
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+.cipher-stream {
+  flex: 1; overflow: hidden; text-overflow: clip; white-space: nowrap;
+  color: rgba(212,160,74,0.55); letter-spacing: 0.18em;
+  mask-image: linear-gradient(90deg, #000 78%, transparent);
+}
+@keyframes live-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
 
-/* ─── Submit button ─── */
-.login-btn {
-  width: 100%;
-  padding: 0.85rem;
-  margin-top: 0.6rem;
+/* ════════ Submit ════════ */
+.submit {
+  position: relative; overflow: hidden;
+  width: 100%; margin-top: 0.7rem; padding: 0.9rem;
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
   background: linear-gradient(135deg, var(--accent), #c08a30);
-  color: #0b0c10;
-  font-weight: 700;
-  font-size: 0.9rem;
-  font-family: var(--font-body);
-  letter-spacing: 0.04em;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  position: relative;
-  overflow: hidden;
-  transition: transform 0.25s cubic-bezier(0.16,1,0.3,1),
-              box-shadow 0.25s ease,
-              opacity 0.2s ease;
-  box-shadow:
-    0 4px 20px rgba(212,160,74,0.25),
-    0 0 0 1px rgba(212,160,74,0.15) inset;
+  color: #0b0c10; font-weight: 700; font-size: 0.9rem; letter-spacing: 0.03em;
+  font-family: var(--font-body); border: none; border-radius: 11px; cursor: pointer;
+  box-shadow: 0 6px 24px rgba(212,160,74,0.28), 0 0 0 1px rgba(212,160,74,0.18) inset;
+  transition: transform 0.25s cubic-bezier(0.16,1,0.3,1), box-shadow 0.25s, opacity 0.2s;
 }
-.login-btn:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow:
-    0 8px 30px rgba(212,160,74,0.35),
-    0 0 0 1px rgba(212,160,74,0.2) inset;
-}
-.login-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-.login-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn-shine {
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 60%;
-  height: 100%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255,255,255,0.15),
-    transparent
-  );
+.submit:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 34px rgba(212,160,74,0.4), 0 0 0 1px rgba(212,160,74,0.25) inset; }
+.submit:hover:not(:disabled) .submit-arrow { transform: translateX(4px); }
+.submit:active:not(:disabled) { transform: translateY(0); }
+.submit:disabled { opacity: 0.55; cursor: not-allowed; }
+.submit-label, .submit-arrow { position: relative; z-index: 1; }
+.submit-arrow { transition: transform 0.25s ease; }
+.submit.loading .submit-label, .submit.loading .submit-arrow { opacity: 0; }
+.submit-shine {
+  position: absolute; top: 0; left: -100%; width: 55%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
   transform: skewX(-20deg);
-  transition: none;
 }
-.login-btn:hover:not(:disabled) .btn-shine {
-  animation: shine-sweep 0.8s ease forwards;
+.submit:hover:not(:disabled) .submit-shine { animation: shine 0.85s ease forwards; }
+@keyframes shine { to { left: 160%; } }
+.submit-spin {
+  position: absolute; width: 20px; height: 20px;
+  border: 2.5px solid rgba(11,12,16,0.18); border-top-color: #0b0c10; border-radius: 50%;
+  opacity: 0; animation: seq-spin 0.7s linear infinite;
 }
-@keyframes shine-sweep {
-  to { left: 150%; }
-}
+.submit.loading .submit-spin { opacity: 1; }
+@keyframes seq-spin { to { transform: rotate(360deg); } }
 
-.btn-text {
-  position: relative;
-  z-index: 1;
-}
-.login-btn.loading .btn-text {
-  opacity: 0;
-}
-.login-btn.loading .btn-shine {
-  display: none;
-}
-.login-btn.loading .spinner {
-  opacity: 1;
-  visibility: visible;
-}
-
-.spinner {
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  border: 2.5px solid rgba(11,12,16,0.12);
-  border-top-color: #0b0c10;
-  border-radius: 50%;
-  animation: seq-spin 0.7s linear infinite;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s ease;
-}
-
-/* ─── Footer meta ─── */
-.login-meta {
-  margin-top: 1.75rem;
+/* ════════ Footer ════════ */
+.console-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-muted);
   animation: fade-up 0.7s 0.6s cubic-bezier(0.16,1,0.3,1) both;
 }
-.meta-divider {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.75rem;
+.foot-pulse { display: inline-flex; align-items: center; gap: 0.4rem; }
+.foot-pulse i {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--success);
+  box-shadow: 0 0 6px var(--success); animation: live-pulse 2s ease-in-out infinite;
 }
-.meta-divider span:first-child,
-.meta-divider span:last-child {
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border-solid), transparent);
-}
-.meta-diamond {
-  color: rgba(212,160,74,0.2);
-  font-size: 0.5rem;
-  line-height: 1;
-}
+.foot-ver { opacity: 0.7; letter-spacing: 0.04em; }
 
-.login-footer {
-  text-align: center;
-  font-size: 0.68rem;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  letter-spacing: 0.04em;
+/* ════════ Access granted overlay ════════ */
+.grant-screen {
+  position: fixed; inset: 0; z-index: 20;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem;
+  background: radial-gradient(ellipse at center, rgba(20,19,15,0.97), rgba(11,12,16,0.99));
+  backdrop-filter: blur(10px);
 }
-.footer-code {
-  color: var(--accent);
-  opacity: 0.5;
+.grant-shield { width: 132px; height: 132px; filter: drop-shadow(0 0 24px rgba(212,160,74,0.5)); }
+.grant-shield-body { stroke-dasharray: 360; stroke-dashoffset: 360; animation: draw 0.7s ease forwards; }
+.grant-check { stroke-dasharray: 80; stroke-dashoffset: 80; animation: draw 0.4s 0.55s ease forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.grant-title {
+  margin-top: 0.8rem; font-family: var(--font-display); font-weight: 800;
+  font-size: 1.5rem; letter-spacing: 0.16em; color: var(--accent-bright);
+  opacity: 0; animation: fade-up 0.5s 0.85s ease forwards;
+  text-shadow: 0 0 28px rgba(212,160,74,0.5);
 }
-.footer-sep {
-  opacity: 0.3;
+.grant-sub {
+  font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-dim); letter-spacing: 0.1em;
+  opacity: 0; animation: fade-up 0.5s 1.05s ease forwards;
 }
+.grant-enter-active { transition: opacity 0.35s ease; }
+.grant-enter-from { opacity: 0; }
+.grant-leave-active { transition: opacity 0.4s ease; }
+.grant-leave-to { opacity: 0; }
 
-/* ─── Responsive ─── */
+/* ════════ Responsive ════════ */
 @media (max-width: 640px) {
-  .login-page { padding: 1rem; }
-  .login-body { padding: 2rem 1.5rem 1.75rem; }
-  .login-card { max-width: 100%; }
-  .side-decor { display: none; }
-  .watermark-text { font-size: 10rem; opacity: 0.15; }
+  .login-stage { padding: 1rem; }
+  .console { max-width: 100%; }
+  .console-body { padding: 2rem 1.5rem 1.6rem; }
+  .watermark-text { font-size: 9rem; opacity: 0.16; }
   .watermark-sub { display: none; }
+}
+
+/* ════════ Reduced motion ════════ */
+@media (prefers-reduced-motion: reduce) {
+  .orb, .bg-grid, .radar-sweep, .radar-sweep::before, .watermark-text,
+  .console-edge, .bg-constellation circle, .brand-mark.glitch,
+  .cipher.active .cipher-lock, .foot-pulse i, .submit-shine, .status-pulse {
+    animation: none !important;
+  }
+  .console { animation: none !important; transform: none !important; }
+  .spotlight, .console-sheen { display: none; }
+  * { scroll-behavior: auto; }
 }
 </style>

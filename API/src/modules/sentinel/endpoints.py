@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import ipaddress
 
@@ -18,7 +19,6 @@ from src.modules.shared._exceptions import (
 )
 from src.modules.shared.schemas import ErrorSchema
 from src.modules.aegis.exceptions import DocumentError, DocumentNotFoundError, DocumentNotReadyError
-from src.modules.system import SecOpsLogger
 
 from .managers import (
     ScanManager,
@@ -27,6 +27,7 @@ from .managers import (
     OpenVASScanManager,
     ProgramedScanManager,
     SentinelReportManager,
+    ScanFolderManager,
 )
 from .model import ScanType
 from .exceptions import (
@@ -38,6 +39,9 @@ from .exceptions import (
     PrivateIPRequested,
     ProgramedScanError,
     ProgramedScanNotFoundError,
+    FolderNotFoundError,
+    FolderNameInvalidError,
+    ScanAlreadyInFolderError,
 )
 from .schemas import (
     ScanIdQuerySchema,
@@ -63,6 +67,15 @@ from .schemas import (
     ScheduledScanResponseSchema,
     ScheduledScanListResponseSchema,
     ScheduledScanActionResponseSchema,
+    CreateFolderSchema,
+    RenameFolderSchema,
+    MoveScanToFolderSchema,
+    AddScansToFolderSchema,
+    FolderListResponseSchema,
+    FolderActionResponseSchema,
+    ScanFolderActionResponseSchema,
+    BulkDeleteScansSchema,
+    BulkDeleteScansResponseSchema,
 )
 
 
@@ -70,7 +83,7 @@ sentinel_blp = SmorestBlueprint(
     "sentinel", __name__,
     description="Escaneos de seguridad (Nmap, Nikto, OpenVAS) y PDFs"
 )
-_logger = SecOpsLogger("sentinel").get_logger()
+logger = logging.getLogger(__name__)
 
 CANCELLABLE_STATES = frozenset({"pending", "running"})
 MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024
@@ -85,7 +98,7 @@ MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def get_scan_status(args):
     """Estado y progreso de un escaneo"""
     scan_id = args["id"]
@@ -122,7 +135,7 @@ def get_scan_status(args):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_UPDATE])
 @limiter.limit("60 per hour; 200 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def cancel_scan(scan_id: int):
     """Cancelar un escaneo en curso"""
     user = get_current_user()
@@ -139,13 +152,17 @@ def cancel_scan(scan_id: int):
         )
 
     if not manager.cancel_scan(scan_id, user.id): # type: ignore
-        raise ScanExecutionError("No se pudo cancelar")
+        raise ScanExecutionError(
+            scan_type=scan.scan_type,
+            target=scan.target,
+            reason="No se pudo cancelar",
+        )
 
     scan = manager.get_scan_by_id(scan_id)
     if not scan:
         raise ScanNotFoundError(scan_id)
 
-    _logger.info(f"Escaneo {scan.scan_type} {scan_id} cancelado por {user.username}")
+    logger.info(f"Escaneo {scan.scan_type} {scan_id} cancelado por {user.username}")
     return {
         "message": "Escaneo cancelado exitosamente",
         "scanId": scan_id,
@@ -164,7 +181,7 @@ def cancel_scan(scan_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
 @limiter.limit("20 per hour; 100 per day")
-@handle_exceptions(default_exception=ScanExecutionError, logger=_logger)
+@handle_exceptions(default_exception=ScanExecutionError, logger=logger)
 def start_nmap_scan(data: dict):
     """Lanzar uno o mas escaneos Nmap (soporta rangos CIDR)"""
     host = data["target"]
@@ -196,7 +213,7 @@ def start_nmap_scan(data: dict):
             timeout=timeout,
         )
         scan_ids.append(scan_id)
-        _logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={user.username}")
+        logger.info(f"Nmap lanzado: ID={scan_id} host={target_host} ports={ports} user={user.username}")
 
     return {
         "message": "Escaneo(s) Nmap iniciado(s) correctamente",
@@ -216,7 +233,7 @@ def start_nmap_scan(data: dict):
 @limiter.limit("20 per hour; 100 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
-@handle_exceptions(default_exception=ScanExecutionError, logger=_logger)
+@handle_exceptions(default_exception=ScanExecutionError, logger=logger)
 def start_nikto_scan(data):
     """Lanzar un escaneo Nikto"""
     target = data["target"]
@@ -225,7 +242,7 @@ def start_nikto_scan(data):
 
     nikto_manager = NiktoScanManager()
     scan_id = nikto_manager.run_scan(target, user_id=user.id, timeout=timeout) # type: ignore
-    _logger.info(f"Nikto lanzado: ID={scan_id} target={target} timeout={timeout} user={user.username}")
+    logger.info(f"Nikto lanzado: ID={scan_id} target={target} timeout={timeout} user={user.username}")
     return {
         "message": "Escaneo Nikto iniciado correctamente",
         "scanId": scan_id,
@@ -244,7 +261,7 @@ def start_nikto_scan(data):
 @limiter.limit("10 per hour; 50 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
-@handle_exceptions(default_exception=ScanExecutionError, logger=_logger)
+@handle_exceptions(default_exception=ScanExecutionError, logger=logger)
 def start_openvas_scan(data):
     """Lanzar un escaneo OpenVAS para un unico host"""
     target = data["target"]
@@ -272,7 +289,7 @@ def start_openvas_scan(data):
         user_id=user.id,
         skip_normalize=True,
     )
-    _logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={user.username}")
+    logger.info(f"OpenVAS lanzado: ID={scan_id} target={target_ip} config={scan_config} user={user.username}")
 
     return {
         "message": "Escaneo OpenVAS iniciado correctamente",
@@ -292,7 +309,7 @@ def start_openvas_scan(data):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def retrieve_all_scans(args):
     """Listar todos los escaneos del usuario con paginacion opcional"""
     scan_type = args["type"]
@@ -331,7 +348,7 @@ def retrieve_all_scans(args):
             for scan in mgr.get_scans_for_user(uid):
                 all_results.append(mgr.format_scan(scan.id))
         except (OSError, RuntimeError) as exc:
-            _logger.error(f"Error obteniendo scans: {exc}")
+            logger.error(f"Error obteniendo scans: {exc}", exc_info=True)
 
     return {
         "message": "Escaneos obtenidos correctamente",
@@ -349,7 +366,7 @@ def retrieve_all_scans(args):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def get_scan_stats():
     """Contadores de escaneos por tipo"""
     from src.modules.infrastructure.session import get_db_session
@@ -369,7 +386,7 @@ def get_scan_stats():
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def retrieve_scan_by_id(scan_id: int):
     """Detalle completo de un escaneo especifico"""
     user = get_current_user()
@@ -380,7 +397,7 @@ def retrieve_scan_by_id(scan_id: int):
         raise ScanNotFoundError(scan_id)
     ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
-    _logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan.scan_type} por usuario {user.username}")
+    logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan.scan_type} por usuario {user.username}")
     result = manager.format_scan(scan_id)
     if scan.scan_type == "nmap": # type: ignore
         result["openPorts"] = [{
@@ -414,7 +431,7 @@ def retrieve_scan_by_id(scan_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def is_scan_finished(args):
     """Indicar si un escaneo ha finalizado"""
     user = get_current_user()
@@ -444,7 +461,7 @@ def is_scan_finished(args):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_DELETE])
 @limiter.limit("60 per hour; 200 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def delete_scan(scan_id: int):
     """Eliminar un escaneo del sistema"""
     user = get_current_user()
@@ -456,17 +473,45 @@ def delete_scan(scan_id: int):
     ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
 
     if scan.status in CANCELLABLE_STATES:
-        _logger.info(f"Cancelando escaneo {scan_id} antes de eliminar")
+        logger.info(f"Cancelando escaneo {scan_id} antes de eliminar")
         manager.cancel_scan(scan_id, user.id) # type: ignore
 
     if not manager.delete_scan(scan_id):
-        raise ScanExecutionError("No se pudo eliminar el escaneo")
+        raise ScanExecutionError(
+            scan_type=scan.scan_type,
+            target=scan.target,
+            reason="No se pudo eliminar el escaneo",
+        )
 
-    _logger.info(f"Escaneo {scan.scan_type} {scan_id} eliminado por {user.username}")
+    logger.info(f"Escaneo {scan.scan_type} {scan_id} eliminado por {user.username}")
     return {
         "message": "Escaneo eliminado correctamente",
         "scanId": scan_id,
         "scanType": scan.scan_type,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.delete("/scans")
+@sentinel_blp.arguments(BulkDeleteScansSchema)
+@sentinel_blp.response(200, BulkDeleteScansResponseSchema, description="Scans bulk deleted")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(500, schema=ErrorSchema, description="Deletion failed")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_DELETE])
+@limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def bulk_delete_scans(data):
+    """Eliminar multiples escaneos de forma masiva"""
+    user = get_current_user()
+    result = ScanManager.bulk_delete_scans(data["scanIds"], user.id)
+    logger.info(f"Bulk delete: {result['deletedCount']} eliminados, {result['failedCount']} fallidos por {user.username}")
+    return {
+        "message": f"{result['deletedCount']} escaneo(s) eliminado(s), {result['failedCount']} fallido(s)",
+        "deletedCount": result["deletedCount"],
+        "failedCount": result["failedCount"],
+        "results": result["results"],
         "user": user.username,
     }
 
@@ -480,7 +525,7 @@ def delete_scan(scan_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_CREATE])
 @limiter.limit("30 per hour; 100 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def generate_pdf(args):
     """Solicitar generacion asincrona de un PDF"""
     scan_id = args["id"]
@@ -505,7 +550,7 @@ def generate_pdf(args):
         ai_report=ai_report,
         strategy_class=manager._strategy_class,
     )
-    _logger.info(f"Generacion de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {user.username} con AI Report: {ai_report}")
+    logger.info(f"Generacion de PDF solicitada para escaneo {scan_id} (documento {doc_id}) por usuario {user.username} con AI Report: {ai_report}")
 
     return {
         "message": "Generacion de PDF iniciada",
@@ -526,7 +571,7 @@ def generate_pdf(args):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
 def get_document_status(args):
     """Consultar estado de generacion de un documento"""
     user = get_current_user()
@@ -569,7 +614,7 @@ def get_document_status(args):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def get_all_documents(args):
     """Obtener todos los documentos del usuario"""
     user = get_current_user()
@@ -614,7 +659,7 @@ def get_all_documents(args):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def get_documents_by_scan(scan_id: int):
     """Obtener todos los documentos de un escaneo concreto"""
     user = get_current_user()
@@ -661,26 +706,26 @@ def get_documents_by_scan(scan_id: int):
 @sentinel_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def download_document(document_id: int):
     """Descargar un documento PDF generado"""
     user = get_current_user()
     uid = user.id
-    _logger.info(f"Download request for document {document_id} by user {uid}")
+    logger.info(f"Download request for document {document_id} by user {uid}")
 
     doc_mgr = SentinelReportManager()
     doc_mgr.assert_document_ownership(document_id, uid) # type: ignore
 
     doc = doc_mgr.get_document_by_id(document_id)
     if not doc:
-        _logger.warning(f"Document {document_id} not found or access denied for user {uid}")
+        logger.warning(f"Document {document_id} not found or access denied for user {uid}")
         raise DocumentNotFoundError(document_id)
 
     if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename): # type: ignore
-        _logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
+        logger.warning(f"Document {document_id} not ready: status={doc.status}, filename={doc.filename}")
         raise DocumentNotReadyError(document_id, doc.status)
 
-    _logger.info(f"Serving document {document_id}: {doc.filename}")
+    logger.info(f"Serving document {document_id}: {doc.filename}")
     return send_file(
         doc.filename, # type: ignore
         mimetype="application/pdf",
@@ -697,7 +742,7 @@ def download_document(document_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_DELETE])
 @limiter.limit("30 per hour; 100 per day")
-@handle_exceptions(default_exception=DocumentError, logger=_logger)
+@handle_exceptions(default_exception=DocumentError, logger=logger)
 def delete_document(document_id: int):
     """Eliminar un documento"""
     user = get_current_user()
@@ -706,7 +751,7 @@ def delete_document(document_id: int):
     doc_mgr = SentinelReportManager()
     doc_mgr.assert_document_ownership(document_id, uid) # type: ignore
     doc_mgr.delete_document(document_id)
-    _logger.info(f"Documento {document_id} eliminado por usuario {uid}")
+    logger.info(f"Documento {document_id} eliminado por usuario {uid}")
     return {"message": "Documento eliminado correctamente", "documentId": document_id}
 
 
@@ -719,7 +764,7 @@ def delete_document(document_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_CREATE])
 @limiter.limit("30 per hour; 100 per day")
-@handle_exceptions(default_exception=ProgramedScanError, logger=_logger)
+@handle_exceptions(default_exception=ProgramedScanError, logger=logger)
 def schedule_scan(data):
     """Crear un escaneo programado"""
     scan_type_str = data["scan_type"].lower()
@@ -739,7 +784,7 @@ def schedule_scan(data):
         schedule_type=data["schedule_type"],
         schedule_config=data["schedule_config"],
     )
-    _logger.info(
+    logger.info(
         f"Escaneo programado {ps.id} creado: tipo={scan_type_str} "
         f"programacion={data['schedule_type']} usuario={user.username}"
     )
@@ -762,13 +807,13 @@ def schedule_scan(data):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_DELETE])
 @limiter.limit("60 per hour; 200 per day")
-@handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=logger)
 def revoke_scheduled_scan(ps_id: int):
     """Revocar un escaneo programado (desactivar)"""
     user = get_current_user()
     ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
     ProgramedScanManager.revoke(ps_id, user.id) # type: ignore
-    _logger.info(f"Escaneo programado {ps_id} revocado por {user.username}")
+    logger.info(f"Escaneo programado {ps_id} revocado por {user.username}")
     return {
         "message": "Escaneo programado revocado correctamente",
         "programedScanId": ps_id,
@@ -785,13 +830,13 @@ def revoke_scheduled_scan(ps_id: int):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_DELETE])
 @limiter.limit("30 per hour; 100 per day")
-@handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=_logger)
+@handle_exceptions(default_exception=ProgramedScanNotFoundError, logger=logger)
 def delete_scheduled_scan(ps_id: int):
     """Eliminar permanentemente un escaneo programado de la BD"""
     user = get_current_user()
     ps = ProgramedScanManager.assert_ownership(ps_id, user.id) # type: ignore
     ProgramedScanManager.delete(ps_id, user.id) # type: ignore
-    _logger.info(f"Escaneo programado {ps_id} eliminado permanentemente por {user.username}")
+    logger.info(f"Escaneo programado {ps_id} eliminado permanentemente por {user.username}")
     return {
         "message": "Escaneo programado eliminado permanentemente",
         "programedScanId": ps_id,
@@ -807,7 +852,7 @@ def delete_scheduled_scan(ps_id: int):
 @limiter.limit("300 per hour; 2000 per day")
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_SCHEDULE_READ])
-@handle_exceptions(default_exception=ProgramedScanError, logger=_logger)
+@handle_exceptions(default_exception=ProgramedScanError, logger=logger)
 def list_scheduled_scans():
     """Listar todos los escaneos programados del usuario"""
     user = get_current_user()
@@ -830,5 +875,168 @@ def list_scheduled_scans():
         "message": "Escaneos programados obtenidos correctamente",
         "count": len(results),
         "scheduledScans": results,
+        "user": user.username,
+    }
+
+
+# =========================================================================
+# SCAN FOLDERS
+# =========================================================================
+
+@sentinel_blp.post("/folders")
+@sentinel_blp.arguments(CreateFolderSchema)
+@sentinel_blp.response(201, FolderActionResponseSchema, description="Folder created")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_CREATE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=FolderNameInvalidError, logger=logger)
+def create_folder(data):
+    """Crear una nueva carpeta de escaneos"""
+    user = get_current_user()
+    folder = ScanFolderManager().create_folder(user.id, data["name"])  # type: ignore
+    logger.info(f"Carpeta {folder.id} creada por {user.username}")
+    return {
+        "message": "Carpeta creada correctamente",
+        "folderId": folder.id,
+        "name": folder.name,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.get("/folders")
+@sentinel_blp.response(200, FolderListResponseSchema, description="User folders with scans")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=FolderNotFoundError, logger=logger)
+def list_folders():
+    """Listar todas las carpetas del usuario con sus escaneos completos"""
+    user = get_current_user()
+    result = ScanFolderManager().get_folders_with_scans(user.id)  # type: ignore
+    logger.info(f"Carpetas obtenidas para usuario {user.username}")
+    return {
+        "message": "Carpetas obtenidas correctamente",
+        "folders": result["folders"],
+        "unfoldered": result["unfoldered"],
+        "user": user.username,
+    }
+
+
+@sentinel_blp.put("/folders/<int:folder_id>")
+@sentinel_blp.arguments(RenameFolderSchema)
+@sentinel_blp.response(200, FolderActionResponseSchema, description="Folder renamed")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=FolderNotFoundError, logger=logger)
+def rename_folder(data, folder_id: int):
+    """Renombrar una carpeta existente"""
+    user = get_current_user()
+    folder = ScanFolderManager().rename_folder(folder_id, user.id, data["name"])  # type: ignore
+    logger.info(f"Carpeta {folder_id} renombrada por {user.username}")
+    return {
+        "message": "Carpeta renombrada correctamente",
+        "folderId": folder.id,
+        "name": folder.name,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.delete("/folders/<int:folder_id>")
+@sentinel_blp.response(200, FolderActionResponseSchema, description="Folder deleted")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_DELETE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=FolderNotFoundError, logger=logger)
+def delete_folder(folder_id: int):
+    """Eliminar una carpeta (los escaneos quedan sin carpeta)"""
+    user = get_current_user()
+    ScanFolderManager().delete_folder(folder_id, user.id)  # type: ignore
+    logger.info(f"Carpeta {folder_id} eliminada por {user.username}")
+    return {
+        "message": "Carpeta eliminada correctamente",
+        "folderId": folder_id,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.post("/folders/<int:folder_id>/scans")
+@sentinel_blp.arguments(MoveScanToFolderSchema)
+@sentinel_blp.response(200, ScanFolderActionResponseSchema, description="Scan moved to folder")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder or scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("120 per hour; 400 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def move_scan_to_folder(data, folder_id: int):
+    """Añadir o mover un escaneo a una carpeta"""
+    user = get_current_user()
+    scan = ScanFolderManager().move_scan_to_folder(data["scanId"], folder_id, user.id)  # type: ignore
+    logger.info(f"Escaneo {scan.id} movido a carpeta {folder_id} por {user.username}")
+    return {
+        "message": "Escaneo añadido a la carpeta correctamente",
+        "scanId": scan.id,
+        "folderId": folder_id,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.post("/folders/<int:folder_id>/scans/batch")
+@sentinel_blp.arguments(AddScansToFolderSchema)
+@sentinel_blp.response(200, ScanFolderActionResponseSchema, description="Scans added to folder")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Folder or scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def add_scans_to_folder(data, folder_id: int):
+    """Añadir varios escaneos a una carpeta de una sola vez"""
+    user = get_current_user()
+    scans = ScanFolderManager().add_scans_to_folder(data["scanIds"], folder_id, user.id)
+    logger.info(f"{len(scans)} escaneos añadidos a carpeta {folder_id} por {user.username}")
+    return {
+        "message": f"{len(scans)} escaneo(s) añadido(s) a la carpeta correctamente",
+        "scanId": scans[0].id if scans else None,
+        "folderId": folder_id,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.delete("/folders/<int:folder_id>/scans/<int:scan_id>")
+@sentinel_blp.response(200, ScanFolderActionResponseSchema, description="Scan removed from folder")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_FOLDER_UPDATE])
+@limiter.limit("120 per hour; 400 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def remove_scan_from_folder(folder_id: int, scan_id: int):
+    """Sacar un escaneo de una carpeta (lo deja sin carpeta)"""
+    user = get_current_user()
+    scan = ScanFolderManager().remove_scan_from_folder(scan_id, user.id)  # type: ignore
+    logger.info(f"Escaneo {scan_id} sacado de carpeta {folder_id} por {user.username}")
+    return {
+        "message": "Escaneo eliminado de la carpeta correctamente",
+        "scanId": scan_id,
+        "folderId": None,
         "user": user.username,
     }

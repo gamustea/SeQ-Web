@@ -1,51 +1,88 @@
+"""
+Password hashing and verification using Argon2id.
 
-import os
+Provides forward-compatible verification: hashes starting with '$argon2'
+are verified with Argon2, while legacy SHA-256+salt hashes are verified
+with hmac.compare_digest and transparently migrated to Argon2 on next login.
+
+Functions:
+    hash_password         — Hash a password with Argon2id (includes salt).
+    verify_password       — Verify a password; returns (valid, needs_rehash).
+    generate_salt         — Legacy helper kept for DB compatibility during migration.
+    hash_password_with_salt — Legacy SHA-256 helper kept for migration path only.
+"""
+
 import hashlib
+import hmac
+import os
+
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+
+import src.modules.system.config_reading as CR
 
 
-def encode_sha256(input_string: str) -> str:
-    """Encodes the input string using SHA-256 and returns the hexadecimal digest.
-    Args:
-        input_string (str): The string to be encoded.
-    Returns:
-        str: The SHA-256 hexadecimal digest of the input string.
+def _get_hasher() -> PasswordHasher:
+    cfg = CR.get_argon2_config()
+    return PasswordHasher(
+        time_cost=cfg.get("time_cost", 3),
+        memory_cost=cfg.get("memory_cost", 65536),
+        parallelism=cfg.get("parallelism", 4),
+    )
+
+
+def hash_password(password: str) -> str:
+    """Hash a password with Argon2id. The salt is embedded in the returned string."""
+    return _get_hasher().hash(password)
+
+
+def verify_password(
+    stored_hash: str,
+    password: str,
+    legacy_salt: str = "",
+) -> tuple[bool, bool]:
     """
-    hasher = hashlib.sha256()
-    hasher.update(input_string.encode('utf-8'))
-    return hasher.hexdigest()
+    Verify a password against a stored hash.
+
+    Supports both Argon2id hashes (new) and legacy SHA-256+salt hashes.
+    Uses constant-time comparison in both paths.
+
+    Args:
+        stored_hash:  The hash stored in the database.
+        password:     The plaintext password to verify.
+        legacy_salt:  The salt used for the legacy SHA-256 hash (ignored for Argon2).
+
+    Returns:
+        (is_valid, needs_rehash) — needs_rehash is True when the hash uses the
+        legacy format or when Argon2 parameters have changed (check_needs_rehash).
+    """
+    if stored_hash.startswith("$argon2"):
+        ph = _get_hasher()
+        try:
+            ph.verify(stored_hash, password)
+            needs_rehash = ph.check_needs_rehash(stored_hash)
+            return True, needs_rehash
+        except VerifyMismatchError:
+            return False, False
+        except (VerificationError, InvalidHashError):
+            return False, False
+
+    # Legacy SHA-256+salt path
+    expected = hash_password_with_salt(password, legacy_salt)
+    is_valid = hmac.compare_digest(expected, stored_hash)
+    return is_valid, is_valid  # needs_rehash == is_valid (upgrade on success)
+
+
+# ---------------------------------------------------------------------------
+# Legacy helpers — kept only for the migration path (SHA-256 verification).
+# Do NOT use for new passwords.
+# ---------------------------------------------------------------------------
 
 def generate_salt() -> str:
-    """Generates a random salt for hashing.
-    Returns:
-        str: A randomly generated salt (32 hex characters).
-    """
-    return os.urandom(16).hex()  # 16 bytes es el tamaño recomendado
+    """Return an empty string. Argon2 embeds its own salt; kept for API compat."""
+    return ""
+
 
 def hash_password_with_salt(password: str, salt: str) -> str:
-    """Combines a password with a salt and returns the SHA-256 hash.
-    
-    Args:
-        password (str): The plaintext password to hash.
-        salt (str): The salt to combine with the password.
-    
-    Returns:
-        str: The SHA-256 hexadecimal digest of the salted password.
-    """
-    salted_password = salt + password
-    return encode_sha256(salted_password)
-
-def verify_password(stored_hash: str, password: str, salt: str) -> bool:
-    """Verifies if a password matches the stored hash.
-    
-    Args:
-        stored_hash (str): The hash stored in the database.
-        password (str): The password to verify.
-        salt (str): The salt used for the stored hash.
-    
-    Returns:
-        bool: True if password is correct, False otherwise.
-    """
-    return hash_password_with_salt(password, salt) == stored_hash
-
-
-
+    """SHA-256 hash of salt+password. Used only to verify legacy stored hashes."""
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()

@@ -15,7 +15,13 @@ estático.
 """
 
 import os
+import re
 import signal
+import logging
+import subprocess
+import sys
+import threading
+import time
 import warnings
 
 from flask                  import Flask, jsonify, request
@@ -31,12 +37,13 @@ from src.modules.shared._exceptions import (
     SecOpsException,
     create_error_response
 )
-from src.modules.system     import SecOpsLogger, config_reading, system_blp
+from src.modules.system     import configure_logging, config_reading, system_blp
 from src.modules.users      import (
     UserManager,
     oauth_blp,
     users_blp
 )
+from src.modules.users.services.secrets import hash_password as _hash_password
 from src.modules.sentinel   import sentinel_blp
 from src.modules.acheron    import acheron_blp
 from src.modules.aegis      import aegis_blp
@@ -48,48 +55,73 @@ import src.modules.system.config_reading as CR
 
 APP_CONTEXT = CR.get_app_context()
 
-_logger = SecOpsLogger(name="APIMain").get_logger()
+_logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", message="Multiple schemas resolved to the name")
 
 _IS_SHUTTING_DOWN = False
+_WORKER = {"proc": None}
+
+# Tope duro de apagado: pase lo que pase con la limpieza (Redis lento, scheduler
+# bloqueado, subproceso colgado), el proceso SIEMPRE sale antes de este límite.
+_SHUTDOWN_DEADLINE_S = 6
 
 
-def _graceful_shutdown(signum, *args) -> None:
+def _kill_worker_tree() -> None:
+    """Mata el subproceso worker y TODOS sus descendientes (nmap, nikto…).
+
+    ``Popen.terminate()`` solo mata el worker; sus subprocesos de escaneo
+    quedarían huérfanos. Con ``psutil`` se recorre el árbol completo y nunca se
+    bloquea sin límite (``wait_procs`` con timeout).
     """
-    Manejador de señales para shutdown graceful de la aplicación.
-
-    Cancela todas las tareas en segundo plano antes de terminar
-    el proceso, asegurando que los workers y subprocesses no queden huérfanos.
-
-    Args:
-        signum: Número de señal recibida (SIGTERM o SIGINT).
-        *args: Argumentos adicionales (para compatibilidad con Werkzeug reloader).
-
-    Behavior:
-        1. Protege contra re-entrada: fuerza os._exit(1) si ya se está apagando.
-        2. Registra la señal recibida.
-        3. Detiene SeQueue (cancela todas las tareas en todas las categorías).
-        4. Detiene el scheduler de tareas programadas.
-        5. Cierra las sesiones de base de datos.
-        6. Termina el proceso con os._exit(0).
-    """
-    global _IS_SHUTTING_DOWN
-
-    if _IS_SHUTTING_DOWN:
-        _logger.warning(
-            "Segunda señal recibida durante el apagado — forzando salida inmediata."
-        )
-        os._exit(1)
-
-    _IS_SHUTTING_DOWN = True
-
-    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-    _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
+    proc = _WORKER["proc"]
+    if proc is None:
+        return
     try:
-        from src.modules.system.sequeue import SeQueue
+        import psutil
+        try:
+            parent = psutil.Process(proc.pid)
+        except psutil.NoSuchProcess:
+            return
+        targets = parent.children(recursive=True) + [parent]
+        for p in targets:
+            try:
+                p.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(targets, timeout=3)
+        for p in alive:
+            try:
+                p.kill()
+            except psutil.NoSuchProcess:
+                pass
+    except Exception as e:
+        _logger.warning(f"Error matando el árbol del worker: {e}")
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    finally:
+        _WORKER["proc"] = None
+
+
+def _run_shutdown_cleanup() -> None:
+    """Limpieza de apagado. Se ejecuta en un hilo daemon con deadline.
+
+    Cada paso va aislado en su propio try/except: un fallo o bloqueo de uno no
+    impide intentar los siguientes, y el hilo daemon garantiza que el proceso
+    pueda salir aunque alguno se quede colgado.
+    """
+    _logger.info("Deteniendo worker...")
+    try:
+        _kill_worker_tree()
+    except Exception as e:
+        _logger.error(f"Error deteniendo worker: {e}")
+
+    try:
+        from src.modules.system.taskqueue import TaskQueue
         _logger.info("Cancelando tareas en segundo plano...")
-        SeQueue.get_instance().cancel_all()
+        TaskQueue.get_instance().cancel_all()
         _logger.info("Tareas canceladas.")
     except Exception as e:
         _logger.error(f"Error cancelando tareas: {e}")
@@ -107,10 +139,43 @@ def _graceful_shutdown(signum, *args) -> None:
     except Exception as e:
         _logger.error(f"Error cerrando sesiones de BD: {e}")
 
-    _logger.info("[Shutdown] Proceso terminado.")
+
+def _graceful_shutdown(signum, *args) -> None:
+    """
+    Manejador de señales para shutdown graceful de la aplicación.
+
+    Clave: la limpieza (que puede bloquearse en Redis, el scheduler o un
+    subproceso) se ejecuta en un **hilo daemon acotado por un deadline**, de
+    modo que el handler NUNCA se queda atascado en una llamada bloqueante. Si lo
+    hiciera, el hilo principal dejaría de estar en un punto seguro del bucle de
+    bytecode y los CTRL+C siguientes no se procesarían ("CTRL+C no funciona").
+    Pase lo que pase, ``os._exit`` se alcanza en <= ``_SHUTDOWN_DEADLINE_S`` s.
+
+    Args:
+        signum: Número de señal recibida (SIGTERM o SIGINT).
+        *args: Argumentos adicionales (compatibilidad con Werkzeug reloader).
+    """
+    global _IS_SHUTTING_DOWN
+
+    if _IS_SHUTTING_DOWN:
+        # Segundo CTRL+C: salida inmediata sin esperar a la limpieza.
+        os._exit(1)
+
+    _IS_SHUTTING_DOWN = True
+
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
+
+    cleanup = threading.Thread(target=_run_shutdown_cleanup, name="shutdown", daemon=True)
+    cleanup.start()
+    cleanup.join(timeout=_SHUTDOWN_DEADLINE_S)
+    if cleanup.is_alive():
+        _logger.warning(
+            "Limpieza de apagado excedió %ss — forzando salida.", _SHUTDOWN_DEADLINE_S
+        )
     os._exit(0)
 
-def create_app(fresh_db_init: bool = False) -> Flask:
+def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Flask:
     """
     Factory de la aplicación Flask SeQ.
 
@@ -124,6 +189,8 @@ def create_app(fresh_db_init: bool = False) -> Flask:
         Flask: Aplicación completamente configurada y lista para servir.
     """
     from src.modules.sentinel.services.scheduling import Scheduler
+
+    configure_logging()
 
     app = Flask(__name__)
 
@@ -159,6 +226,9 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     _logger.info("Registrando manejadores de error globales...")
     _register_error_handlers(app)
 
+    _logger.info("Registrando auditoría de peticiones...")
+    _register_request_audit(app)
+
     if fresh_db_init:
         _init_db()
 
@@ -171,12 +241,35 @@ def create_app(fresh_db_init: bool = False) -> Flask:
     from src.modules.infrastructure.session import shutdown_request_session
     app.teardown_request(shutdown_request_session)
 
-    _logger.info("Arrancando scheduler de tareas programadas...")
-    Scheduler.start()
+    if start_scheduler:
+        _logger.info("Reconciliando escaneos huérfanos...")
+        try:
+            from src.modules.sentinel.managers import ScanManager
+            fixed = ScanManager.reconcile_orphaned_scans()
+            if fixed:
+                _logger.info("Se marcaron %d escaneo(s) huérfano(s) como FAILED", fixed)
+        except Exception as e:
+            _logger.warning("No se pudo reconciliar escaneos huérfanos: %s", e)
 
-    _logger.info("Arrancando cola de tareas en segundo plano (SeQueue)...")
-    from src.modules.system.sequeue import SeQueue
-    SeQueue.get_instance().start()
+        _logger.info("Arrancando scheduler de tareas programadas...")
+        Scheduler.start()
+
+    _logger.info("Verificando conexion a Redis...")
+    import redis as redis_lib
+    try:
+        redis_cfg = CR.get_redis_config()
+        r = redis_lib.Redis(
+            host=redis_cfg["host"],
+            port=redis_cfg["port"],
+            db=redis_cfg["db"],
+            password=redis_cfg["password"],
+            socket_connect_timeout=redis_cfg.get("socket_connect_timeout", 2),
+        )
+        r.ping()
+        r.close()
+        _logger.info("Redis conectado correctamente")
+    except Exception as e:
+        _logger.warning("Redis no disponible — la cola de tareas no funcionara: %s", e)
 
     _logger.info("Aplicación SeQ iniciada correctamente")
     return app
@@ -262,6 +355,51 @@ def _register_error_handlers(app: Flask) -> None:
             "error_description": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
 
+def _register_request_audit(app: Flask) -> None:
+    """
+    Registra la auditoría de acceso de la API.
+
+    Un único par de hooks ``before_request`` / ``after_request`` garantiza que
+    TODA petición a cualquier endpoint deje una línea de log con: método, ruta,
+    código de estado, usuario que la realizó, IP de origen y duración.
+
+    El usuario se lee de ``request.current_username`` / ``request.current_user_id``,
+    que ``@require_oauth_token`` inyecta durante el dispatch de la vista; por eso
+    el log se emite en ``after_request`` (cuando esos atributos ya existen) y no
+    en ``before_request``. Las peticiones anónimas se registran como ``anonymous``.
+
+    Args:
+        app: Instancia de la aplicación Flask.
+    """
+    audit_logger = logging.getLogger("seq.audit")
+
+    @app.before_request
+    def _audit_start():
+        request._audit_start = time.perf_counter()  # type: ignore[attr-defined]
+
+    @app.after_request
+    def _audit_access(response):
+        # Ignora el preflight CORS y los assets de la documentación OpenAPI.
+        if request.method == "OPTIONS" or request.path.startswith("/api-docs"):
+            return response
+
+        username = getattr(request, "current_username", None) or "anonymous"
+        user_id  = getattr(request, "current_user_id", None)
+        start    = getattr(request, "_audit_start", None)
+        duration_ms = (time.perf_counter() - start) * 1000 if start else -1.0
+
+        audit_logger.info(
+            "%s %s -> %s | user=%s(id=%s) ip=%s %.1fms",
+            request.method,
+            request.path,
+            response.status_code,
+            username,
+            user_id,
+            request.remote_addr,
+            duration_ms,
+        )
+        return response
+
 def _init_db() -> None:
     """
     Inicializa la base de datos completa de SeQ desde cero.
@@ -297,64 +435,51 @@ def _init_db() -> None:
     port = db_creds["port"]
 
     default_db_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/postgres"
-    print(f"[*] Conectando a la base de datos por defecto para configurar '{dbname}'...")
     engine_postgres = create_engine(default_db_url, isolation_level="AUTOCOMMIT")
 
+    _SAFE_IDENTIFIER = re.compile(r'^[A-Za-z0-9_]+$')
+    if not _SAFE_IDENTIFIER.match(dbname):
+        raise ValueError(f"Nombre de base de datos inválido: {dbname!r}")
+
     with engine_postgres.connect() as conn:
-        print(f"[*] Terminando conexiones activas a la base de datos '{dbname}'...")
-        conn.execute(text(f"""
-            SELECT pg_terminate_backend(pg_stat_activity.pid)
-            FROM pg_stat_activity
-            WHERE pg_stat_activity.datname = '{dbname}'
-            AND pid <> pg_backend_pid();
-        """))
+        conn.execute(
+            text(
+                "SELECT pg_terminate_backend(pg_stat_activity.pid) "
+                "FROM pg_stat_activity "
+                "WHERE pg_stat_activity.datname = :dbname "
+                "AND pid <> pg_backend_pid();"
+            ),
+            {"dbname": dbname},
+        )
 
-        # Eliminar y recrear la base de datos
-        print(f"[*] Eliminando la base de datos '{dbname}' si existe...")
+        # DDL identifiers cannot use bind params; dbname is validated above.
         conn.execute(text(f'DROP DATABASE IF EXISTS "{dbname}";'))
-
-        print(f"[*] Creando la base de datos '{dbname}'...")
         conn.execute(text(f'CREATE DATABASE "{dbname}";'))
 
     engine_postgres.dispose()
 
     database_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
-    print(f"[*] Conectando a: {dialect}://{username}:***@{host}:{port}/{dbname}")
     engine = create_engine(database_url)
 
-    # 1. Eliminar las tablas si ya existen (en lugar de borrar toda la DB)
-    print("[*] Eliminando tablas existentes (si las hay)...")
     Base.metadata.drop_all(engine)
-
-    # 2. Creación de las tablas
-    print("[*] Creando tablas en PostgreSQL...")
     Base.metadata.create_all(engine)
-    print("[+] ¡Tablas creadas correctamente!")
-
-    # 3. Inserción de los datos iniciales
-    print("[*] Insertando datos de prueba (User)...")
+    root_password_hash = _hash_password("root")
     with engine.connect() as conn:
-        conn.execute(text("""
-            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at, role)
-            VALUES (
-            'root',
-            'Gabe',
-            'Joe',
-            '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
-            'c167837c1c2a860031d861164d69bd79',
-            'gjoe@seq.com',
-            CURRENT_DATE,
-            'role_root'
-            );
-        """))
+        conn.execute(
+            text(
+                'INSERT INTO "User" '
+                "(username, first_name, last_name, password_hash, password_salt, email, created_at, role) "
+                "VALUES ('root', 'Gabe', 'Joe', :pwdhash, '', 'gjoe@seq.com', CURRENT_DATE, 'role_root');"
+            ),
+            {"pwdhash": root_password_hash},
+        )
 
-        print("[*] Insertando atributos al usuario root...")
         root_attributes = UserManager.get_all_available_attributes()
         for attr in root_attributes:
-            conn.execute(text(f'''
-                INSERT INTO "UserAttribute" (user_id, attribute_name)
-                VALUES (1, '{attr}');
-            '''))
+            conn.execute(
+                text('INSERT INTO "UserAttribute" (user_id, attribute_name) VALUES (1, :attr);'),
+                {"attr": attr},
+            )
 
         conn.execute(text(("""
         INSERT INTO "Topic" (title) VALUES
@@ -450,10 +575,13 @@ def _init_db() -> None:
         )))
         conn.commit()
 
-    print("[+] ¡Datos iniciales insertados con éxito!")
-
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="SeQ API server")
+    parser.add_argument("--with-worker", action="store_true", help="Start RQ worker as subprocess")
+    _args, _ = parser.parse_known_args()
+
     signal.signal(
         signal.SIGTERM,
         _graceful_shutdown
@@ -464,8 +592,30 @@ if __name__ == "__main__":
     )
 
     app = create_app(APP_CONTEXT.create_database)
-    app.run(
-        debug=APP_CONTEXT.debug,
-        host=APP_CONTEXT.host,
-        port=APP_CONTEXT.port
-    )
+
+    if _args.with_worker:
+        # El worker se lanza en su PROPIA sesión para que el CTRL+C de la
+        # consola NO se le difunda (ni a sus descendientes: nmap, nikto).
+        # Así run.py es el único gestor de la señal y su _graceful_shutdown
+        # termina el worker explícitamente, evitando carreras de señales.
+        popen_kwargs = {
+            "cwd": os.path.dirname(os.path.abspath(__file__)),
+            "start_new_session": True,
+        }
+
+        _WORKER["proc"] = subprocess.Popen( # type: ignore
+            [sys.executable, "-m", "src.modules.system.taskqueue.worker"],
+            **popen_kwargs,
+        )
+        _logger.info("Worker iniciado como subproceso (PID %d)", _WORKER["proc"].pid)
+
+    try:
+        app.run(
+            debug=APP_CONTEXT.debug,
+            host=APP_CONTEXT.host,
+            port=APP_CONTEXT.port,
+            use_reloader=False
+        )
+    except KeyboardInterrupt:
+        _logger.info("KeyboardInterrupt caught, initiating shutdown...")
+        _graceful_shutdown(signal.SIGINT)

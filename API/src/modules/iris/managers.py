@@ -1,9 +1,9 @@
 """
-IrisManager — orchestrates email header analysis via SeQueue background tasks.
+IrisManager — orchestrates email header analysis via TaskQueue background tasks.
 
 Coordinates the analysis lifecycle:
 1. Creates an IrisAnalysis record in the database.
-2. Submits an analysis task to SeQueue (category: "iris.analyze").
+2. Submits an analysis task to the TaskQueue (category: "iris.analyze").
 3. The background task runs all registered rules, aggregates scores,
    determines a verdict, and persists results.
 4. Provides status queries and cancellation support.
@@ -11,16 +11,14 @@ Coordinates the analysis lifecycle:
 
 from __future__ import annotations
 
-import threading
-
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import src.modules.system.config_reading as CR
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
-from src.modules.system.logging import SecOpsLogger
-from src.modules.system.sequeue import SeQueue
+from src.modules.system.taskqueue import ITaskQueue, TaskQueue, Task, TaskTrackingMixin, job_context
 
 from .exceptions import (
     IrisAnalysisNotFoundError,
@@ -35,10 +33,12 @@ from .rules import iris_rules, RuleResult
 from .services import parse_raw_headers
 
 
+logger = logging.getLogger(__name__)
+
 _CANCELLABLE_STATES = frozenset({"pending", "running"})
 
 
-class IrisManager:
+class IrisManager(TaskTrackingMixin):
     """Orchestrates the lifecycle of an Iris email-header analysis.
 
     Typical usage::
@@ -49,8 +49,11 @@ class IrisManager:
         report = manager.get_analysis_results(analysis_id)     # finished
     """
 
-    def __init__(self) -> None:
-        self.logger = SecOpsLogger("IrisManager").get_logger()
+    EXTERNAL_ID_PREFIX = "iris-analysis:"
+    TASK_CATEGORY = "iris.analyze"
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
     # =========================================================================
     # PUBLIC API
@@ -60,7 +63,7 @@ class IrisManager:
         """Submit raw email headers for background analysis.
 
         Creates an IrisAnalysis record in ``pending`` state and enqueues
-        a SeQueue task (category ``"iris.analyze"``) that runs every
+        a TaskQueue task (category ``"iris.analyze"``) that runs every
         registered rule, aggregates scores, and persists the results.
 
         Args:
@@ -81,18 +84,14 @@ class IrisManager:
         """
         self._validate_headers_pre(raw_headers)
         analysis_id = self._create_analysis_record(raw_headers, user_id, title=title)
-        self.logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
+        logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
 
-        cancel_event = threading.Event()
-        thread_mgr = IrisManager()
-
-        SeQueue.get_instance().submit(
-            func=thread_mgr._run_analysis,
+        self._tq.submit(
+            func=IrisManager.execute_iris_analysis,
             args=(analysis_id, raw_headers),
             name=f"IrisAnalysis-{analysis_id}",
-            category="iris.analyze",
-            external_id=f"iris-analysis:{analysis_id}",
-            on_cancel=cancel_event.set,
+            category=self.TASK_CATEGORY,
+            external_id=self.external_id_for(analysis_id),
         )
 
         return analysis_id
@@ -110,16 +109,13 @@ class IrisManager:
     def get_analysis_status(self, analysis_id: int) -> Optional[str]:
         """Return the current lifecycle status string of an analysis.
 
-        Checks the in-memory SeQueue task first (fast path for running
-        tasks) and falls back to the database record.  Returns None
-        if the analysis ID is unknown.
+        Checks the TaskQueue task first (fast path for running tasks) and
+        falls back to the database record.  Returns None if the analysis
+        ID is unknown.
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
-            f"iris-analysis:{analysis_id}", category="iris.analyze"
-        )
-        if sq_task:
-            return str(sq_task.status)
+        status = self.task_status_of(analysis_id)
+        if status is not None:
+            return status
 
         analysis = self.get_analysis(analysis_id)
         if analysis:
@@ -130,15 +126,9 @@ class IrisManager:
         """Return the progress percentage (0‑100) of a running analysis.
 
         Only meaningful for analyses in ``running`` state — returns None
-        if no SeQueue task is active (e.g. finished or pending).
+        if no TaskQueue task is active (e.g. finished or pending).
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
-            f"iris-analysis:{analysis_id}", category="iris.analyze"
-        )
-        if sq_task:
-            return sq_task.progress
-        return None
+        return self.task_progress_of(analysis_id)
 
     def get_analysis_results(self, analysis_id: int) -> Dict[str, Any]:
         """Return the full analysis report for a finished analysis.
@@ -208,7 +198,7 @@ class IrisManager:
     def cancel_analysis(self, analysis_id: int, user_id: int) -> bool:
         """Cancel a running or pending analysis.
 
-        Signals the SeQueue task to stop and marks the database record
+        Signals the TaskQueue task to stop and marks the database record
         as ``cancelled``.
 
         Args:
@@ -231,15 +221,12 @@ class IrisManager:
                 f"Analysis {analysis_id} cannot be cancelled in state: {analysis.status}"
             )
 
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
-            f"iris-analysis:{analysis_id}", category="iris.analyze"
-        )
+        sq_task = self.find_task(analysis_id)
         if not sq_task:
-            self.logger.warning(f"No active task found for analysis {analysis_id}")
+            logger.warning(f"No active task found for analysis {analysis_id}")
             return False
 
-        cancelled = sequeue.cancel(sq_task.id)
+        cancelled = self._tq.cancel(sq_task.id)
         if cancelled:
             with UnitOfWork() as uow:
                 repo = IrisAnalysisRepository(uow)
@@ -248,7 +235,7 @@ class IrisManager:
                     fresh.status = "cancelled"
                     fresh.finished_at = datetime.now()
                     repo.update(fresh)
-            self.logger.info(f"Analysis {analysis_id} cancelled by user {user_id}")
+            logger.info(f"Analysis {analysis_id} cancelled by user {user_id}")
         return cancelled
 
     def delete_analysis(self, analysis_id: int) -> bool:
@@ -270,19 +257,16 @@ class IrisManager:
             raise IrisAnalysisNotFoundError(analysis_id)
 
         if analysis.status in _CANCELLABLE_STATES:
-            sequeue = SeQueue.get_instance()
-            sq_task = sequeue.get_task_by_external_id(
-                f"iris-analysis:{analysis_id}", category="iris.analyze"
-            )
+            sq_task = self.find_task(analysis_id)
             if sq_task:
-                sequeue.cancel(sq_task.id)
+                self._tq.cancel(sq_task.id)
 
         with UnitOfWork() as uow:
             repo = IrisAnalysisRepository(uow)
             fresh = repo.get_by_id(analysis_id)
             if fresh:
                 repo.delete(fresh)
-                self.logger.info(f"Analysis {analysis_id} deleted")
+                logger.info(f"Analysis {analysis_id} deleted")
                 return True
         return False
 
@@ -373,87 +357,90 @@ class IrisManager:
                 "El contenido no contiene suficientes cabeceras de correo v\u00e1lidas." % (len(parsed), min_h)
             )
 
+    @staticmethod
+    def execute_iris_analysis(analysis_id: int, raw_headers: str) -> None:
+        """Entry point submitted to the TaskQueue for background analysis."""
+        IrisManager()._run_analysis(analysis_id, raw_headers)
+
     def _run_analysis(self, analysis_id: int, raw_headers: str) -> None:
         """Background task: execute all rules and persist results.
 
-        This is the function submitted to SeQueue.  It:
+        This is the function submitted to the TaskQueue.  It:
         1. Marks the analysis as ``running``.
         2. Parses the raw header text.
         3. Iterates over every registered rule, collects RuleResults.
-        4. Updates the SeQueue task progress after each rule.
+        4. Updates the TaskQueue task progress after each rule.
         5. Computes the total score and verdict.
         6. Persists the final state (``finished`` + score + verdict).
 
         If cancellation is detected between rule executions, the task
         exits early without saving results.
         """
-        self.logger.info(f"Starting analysis {analysis_id}")
-
-        try:
-            with UnitOfWork() as uow:
-                repo = IrisAnalysisRepository(uow)
-                fresh = repo.get_by_id(analysis_id)
-                if fresh:
-                    fresh.status = "running" # type: ignore
-                    fresh.started_at = datetime.now() # type: ignore
-                    repo.update(fresh)
-        except Exception as e:
-            self.logger.error(f"Failed to mark analysis {analysis_id} as running: {e}")
-            self._fail_analysis(analysis_id)
-            return
-
-        headers = parse_raw_headers(raw_headers)
-        self._validate_headers_parsed(headers)
-
-        rules_defs = iris_rules.get_rules()
-        total_rules = len(rules_defs)
-        results: List[RuleResult] = []
-        sequeue = SeQueue.get_instance()
-
-        for idx, rule_def in enumerate(rules_defs):
-            if self._is_cancelled(analysis_id):
-                self.logger.info(f"Analysis {analysis_id} was cancelled")
-                return
+        with job_context() as job:
+            logger.info(f"Starting analysis {analysis_id}")
 
             try:
-                result = rule_def["func"](headers)
+                with UnitOfWork() as uow:
+                    repo = IrisAnalysisRepository(uow)
+                    fresh = repo.get_by_id(analysis_id)
+                    if fresh:
+                        fresh.status = "running" # type: ignore
+                        fresh.started_at = datetime.now() # type: ignore
+                        repo.update(fresh)
             except Exception as e:
-                self.logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}")
-                result = RuleResult(
-                    score=0, verdict="error",
-                    details={"error": str(e)},
-                    recommendation=f"La regla '{rule_def['name']}' falló durante la ejecución.",
-                )
+                logger.error(f"Failed to mark analysis {analysis_id} as running: {e}", exc_info=True)
+                self._fail_analysis(analysis_id)
+                return
 
-            self._persist_rule_result(analysis_id, rule_def, result, idx)
-            results.append(result)
+            headers = parse_raw_headers(raw_headers)
+            self._validate_headers_parsed(headers)
 
-            progress = int(((idx + 1) / total_rules) * 100)
-            sq_task = sequeue.get_task_by_external_id(
-                f"iris-analysis:{analysis_id}", category="iris.analyze"
-            )
-            if sq_task:
-                sequeue.update_progress(sq_task.id, progress)
+            rules_defs = iris_rules.get_rules()
+            total_rules = len(rules_defs)
+            results: List[RuleResult] = []
 
-        total_score = sum(r.score for r in results)
-        verdict = self._determine_verdict(total_score)
+            for idx, rule_def in enumerate(rules_defs):
+                if job.cancelled():
+                    logger.info(f"Analysis {analysis_id} was cancelled")
+                    return
 
-        try:
-            with UnitOfWork() as uow:
-                repo = IrisAnalysisRepository(uow)
-                fresh = repo.get_by_id(analysis_id)
-                if fresh:
-                    fresh.status = "finished" # type: ignore
-                    fresh.total_score = total_score # type: ignore
-                    fresh.verdict = verdict # type: ignore
-                    fresh.finished_at = datetime.now() # type: ignore
-                    repo.update(fresh)
-        except Exception as e:
-            self.logger.error(f"Failed to finalise analysis {analysis_id}: {e}")
-            self._fail_analysis(analysis_id)
-            return
+                try:
+                    result = rule_def["func"](headers)
+                except Exception as e:
+                    logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}", exc_info=True)
+                    result = RuleResult(
+                        score=0, verdict="error",
+                        details={"error": str(e)},
+                        recommendation=f"La regla '{rule_def['name']}' falló durante la ejecución.",
+                    )
 
-        self.logger.info(f"Analysis {analysis_id} completed: score={total_score}, verdict={verdict}")
+                self._persist_rule_result(analysis_id, rule_def, result, idx)
+                results.append(result)
+
+                progress = int(((idx + 1) / total_rules) * 100)
+                sq_task = self.find_task(analysis_id)
+                if sq_task:
+                    job.progress(progress)
+
+            total_score = sum(r.score for r in results)
+            verdict = self._determine_verdict(total_score)
+
+            try:
+                with UnitOfWork() as uow:
+                    repo = IrisAnalysisRepository(uow)
+                    fresh = repo.get_by_id(analysis_id)
+                    if fresh:
+                        fresh.status = "finished" # type: ignore
+                        fresh.total_score = total_score # type: ignore
+                        fresh.verdict = verdict # type: ignore
+                        fresh.finished_at = datetime.now() # type: ignore
+                        repo.update(fresh)
+            except Exception as e:
+                logger.error(f"Failed to finalise analysis {analysis_id}: {e}", exc_info=True)
+                self._fail_analysis(analysis_id)
+                return
+
+            logger.info(f"Analysis {analysis_id} completed: score={total_score}, verdict={verdict}")
 
     def _persist_rule_result(self, analysis_id: int, rule_def: dict,
                               result: RuleResult, position: int) -> None:
@@ -477,7 +464,7 @@ class IrisManager:
                 )
                 repo.save(rr)
         except Exception as e:
-            self.logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}")
+            logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}", exc_info=True)
 
     def _determine_verdict(self, total_score: float) -> str:
         """Map a numeric total score to a textual verdict.
@@ -506,19 +493,15 @@ class IrisManager:
                     fresh.finished_at = datetime.now() # type: ignore
                     repo.update(fresh)
         except Exception as e:
-            self.logger.error(f"Failed to mark analysis {analysis_id} as failed: {e}")
+            logger.error(f"Failed to mark analysis {analysis_id} as failed: {e}", exc_info=True)
 
     def _is_cancelled(self, analysis_id: int) -> bool:
         """Check whether the analysis has been cancelled since we started.
 
-        Reads from both the SeQueue in-memory state and the database;
-        returns True if either indicates ``cancelled``.
+        Reads from both the TaskQueue state and the database; returns True
+        if either indicates ``cancelled``.
         """
-        sequeue = SeQueue.get_instance()
-        sq_task = sequeue.get_task_by_external_id(
-            f"iris-analysis:{analysis_id}", category="iris.analyze"
-        )
-        if sq_task and sq_task.status.value == "cancelled":
+        if self.task_status_of(analysis_id) == "cancelled":
             return True
         try:
             with UnitOfWork() as uow:
@@ -526,6 +509,6 @@ class IrisManager:
                 analysis = repo.get_by_id(analysis_id)
                 if analysis and analysis.status == "cancelled":
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error checking cancellation for analysis {analysis_id}", exc_info=True)
         return False # type: ignore

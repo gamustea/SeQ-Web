@@ -8,7 +8,7 @@
 - **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades, potenciado por IA local (operativo).
 - **SeQ Web** — Interfaz web SPA (Vue 3 + Vite + Pinia) para interactuar con todos los módulos.
 - **AcheronMobile** — App Android/Kotlin con módulo de cifrado AcheronCore (Java).
-- **SeQ Hub** — Dashboard central con terminal interactiva de comandos y acceso rápido a todos los módulos.
+- **SeQ Hub** — Dashboard central con acceso rápido a todos los módulos.
 
 ---
 
@@ -34,7 +34,9 @@
       - [Generar PDF con análisis de IA](#generar-pdf-con-análisis-de-ia)
       - [Prompts especializados](#prompts-especializados)
     - [Consulta de resultados](#consulta-de-resultados)
-    - [Generación de informes PDF](#generación-de-informes-pdf)
+    - [Generación y consulta de informes PDF](#generación-y-consulta-de-informes-pdf)
+    - [Escaneos programados (Scheduled Scans)](#escaneos-programados-scheduled-scans)
+    - [Gestión de carpetas (Folders)](#gestión-de-carpetas-folders)
   - [Módulo Aegis — Concienciación y alertas](#módulo-aegis--concienciación-y-alertas)
     - [¿Qué hace Aegis?](#qué-hace-aegis)
     - [Endpoints principales](#endpoints-principales)
@@ -44,14 +46,22 @@
       - [Otros endpoints Aegis](#otros-endpoints-aegis)
       - [Arquitectura de IA en Aegis](#arquitectura-de-ia-en-aegis)
   - [Módulo Iris — Análisis Anti-Phishing](#módulo-iris--análisis-anti-phishing)
-    - [Endpoints](#endpoints-1)
-  - [Módulo Acheron — Vault](#módulo-acheron--vault)
     - [Endpoints](#endpoints)
+    - [Iniciar un análisis](#iniciar-un-análisis)
+    - [Consultar estado](#consultar-estado)
+    - [Informe completo](#informe-completo)
+    - [Reglas de análisis](#reglas-de-análisis)
+    - [Validación de entrada](#validación-de-entrada)
+    - [Frontend web](#frontend-web)
+  - [Módulo Acheron — Vault](#módulo-acheron--vault)
+    - [Endpoints](#endpoints-1)
       - [Vault](#vault)
       - [Storables (objetos del vault)](#storables-objetos-del-vault)
       - [Ejemplo: añadir una cuenta](#ejemplo-añadir-una-cuenta)
       - [Ejemplo: añadir una tarjeta de crédito](#ejemplo-añadir-una-tarjeta-de-crédito)
     - [Componentes](#componentes)
+  - [Web Frontend — SeQ Hub](#web-frontend--seq-hub)
+    - [Dashboard Hub (`/hub`)](#dashboard-hub-hub)
   - [Infraestructura Docker](#infraestructura-docker)
     - [Servicios principales](#servicios-principales)
     - [Levantamiento de servicios](#levantamiento-de-servicios)
@@ -59,11 +69,18 @@
   - [Estructura del proyecto](#estructura-del-proyecto)
   - [Stack tecnológico](#stack-tecnológico)
   - [Quick Start](#quick-start)
+  - [Cambios recientes](#cambios-recientes-2026-06-16)
   - [Notas Importantes](#notas-importantes)
 
 ---
 
 ## Requisitos previos
+
+> **Plataforma:** la API de SeQ asume un entorno **Linux**. Las herramientas de escaneo
+> (Nmap, Nikto y OpenVAS/Greenbone) son nativas de Linux —OpenVAS ni siquiera corre nativo en
+> Windows— por lo que la API debe ejecutarse en **Linux nativo, dentro de WSL, o vía Docker**.
+> En Windows, ejecuta el entrypoint dentro de WSL (`wsl` → `cd .../API && python run.py`) o usa
+> `docker compose`.
 
 Antes de ejecutar el proyecto, asegúrate de tener instalado:
 
@@ -166,7 +183,7 @@ Nmap realiza descubrimiento de puertos abiertos en hosts o rangos de red. Soport
 #### Iniciar escaneo
 
 ```http
-POST /sentinel/nmap/start
+POST /sentinel/nmap
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -209,7 +226,7 @@ Nikto realiza análisis de vulnerabilidades web sobre servidores HTTP/HTTPS, det
 #### Iniciar escaneo
 
 ```http
-POST /sentinel/nikto/start
+POST /sentinel/nikto
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -248,7 +265,7 @@ OpenVAS realiza análisis completos de vulnerabilidades con base en la base de d
 #### Iniciar escaneo
 
 ```http
-POST /sentinel/openvas/start
+POST /sentinel/openvas
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -258,7 +275,7 @@ Content-Type: application/json
 }
 ```
 
-> Configuraciones disponibles: `full_fast`, `full_deep`, `full_ultimate`.  
+> Configuraciones disponibles: `full_fast`, `full_deep`, `full_ultimate`.
 > OpenVAS solo acepta **un host** por escaneo.
 
 **Resultado de un escaneo OpenVAS:**
@@ -303,11 +320,17 @@ Sentinel integra análisis de inteligencia artificial mediante **Ollama** para t
 #### Generar PDF con análisis de IA
 
 ```http
-GET /sentinel/generate-pdf?id=<id>&aiReport=true
+POST /sentinel/generate-pdf
 Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "id": 123,
+  "aiReport": true
+}
 ```
 
-El parámetro `aiReport=true` activa la generación del análisis IA. El proceso:
+El parámetro `aiReport` activa la generación del análisis IA. El proceso:
 
 1. **Preprocesamiento**: Los hallazgos se agrupan por controles de seguridad (no por cantidad de hallazgos individuales).
 2. **Prompt ingeniería**: Se usa un system prompt especializado que aplica el principio "Controls, Not Counts":
@@ -337,22 +360,78 @@ Cada prompt enforcing:
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET` | `/sentinel/results?type=all` | Lista todos los escaneos del usuario (filtrable por `nmap`, `nikto`, `openvas`) |
+| `GET` | `/sentinel/results?type=all&page=1&per_page=10` | Lista escaneos (filtrable: `nmap`, `nikto`, `openvas`; paginado) |
 | `GET` | `/sentinel/results/<id>` | Detalle completo de un escaneo por ID |
-| `GET` | `/sentinel/scan-status?id=<id>` | Estado actual del escaneo (`pending`, `running`, `done`, `cancelled`) |
+| `GET` | `/sentinel/scan-status?id=<id>` | Estado del escaneo (`pending`, `running`, `done`, `cancelled`) |
 | `GET` | `/sentinel/is-finished?id=<id>` | Comprobación rápida de si el escaneo ha finalizado |
 | `POST` | `/sentinel/scans/<id>/cancel` | Cancela un escaneo en estado `pending` o `running` |
+| `DELETE` | `/sentinel/<id>` | Elimina un escaneo completado |
+| `DELETE` | `/sentinel/scans` | Elimina múltiples escaneos (body: lista de IDs) |
+| `GET` | `/sentinel/stats` | Estadísticas globales del usuario (total escaneos, últimos 30 días, etc.) |
 
 ---
 
-### Generación de informes PDF
+### Escaneos programados (Scheduled Scans)
 
-Una vez finalizado un escaneo, se puede exportar como informe PDF estructurado.
+Permite programar escaneos recurrentes automáticos mediante cron o intervalos.
+
+#### Crear escaneo programado
+
+```http
+POST /sentinel/scheduled-scans
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "scan_type": "nmap",
+  "arguments": {
+    "target": "192.168.1.0/24",
+    "ports": "80,443,22"
+  },
+  "schedule_type": "cron",
+  "schedule_config": {
+    "cron": "0 2 * * *"
+  }
+}
+```
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET` | `/sentinel/generate-pdf?id=<id>` | Descarga directa del PDF |
-| `GET` | `/sentinel/generate-pdf-base64?id=<id>` | Devuelve el PDF codificado en Base64 (útil para apps móviles) |
+| `POST` | `/sentinel/scheduled-scans` | Crea un escaneo programado |
+| `GET` | `/sentinel/scheduled-scans` | Lista escaneos programados del usuario |
+| `DELETE` | `/sentinel/scheduled-scans/<id>` | Revoca (desactiva) un escaneo programado |
+| `DELETE` | `/sentinel/scheduled-scans/<id>/permanent` | Elimina permanentemente de la BD |
+
+---
+
+### Gestión de carpetas (Folders)
+
+Organiza escaneos en carpetas para mejor clasificación.
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/sentinel/folders` | Crea una carpeta (body: `{"name": "..."}`) |
+| `GET` | `/sentinel/folders` | Lista carpetas del usuario y escaneos sin carpeta |
+| `PUT` | `/sentinel/folders/<id>` | Renombra una carpeta (body: `{"name": "..."}`) |
+| `DELETE` | `/sentinel/folders/<id>` | Elimina una carpeta (mueve escaneos a "Sin carpeta") |
+| `POST` | `/sentinel/folders/<id>/scans` | Añade un escaneo a una carpeta (body: `{"scanId": ...}`) |
+| `POST` | `/sentinel/folders/<id>/scans/batch` | Añade múltiples escaneos a una carpeta (body: `{"scanIds": [...]}`) |
+| `DELETE` | `/sentinel/folders/<id>/scans/<scan_id>` | Elimina escaneo de una carpeta |
+
+---
+
+### Generación y consulta de informes PDF
+
+Sentinel gestiona los informes PDF de forma asíncrona. Primero solicitas la generación, luego consultas su estado y descarga.
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/sentinel/generate-pdf` | Solicita generación asíncrona de un PDF (body: `{"id": scanId, "aiReport": bool}`) |
+| `GET` | `/sentinel/document-status?document_id=<id>` | Consulta el estado de generación del PDF |
+| `GET` | `/sentinel/documents` | Lista todos los documentos PDF del usuario |
+| `GET` | `/sentinel/scan/<scan_id>/documents` | Documentos PDF asociados a un escaneo |
+| `GET` | `/sentinel/document/<document_id>/download` | Descarga del PDF (se genera si aún no existe) |
+| `DELETE` | `/sentinel/document/<document_id>` | Elimina un documento PDF |
 
 Los informes adaptan su formato al tipo de escaneo (Nmap, Nikto u OpenVAS) mediante el patrón Strategy.
 
@@ -605,13 +684,13 @@ Todos los endpoints requieren autenticación OAuth (`Authorization: Bearer <acce
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `POST` | `/vaults/storables` | Añadir un `Account` o `CreditCard` al vault |
-| `DELETE` | `/vaults/storables` | Eliminar un Storable por `internalId` |
+| `POST` | `/acheron/storables` | Añadir un `Account` o `CreditCard` al vault |
+| `DELETE` | `/acheron/storables` | Eliminar un Storable por `internalId` |
 
 #### Ejemplo: añadir una cuenta
 
 ```http
-POST /vaults/storables
+POST /acheron/storables
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -640,7 +719,7 @@ Content-Type: application/json
 #### Ejemplo: añadir una tarjeta de crédito
 
 ```http
-POST /vaults/storables
+POST /acheron/storables
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -673,7 +752,7 @@ La interfaz web SPA (Vue 3 + Vite + Pinia + Vue Router) cuenta con un **hub cent
 
 ### Dashboard Hub (`/hub`)
 
-- **Layout partido 2/3 + 1/3**: Columna izquierda con hero `[ SeQ ]` + terminal interactiva; columna derecha con fichas de módulos scrolleables.
+- **Layout partido 2/3 + 1/3**: Columna izquierda con hero `[ SeQ ]`; columna derecha con fichas de módulos scrolleables.
 - **Terminal de comandos**: Panel con efecto glass morphism (`backdrop-filter: blur(16px)`) y borde neón dorado. Reproduce escaneos reales (nikto, nmap, openvas) con typewriter y highlight sintáctico de JSON. Indicador LIVE pulsante en la barra de título.
 - **Fondo animado**: Orbes de color con blur 150px, rejilla hexagonal SVG, partículas flotantes, scan-lines CRT y granulado SVG — todo con animación CSS.
 - **Módulos glass**: Fichas con `backdrop-filter: blur(12px)`, borde izquierdo neón de 3px por módulo (verde Sentinel, azul Aegis, naranja Iris, púrpura Acheron). Hover con elevación y glow expansivo.
@@ -773,18 +852,20 @@ SeQ/
 |---|---|
 | API Backend | Python 3, Flask 3.0, SQLAlchemy 2.0 |
 | Base de datos | PostgreSQL (psycopg2) |
-| Autenticación | OAuth 2.0 + JWT (PyJWT) |
+| Autenticación | OAuth 2.0 + JWT (PyJWT, con `jti` claim) |
+| Hash de contraseñas | Argon2id (via argon2-cffi) |
 | Escaneo de puertos | Nmap + python-nmap |
 | Escaneo web | Nikto |
 | Análisis de vulnerabilidades | OpenVAS / GVM |
 | Generación de PDFs | ReportLab + Pillow |
 | Concienciación y generación de contenido | Ollama (IA local, llama3.2) + prompts especializados |
 | Obtención de vulnerabilidades recientes | INCIBE-CERT + API pública CIRCL/NVD |
-| Análisis anti-phishing | Iris (reglas atómicas con registro por decorador + SeQueue) |
+| Análisis anti-phishing | Iris (reglas atómicas con registro por decorador) |
 | Frontend web | Vue 3 (Vite + Pinia + Vue Router) |
 | App móvil | Android / Kotlin + Jetpack Compose |
 | Lógica de vault | AcheronCore (Java) |
 | Rate limiting | Flask-Limiter |
+| Cola de tareas | SeQueue (threads + SimpleWorker) |
 | Infraestructura | Docker + Docker Compose |
 
 ---
@@ -802,6 +883,23 @@ cd API && python run.py
 
 ---
 
+---
+
+## Cambios recientes (2026-06-16)
+
+**Commit: `5e16faa` — 13 mejoras de seguridad y estabilidad**
+
+- ✅ **Autenticación JWT**: Tokens ahora incluyen claim `jti` (UUID4) para prevenir colisiones UNIQUE
+- ✅ **Hash de contraseñas**: Migrado de SHA-256 a **Argon2id** vía argon2-cffi (rehash transparente en login)
+- ✅ **Rutas de Acheron**: Corregido doble prefijo (`/acheron/acheron/vault` → `/acheron/vault`)
+- ✅ **Endpoints de páginas**: `/pages` ahora requieren OAuth token (anterior: públicos)
+- ✅ **Manejo de excepciones**: `require_attributes` ya no oculta excepciones de dominio (4xx/5xx correctos)
+- ✅ **Configuración centralizada**: `isolation_level` y `redis.socket_connect_timeout` ahora en `SecOpsConfig.json`
+- ✅ **SQL segura**: `_init_db` usa parámetros en lugar de f-strings
+- ✅ **Motor de BD**: Delegado a `unit_of_work` (singleton centralizado)
+
+---
+
 ## Notas Importantes
 
 - `.env` contiene credenciales — **NO hacer commit**
@@ -809,3 +907,4 @@ cd API && python run.py
 - OpenVAS tarda ~15min en iniciar la primera vez (descarga NVT feed)
 - PostgreSQL usa el puerto **15432** (no el estándar 5432) en desarrollo local
 - La documentación se genera automáticamente en la rama `docs` y se despliega a GitHub Pages
+- Los tokens JWT incluyen claim `jti` desde **2026-06-16** — es obligatorio en nueva emisión

@@ -32,19 +32,21 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+logger = logging.getLogger(__name__)
+
 
 import time
 import urllib.parse
-from typing import Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, scoped_session, sessionmaker
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 
 ENGINE: Optional[Engine] = None
@@ -82,12 +84,15 @@ def initialize(database_url: Optional[str] = None) -> Engine:
             f"@{db_creds['host']}:{db_creds['port']}/{db_creds['dbname']}"
         )
 
+    from src.modules.system import config_reading as CR
+    isolation_level = CR.get_db_isolation_level()
+
     ENGINE = create_engine(
         database_url,
         pool_pre_ping=True,
         pool_recycle=3600,
         echo=False,
-        isolation_level="READ COMMITTED",
+        isolation_level=isolation_level,
     )
 
     SESSION_FACTORY = scoped_session(
@@ -229,9 +234,11 @@ class UnitOfWork:
             False — exceptions are never suppressed.
         """
         if exc_type is None:
-            self.commit()
+            if self._owns_session:
+                self.commit()
         else:
-            self.rollback()
+            if self._owns_session:
+                self.rollback()
         self.close()
         return False
 
@@ -251,6 +258,7 @@ class UnitOfWork:
             self.session.commit()
         except SQLAlchemyError as e:
             self.rollback()
+            logger.error("Commit failed", exc_info=True)
             raise SQLAlchemyError(f"Commit failed: {e}") from e
 
     def rollback(self) -> None:
@@ -264,12 +272,13 @@ class UnitOfWork:
             if self.session is not None:
                 self.session.rollback()
         except Exception as rollback_err:
+            logger.error("Rollback failed", exc_info=True)
             if self._owns_session:
                 try:
                     self.session.close()
                     self.session = get_session()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception("Failed to recreate session after close")
             raise RuntimeError(
                 f"Rollback failed, session has been recreated: {rollback_err}"
             ) from rollback_err

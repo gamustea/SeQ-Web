@@ -16,6 +16,7 @@ from ._managers     import BaseManager
 from ._documents    import AIWriter
 from ._exceptions   import handle_exceptions, ExceptionHandler
 from ._endpoints    import (
+    current_actor,
     normalize_target,
     require_json,
     require_str,
@@ -31,6 +32,7 @@ __all__ = [
     "AIWriter",
     "handle_exceptions",
     "ExceptionHandler",
+    "current_actor",
     "normalize_target",
     "require_json",
     "require_str",

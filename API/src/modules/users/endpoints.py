@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from flask import request
@@ -11,7 +12,6 @@ from src.modules.shared._exceptions import (
     SecOpsException,
 )
 from src.modules.shared.schemas import ErrorSchema
-from src.modules.system import SecOpsLogger
 
 from .services import Role, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
@@ -38,7 +38,7 @@ from .schemas import (
 
 oauth_blp = SmorestBlueprint("oauth", __name__, description="Autenticacion OAuth 2.0")
 users_blp = SmorestBlueprint("users", __name__, description="Gestion de usuarios")
-_logger = SecOpsLogger("oauth").get_logger()
+logger = logging.getLogger(__name__)
 
 
 USER_MANAGER = UserManager()
@@ -46,12 +46,13 @@ OAUTH_MANAGER = OAuthTokenManager()
 
 
 def get_current_user() -> "User":
-    if not hasattr(request, 'current_user'):
-        user_id = request.current_user_id # type: ignore
+    if not hasattr(request, "current_user"):
+        user_id = request.current_user_id  # type: ignore
         user = UserManager().get_user_by_id(user_id)
         if user is None:
             raise IllegalStateError("'user' detectado como None")
-    return user
+        request.current_user = user  # type: ignore
+    return request.current_user  # type: ignore
 
 
 # =========================================================================
@@ -75,7 +76,7 @@ def oauth_token(data: dict[str, Any]):
 
         is_valid, uid = UserManager().verify_credentials(username, password)
         if not is_valid or uid is None:
-            _logger.warning(f"Login fallido para: {username}")
+            logger.warning(f"Login fallido para: {username}")
             raise InvalidCredentialsError()
 
         user = USER_MANAGER.get_user_by_id(uid)
@@ -86,7 +87,7 @@ def oauth_token(data: dict[str, Any]):
         refresh_token = OAUTH_MANAGER.create_refresh_token(uid)
         user_attrs = USER_MANAGER.get_user_attributes(uid)
 
-        _logger.info(f"Tokens emitidos para: {username}")
+        logger.info(f"Tokens emitidos para: {username}")
         return {
             "access_token": access_token,
             "token_type": "Bearer",
@@ -109,7 +110,7 @@ def oauth_token(data: dict[str, Any]):
         access_token = OAUTH_MANAGER.create_access_token(uid, user.username, user.role) # type: ignore
         user_attrs = USER_MANAGER.get_user_attributes(uid)
 
-        _logger.info(f"Access token renovado para usuario ID: {uid}")
+        logger.info(f"Access token renovado para usuario ID: {uid}")
         return {
             "access_token": access_token,
             "token_type": "Bearer",
@@ -129,7 +130,7 @@ def oauth_revoke():
     """Revocar el token Bearer actual"""
     token = request.headers["Authorization"].split()[1]
     OAUTH_MANAGER.revoke_access_token(token)
-    _logger.info(f"Token revocado para: {get_current_user().username}")
+    logger.info(f"Token revocado para: {get_current_user().username}")
     return {"message": "Token revoked successfully"}
 
 
@@ -154,7 +155,7 @@ def oauth_revoke_all():
 @users_blp.response(200, CheckCredentialsResponseSchema, description="Valid credentials")
 @users_blp.alt_response(401, schema=ErrorSchema, description="Invalid credentials")
 @limiter.limit("10 per minute; 30 per hour")
-@handle_exceptions(default_exception=InvalidCredentialsError, logger=_logger)
+@handle_exceptions(default_exception=InvalidCredentialsError, logger=logger)
 def check_credentials(data: dict[str, Any]):
     """Validar credenciales de usuario (endpoint legacy)"""
     username = data["username"]
@@ -164,7 +165,7 @@ def check_credentials(data: dict[str, Any]):
     if not is_valid:
         raise InvalidCredentialsError()
 
-    _logger.info(f"Credenciales validas para: {username} (ID: {user_id})")
+    logger.info(f"Credenciales validas para: {username} (ID: {user_id})")
     return {"message": "Credenciales validas", "isValid": True, "userId": user_id, "username": username}
 
 
@@ -174,7 +175,7 @@ def check_credentials(data: dict[str, Any]):
 @users_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
 @require_oauth_token
 @limiter.limit("5 per hour; 10 per day")
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def change_password(data: dict[str, Any]):
     """Cambiar la contrasena del usuario autenticado. Invalida todos sus tokens."""
     new_password = data["newPassword"]
@@ -186,7 +187,7 @@ def change_password(data: dict[str, Any]):
     USER_MANAGER.update_user_password(user_id, new_password)
     OAUTH_MANAGER.revoke_all_user_tokens(user_id)
 
-    _logger.info(f"Contrasena cambiada para: {username} (ID: {user_id})")
+    logger.info(f"Contrasena cambiada para: {username} (ID: {user_id})")
     return {
         "message": "Contrasena cambiada exitosamente. Por favor, inicia sesion de nuevo.",
         "userId": user_id,
@@ -199,7 +200,7 @@ def change_password(data: dict[str, Any]):
 @users_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
 @require_oauth_token
 @limiter.limit("30 per hour; 100 per day")
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def get_current_profile():
     """Obtener el perfil del usuario autenticado"""
     user = get_current_user()
@@ -220,7 +221,7 @@ def get_current_profile():
 @users_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
 @require_oauth_token
 @limiter.limit("10 per hour; 20 per day")
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def update_current_profile(data: dict[str, Any]):
     """Actualizar nombre y apellidos del perfil propio"""
     first_name = data["first_name"]
@@ -250,7 +251,7 @@ def update_current_profile(data: dict[str, Any]):
 @limiter.limit("10 per hour; 20 per day")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def sign_up_user(data: dict[str, Any]):
     """Registrar un nuevo usuario (requiere role_admin o role_root)"""
     username = data["username"]
@@ -270,7 +271,7 @@ def sign_up_user(data: dict[str, Any]):
         role=requested_role,
         actor_id=current_user_id,
     )
-    _logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
+    logger.info(f"Usuario registrado: {username} con rol {requested_role} (ID: {user.id})")
     return {
         "message": "Usuario registrado exitosamente",
         "userId": user.id,
@@ -286,7 +287,7 @@ def sign_up_user(data: dict[str, Any]):
 @users_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def list_all_users():
     """Listar todos los usuarios del sistema con sus atributos"""
     users = USER_MANAGER.get_all_users()
@@ -311,14 +312,14 @@ def list_all_users():
 @users_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def list_user_attributes(target_user_id: int):
     """Listar los atributos de un usuario especifico"""
     current_user = get_current_user()
     uid = current_user.id
 
     if not USER_MANAGER.can_manage_user(uid, target_user_id):
-        _logger.warning(f"Usuario {uid} intento ver atributos de {target_user_id} sin permiso")
+        logger.warning(f"Usuario {uid} intento ver atributos de {target_user_id} sin permiso")
         raise SecOpsException(
             "No tienes permiso para ver atributos de este usuario",
             status_code=403,
@@ -340,13 +341,13 @@ def list_user_attributes(target_user_id: int):
 @users_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def add_user_attribute(data: dict[str, Any], target_user_id: int):
     """Anadir atributos a un usuario"""
     current_user_id = get_current_user().id
 
     if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
-        _logger.warning(f"Usuario {current_user_id} intento anadir atributos a {target_user_id} sin permiso")
+        logger.warning(f"Usuario {current_user_id} intento anadir atributos a {target_user_id} sin permiso")
         raise SecOpsException(
             "No tienes permiso para gestionar atributos de este usuario",
             status_code=403,
@@ -357,7 +358,7 @@ def add_user_attribute(data: dict[str, Any], target_user_id: int):
         user_id=target_user_id, attribute_names=attrs_to_add,
     )
 
-    _logger.info(f"Atributos {added_attrs} anadidos al usuario {target_user_id}")
+    logger.info(f"Atributos {added_attrs} anadidos al usuario {target_user_id}")
     return {"message": "Attributes added", "attributes": added_attrs}
 
 
@@ -369,13 +370,13 @@ def add_user_attribute(data: dict[str, Any], target_user_id: int):
 @users_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
 @require_oauth_token
 @require_role(Role.ADMIN)
-@handle_exceptions(default_exception=DatabaseError, logger=_logger)
+@handle_exceptions(default_exception=DatabaseError, logger=logger)
 def remove_user_attribute(data: dict[str, Any], target_user_id: int):
     """Eliminar atributos de un usuario"""
     current_user_id = get_current_user().id
 
     if not USER_MANAGER.can_manage_user(current_user_id, target_user_id):
-        _logger.warning(
+        logger.warning(
             f"Usuario {current_user_id} intento eliminar atributos de {target_user_id} sin permiso"
         )
         raise SecOpsException(
@@ -388,5 +389,5 @@ def remove_user_attribute(data: dict[str, Any], target_user_id: int):
         user_id=target_user_id, attribute_names=attrs_to_remove,
     )
 
-    _logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
+    logger.info(f"Atributos {attrs_to_remove} eliminados del usuario {target_user_id}")
     return {"message": "Attributes removed", "attributes": attrs_to_remove}
