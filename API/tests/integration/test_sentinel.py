@@ -38,11 +38,6 @@ def test_stats_for_new_user(client, regular_user, auth_headers):
     assert resp.status_code == 200
 
 
-@pytest.mark.xfail(
-    reason="require_attributes captura ScanNotFoundError y devuelve 500 en lugar "
-           "de 404. Ver IMPROVEMENTS.md.",
-    strict=True,
-)
 def test_scan_detail_not_found(client, regular_user, auth_headers):
     resp = client.get("/sentinel/results/999999", headers=auth_headers(regular_user))
     assert resp.status_code == 404
@@ -71,11 +66,6 @@ def test_folder_crud_roundtrip(client, regular_user, auth_headers):
     assert deleted.status_code == 200
 
 
-@pytest.mark.xfail(
-    reason="require_attributes captura FolderNotFoundError y devuelve 500 en lugar "
-           "de 404 al acceder a una carpeta ajena. Ver IMPROVEMENTS.md.",
-    strict=True,
-)
 def test_folder_isolation_between_users(client, make_user, auth_headers):
     owner = make_user(role="role_user")
     other = make_user(role="role_user")
