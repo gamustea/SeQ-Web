@@ -14,13 +14,13 @@ Module Variables:
 """
 
 import logging
-import time
-import urllib.parse
 from typing import Optional, Any, List
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, scoped_session, sessionmaker
+from sqlalchemy.orm import Session
+
+from src.modules.infrastructure import unit_of_work as _uow
 
 
 ENGINE = None
@@ -55,16 +55,11 @@ class BaseManager:
             session: Optional existing SQLAlchemy session. If not provided,
                         a new session will be created from the factory.
         """
-        global SESSION_FACTORY
-
-        if SESSION_FACTORY is None:
-            BaseManager._initialize_engine()
-
         if session is not None:
             self.session = session
             self._owns_session = False
         else:
-            self.session = SESSION_FACTORY()
+            self.session = _uow.get_session()
             self._owns_session = True
 
 
@@ -74,95 +69,41 @@ class BaseManager:
 
     @staticmethod
     def warmup_connection(engine=None) -> None:
-        """
-        Open and close a real connection to warm up the connection pool.
-
-        This method pre-warms the database connection pool by executing
-        a simple query, ensuring that the first actual database operation
-        doesn't incur the overhead of establishing a new connection.
-
-        Args:
-            engine: Optional engine parameter (reserved for future use).
-        """
-        global SESSION_FACTORY
-        if SESSION_FACTORY is None:
-            BaseManager._initialize_engine()
-        
-        session = SESSION_FACTORY()
-        session.execute(text("SELECT 1"))
-        session.close()
-        SESSION_FACTORY.remove()
+        """Pre-warm the connection pool by executing a trivial query."""
+        _uow.warmup()
 
     @staticmethod
     def close_all_sessions() -> None:
-        """
-        Close all active sessions in the session factory.
-
-        Useful for cleanup during application shutdown or testing.
-        """
-        global SESSION_FACTORY
-        if SESSION_FACTORY is not None:
-            SESSION_FACTORY.remove()
+        """Remove all active sessions from the scoped session factory."""
+        _uow.close_all()
 
     def close_session(self) -> None:
-        """
-        Close the current session if this manager owns it.
-
-        Only closes the session if the manager created it (not passed externally)
-        and the session exists. Logs any errors that occur during closure.
-        """
+        """Close the current session if this manager owns it."""
         if self._owns_session and self.session is not None:
             try:
                 self.session.close()
-                SESSION_FACTORY.remove()
+                _uow.close_all()
             except Exception as e:
                 logger.warning(f"Error al cerrar sesión: {e}", exc_info=True)
 
     @staticmethod
     def _initialize_engine(database_url: Optional[str] = None):
         """
-        Initialize the SQLAlchemy engine and session factory once.
+        Initialize the database engine (delegates to unit_of_work.initialize).
 
-        Creates a singleton engine with connection pooling configuration
-        and a scoped session factory for thread-safe sessions. Called
-        automatically on first manager instantiation.
+        Kept for backwards compatibility with call sites in run.py.
 
         Args:
-            database_url:   Optional database URL. If not provided, credentials
-                            are read from CR.
+            database_url: Optional database URL override.
 
         Returns:
-            The created SQLAlchemy engine instance.
+            The active SQLAlchemy engine instance.
         """
         global ENGINE, SESSION_FACTORY
-
-        if ENGINE is None:
-            t0 = time.perf_counter()
-            if database_url is None:
-                from src.modules.system import config_reading as CR
-                db_creds = CR.get_db_credentials()
-                database_url = (
-                    f"{db_creds['dialect']}://{db_creds['username']}:{urllib.parse.quote(db_creds['password'])}@{db_creds['host']}:{db_creds['port']}/{db_creds['dbname']}"
-                )
-
-            ENGINE = create_engine(
-                database_url,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                echo=False,
-                isolation_level="READ COMMITTED"
-            )
-
-            SESSION_FACTORY = scoped_session(
-                sessionmaker(
-                    bind=ENGINE,
-                    expire_on_commit=False,
-                    autoflush=True,
-                    autocommit=False
-                )
-            )
-
-        return ENGINE
+        engine = _uow.initialize(database_url)
+        ENGINE = engine
+        SESSION_FACTORY = _uow.SESSION_FACTORY
+        return engine
 
 
     # =========================================================================

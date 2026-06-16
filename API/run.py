@@ -15,6 +15,7 @@ estático.
 """
 
 import os
+import re
 import signal
 import logging
 import subprocess
@@ -42,6 +43,7 @@ from src.modules.users      import (
     oauth_blp,
     users_blp
 )
+from src.modules.users.services.secrets import hash_password as _hash_password
 from src.modules.sentinel   import sentinel_blp
 from src.modules.acheron    import acheron_blp
 from src.modules.aegis      import aegis_blp
@@ -261,7 +263,7 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
             port=redis_cfg["port"],
             db=redis_cfg["db"],
             password=redis_cfg["password"],
-            socket_connect_timeout=5,
+            socket_connect_timeout=redis_cfg.get("socket_connect_timeout", 2),
         )
         r.ping()
         r.close()
@@ -435,14 +437,22 @@ def _init_db() -> None:
     default_db_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/postgres"
     engine_postgres = create_engine(default_db_url, isolation_level="AUTOCOMMIT")
 
-    with engine_postgres.connect() as conn:
-        conn.execute(text(f"""
-            SELECT pg_terminate_backend(pg_stat_activity.pid)
-            FROM pg_stat_activity
-            WHERE pg_stat_activity.datname = '{dbname}'
-            AND pid <> pg_backend_pid();
-        """))
+    _SAFE_IDENTIFIER = re.compile(r'^[A-Za-z0-9_]+$')
+    if not _SAFE_IDENTIFIER.match(dbname):
+        raise ValueError(f"Nombre de base de datos inválido: {dbname!r}")
 
+    with engine_postgres.connect() as conn:
+        conn.execute(
+            text(
+                "SELECT pg_terminate_backend(pg_stat_activity.pid) "
+                "FROM pg_stat_activity "
+                "WHERE pg_stat_activity.datname = :dbname "
+                "AND pid <> pg_backend_pid();"
+            ),
+            {"dbname": dbname},
+        )
+
+        # DDL identifiers cannot use bind params; dbname is validated above.
         conn.execute(text(f'DROP DATABASE IF EXISTS "{dbname}";'))
         conn.execute(text(f'CREATE DATABASE "{dbname}";'))
 
@@ -453,27 +463,23 @@ def _init_db() -> None:
 
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    root_password_hash = _hash_password("root")
     with engine.connect() as conn:
-        conn.execute(text("""
-            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at, role)
-            VALUES (
-            'root',
-            'Gabe',
-            'Joe',
-            '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
-            'c167837c1c2a860031d861164d69bd79',
-            'gjoe@seq.com',
-            CURRENT_DATE,
-            'role_root'
-            );
-        """))
+        conn.execute(
+            text(
+                'INSERT INTO "User" '
+                "(username, first_name, last_name, password_hash, password_salt, email, created_at, role) "
+                "VALUES ('root', 'Gabe', 'Joe', :pwdhash, '', 'gjoe@seq.com', CURRENT_DATE, 'role_root');"
+            ),
+            {"pwdhash": root_password_hash},
+        )
 
         root_attributes = UserManager.get_all_available_attributes()
         for attr in root_attributes:
-            conn.execute(text(f'''
-                INSERT INTO "UserAttribute" (user_id, attribute_name)
-                VALUES (1, '{attr}');
-            '''))
+            conn.execute(
+                text('INSERT INTO "UserAttribute" (user_id, attribute_name) VALUES (1, :attr);'),
+                {"attr": attr},
+            )
 
         conn.execute(text(("""
         INSERT INTO "Topic" (title) VALUES

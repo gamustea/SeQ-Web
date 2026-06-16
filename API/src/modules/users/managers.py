@@ -21,6 +21,7 @@ Classes:
 import logging
 import secrets
 from datetime import datetime, timedelta
+from uuid import uuid4
 from typing import List, Optional, Tuple
 
 import jwt
@@ -40,6 +41,7 @@ from .model import AccessToken, RefreshToken, User, UserAttribute
 from .repositories import TokenRepository, UserRepository, AttributeRepository
 from .services import (
     generate_salt,
+    hash_password,
     hash_password_with_salt,
     verify_password
 )
@@ -95,25 +97,31 @@ class UserManager:
             user = UserRepository(session=session).get_by_username(username)
 
             if user is None:
-                # Perform a dummy comparison to prevent username enumeration
-                # via timing differences.
-                verify_password("dummy", password, "dummy_salt")
+                # Dummy comparison to prevent username enumeration via timing differences.
+                verify_password("dummy_hash", password, "dummy_salt")
                 logger.info(f"Usuario '{username}' no encontrado")
                 return False, None
 
-            is_valid = verify_password(
+            is_valid, needs_rehash = verify_password(
                 stored_hash = user.password_hash,
                 password    = password,
-                salt        = user.password_salt,
+                legacy_salt = user.password_salt or "",
             )
-            user_id = user.id if is_valid else None
 
             if not is_valid:
                 logger.warning(f"Contraseña incorrecta para '{username}'")
                 return False, None
 
-            logger.info(f"Credenciales válidas para '{username}' (ID: {user_id})")
-            return True, user_id
+            if needs_rehash:
+                with UnitOfWork() as uow:
+                    u = UserRepository(uow).get_by_id(user.id)
+                    if u is not None:
+                        u.password_hash = hash_password(password)
+                        u.password_salt = ""
+                logger.info(f"Hash actualizado a Argon2 para usuario '{username}'")
+
+            logger.info(f"Credenciales válidas para '{username}' (ID: {user.id})")
+            return True, user.id
 
         except Exception as e:
             logger.error(f"Error verificando credenciales: {e}")
@@ -194,16 +202,13 @@ Raises:
                     logger.error(f"Se intentó crear un usuario con un email ({email}) repetido")
                     raise ExistingUserError(None, email)
 
-                salt            = generate_salt()
-                hashed_password = hash_password_with_salt(password, salt)
-
                 new_user = User(
                     username      = username,
                     email         = email,
                     first_name    = first_name,
                     last_name     = last_name,
-                    password_hash = hashed_password,
-                    password_salt = salt,
+                    password_hash = hash_password(password),
+                    password_salt = "",
                     role          = assigned_role,
                 )
                 repo.save(new_user)
@@ -284,9 +289,8 @@ Raises:
             if user is None:
                 raise UserBindingError(username=str(user_id))
 
-            new_salt = generate_salt()
-            user.password_hash = hash_password_with_salt(new_password, new_salt)
-            user.password_salt = new_salt
+            user.password_hash = hash_password(new_password)
+            user.password_salt = ""
 
         logger.info(f"Contraseña actualizada para usuario {user_id}")
 
@@ -531,6 +535,7 @@ class OAuthTokenManager:
             "username": username,
             "exp":      expires_at,
             "iat":      datetime.utcnow(),
+            "jti":      uuid4().hex,
             "type":     "access",
             "role":     role,
         }

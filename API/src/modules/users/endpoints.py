@@ -46,12 +46,13 @@ OAUTH_MANAGER = OAuthTokenManager()
 
 
 def get_current_user() -> "User":
-    if not hasattr(request, 'current_user'):
-        user_id = request.current_user_id # type: ignore
+    if not hasattr(request, "current_user"):
+        user_id = request.current_user_id  # type: ignore
         user = UserManager().get_user_by_id(user_id)
         if user is None:
             raise IllegalStateError("'user' detectado como None")
-    return user
+        request.current_user = user  # type: ignore
+    return request.current_user  # type: ignore
 
 
 # =========================================================================

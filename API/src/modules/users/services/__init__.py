@@ -1,6 +1,6 @@
 from .secrets import (
-    encode_sha256,
     generate_salt,
+    hash_password,
     hash_password_with_salt,
     verify_password
 )
@@ -14,8 +14,8 @@ from .permissions import (
 )
 
 __all__ = [
-    'encode_sha256',
     'generate_salt',
+    'hash_password',
     'hash_password_with_salt',
     'verify_password',
 
