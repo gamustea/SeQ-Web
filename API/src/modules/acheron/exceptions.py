@@ -43,9 +43,10 @@ class VaultNotFoundError(VaultError):
     default_status_code = 404
     default_severity = ErrorSeverity.LOW
 
-    def __init__(self, vault_id: int):
+    def __init__(self, vault_id: int = None):
+        msg = f"Vault con ID {vault_id} no encontrado" if vault_id is not None else "Vault no encontrado"
         super().__init__(
-            message=f"Vault con ID {vault_id} no encontrado",
+            message=msg,
             details={"vault_id": vault_id},
             user_message="Vault no encontrado."
         )

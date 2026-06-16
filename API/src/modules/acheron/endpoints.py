@@ -38,7 +38,7 @@ def get_vault_manager():
     yield VaultManager(get_current_user())
 
 
-@acheron_blp.get("/acheron/vault")
+@acheron_blp.get("/vault")
 @acheron_blp.arguments(IsRecoveryQuerySchema, location="query", as_kwargs=True)
 @acheron_blp.response(200, description="Vault del usuario en formato JSON")
 @acheron_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
@@ -62,7 +62,7 @@ def get_vault(**kwargs):
     return payload
 
 
-@acheron_blp.post("/acheron/vault")
+@acheron_blp.post("/vault")
 @acheron_blp.arguments(IsRecoveryQuerySchema, location="query", as_kwargs=True)
 @acheron_blp.response(201, VaultUpsertResponseSchema, description="Vault created")
 @acheron_blp.alt_response(200, schema=VaultUpsertResponseSchema, description="Vault updated")
@@ -98,7 +98,7 @@ def upsert_vault(**kwargs):
     return result, 200
 
 
-@acheron_blp.patch("/acheron/storables")
+@acheron_blp.patch("/storables")
 @acheron_blp.arguments(BulkOperationSchema(many=True))
 @acheron_blp.response(200, BulkUpdateResponseSchema, description="Bulk update completed")
 @acheron_blp.alt_response(400, schema=ErrorSchema, description="Invalid body")
@@ -117,7 +117,7 @@ def patch_vault_storables(data):
     return {"message": "Bulk storable update completed", "results": results}
 
 
-@acheron_blp.post("/vaults/storables")
+@acheron_blp.post("/storables")
 @acheron_blp.arguments(StorableCreateSchema)
 @acheron_blp.response(201, StorableResponseSchema, description="Storable created")
 @acheron_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
@@ -180,7 +180,7 @@ def add_vault_storable(data):
     }
 
 
-@acheron_blp.delete("/vaults/storables")
+@acheron_blp.delete("/storables")
 @acheron_blp.arguments(StorableDeleteSchema)
 @acheron_blp.response(200, StorableResponseSchema, description="Storable deleted")
 @acheron_blp.alt_response(400, schema=ErrorSchema, description="Missing internalId")

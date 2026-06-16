@@ -44,6 +44,8 @@ import os
 from pathlib import Path
 from flask import Blueprint, send_from_directory, jsonify
 
+from src.modules.users import require_oauth_token
+
 pages_bp = Blueprint("pages", __name__)
 
 # Directorio de páginas HTML legacy. Se prioriza la variable de entorno
@@ -60,6 +62,7 @@ def serve_login():
     return send_from_directory(_PAGES_DIR, "login.html")
 
 @pages_bp.route("/<string:page_name>")
+@require_oauth_token
 def serve_page(page_name: str):
     filename = page_name if page_name.endswith(".html") else f"{page_name}.html"
     if filename == "login.html":

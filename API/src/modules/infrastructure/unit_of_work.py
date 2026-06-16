@@ -84,12 +84,15 @@ def initialize(database_url: Optional[str] = None) -> Engine:
             f"@{db_creds['host']}:{db_creds['port']}/{db_creds['dbname']}"
         )
 
+    from src.modules.system import config_reading as CR
+    isolation_level = CR.get_db_isolation_level()
+
     ENGINE = create_engine(
         database_url,
         pool_pre_ping=True,
         pool_recycle=3600,
         echo=False,
-        isolation_level="READ COMMITTED",
+        isolation_level=isolation_level,
     )
 
     SESSION_FACTORY = scoped_session(

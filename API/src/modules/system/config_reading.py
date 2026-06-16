@@ -154,57 +154,60 @@ def get_openvas_environment() -> dict[str, str]:
                 "OPENVAS_USERNAME y OPENVAS_PASSWORD.")
 
 
-def get_app_context() -> AppContext:
-    shutdown_time   = os.getenv("SHUTDOWN_TIMEOUT", 30)
-    create_database = os.getenv("CREATE_DATABASE", False)
-    debug           = os.getenv("DEBUG", False)
-    host            = os.getenv("HOST", "0.0.0.0")
-    port            = os.getenv("PORT", 5000)
+def _as_bool(value: str | bool | None, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes")
 
-    if not all([shutdown_time, create_database, debug, host, port]):
-        raise ValueError([shutdown_time, create_database, debug, host, port])
+
+def get_app_context() -> AppContext:
+    shutdown_time   = os.getenv("SHUTDOWN_TIMEOUT", "30")
+    create_database = os.getenv("CREATE_DATABASE", "false")
+    debug           = os.getenv("DEBUG", "false")
+    host            = os.getenv("HOST", "0.0.0.0")
+    port            = os.getenv("PORT", "5000")
 
     return AppContext(
-        shutdown_time = int(shutdown_time),
-        create_database = create_database == "True" or create_database == "true",
-        debug = debug == "True" or debug == "true",
-        host = host,
-        port = int(port)
+        shutdown_time   = int(shutdown_time),
+        create_database = _as_bool(create_database),
+        debug           = _as_bool(debug),
+        host            = host,
+        port            = int(port),
     )
 
 # =============================================================================
 # CONFIGURACIÓN DE BASE DE DATOS
 # =============================================================================
 
-@_lazy_load
 def get_db_credentials() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
+    """Devuelve credenciales de BD desde variables de entorno (.env).
 
-    user = os.getenv("POSTGRES_USER")
+    Todas las credenciales son secretos y viven exclusivamente en .env:
+    POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_DB, POSTGRES_PORT,
+    POSTGRES_DIALECT.
+    """
+    user     = os.getenv("POSTGRES_USER")
     password = os.getenv("POSTGRES_PASSWORD")
-    host = os.getenv("POSTGRES_HOST", "postgres")
+    host     = os.getenv("POSTGRES_HOST", "postgres")
     database = os.getenv("POSTGRES_DB")
-    port = os.getenv("POSTGRES_PORT", "5432")
-    dialect = os.getenv("POSTGRES_DIALECT", "postgresql+psycopg2")
+    port     = os.getenv("POSTGRES_PORT", "5432")
+    dialect  = os.getenv("POSTGRES_DIALECT", "postgresql+psycopg2")
 
-    if all([user, password, host, database]):
-        return {
-            "dialect": dialect,
-            "username": user,
-            "password": password,
-            "host": host,
-            "port": port,
-            "dbname": database
-        }
+    if not all([user, password, database]):
+        raise EnvironmentError(
+            "Variables de entorno requeridas no encontradas: "
+            "POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB"
+        )
 
     return {
-        "dialect": _configs.get("dialect", "postgresql+psycopg2"),
-        "username": _configs["dbconfig"].get("username"),
-        "password": _configs["dbconfig"].get("password"),
-        "host": _configs["dbconfig"].get("host", "postgres"),
-        "port": str(_configs["dbconfig"].get("port", "5432")),
-        "dbname": _configs["dbconfig"].get("dbname")
+        "dialect":  dialect,
+        "username": user,
+        "password": password,
+        "host":     host,
+        "port":     port,
+        "dbname":   database,
     }
 
 
@@ -438,18 +441,31 @@ def save_full_config(new_config: dict) -> dict:
 # CONFIGURACI�N DE TASKQUEUE
 # =============================================================================
 
+@_lazy_load
 def get_redis_config() -> dict:
-    """Devuelve la configuracion de conexion Redis desde variables de entorno."""
-    host = os.getenv("REDIS_HOST", "localhost")
-    port = int(os.getenv("REDIS_PORT", "6379"))
-    db = int(os.getenv("REDIS_DB", "0"))
+    """Devuelve la configuración de conexión Redis.
+
+    Valores no secretos (host, port, db, socket_connect_timeout) provienen de
+    SecOpsConfig.json. El password (secreto) proviene de la variable de entorno
+    REDIS_PASSWORD. Las env vars REDIS_HOST/PORT/DB sobreescriben la config si
+    están presentes (útil en contenedores).
+    """
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
+    cfg = _configs.get("redis", {})
+    host    = os.getenv("REDIS_HOST", str(cfg.get("host", "localhost")))
+    port    = int(os.getenv("REDIS_PORT", str(cfg.get("port", 6379))))
+    db      = int(os.getenv("REDIS_DB",   str(cfg.get("db", 0))))
+    timeout = int(cfg.get("socket_connect_timeout", 2))
     password = os.getenv("REDIS_PASSWORD", "")
 
     return {
-        "host": host,
-        "port": port,
-        "db": db,
-        "password": password or None,
+        "host":                  host,
+        "port":                  port,
+        "db":                    db,
+        "socket_connect_timeout": timeout,
+        "password":              password or None,
     }
 
 @_lazy_load
@@ -488,6 +504,31 @@ def get_iris_suspicious_threshold() -> float:
 def get_iris_min_headers() -> int:
     cfg = get_iris_config()
     return int(cfg.get("min_headers", 2))
+
+
+# =============================================================================
+# CONFIGURACIÓN DE BASE DE DATOS (no secretos)
+# =============================================================================
+
+@_lazy_load
+def get_db_isolation_level() -> str:
+    """Devuelve el isolation level de SQLAlchemy desde SecOpsConfig.json."""
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+    return _configs.get("database", {}).get("isolation_level", "READ COMMITTED")
+
+
+# =============================================================================
+# CONFIGURACIÓN DE SEGURIDAD
+# =============================================================================
+
+@_lazy_load
+def get_argon2_config() -> dict:
+    """Devuelve los parámetros de Argon2id para hashing de contraseñas."""
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+    defaults = {"time_cost": 3, "memory_cost": 65536, "parallelism": 4}
+    return {**defaults, **_configs.get("security", {}).get("argon2", {})}
 
 
 # =============================================================================

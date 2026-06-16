@@ -38,6 +38,7 @@ flask-smorest>=0.45.0,<0.47
 marshmallow>=3.21.0,<4.0
 
 # Security, API & Utilities
+argon2-cffi>=23.1.0
 cryptography>=41.0.4
 flask_limiter
 PyJWT

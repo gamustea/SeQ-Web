@@ -5,7 +5,7 @@ from typing import List, Optional, Set
 
 from flask import request, jsonify
 
-from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError
+from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException
 
 from ..managers import OAuthTokenManager
 from ..repositories import AttributeRepository
@@ -56,6 +56,33 @@ class Role(Enum):
 # AttributeType ENUM — fine-grained ABAC capabilities (what the user can do)
 # =========================================================================
 
+_ATTRIBUTE_DESCRIPTIONS: dict[str, str] = {
+    "aegis_create":    "Create access for Aegis awareness pills",
+    "aegis_read":      "Read access for Aegis awareness pills",
+    "aegis_update":    "Update access for Aegis awareness pills",
+    "aegis_delete":    "Delete access for Aegis awareness pills",
+    "sentinel_create": "Create access for Sentinel security scans",
+    "sentinel_read":   "Read access for Sentinel security scans",
+    "sentinel_update": "Update access for Sentinel security scans",
+    "sentinel_delete": "Delete access for Sentinel security scans",
+    "sentinel_folder_create": "Create access for Sentinel scan folders",
+    "sentinel_folder_read":   "Read access for Sentinel scan folders",
+    "sentinel_folder_update": "Update access for Sentinel scan folders",
+    "sentinel_folder_delete": "Delete access for Sentinel scan folders",
+    "acheron_create":  "Create access for Acheron vault secrets",
+    "acheron_read":    "Read access for Acheron vault secrets",
+    "acheron_update":  "Update access for Acheron vault secrets",
+    "acheron_delete":  "Delete access for Acheron vault secrets",
+    "iris_create":     "Create access for Iris email header analysis",
+    "iris_read":       "Read access for Iris email header analysis",
+    "iris_update":     "Update access for Iris email header analysis",
+    "iris_delete":     "Delete access for Iris email header analysis",
+    "sentinel_schedule_create": "Create access for scheduled scans",
+    "sentinel_schedule_read":   "Read access for scheduled scans",
+    "sentinel_schedule_delete": "Delete access for scheduled scans",
+}
+
+
 class AttributeType(Enum):
     """
     ABAC capability attributes for fine-grained access control.
@@ -100,39 +127,13 @@ class AttributeType(Enum):
     SENTINEL_SCHEDULE_READ   = "sentinel_schedule_read"
     SENTINEL_SCHEDULE_DELETE = "sentinel_schedule_delete"
 
-    _DESCRIPTIONS = {
-        "aegis_create":    "Create access for Aegis awareness pills",
-        "aegis_read":      "Read access for Aegis awareness pills",
-        "aegis_update":    "Update access for Aegis awareness pills",
-        "aegis_delete":    "Delete access for Aegis awareness pills",
-        "sentinel_create": "Create access for Sentinel security scans",
-        "sentinel_read":   "Read access for Sentinel security scans",
-        "sentinel_update": "Update access for Sentinel security scans",
-        "sentinel_delete": "Delete access for Sentinel security scans",
-        "sentinel_folder_create": "Create access for Sentinel scan folders",
-        "sentinel_folder_read":   "Read access for Sentinel scan folders",
-        "sentinel_folder_update": "Update access for Sentinel scan folders",
-        "sentinel_folder_delete": "Delete access for Sentinel scan folders",
-        "acheron_create":  "Create access for Acheron vault secrets",
-        "acheron_read":    "Read access for Acheron vault secrets",
-        "acheron_update":  "Update access for Acheron vault secrets",
-        "acheron_delete":  "Delete access for Acheron vault secrets",
-        "iris_create":     "Create access for Iris email header analysis",
-        "iris_read":       "Read access for Iris email header analysis",
-        "iris_update":     "Update access for Iris email header analysis",
-        "iris_delete":     "Delete access for Iris email header analysis",
-        "sentinel_schedule_create": "Create access for scheduled scans",
-        "sentinel_schedule_read":   "Read access for scheduled scans",
-        "sentinel_schedule_delete": "Delete access for scheduled scans",
-    }
-
     @property
     def db_name(self) -> str:
-        return self.value # type: ignore
+        return self.value  # type: ignore
 
     @property
     def db_description(self) -> str:
-        return self._DESCRIPTIONS.get(self.value, "") # type: ignore
+        return _ATTRIBUTE_DESCRIPTIONS.get(self.value, "")  # type: ignore
 
 
 # =========================================================================
@@ -377,6 +378,8 @@ def require_attributes(
                 )
                 return f(*args, **kwargs)
 
+            except (SecOpsException, MissingParameterError, MissingJsonBodyError):
+                raise
             except Exception as exc:
                 logger.error(f"Error en require_permissions: {exc}", exc_info=True)
                 return jsonify({
