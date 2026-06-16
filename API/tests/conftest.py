@@ -1,0 +1,324 @@
+"""
+tests/conftest.py
+═════════════════
+Infraestructura compartida para toda la suite de tests de la API SeQ.
+
+Decisiones de diseño (ver el plan de tests):
+
+1.  **Variables de entorno ANTES de importar ``src``.** El módulo
+    ``users.managers`` lee la configuración OAuth en *tiempo de import*
+    (``JWT_SECRET_KEY`` y compañía quedan capturadas como constantes de módulo).
+    Por eso se fijan aquí, en la cabecera del fichero, antes de cualquier
+    ``import`` de la aplicación. Lo mismo aplica a ``run.py``, que evalúa
+    ``get_app_context()`` al importarse (necesita ``CREATE_DATABASE``/``DEBUG``).
+
+2.  **BD SQLite en fichero temporal** (no ``:memory:``). La aplicación mantiene
+    DOS singletons de engine independientes —``shared._managers.BaseManager`` y
+    ``infrastructure.unit_of_work``—; con ``:memory:`` cada uno abriría una base
+    distinta. Un fichero compartido garantiza que ambos vean las mismas tablas.
+
+3.  **Shim de tipos PostgreSQL→SQLite.** Los modelos usan ``JSONB`` y ``ARRAY``,
+    inexistentes en SQLite. Antes de crear el esquema se sustituyen *en memoria*
+    por ``JSON`` genérico. No se toca ningún fichero de ``src/``.
+
+4.  **Servicios externos mockeados.** El ``ping`` a Redis de ``create_app`` se
+    parchea; el scheduler se desactiva con ``start_scheduler=False``; el rate
+    limiter se desactiva para no contaminar tests entre sí.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# 1. Entorno mínimo — DEBE ir antes de importar la aplicación.
+# ---------------------------------------------------------------------------
+
+_API_DIR = Path(__file__).resolve().parent.parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production")
+os.environ.setdefault("JWT_ALGORITHM", "HS256")
+os.environ.setdefault("ACCESS_TOKEN_EXPIRY_MINUTES", "30")
+os.environ.setdefault("REFRESH_TOKEN_EXPIRY_DAYS", "7")
+os.environ.setdefault("FLASK_ENV", "development")
+
+# get_app_context() exige estas variables (su comprobación con all() trata el
+# bool False por defecto como ausente — ver IMPROVEMENTS.md). Las fijamos como
+# strings para poder importar run.py sin que lance ValueError.
+os.environ.setdefault("CREATE_DATABASE", "false")
+os.environ.setdefault("DEBUG", "false")
+os.environ.setdefault("HOST", "127.0.0.1")
+os.environ.setdefault("PORT", "5000")
+os.environ.setdefault("SHUTDOWN_TIMEOUT", "30")
+
+# Redis/Ollama/OpenVAS: valores inertes; los servicios se mockean.
+os.environ.setdefault("REDIS_HOST", "localhost")
+os.environ.setdefault("OLLAMA_HOST", "http://localhost:11434")
+
+from unittest import mock  # noqa: E402
+
+import pytest  # noqa: E402
+import sqlalchemy as sa  # noqa: E402
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
+
+from sqlalchemy.orm import scoped_session, sessionmaker  # noqa: E402
+
+from src.modules.shared import Base, BaseManager  # noqa: E402
+from src.modules.shared import _managers as shared_managers  # noqa: E402
+from src.modules.infrastructure import unit_of_work  # noqa: E402
+from src.modules.users.model import User, UserAttribute  # noqa: E402
+from src.modules.users.repositories import (  # noqa: E402
+    AttributeRepository,
+    UserRepository,
+)
+from src.modules.users.managers import OAuthTokenManager  # noqa: E402
+from src.modules.users.services import generate_salt, hash_password_with_salt  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Shim: unicidad de access tokens
+# ---------------------------------------------------------------------------
+# Los JWT se firman con ``iat``/``exp`` a resolución de SEGUNDO, de modo que dos
+# tokens del mismo usuario emitidos dentro del mismo segundo son idénticos y
+# colisionan con la constraint UNIQUE de ``AccessToken.token`` (ver
+# IMPROVEMENTS.md). En tests legítimos esto ocurre a menudo (login + refresh,
+# fixture + login). Añadimos un ``jti`` aleatorio al payload antes de firmar;
+# ``verify_access_token`` ignora ese claim, así que el comportamiento observable
+# no cambia. Es un parche SOLO de test, no toca ``src/``.
+import uuid  # noqa: E402
+
+import src.modules.users.managers as _um  # noqa: E402
+
+_real_jwt_encode = _um.jwt.encode
+
+
+def _unique_jwt_encode(payload, key, algorithm=None, **kwargs):
+    if isinstance(payload, dict) and payload.get("type") == "access":
+        payload = {**payload, "jti": uuid.uuid4().hex}
+    return _real_jwt_encode(payload, key, algorithm=algorithm, **kwargs)
+
+
+_um.jwt.encode = _unique_jwt_encode
+
+
+# ---------------------------------------------------------------------------
+# 2. Shim de tipos PostgreSQL → SQLite
+# ---------------------------------------------------------------------------
+
+def _patch_postgres_types() -> None:
+    """Sustituye JSONB/ARRAY por JSON genérico en toda la metadata.
+
+    SQLite no entiende ``JSONB`` ni ``ARRAY``; ``JSON`` serializa la estructura
+    a texto y la rehidrata al leer, que es suficiente para los tests. Se aplica
+    sobre la metadata ya poblada (los modelos se importan al cargar ``src``).
+    """
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            col_type = column.type
+            if isinstance(col_type, (JSONB, sa.ARRAY)) or col_type.__class__.__name__ == "JSONB":
+                column.type = sa.JSON()
+
+
+# ---------------------------------------------------------------------------
+# 3. Engines + esquema (una sola vez por sesión de tests)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def _sqlite_url(tmp_path_factory) -> str:
+    """URL SQLite en fichero temporal compartida por ambos singletons."""
+    db_path = tmp_path_factory.mktemp("seq_db") / "test.db"
+    return f"sqlite:///{db_path.as_posix()}"
+
+
+@pytest.fixture(scope="session")
+def _initialized_db(_sqlite_url):
+    """Crea un engine SQLite e inyecta los singletons en ambos módulos.
+
+    No se pueden usar ``BaseManager._initialize_engine`` ni
+    ``unit_of_work.initialize`` directamente porque fijan
+    ``isolation_level="READ COMMITTED"`` (válido en PostgreSQL, rechazado por
+    SQLite — ver IMPROVEMENTS.md). En su lugar construimos aquí un engine
+    compatible con SQLite y lo asignamos a los globales de ``shared._managers``
+    y ``infrastructure.unit_of_work``; como ambas funciones de init son
+    idempotentes (``if ENGINE is None``), después reutilizarán este engine.
+
+    Se comparte UN único engine + scoped_session entre los dos módulos para
+    evitar dos pools sobre el mismo fichero SQLite.
+    """
+    # Importar run arrastra todos los blueprints y, con ellos, TODOS los modelos
+    # de cada módulo a Base.metadata. Debe ocurrir antes del shim para que se
+    # parcheen también las tablas de iris/sentinel/aegis.
+    import run  # noqa: F401
+
+    _patch_postgres_types()
+
+    engine = sa.create_engine(
+        _sqlite_url,
+        connect_args={"check_same_thread": False},
+        pool_pre_ping=True,
+        echo=False,
+    )
+    session_factory = scoped_session(
+        sessionmaker(
+            bind=engine,
+            expire_on_commit=False,
+            autoflush=True,
+            autocommit=False,
+        )
+    )
+
+    shared_managers.ENGINE = engine
+    shared_managers.SESSION_FACTORY = session_factory
+    unit_of_work.ENGINE = engine
+    unit_of_work.SESSION_FACTORY = session_factory
+
+    Base.metadata.create_all(engine)
+    yield engine
+    Base.metadata.drop_all(engine)
+    session_factory.remove()
+
+
+# ---------------------------------------------------------------------------
+# 4. Aplicación Flask + cliente de test
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def app(_initialized_db):
+    """Crea la app SeQ apuntando a SQLite, sin scheduler ni Redis real."""
+    import run  # import diferido: ya hay entorno y engines listos
+
+    # ``redis.Redis(...).ping()`` se ejecuta dentro de create_app; lo
+    # neutralizamos para no depender de un Redis real ni pagar su timeout.
+    with mock.patch("redis.Redis.ping", return_value=True), \
+         mock.patch("redis.Redis.close", return_value=None):
+        application = run.create_app(fresh_db_init=False, start_scheduler=False)
+
+    application.config.update(TESTING=True)
+
+    # Desactiva el rate limiting para que los límites no contaminen tests.
+    from src.modules.shared import limiter
+    limiter.enabled = False
+
+    return application
+
+
+@pytest.fixture()
+def client(app):
+    """Cliente HTTP de pruebas de Flask."""
+    return app.test_client()
+
+
+# ---------------------------------------------------------------------------
+# 5. Aislamiento entre tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clean_db(_initialized_db):
+    """Vacía todas las tablas tras cada test para garantizar independencia."""
+    yield
+    engine = _initialized_db
+    with engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            conn.execute(table.delete())
+    BaseManager.close_all_sessions()
+    unit_of_work.close_all()
+
+
+# ---------------------------------------------------------------------------
+# 6. Factories de usuarios y cabeceras de autenticación
+# ---------------------------------------------------------------------------
+
+class UserHandle:
+    """Datos planos de un usuario de prueba (evita objetos ORM desligados)."""
+
+    def __init__(self, user_id: int, username: str, password: str, role: str):
+        self.id = user_id
+        self.username = username
+        self.password = password
+        self.role = role
+
+
+@pytest.fixture()
+def make_user(app):
+    """Factory que crea un usuario con rol y atributos ABAC dados.
+
+    Devuelve un ``UserHandle`` con id/username/password/role. El usuario se
+    persiste con una contraseña hasheada real, de modo que sirve tanto para
+    flujos de login como para minar tokens.
+    """
+    counter = {"n": 0}
+
+    def _make(role: str = "role_user", attributes=None, password: str = "Secret123!"):
+        counter["n"] += 1
+        suffix = counter["n"]
+        username = f"user{suffix}"
+        email = f"user{suffix}@seq.test"
+
+        with app.app_context():
+            salt = generate_salt()
+            user = User(
+                username=username,
+                email=email,
+                first_name="Test",
+                last_name=f"User{suffix}",
+                password_hash=hash_password_with_salt(password, salt),
+                password_salt=salt,
+                role=role,
+            )
+            with unit_of_work.UnitOfWork() as uow:
+                UserRepository(uow).save(user)
+                user_id = user.id
+                for attr in attributes or []:
+                    AttributeRepository(uow).add_attribute(user_id, attr)
+
+        return UserHandle(user_id, username, password, role)
+
+    return _make
+
+
+@pytest.fixture()
+def auth_headers(app):
+    """Factory que genera cabeceras Bearer para un ``UserHandle``."""
+
+    def _headers(user: UserHandle) -> dict:
+        with app.app_context():
+            token = OAuthTokenManager().create_access_token(
+                user.id, user.username, user.role
+            )
+        return {"Authorization": f"Bearer {token}"}
+
+    return _headers
+
+
+@pytest.fixture()
+def root_user(make_user):
+    return make_user(role="role_root")
+
+
+@pytest.fixture()
+def admin_user(make_user):
+    return make_user(role="role_admin")
+
+
+@pytest.fixture()
+def regular_user(make_user):
+    return make_user(role="role_user")
+
+
+@pytest.fixture()
+def root_headers(root_user, auth_headers):
+    return auth_headers(root_user)
+
+
+@pytest.fixture()
+def admin_headers(admin_user, auth_headers):
+    return auth_headers(admin_user)
+
+
+@pytest.fixture()
+def user_headers(regular_user, auth_headers):
+    return auth_headers(regular_user)
