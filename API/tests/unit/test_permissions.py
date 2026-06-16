@@ -25,11 +25,11 @@ def test_attribute_db_name():
     assert AttributeType.IRIS_DELETE.db_name == "iris_delete"
 
 
-def test_attribute_db_description_is_currently_broken():
-    """Documenta un bug: ``db_description`` referencia ``self._DESCRIPTIONS``,
-    que dentro del Enum no resuelve al dict esperado (ver IMPROVEMENTS.md)."""
-    with pytest.raises(AttributeError):
-        _ = AttributeType.SENTINEL_READ.db_description
+def test_attribute_db_description_returns_non_empty_string():
+    """db_description devuelve una descripción legible para cada miembro del Enum."""
+    assert AttributeType.SENTINEL_READ.db_description == "Read access for Sentinel security scans"
+    assert AttributeType.ACHERON_READ.db_description == "Read access for Acheron vault secrets"
+    assert AttributeType.IRIS_DELETE.db_description == "Delete access for Iris email header analysis"
 
 
 def test_user_role_includes_read_baseline():

@@ -22,11 +22,6 @@ def test_list_results_empty(client, regular_user, auth_headers):
     assert resp.get_json()["total"] == 0
 
 
-@pytest.mark.xfail(
-    reason="require_attributes captura la excepción de dominio y devuelve 500 "
-           "en lugar de 404. Ver IMPROVEMENTS.md.",
-    strict=True,
-)
 def test_status_unknown_analysis_returns_404(client, regular_user, auth_headers):
     resp = client.get("/iris/status?id=999999", headers=auth_headers(regular_user))
     assert resp.status_code == 404

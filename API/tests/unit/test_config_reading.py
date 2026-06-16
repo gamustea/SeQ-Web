@@ -54,13 +54,10 @@ def test_get_app_context_happy_path(monkeypatch):
     assert ctx.port == 5000
 
 
-def test_get_app_context_bug_with_default_booleans(monkeypatch):
-    """Documenta el bug de get_app_context (ver IMPROVEMENTS.md).
-
-    Con DEBUG sin definir, el default es el bool ``False``, que ``all([...])``
-    interpreta como "ausente" y provoca un ``ValueError`` espurio.
-    """
+def test_get_app_context_uses_false_defaults_when_envs_absent(monkeypatch):
+    """Con DEBUG y CREATE_DATABASE sin definir, get_app_context() usa False por defecto."""
     monkeypatch.delenv("DEBUG", raising=False)
     monkeypatch.delenv("CREATE_DATABASE", raising=False)
-    with pytest.raises(ValueError):
-        CR.get_app_context()
+    ctx = CR.get_app_context()
+    assert ctx.debug is False
+    assert ctx.create_database is False
