@@ -49,7 +49,7 @@ from src.modules.shared._exceptions import IllegalStateError, ValidationError
 logger = logging.getLogger(__name__)
 
 from ..model import NmapScan, NiktoScan, Scan, Host, ScanType
-from .ai import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
+from .analyzers import NmapAIWriter, NiktoAIWriter, OpenVASAIWriter
 
 
 
