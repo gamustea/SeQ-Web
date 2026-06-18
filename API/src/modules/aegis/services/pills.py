@@ -7,7 +7,7 @@ Contiene:
     — Dataclasses de tránsito: AegisTipData, AegisContent, AegisAlert
     — Decoradores de resiliencia: retry_on_failure, circuit_breaker
     — AegisAlertFetcher: fetch concurrente de INCIBE y CIRCL
-    — AegisAIWriter: generación de contenido con Ollama (hereda de AIWriter)
+    — AegisAIWriter: generación de píldoras delegando en un scribe AIGenerator
 """
 
 from __future__ import annotations
@@ -30,20 +30,14 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-import ollama
-from ddgs import DDGS
-
 import src.modules.system.config_reading as CR
-from src.modules.shared import AIWriter
+from src.modules.scribe import AIInput, AIGenerator, build_generator, web_search, WEB_SEARCH_TOOL
 
 logger = logging.getLogger(__name__)
 from src.modules.aegis.exceptions import (
-    CircuitBreakerOpenError,
     AegisValidationError,
     AegisInsufficientContentError,
     AegisFetchError,
-    AIResponseError,
-    AIFallbackExhaustedError,
 )
 
 from ..model import Topic
@@ -252,39 +246,6 @@ def retry_on_failure(max_retries: int = MAX_RETRIES, exceptions: tuple = (Except
                         raise
                     delay = RETRY_DELAY_BASE ** attempt + random.uniform(0, 0.5)
                     time.sleep(delay)
-        return wrapper
-    return decorator
-
-
-def circuit_breaker(threshold: int = 5, timeout: int = 60):
-    """Circuit breaker simple para llamadas a servicios externos."""
-    failures            = 0
-    last_failure_time   = None
-    lock                = threading.Lock()
-
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            nonlocal failures, last_failure_time
-
-            with lock:
-                if failures >= threshold:
-                    elapsed = time.time() - (last_failure_time or 0)
-                    if elapsed < timeout:
-                        raise CircuitBreakerOpenError("Ollama")
-                    failures = 0
-
-            try:
-                result = func(*args, **kwargs)
-                with lock:
-                    failures = 0
-                return result
-            except Exception as exc:
-                with lock:
-                    failures          += 1
-                    last_failure_time  = time.time()
-                raise exc
-
         return wrapper
     return decorator
 
@@ -643,21 +604,18 @@ class AegisAlertFetcher:
         return unique_alerts[:20]
 
 
-class AegisAIWriter(AIWriter):
+class AegisAIWriter:
     """
-    Genera el contenido de una píldora mediante Ollama con few-shot prompting,
-    tool calling para búsqueda web y validación estructural del JSON resultante.
-    
-    Si no se proporcionan host o model, se obtienen de las variables de entorno
-    OLLAMA_HOST y OLLAMA_MODEL (o valores por defecto).
+    Genera el contenido de una píldora con few-shot prompting, tool calling para
+    búsqueda web y validación estructural del JSON resultante.
+
+    La llamada al modelo se delega en un ``AIGenerator`` inyectado (estrategia
+    Ollama u OpenAI según ``SecOpsConfig.json``). Si no se pasa generador, se
+    construye uno para el módulo 'aegis' mediante ``build_generator``.
     """
 
-    def __init__(
-        self,
-        host: Optional[str] = None,
-        model: Optional[str] = None,
-    ) -> None:
-        super().__init__()
+    def __init__(self, generator: Optional[AIGenerator] = None) -> None:
+        self._generator = generator or build_generator("aegis")
 
     # ── Prompts ───────────────────────────────────────────────────────────────
 
@@ -718,7 +676,6 @@ class AegisAIWriter(AIWriter):
 
     # ── Generación ────────────────────────────────────────────────────────────
 
-    @circuit_breaker(threshold=3, timeout=60)
     def generate(
         self,
         *,
@@ -730,10 +687,11 @@ class AegisAIWriter(AIWriter):
         tweaks:            dict[str, Any],
     ) -> AegisContent:
         """
-        Genera el contenido de la píldora con tool calling y reintentos.
+        Genera el contenido de la píldora delegando en el ``AIGenerator``.
+
+        El generador encapsula el tool calling, los reintentos y el circuit
+        breaker; aquí solo construimos el ``AIInput`` y validamos la salida.
         Devuelve un AegisContent validado listo para persistir.
-        
-        Implementa el método abstracto generate() de AIWriter.
         """
         # Enriquecimiento de contexto con búsqueda web
         search_queries = [
@@ -744,7 +702,7 @@ class AegisAIWriter(AIWriter):
         verified_resources = ""
         for query in search_queries:
             try:
-                verified_resources += f"\n{self._web_search(query, max_results=3)}"
+                verified_resources += f"\n{web_search(query, max_results=3)}"
             except Exception as exc:
                 logger.warning(f"Búsqueda fallida '{query}': {exc}")
 
@@ -752,69 +710,17 @@ class AegisAIWriter(AIWriter):
             topic, resolved_topic_id, reference, tweaks, verified_resources
         )
 
-        tools = [{
-            "type": "function",
-            "function": {
-                "name":        "web_search",
-                "description": "Busca información actualizada sobre vulnerabilidades o guías de seguridad",
-                "parameters": {
-                    "type":       "object",
-                    "properties": {"query": {"type": "string", "description": "Términos de búsqueda"}},
-                    "required":   ["query"],
-                },
-            },
-        }]
+        ai_input = AIInput(
+            system_prompt = self._build_system_prompt(),
+            user_prompt   = prompt,
+            tools         = [WEB_SEARCH_TOOL],
+            num_predict   = 8192,
+            temperature   = 0.4,
+        )
 
-        raw_response = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                messages = [
-                    {"role": "system", "content": self._build_system_prompt()},
-                    {"role": "user",   "content": prompt},
-                ]
-                resp = self._client.chat(
-                    model    = self.model,
-                    messages = messages,
-                    tools    = tools,
-                    format   = "json",
-                    options  = {
-                        "num_predict":    8192,
-                        "temperature":    0.4 if attempt == 0 else 0.7,
-                        "top_p":          0.9,
-                        "repeat_penalty": 1.1,
-                    },
-                )
+        result = self._generator.digest(ai_input)
 
-                if getattr(resp.message, "tool_calls", None):
-                    logger.info(f"Tool calls: {len(resp.message.tool_calls)}")
-                    messages.append({
-                        "role":       "assistant",
-                        "content":    resp.message.content or "",
-                        "tool_calls": resp.message.tool_calls,
-                    })
-                    for tc in resp.message.tool_calls:
-                        query         = tc.function.arguments.get("query", "")
-                        search_result = self._web_search(query)
-                        messages.append({"role": "tool", "content": search_result})
-
-                    resp = self._client.chat(
-                        model    = self.model,
-                        messages = messages,
-                        format   = "json",
-                        options  = {"num_predict": 8192, "temperature": 0.5},
-                    )
-
-                raw_response = resp.message.content.strip()
-                if raw_response:
-                    break
-
-            except Exception as exc:
-                logger.error(f"Intento {attempt + 1} fallido: {exc}")
-                if attempt == MAX_RETRIES - 1:
-                    raise AIFallbackExhaustedError(MAX_RETRIES, str(exc))
-                time.sleep(RETRY_DELAY_BASE ** attempt)
-
-        data = self._parse_response(raw_response)
+        data = result.parse_json()
         tips_amount = CR.get_aegis_tips_amount()
         raw_subtitle = str(data.get("subtitle", "")).strip()
         
@@ -872,49 +778,3 @@ class AegisAIWriter(AIWriter):
             closing       = str(data.get("closing", ""))[:500],
             contact_email = str(data.get("contactEmail", ""))[:100],
         )
-
-    def _parse_response(self, raw: str) -> dict:
-        """
-        Parseo robusto con múltiples estrategias de recuperación.
-
-        Detecta explìtamente si la respuesta viene truncada por el límite de
-        num_predict antes de intentar extraer un JSON parcial, evitando que
-        un objeto incompleto pase la validación con menos tips de los esperados.
-        """
-        if not raw:
-            raise AIResponseError("Respuesta vacía del modelo")
-
-        # Detección temprana de truncado: el JSON no cierra su llave raíz
-        # Un JSON completo siempre termina en '}' (ignorando whitespace)
-        stripped = raw.rstrip()
-        if stripped and stripped[-1] != '}':
-            logger.warning(
-                f"Respuesta truncada detectada (num_predict alcanzado). "
-                f"\xdaltimos 80 chars: {repr(stripped[-80:])}"
-            )
-            raise AIResponseError(
-                "Respuesta truncada por límite de tokens: el JSON no está completo. "
-                "Aumenta num_predict o reduce el tamaño del prompt."
-            )
-
-        # Intento directo
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-
-        for pattern in [r'```(?:json)?\s*([\s\S]*?)\s*```', r'JSON:\s*(\{[\s\S]*\})', r'\{[\s\S]*\}']:
-            match = re.search(pattern, raw)
-            if match:
-                try:
-                    return json.loads(match.group(1) if match.groups() else match.group())
-                except json.JSONDecodeError:
-                    continue
-
-        cleaned = re.sub(r'^[^{]*', '', raw)
-        cleaned = re.sub(r'[^}]*$', '', cleaned)
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            logger.error(f"No se pudo parsear respuesta: {raw[:500]}")
-            raise AIResponseError(f"JSON inválido tras limpieza: {exc}")

@@ -241,5 +241,16 @@
     "legitimate_threshold": 30,
     "suspicious_threshold": -10,
     "min_headers": 2
+  },
+  "ai": {
+    "defaultStrategy": "ollama",
+    "strategies": {
+      "ollama": {},
+      "openai": {}
+    },
+    "modules": {
+      "sentinel": "ollama",
+      "aegis": "ollama"
+    }
   }
 }
