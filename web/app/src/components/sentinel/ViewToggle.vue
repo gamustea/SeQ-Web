@@ -6,7 +6,8 @@
       role="tab" @click="$emit('update:modelValue', v.id)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path v-if="v.id === 'full'" d="M4 6h16M4 12h16M4 18h16"/>
-        <path v-else d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        <path v-else-if="v.id === 'folders'" d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        <path v-else d="M3 3v18h18M7 16l4-5 3 3 5-7"/>
       </svg>
       {{ v.label }}
     </button>
@@ -19,6 +20,7 @@ defineEmits(['update:modelValue'])
 const views = [
   { id: 'full', label: 'Vista completa' },
   { id: 'folders', label: 'Carpetas' },
+  { id: 'history', label: 'Estadísticas' },
 ]
 </script>
 

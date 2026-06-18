@@ -24,7 +24,7 @@
           </template>
         </ScanTable>
       </template>
-      <ScanFolderView v-else
+      <ScanFolderView v-else-if="store.viewMode === 'folders'"
         :folders="store.folders.items" :loading="store.folders.loading"
         @refresh="store.loadFolders()"
         @preview="(id, type) => store.openPreview(id, type)"
@@ -35,7 +35,8 @@
         @delete-folder="handleDeleteFolder"
         @move-scan="handleOpenMoveScan"
         @remove-scan="handleRemoveScan" />
-      <ScheduledScansPanel :scheduled="store.scheduled" :scheduling="store.scheduling" :active-tab="store.activeTab" @create="handleCreateScheduled" @deactivate="handleDeactivateScheduled" @delete="handleDeleteScheduled" @toggle-form="store.toggleScheduledForm()" />
+      <HistoryPanel v-else-if="store.viewMode === 'history'" />
+      <ScheduledScansPanel v-if="store.viewMode === 'full'" :scheduled="store.scheduled" :scheduling="store.scheduling" :active-tab="store.activeTab" @create="handleCreateScheduled" @deactivate="handleDeactivateScheduled" @delete="handleDeleteScheduled" @toggle-form="store.toggleScheduledForm()" />
     </main>
 
     <ScanPreviewModal :show="store.preview.show" :scan="store.preview.scan" :type="store.preview.type" :docs="store.preview.docs" :docs-loading="store.preview.docsLoading"
@@ -112,6 +113,7 @@ import ScanTabs from '@/components/sentinel/ScanTabs.vue'
 import ScanForm from '@/components/sentinel/ScanForm.vue'
 import ScanTable from '@/components/sentinel/ScanTable.vue'
 import ScanFolderView from '@/components/sentinel/ScanFolderView.vue'
+import HistoryPanel from '@/components/sentinel/HistoryPanel.vue'
 import ScanPreviewModal from '@/components/sentinel/ScanPreviewModal.vue'
 import ScanDetailsModal from '@/components/sentinel/ScanDetailsModal.vue'
 import FolderFormModal from '@/components/sentinel/FolderFormModal.vue'

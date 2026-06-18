@@ -47,6 +47,14 @@ export const useSentinelStore = defineStore('sentinel', () => {
   })
   const moveScan = reactive({ show: false, scanId: null, folderId: null, submitting: false })
 
+  /* ════════════════════════════════ ESTADÍSTICAS HISTÓRICAS ════════════ */
+  const history = reactive({
+    hosts: [], loading: false,
+    selected: null,          // { target, scanType }
+    chart: null, chartLoading: false,
+    cache: {},                // `${type}|${target}` -> payload, evita refetch al re-seleccionar
+  })
+
   /* ── HELPERS ── */
   /** @param {'nmap'|'nikto'|'openvas'} type */
   function _scandata(type) { return scans[type] }
@@ -423,9 +431,53 @@ export const useSentinelStore = defineStore('sentinel', () => {
     viewMode.value = mode
     if (mode === 'folders') {
       if (!folders.items.length) loadFolders()
+    } else if (mode === 'history') {
+      if (!history.hosts.length) loadHistoryHosts()
     } else {
       refreshCurrent()
     }
+  }
+
+  /* ════════════════════════════════ ESTADÍSTICAS HISTÓRICAS ════════════ */
+  /** Carga la lista de hosts escaneados por el usuario (para el selector). */
+  async function loadHistoryHosts({ force = false } = {}) {
+    history.loading = true
+    try {
+      const res = await apiFetch('/sentinel/history/hosts')
+      if (!res?.ok) { history.hosts = []; return }
+      const data = await res.json()
+      history.hosts = data.hosts ?? []
+      if (force) history.cache = {}
+    } catch { history.hosts = [] }
+    finally { history.loading = false }
+  }
+
+  /** Carga las estadísticas históricas de un host + herramienta. Usa cache salvo `force`. */
+  async function loadHistoryStats(target, type, { force = false } = {}) {
+    history.selected = { target, scanType: type }
+    const key = `${type}|${target}`
+
+    if (!force && history.cache[key]) {
+      history.chart = history.cache[key]
+      return
+    }
+
+    history.chartLoading = true
+    history.chart = null
+    try {
+      const params = new URLSearchParams({ target, type })
+      const res = await apiFetch(`/sentinel/history/stats?${params}`)
+      if (!res?.ok) {
+        const data = await res?.json().catch(() => ({}))
+        toast.show(data?.error_description || data?.message || 'No se pudieron obtener las estadísticas.', 'error')
+        return
+      }
+      const data = await res.json()
+      history.chart = data
+      history.cache[key] = data
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+    } finally { history.chartLoading = false }
   }
 
   async function createFolder(name) {
@@ -610,6 +662,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
     openDetails, closeDetails, refreshDetailsDocs,
     generatePdf, downloadDocument, deleteDocument,
     setViewMode, loadFolders,
+    history, loadHistoryHosts, loadHistoryStats,
     createFolder, renameFolder, deleteFolder,
     moveScanToFolder, removeScanFromFolder,
     openMoveScan, closeMoveScan,
