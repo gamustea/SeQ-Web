@@ -171,6 +171,9 @@
     "folders": {
       "defaultFolderName": "Sin carpeta"
     },
+    "history": {
+      "maxScans": 5
+    },
     "directories": {
       "csv": "data/sentinel/csv",
       "output": "data/sentinel/output",

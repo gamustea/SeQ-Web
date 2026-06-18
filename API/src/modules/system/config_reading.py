@@ -469,6 +469,13 @@ def get_sentinel_default_folder_name() -> str:
     return sentinel.get("folders", {}).get("defaultFolderName", "Sin carpeta")
 
 
+@_lazy_load
+def get_sentinel_history_size() -> int:
+    """Número de escaneos recientes a considerar en las estadísticas históricas."""
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    return int(sentinel.get("history", {}).get("maxScans", 5))
+
+
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
 # =============================================================================

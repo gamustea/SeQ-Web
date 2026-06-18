@@ -28,6 +28,7 @@ from .managers import (
     ProgramedScanManager,
     SentinelReportManager,
     ScanFolderManager,
+    ScanHistoryManager,
 )
 from .model import ScanType
 from .exceptions import (
@@ -76,6 +77,9 @@ from .schemas import (
     ScanFolderActionResponseSchema,
     BulkDeleteScansSchema,
     BulkDeleteScansResponseSchema,
+    HistoryHostsResponseSchema,
+    HistoryStatsQuerySchema,
+    HistoryStatsResponseSchema,
 )
 
 
@@ -376,6 +380,47 @@ def get_scan_stats():
     repo = _ScanRepo(session=session)
     stats = repo.get_stats(user.id)
     return stats
+
+
+@sentinel_blp.get("/history/hosts")
+@sentinel_blp.response(200, HistoryHostsResponseSchema, description="Scanned hosts")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def list_history_hosts():
+    """Listar los hosts escaneados por el usuario (para el selector de estadísticas)"""
+    user = get_current_user()
+    hosts = ScanHistoryManager().list_scanned_hosts(user.id)  # type: ignore
+    return {
+        "message": "Hosts obtenidos correctamente",
+        "hosts": hosts,
+        "user": user.username,
+    }
+
+
+@sentinel_blp.get("/history/stats")
+@sentinel_blp.arguments(HistoryStatsQuerySchema, location="query")
+@sentinel_blp.response(200, HistoryStatsResponseSchema, description="Host historical statistics")
+@sentinel_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def get_history_stats(args):
+    """Estadísticas históricas de un host para los últimos escaneos del usuario"""
+    target = args["target"]
+    scan_type = ScanType(args["type"])
+
+    user = get_current_user()
+    payload = ScanHistoryManager().get_host_history(user.id, target, scan_type)  # type: ignore
+    payload["message"] = "Estadísticas obtenidas correctamente"
+    payload["user"] = user.username
+    return payload
 
 
 @sentinel_blp.get("/results/<int:scan_id>")

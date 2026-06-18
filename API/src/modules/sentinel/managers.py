@@ -69,7 +69,8 @@ from .services import (
     OpenVASTask,
     TaskStatus,
     _Task,
-    Scheduler
+    Scheduler,
+    HistoryStatsService,
 )
 from .exceptions import (
     ScanNotFoundError,
@@ -1374,6 +1375,42 @@ class ScanFolderManager:
 # =============================================================================
 # NMAP
 # =============================================================================
+
+class ScanHistoryManager:
+    """
+    Manager for per-host historical scan statistics.
+
+    Orchestrates UnitOfWork + ScanRepository + HistoryStatsService to produce
+    the chart-ready payload consumed by both the REST endpoint and the PDF
+    report. Every query is scoped to the owning user, so a user can only ever
+    see statistics built from their own scans.
+    """
+
+    def list_scanned_hosts(self, user_id: int) -> List[dict]:
+        """Return the distinct hosts the user has finished scanning."""
+        with UnitOfWork() as uow:
+            return ScanRepository(uow).get_scanned_targets(user_id)
+
+    def get_host_history(self, user_id: int, target: str, scan_type: ScanType) -> dict:
+        """Build the historical statistics payload for a host + tool.
+
+        Args:
+            user_id:   Owner user primary key (enforces the security scope).
+            target:    The scanned host.
+            scan_type: The tool discriminator (nmap/nikto/openvas).
+
+        Returns:
+            JSON-serializable statistics payload (see HistoryStatsService.build).
+        """
+        scan_type = ScanType(scan_type)
+        limit = CR.get_sentinel_history_size()
+        with UnitOfWork() as uow:
+            scans = ScanRepository(uow).get_recent_finished(
+                user_id, target, scan_type, limit
+            )
+            scans = list(reversed(scans))  # ascending (oldest -> newest) for charting
+            return HistoryStatsService().build(scans, scan_type, target)
+
 
 @ScanManager.register(ScanType.NMAP)
 class NmapScanManager(ScanManager):

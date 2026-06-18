@@ -236,6 +236,90 @@ class ScanRepository(BaseRepository[Scan]):
         return self.get_all_by_field("host_id", host_id)
 
     # =========================================================================
+    # HISTORY QUERIES
+    # =========================================================================
+
+    def get_scanned_targets(self, user_id: int) -> List[dict]:
+        """Return the distinct hosts a user has finished scanning.
+
+        Grouped by (target, scan_type) so the frontend can offer a per-tool
+        host selector. Only finished scans are considered.
+
+        Returns:
+            List of dicts: ``{"target", "scanType", "scanCount", "lastScannedAt"}``.
+        """
+        from sqlalchemy import func
+
+        rows = (
+            self._session.query(
+                Scan.target,
+                Scan.scan_type,
+                func.count(Scan.id),
+                func.max(Scan.started_at),
+            )
+            .filter(
+                Scan.user_id == user_id,
+                Scan.status == ScanStatus.FINISHED.value,
+            )
+            .group_by(Scan.target, Scan.scan_type)
+            .order_by(func.max(Scan.started_at).desc())
+            .all()
+        )
+        return [
+            {
+                "target": target,
+                "scanType": scan_type.value if hasattr(scan_type, "value") else str(scan_type),
+                "scanCount": count,
+                "lastScannedAt": last_scanned,
+            }
+            for target, scan_type, count, last_scanned in rows
+        ]
+
+    # Eager-loading options per subtype so the returned scans survive
+    # UnitOfWork.close() in background threads (report generation).
+    _HISTORY_OPTIONS = {
+        ScanType.NMAP: (
+            NmapScan,
+            lambda: [joinedload(NmapScan.open_ports_relation).joinedload(OpenPort.port)],
+        ),
+        ScanType.NIKTO: (
+            NiktoScan,
+            lambda: [joinedload(NiktoScan.incidents)],
+        ),
+        ScanType.OPENVAS: (
+            OpenVASScan,
+            lambda: [joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.vulnerability)],
+        ),
+    }
+
+    def get_recent_finished(
+        self,
+        user_id: int,
+        target: str,
+        scan_type: ScanType,
+        limit: int,
+    ) -> List[Scan]:
+        """Return the user's last ``limit`` finished scans of a host + tool.
+
+        Findings relationships are eagerly loaded. Ordered newest-first; the
+        service reverses the list to ascending order for charting.
+        """
+        scan_type = ScanType(scan_type)
+        model, options_factory = self._HISTORY_OPTIONS[scan_type]
+        return (
+            self._session.query(model)
+            .filter(
+                model.user_id == user_id,
+                model.target == target,
+                model.status == ScanStatus.FINISHED.value,
+            )
+            .options(*options_factory())
+            .order_by(model.started_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    # =========================================================================
     # FOLDER QUERIES
     # =========================================================================
 
