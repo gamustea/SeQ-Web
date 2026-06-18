@@ -5,7 +5,8 @@ Contiene las base classes y utilities que otros módulos necesitan:
     - Base (SQLAlchemy)
     - Document
     - OAuth decorators y helpers
-    - AIWriter base class
+
+La generación con IA vive ahora en el módulo `scribe`, no aquí.
 
 Este paquete no contiene endpoints, models específicos de módulos,
 ni managers concretos. Esas responsabilidades viven en sus módulos respectivos.
@@ -13,7 +14,6 @@ ni managers concretos. Esas responsabilidades viven en sus módulos respectivos.
 
 from ._model        import Base, Document
 from ._managers     import BaseManager
-from ._documents    import AIWriter
 from ._exceptions   import handle_exceptions, ExceptionHandler
 from ._endpoints    import (
     current_actor,
@@ -29,7 +29,6 @@ __all__ = [
     "Base",
     "Document",
     "BaseManager",
-    "AIWriter",
     "handle_exceptions",
     "ExceptionHandler",
     "current_actor",
