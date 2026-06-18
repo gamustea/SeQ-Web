@@ -788,9 +788,27 @@ docker compose --profile dev up -d
 docker compose --profile container up -d
 ```
 
-### Configuración de Ollama
+### Configuración de IA (módulo `scribe`)
 
-Para IA en Sentinel y Aegis, se requiere Ollama con un modelo compatible (por defecto `llama3.2`):
+La generación con IA está centralizada en el módulo `scribe`, que llama al modelo
+mediante una **estrategia** inyectable. Hay dos estrategias disponibles:
+
+- **`ollama`** — modelo local (por defecto `llama3.2`), ideal para máquinas con GPU.
+- **`openai`** — API de OpenAI (por defecto `gpt-4o-mini`), pensada para desplegar
+  en un VPS sin GPU.
+
+La estrategia se elige en `API/SecOpsConfig.json`, con la posibilidad de usar una
+distinta por módulo:
+
+```json
+"ai": {
+  "defaultStrategy": "ollama",
+  "strategies": { "ollama": {}, "openai": {} },
+  "modules": { "sentinel": "ollama", "aegis": "openai" }
+}
+```
+
+Para la estrategia Ollama se requiere un modelo compatible:
 
 ```bash
 # Desde el contenedor Ollama
@@ -803,8 +821,14 @@ ollama pull llama3.2
 Las variables de entorno para la API se configuran en `API/.env`:
 
 ```
+# Estrategia Ollama (local)
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=llama3.2
+
+# Estrategia OpenAI (requerida solo si algún módulo usa "openai")
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL=        # opcional (proxies / Azure / endpoints compatibles)
 ```
 
 > **Nota**: OpenVAS puede tardar ~15 minutos en iniciar la primera vez (descarga de plugins NVT). Verifica el estado en `http://localhost:9392`.
