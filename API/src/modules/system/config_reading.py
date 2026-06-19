@@ -476,6 +476,29 @@ def get_sentinel_history_size() -> int:
     return int(sentinel.get("history", {}).get("maxScans", 5))
 
 
+def _traceroute_cfg() -> dict:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    return sentinel.get("traceroute", {})
+
+
+@_lazy_load
+def get_sentinel_traceroute_cache_hours() -> float:
+    """Horas que una ruta cacheada se considera válida antes de recalcularse."""
+    return float(_traceroute_cfg().get("cacheHours", 24))
+
+
+@_lazy_load
+def get_sentinel_traceroute_max_hops() -> int:
+    """Número máximo de saltos a sondear (``-m`` en traceroute)."""
+    return int(_traceroute_cfg().get("maxHops", 30))
+
+
+@_lazy_load
+def get_sentinel_traceroute_timeout() -> float:
+    """Tiempo máximo total (segundos) para el comando traceroute."""
+    return float(_traceroute_cfg().get("timeout", 60))
+
+
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
 # =============================================================================

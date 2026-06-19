@@ -46,6 +46,7 @@ from .model import (
     ScanStatus,
     ScanType,
     SentinelDocument,
+    Traceroute,
 )
 
 
@@ -569,6 +570,43 @@ class ScanFolderRepository(BaseRepository[ScanFolder]):
             .filter(ScanFolder.id == folder_id, ScanFolder.user_id == user_id)
             .one_or_none()
         )
+
+
+class TracerouteRepository(BaseRepository[Traceroute]):
+    """
+    Repository for the Traceroute entity (cached network paths to targets).
+
+    One row per (user_id, target); ``upsert`` refreshes the cached hops in
+    place so the cache never grows unbounded for a repeatedly-scanned host.
+    """
+
+    def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
+        super().__init__(Traceroute, uow=uow, session=session)
+
+    def get_by_user_and_target(self, user_id: int, target: str) -> Optional[Traceroute]:
+        """Return the cached traceroute for a user + target, or None."""
+        return (
+            self._session.query(Traceroute)
+            .filter(Traceroute.user_id == user_id, Traceroute.target == target)
+            .one_or_none()
+        )
+
+    def upsert(self, user_id: int, target: str, hops: list) -> Traceroute:
+        """Create or refresh the cached traceroute for a user + target."""
+        existing = self.get_by_user_and_target(user_id, target)
+        if existing:
+            existing.hops = hops
+            existing.hop_count = len(hops)
+            existing.created_at = datetime.utcnow()
+            return self.update(existing)
+
+        trace = Traceroute(
+            user_id=user_id,
+            target=target,
+            hops=hops,
+            hop_count=len(hops),
+        )
+        return self.save(trace)
 
 
 class ProgramedScanRepository(BaseRepository[ProgramedScan]):
