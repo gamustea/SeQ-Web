@@ -29,6 +29,7 @@ from .managers import (
     SentinelReportManager,
     ScanFolderManager,
     ScanHistoryManager,
+    TracerouteManager,
 )
 from .model import ScanType
 from .exceptions import (
@@ -80,6 +81,7 @@ from .schemas import (
     HistoryHostsResponseSchema,
     HistoryStatsQuerySchema,
     HistoryStatsResponseSchema,
+    TracerouteResponseSchema,
 )
 
 
@@ -465,6 +467,42 @@ def retrieve_scan_by_id(scan_id: int):
         "result": result,
         "user": user.username,
     }
+
+
+@sentinel_blp.get("/scan/<int:scan_id>/traceroute")
+@sentinel_blp.response(200, TracerouteResponseSchema, description="Cached traceroute to the scan target")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def get_scan_traceroute(scan_id: int):
+    """Traceroute (cacheado) desde el servidor SeQ hasta el objetivo del escaneo."""
+    user = get_current_user()
+    payload = TracerouteManager().get_for_scan(scan_id, user.id)  # type: ignore
+    payload["message"] = "Traceroute obtenido correctamente"
+    payload["user"] = user.username
+    return payload
+
+
+@sentinel_blp.post("/scan/<int:scan_id>/traceroute/refresh")
+@sentinel_blp.response(200, TracerouteResponseSchema, description="Recomputed traceroute to the scan target")
+@sentinel_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@sentinel_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@sentinel_blp.alt_response(404, schema=ErrorSchema, description="Scan not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
+@limiter.limit("60 per hour; 300 per day")
+@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+def refresh_scan_traceroute(scan_id: int):
+    """Fuerza el recálculo del traceroute hasta el objetivo del escaneo."""
+    user = get_current_user()
+    payload = TracerouteManager().get_for_scan(scan_id, user.id, force_refresh=True)  # type: ignore
+    payload["message"] = "Traceroute recalculado correctamente"
+    payload["user"] = user.username
+    return payload
 
 
 @sentinel_blp.get("/is-finished")

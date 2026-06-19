@@ -275,3 +275,17 @@ class HistoryStatsResponseSchema(Schema):
     legend = fields.List(fields.Dict())
     scanCount = fields.Integer()
     user = fields.String()
+
+
+# =========================================================================
+# TRACEROUTE SCHEMAS
+# =========================================================================
+
+class TracerouteResponseSchema(Schema):
+    message = fields.String()
+    target = fields.String()
+    hops = fields.List(fields.Dict())
+    hopCount = fields.Integer()
+    computedAt = fields.String(allow_none=True)
+    cached = fields.Boolean()
+    user = fields.String()
