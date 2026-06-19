@@ -35,6 +35,8 @@ from .scheduling import Scheduler
 
 from .history import HistoryStatsService
 
+from .traceroute import TracerouteService
+
 __all__ = [
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
@@ -56,5 +58,6 @@ __all__ = [
     NmapScanLogger,
     NiktoScanLogger,
     OpenVASScanLogger,
-    Scheduler
+    Scheduler,
+    TracerouteService,
 ]

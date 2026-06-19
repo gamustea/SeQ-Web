@@ -29,7 +29,7 @@ import re
 import uuid
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -46,7 +46,8 @@ from .repositories import (
     ScanRepository,
     ScanFolderRepository,
     SentinelReportRepository,
-    ProgramedScanRepository)
+    ProgramedScanRepository,
+    TracerouteRepository)
 from .model import (
     NiktoScan,
     NmapScan,
@@ -71,6 +72,7 @@ from .services import (
     _Task,
     Scheduler,
     HistoryStatsService,
+    TracerouteService,
 )
 from .exceptions import (
     ScanNotFoundError,
@@ -1410,6 +1412,83 @@ class ScanHistoryManager:
             )
             scans = list(reversed(scans))  # ascending (oldest -> newest) for charting
             return HistoryStatsService().build(scans, scan_type, target)
+
+
+class TracerouteManager:
+    """
+    Manager for cached traceroutes from the SeQ server to scan targets.
+
+    The traceroute is computed lazily (the first time a user opens a scan
+    detail for a given target) and cached per (user, target). Subsequent views
+    reuse the cached path until it goes stale (see ``cacheHours`` config), at
+    which point — or when the user explicitly refreshes — it is recomputed.
+
+    Every operation is scoped to the owning user via
+    ``ScanManager.assert_scan_ownership`` so a user can only ever trace targets
+    from their own scans.
+    """
+
+    def get_for_scan(self, scan_id: int, user_id: int, force_refresh: bool = False) -> dict:
+        """Return the (possibly cached) traceroute for a scan's target.
+
+        Args:
+            scan_id:       Scan whose target to trace.
+            user_id:       Owner user primary key (enforces the security scope).
+            force_refresh: If True, ignore the cache and recompute.
+
+        Returns:
+            JSON-serializable payload: ``target``, ``hops``, ``hopCount``,
+            ``computedAt`` (ISO) and ``cached`` (bool).
+        """
+        scan = ScanManager.assert_scan_ownership(scan_id, user_id)
+        target = scan.target
+
+        if not force_refresh:
+            cached = self._get_fresh_cached(user_id, target)
+            if cached is not None:
+                return cached
+
+        hops = TracerouteService().trace(self._probe_host(target))
+        with UnitOfWork() as uow:
+            trace = TracerouteRepository(uow).upsert(user_id, target, hops)
+            payload = self._format(trace, cached_hit=False)
+        return payload
+
+    def _get_fresh_cached(self, user_id: int, target: str):
+        """Return the cached Traceroute if present and still within TTL."""
+        max_age = timedelta(hours=CR.get_sentinel_traceroute_cache_hours())
+        with UnitOfWork() as uow:
+            trace = TracerouteRepository(uow).get_by_user_and_target(user_id, target)
+            if trace is None:
+                return None
+            if datetime.utcnow() - trace.created_at > max_age:
+                return None
+            return self._format(trace, cached_hit=True)
+
+    @staticmethod
+    def _probe_host(target: str) -> str:
+        """Resolve the host to probe from a stored target (strips URL/scheme).
+
+        The cache key stays the user-facing ``target`` string, but the actual
+        probe goes to the resolved IP for reliability (Nikto stores URLs).
+        """
+        from src.modules.shared._endpoints import normalize_target
+        try:
+            ip, _ = normalize_target(target)
+            return ip or target
+        except ValueError:
+            return target
+
+    @staticmethod
+    def _format(trace, cached_hit: bool) -> dict:
+        """Format a Traceroute row as a JSON-serializable payload."""
+        return {
+            "target": trace.target,
+            "hops": trace.hops,
+            "hopCount": trace.hop_count,
+            "computedAt": trace.created_at.isoformat() if trace.created_at else None,
+            "cached": cached_hit,
+        }
 
 
 @ScanManager.register(ScanType.NMAP)
