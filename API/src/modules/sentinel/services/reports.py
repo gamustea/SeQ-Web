@@ -580,12 +580,36 @@ class PrintingStrategy(ABC):
 
         metric_label = payload.get("metricLabel", "Hallazgos")
         scan_count = payload.get("scanCount", len(points))
+        x_axis = payload.get("axes", {}).get("x", {})
+        first_date = points[0]["x"] if points else None
+        last_date = points[-1]["x"] if points else None
+
         intro = (
-            f"Evolución de «{metric_label.lower()}» en los últimos {scan_count} "
-            f"escaneos de {self.scan.target} realizados por el usuario."
+            f"El siguiente gráfico recoge la evolución de «{metric_label.lower()}» "
+            f"observada en los últimos {scan_count} escaneos de tipo "
+            f"{scan_type.value.upper()} realizados sobre <b>{self.scan.target}</b> "
+            f"por el usuario propietario de este informe. Permite identificar de un "
+            f"vistazo si la superficie expuesta del host crece, se mantiene estable "
+            f"o se reduce a lo largo del tiempo."
         )
         elements.append(Paragraph(intro, theme.body))
-        elements.append(Spacer(1, 0.1 * inch))
+        elements.append(Spacer(1, 0.08 * inch))
+
+        if first_date and last_date and scan_count >= 2:
+            range_text = (
+                f"Periodo analizado: desde <b>{first_date}</b> hasta <b>{last_date}</b> "
+                f"({scan_count} escaneos). El eje horizontal («{x_axis.get('label', 'Escaneo')}») "
+                f"representa cada escaneo en orden cronológico, mientras que el eje vertical "
+                f"indica el número de «{metric_label.lower()}» detectados en cada uno."
+            )
+        else:
+            range_text = (
+                f"Este es el primer escaneo registrado de este host con esta herramienta, "
+                f"por lo que todavía no hay un histórico con el que comparar. A partir del "
+                f"siguiente escaneo se mostrará también la comparativa de cambios."
+            )
+        elements.append(Paragraph(range_text, theme.label))
+        elements.append(Spacer(1, 0.18 * inch))
 
         main_color = colors.HexColor(self.color_palette[ColorType.MAIN])
         light_color = colors.HexColor(self.color_palette[ColorType.LIGHT])
@@ -594,27 +618,30 @@ class PrintingStrategy(ABC):
         step = y_axis.get("step", 1) or 1
         max_val = y_axis.get("max", 0) or 0
 
-        drawing = Drawing(440, 200)
+        drawing = Drawing(460, 210)
+        drawing.hAlign = "CENTER"
         bc = VerticalBarChart()
-        bc.x = 35
-        bc.y = 40
+        bc.x = 45
+        bc.y = 45
         bc.height = 135
-        bc.width = 380
+        bc.width = 390
         bc.data = [[p["y"] for p in points]]
         bc.categoryAxis.categoryNames = [p["x"] for p in points]
         bc.categoryAxis.labels.boxAnchor = "ne"
         bc.categoryAxis.labels.angle = 30
+        bc.categoryAxis.labels.fontName = "Helvetica"
         bc.categoryAxis.labels.fontSize = 6
         bc.categoryAxis.labels.dy = -2
         bc.valueAxis.valueMin = 0
         bc.valueAxis.valueMax = max(max_val + step, step)
         bc.valueAxis.valueStep = step
+        bc.valueAxis.labels.fontName = "Helvetica"
         bc.valueAxis.labels.fontSize = 7
         bc.bars[0].fillColor = main_color
         bc.bars[0].strokeColor = light_color
         drawing.add(bc)
         elements.append(drawing)
-        elements.append(Spacer(1, 0.15 * inch))
+        elements.append(Spacer(1, 0.18 * inch))
 
         # Diff legend (only meaningful with at least two scans to compare).
         if scan_count >= 2:
@@ -639,10 +666,20 @@ class PrintingStrategy(ABC):
                 ("GRID", (0, 0), (-1, -1), 0.4, light_color),
             ]))
             elements.append(legend_table)
-            elements.append(Spacer(1, 0.05 * inch))
+            elements.append(Spacer(1, 0.08 * inch))
             elements.append(Paragraph(
-                "Comparativa del último escaneo frente al inmediatamente anterior.",
+                "Comparativa del último escaneo frente al inmediatamente anterior: "
+                "<b>Nuevos</b> son los hallazgos que no estaban presentes antes, "
+                "<b>Iguales</b> los que se mantienen en ambos escaneos y "
+                "<b>Desaparecidos</b> los que ya no se detectan.",
                 theme.label,
+            ))
+            elements.append(Spacer(1, 0.1 * inch))
+            elements.append(Paragraph(
+                "Un número elevado de hallazgos nuevos o desaparecidos puede indicar "
+                "cambios recientes en la configuración o exposición del host; conviene "
+                "revisar dichos cambios para confirmar que son intencionados.",
+                theme.body,
             ))
 
     @abstractmethod
