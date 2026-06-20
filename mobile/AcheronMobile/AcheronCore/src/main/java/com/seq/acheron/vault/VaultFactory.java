@@ -198,20 +198,18 @@ public record VaultFactory(User user) {
 
         String salt = algorithmJson.get("salt").getAsString();
 
-        VaultEncryptingStrategy tempStrategy = buildStrategy(kdfId, masterPassword, salt, null);
+        VaultEncryptingStrategy strategy = buildStrategy(kdfId, masterPassword, salt);
         String checker = root
                 .get("checker")
                 .getAsString();
 
-        if (!checkMasterPassword(checker, tempStrategy)) {
+        if (!checkMasterPassword(checker, strategy)) {
             throw new WrongPasswordException("Wrong master password");
         }
 
         String vaultKeyStr = root.get("vaultKey").getAsString();
-        VaultEncryptingStrategy strategy;
         try {
-            SecretKey vaultKey = tempStrategy.importVaultKey(vaultKeyStr);
-            strategy = buildStrategy(kdfId, masterPassword, salt, vaultKey);
+            strategy.importVaultKey(vaultKeyStr);
         } catch (AEADBadTagException e) {
             throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
         }
@@ -277,19 +275,12 @@ public record VaultFactory(User user) {
     private static VaultEncryptingStrategy buildStrategy(
             @NotNull String kdfId,
             @NotNull String masterPassword,
-            @NotNull String salt,
-            SecretKey vaultKey
+            @NotNull String salt
     ) throws GeneralSecurityException {
         if ("PBKDF2".equalsIgnoreCase(kdfId)) {
-            if (vaultKey != null) {
-                return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, vaultKey);
-            }
-            return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, true);
+            return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null);
         }
-        if (vaultKey != null) {
-            return new Argon2VaultEncryptingStrategy(masterPassword, salt, vaultKey);
-        }
-        return new Argon2VaultEncryptingStrategy(masterPassword, salt, true);
+        return new Argon2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null);
     }
 
 }
