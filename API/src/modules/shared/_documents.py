@@ -59,7 +59,6 @@ def update_document_status(
 
     with UnitOfWork() as uow:
         uow.session.add(doc) # type: ignore
-        uow.session.add(doc) # type: ignore
     return doc
 
 

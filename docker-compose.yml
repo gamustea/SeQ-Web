@@ -140,6 +140,10 @@ services:
       dockerfile: Dockerfile
     container_name: SeQ-API
     restart: unless-stopped
+    # traceroute (y el chequeo ICMP de alcanzabilidad) necesitan raw sockets
+    # para leer las respuestas ICMP TTL-exceeded.
+    cap_add:
+      - NET_RAW
     depends_on:
       postgres:
         condition: service_healthy
@@ -182,6 +186,9 @@ services:
       dockerfile: Dockerfile
     container_name: SeQ-Worker
     restart: unless-stopped
+    # traceroute necesita raw sockets para leer las respuestas ICMP TTL-exceeded.
+    cap_add:
+      - NET_RAW
     depends_on:
       postgres:
         condition: service_healthy

@@ -469,6 +469,46 @@ def get_sentinel_default_folder_name() -> str:
     return sentinel.get("folders", {}).get("defaultFolderName", "Sin carpeta")
 
 
+@_lazy_load
+def get_sentinel_history_size() -> int:
+    """Número de escaneos recientes a considerar en las estadísticas históricas."""
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    return int(sentinel.get("history", {}).get("maxScans", 5))
+
+
+def _traceroute_cfg() -> dict:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    return sentinel.get("traceroute", {})
+
+
+@_lazy_load
+def get_sentinel_traceroute_cache_hours() -> float:
+    """Horas que una ruta cacheada se considera válida antes de recalcularse."""
+    return float(_traceroute_cfg().get("cacheHours", 24))
+
+
+@_lazy_load
+def get_sentinel_traceroute_max_hops() -> int:
+    """Número máximo de saltos a sondear (``-m`` en traceroute)."""
+    return int(_traceroute_cfg().get("maxHops", 30))
+
+
+@_lazy_load
+def get_sentinel_traceroute_timeout() -> float:
+    """Tiempo máximo total (segundos) para el comando traceroute."""
+    return float(_traceroute_cfg().get("timeout", 60))
+
+
+@_lazy_load
+def get_sentinel_traceroute_retry_failed_minutes() -> float:
+    """Minutos que una ruta fallida (sin saltos) se cachea antes de reintentar.
+
+    Mucho más corto que ``cacheHours``: evita re-sondear un host inalcanzable en
+    cada apertura del detalle, pero permite reintentar pronto (o de inmediato con
+    el botón de refresco)."""
+    return float(_traceroute_cfg().get("retryFailedMinutes", 15))
+
+
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
 # =============================================================================

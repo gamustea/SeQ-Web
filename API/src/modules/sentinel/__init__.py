@@ -56,7 +56,7 @@ from .services import (
 from .endpoints import sentinel_blp
 
 # Registro de las categorías de cola de este módulo (OCP).
-QueueRegistry.register("sentinel.scan", "sentinel.report")
+QueueRegistry.register("sentinel.scan", "sentinel.report", "sentinel.traceroute")
 
 __all__ = [
     "Host", "NiktoIncident", "NiktoScan", "NmapScan", "OpenPort",
