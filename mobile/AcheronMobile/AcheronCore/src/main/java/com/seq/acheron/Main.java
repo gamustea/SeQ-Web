@@ -20,19 +20,10 @@ public class Main {
         );
 
         Vault mockVault = vf.getMockVault();
-        Pair<Vault, String> pair = vf.getRestorationVault(mockVault);
-        System.out.println("La cotraseña es: " + pair.right());
-
-        Vault newVault = vf.fromJson(
-                pair.left()
-                        .encryptAll()
-                        .toJson(),
-                pair.right()
-        );
 
         System.out.println("Vault encriptado");
-        System.out.println(newVault);
+        System.out.println(mockVault.encryptAll());
         System.out.println("Vault desencriptado");
-        System.out.println(newVault.decryptAll());
+        System.out.println(mockVault.decryptAll());
     }
 }

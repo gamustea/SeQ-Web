@@ -40,28 +40,17 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
      * @param generateVaultKey  Whether the constructor builds a random {@link #vaultKey} or not
      * @throws GeneralSecurityException if key generation fails
      */
-    public Argon2VaultEncryptingStrategy(String masterPassword,
-                                         String saltBase64,
-                                         boolean generateVaultKey) throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", generateVaultKey, saltBase64);
-        this.saltBase64 = saltBase64;
-
-        Argon2Advanced argon2 = Argon2Factory.createAdvanced();
-        char[] passwordChars = masterPassword.toCharArray();
-
-        try {
-            byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            byte[] keyBytes = argon2.rawHash(
-                    ARGON2_ITERATIONS,
-                    ARGON2_MEMORY_KIB,
-                    ARGON2_PARALLELISM,
-                    passwordChars,
-                    saltBytes
-            );
-            derivedKey = new SecretKeySpec(keyBytes, "AES");
-        } finally {
-            argon2.wipeArray(passwordChars);
-        }
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            boolean generateVaultKey
+    ) throws GeneralSecurityException {
+        super(
+            masterPassword,
+            "AES/GCM/NoPadding",
+            saltBase64,
+            generateVaultKey
+        );
     }
 
     /**
@@ -75,12 +64,23 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
      * @param saltBase64     Base64-encoded salt used for Argon2
      * @param vaultKey       an existing vault key to reuse
      */
-    public Argon2VaultEncryptingStrategy(String masterPassword,
-                                         String saltBase64,
-                                         SecretKey vaultKey) {
-        super("AES/GCM/NoPadding", vaultKey, saltBase64);
-        this.saltBase64 = saltBase64;
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            SecretKey vaultKey
+    ) throws GeneralSecurityException {
+        super(
+                masterPassword,
+                "AES/GCM/NoPadding",
+                saltBase64,
+                vaultKey
+        );
+    }
 
+    public SecretKey deriveKey(
+            String masterPassword,
+            String saltBase64
+    ) throws GeneralSecurityException {
         Argon2Advanced argon2 = Argon2Factory.createAdvanced();
         char[] passwordChars = masterPassword.toCharArray();
 
@@ -93,7 +93,7 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
                     passwordChars,
                     saltBytes
             );
-            derivedKey = new SecretKeySpec(keyBytes, "AES");
+            return new SecretKeySpec(keyBytes, "AES");
         } finally {
             argon2.wipeArray(passwordChars);
         }

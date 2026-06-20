@@ -3,6 +3,7 @@ package com.seq.acheron.vault.storables;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import org.junit.jupiter.api.Test;
 
+import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
@@ -15,10 +16,14 @@ public class AccountTest {
     private static class TestVaultStrategy extends VaultEncryptingStrategy {
 
         TestVaultStrategy() throws GeneralSecurityException {
-            super("AES/GCM/NoPadding", true, generateSalt()); // generate vaultKey
+            super("test-master-password", "AES/GCM/NoPadding", generateSalt(), true);
+        }
+
+        @Override
+        protected SecretKey deriveKey(String masterPassword, String saltBase64) throws GeneralSecurityException {
             byte[] dk = new byte[32];
             SecureRandom.getInstanceStrong().nextBytes(dk);
-            this.derivedKey = new SecretKeySpec(dk, "AES");
+            return new SecretKeySpec(dk, "AES");
         }
 
         @Override

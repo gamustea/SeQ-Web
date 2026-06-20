@@ -70,16 +70,15 @@ public abstract class VaultEncryptingStrategy {
      * @throws GeneralSecurityException if key generation fails
      */
     protected VaultEncryptingStrategy(
+            String masterPassword,
             String transformation,
-            boolean generateVaultKey,
-            String saltBase64
+            String saltBase64,
+            boolean generateVaultKey
     ) throws GeneralSecurityException {
-
-        this.transformation = transformation;
-        this.saltBase64 = saltBase64;
-        if (generateVaultKey) {
-            this.vaultKey = generateKey();
-        }
+        this.saltBase64                     = saltBase64;
+        this.derivedKey                     = deriveKey(masterPassword, saltBase64);
+        this.transformation                 = transformation;
+        if (generateVaultKey) this.vaultKey = generateKey();
     }
 
     /**
@@ -91,11 +90,19 @@ public abstract class VaultEncryptingStrategy {
      * @param transformation the cipher transformation
      * @param vaultKey       an existing vault key to reuse
      */
-    protected VaultEncryptingStrategy(String transformation, SecretKey vaultKey, String saltBase64) {
+    protected VaultEncryptingStrategy(
+            String masterPassword,
+            String transformation,
+            String saltBase64,
+            SecretKey vaultKey
+    ) throws GeneralSecurityException {
+        this.saltBase64     = saltBase64;
+        this.derivedKey     = deriveKey(masterPassword, saltBase64);
         this.transformation = transformation;
-        this.vaultKey = vaultKey;
-        this.saltBase64 = saltBase64;
+        this.vaultKey       = vaultKey;
     }
+
+
 
     /**
      * Exports the current {@link #vaultKey} in encrypted form using
@@ -286,4 +293,9 @@ public abstract class VaultEncryptingStrategy {
     }
 
     public abstract String toJson();
+
+    protected abstract SecretKey deriveKey(
+            String masterPassword,
+            String saltBase64
+    ) throws GeneralSecurityException;
 }

@@ -247,58 +247,6 @@ public record VaultFactory(User user) {
     }
 
 
-        /**
-         * Creates a restoration {@link Vault} as a self-contained backup copy of the given vault.
-         * <p>
-         * The restoration vault is protected by a freshly generated, cryptographically strong
-         * random password and an independent AES encryption strategy, so it can be stored or
-         * transmitted safely without exposing the user's original master password.
-         * All {@link com.seq.acheron.vault.storables.VaultObject VaultObject} items from
-         * {@code originalVault} are deep-copied into the new vault via
-         * {@link com.seq.acheron.vault.storables.VaultObject#copy()}.
-         * <p>
-         * Typical use cases:
-         * <ul>
-         *   <li>Generating a one-time recovery export before a destructive operation.</li>
-         *   <li>Providing the user with a backup vault alongside a temporary password
-         *       for out-of-band delivery (e.g., email, QR code).</li>
-         * </ul>
-         *
-         * @param originalVault the source {@link Vault} whose storables are to be copied;
-         *                      must not be {@code null}
-         * @return a {@link Pair} where the first element is the newly created restoration
-         *         {@link Vault} (encrypted with a fresh strategy) and the second element
-         *         is the plain-text restoration password needed to decrypt it
-         * @throws GeneralSecurityException if the AES strategy cannot be initialised or
-         *                                  any cryptographic operation fails
-         */
-    public Pair<Vault, String> getRestorationVault(
-                @NotNull Vault originalVault
-    ) throws GeneralSecurityException {
-
-        String securePassword = CryptoUtils.generatePassword(32);
-        String salt = CryptoUtils.generateSalt(16);
-        VaultEncryptingStrategy strategy = new Argon2VaultEncryptingStrategy(
-                securePassword,
-                salt,
-                true
-        );
-
-        Vault restorationVault = new Vault(
-                strategy,
-                user,
-                originalVault.isEncrypted()
-        );
-
-        originalVault.getStorables()
-                .forEach(storable -> {
-                    restorationVault.getStorables()
-                            .add(storable.copy());
-                });
-
-        return new Pair<>(restorationVault, securePassword);
-    }
-
     /**
      * Validates that the master password currently configured in the provided
      * {@link VaultEncryptingStrategy} matches the one used to produce the

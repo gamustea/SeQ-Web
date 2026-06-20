@@ -55,17 +55,7 @@ public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy
      */
     public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey)
             throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", generateVaultKey, saltBase64);
-        char[] passwordChars = masterPassword.toCharArray();
-        try {
-            byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, ITERATIONS, KEY_LENGTH_BITS);
-            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-            SecretKey tmp = factory.generateSecret(spec);
-            this.derivedKey = new SecretKeySpec(tmp.getEncoded(), "AES");
-        } finally {
-            Arrays.fill(passwordChars, '\0');
-        }
+        super(masterPassword, "AES/GCM/NoPadding", saltBase64, generateVaultKey);
     }
 
     /**
@@ -84,16 +74,25 @@ public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy
      * @param vaultKey       an existing vault key to reuse for AES-GCM
      * @throws GeneralSecurityException if key derivation fails
      */
-    public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, SecretKey vaultKey)
-            throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", vaultKey, saltBase64);
+    public PBKDF2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            SecretKey vaultKey
+    ) throws GeneralSecurityException {
+        super(masterPassword, "AES/GCM/NoPadding", saltBase64, vaultKey);
+    }
+
+    protected SecretKey deriveKey(
+            String masterPassword,
+            String saltBase64
+    ) throws GeneralSecurityException {
         char[] passwordChars = masterPassword.toCharArray();
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
             KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, ITERATIONS, KEY_LENGTH_BITS);
             SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
             SecretKey tmp = factory.generateSecret(spec);
-            this.derivedKey = new SecretKeySpec(tmp.getEncoded(), "AES");
+            return new SecretKeySpec(tmp.getEncoded(), "AES");
         } finally {
             Arrays.fill(passwordChars, '\0');
         }
