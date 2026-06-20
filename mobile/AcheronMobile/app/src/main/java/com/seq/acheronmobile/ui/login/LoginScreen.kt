@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -23,6 +22,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.seq.acheronmobile.ui.theme.AcheronLogo
+import com.seq.acheronmobile.ui.theme.BrandAuthBackground
 
 @Composable
 fun LoginScreen(
@@ -41,6 +42,7 @@ fun LoginScreen(
         }
     }
 
+    BrandAuthBackground {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -53,10 +55,10 @@ fun LoginScreen(
         ) {
 
             // ── Logo / cabecera ──────────────────────────────────────────
+            AcheronLogo(modifier = Modifier.size(96.dp))
             Text(
                 text = "Acheron",
                 style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
             Text(
@@ -156,5 +158,6 @@ fun LoginScreen(
                 }
             }
         }
+    }
     }
 }

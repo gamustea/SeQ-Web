@@ -34,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -43,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.seq.acheronmobile.ui.theme.AcheronLogo
+import com.seq.acheronmobile.ui.theme.BrandAuthBackground
 
 @Composable
 fun MasterKeyScreen(
@@ -60,6 +61,7 @@ fun MasterKeyScreen(
         }
     }
 
+    BrandAuthBackground {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -71,10 +73,10 @@ fun MasterKeyScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
+            AcheronLogo(modifier = Modifier.size(72.dp))
             Text(
                 text = "Clave maestra del Vault",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                style = MaterialTheme.typography.headlineSmall
             )
             Text(
                 text = "Introduce tu clave maestra para descifrar el vault.",
@@ -175,5 +177,6 @@ fun MasterKeyScreen(
                 }
             }
         }
+    }
     }
 }

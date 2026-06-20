@@ -255,9 +255,12 @@ val unspecified_scheme = ColorFamily(
 
 @Composable
 fun AcheronMobileTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    // La identidad de marca de Acheron es oscura por defecto (igual que
+    // web/app), independientemente del tema del sistema.
+    darkTheme: Boolean = true,
+    // El color dinamico (Android 12+) sustituiria la paleta de marca por la
+    // del wallpaper del usuario; se deja desactivado para mantener la identidad.
+    dynamicColor: Boolean = false,
     content: @Composable() () -> Unit
 ) {
     val colorScheme = when {
@@ -273,6 +276,7 @@ fun AcheronMobileTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = AppTypography,
+        shapes = AppShapes,
         content = content
     )
 }

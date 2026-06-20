@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import com.seq.acheronmobile.ui.theme.AcheronLogo
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
@@ -81,7 +82,7 @@ fun VaultListScreen(
         AlertDialog(
             onDismissRequest = { showLockDialog = false },
             title = { Text("Bloquear Vault") },
-            text = { Text("El vault se cerrara y necesitaras la clave maestra para volver.") },
+            text = { Text("El vault se cerrará y necesitarás la clave maestra para volver.") },
             confirmButton = {
                 TextButton(onClick = {
                     showLockDialog = false
@@ -98,7 +99,13 @@ fun VaultListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Acheron Vault") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AcheronLogo(modifier = Modifier.size(28.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Acheron Vault")
+                    }
+                },
                 actions = {
                     IconButton(onClick = { viewModel.syncToRemote() },
                         enabled = !uiState.syncing) {
@@ -130,7 +137,7 @@ fun VaultListScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 FloatingActionButton(onClick = { showFabMenu = !showFabMenu }) {
-                    Icon(Icons.Filled.Add, "Anadir")
+                    Icon(Icons.Filled.Add, "Añadir")
                 }
             }
         }
@@ -141,9 +148,9 @@ fun VaultListScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Vault vacio", style = MaterialTheme.typography.titleMedium,
+                    Text("Vault vacío", style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Toca + para anadir cuentas o tarjetas",
+                    Text("Toca + para añadir cuentas o tarjetas",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
