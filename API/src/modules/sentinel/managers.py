@@ -1455,6 +1455,10 @@ class TracerouteManager:
         # lo dejaría "pegajoso" durante todo el TTL e impediría reintentar. Se
         # devuelve sin guardar para que la próxima apertura vuelva a intentarlo.
         if not hops:
+            logger.warning(
+                f"Traceroute vacío para target '{target}' (escaneo {scan_id}); "
+                f"no se persiste. Revisa los logs de TracerouteService para la causa."
+            )
             return {
                 "target": target,
                 "hops": [],

@@ -63,9 +63,13 @@ class TracerouteService:
 
         cmd = self._build_command(target, max_hops)
         if cmd is None:
-            logger.warning("No se encontró binario de traceroute/tracert en el sistema")
+            logger.error(
+                "No se encontró binario de traceroute/tracert en el PATH. "
+                "En el contenedor de la API instala 'traceroute' (ver Dockerfile)."
+            )
             return []
 
+        logger.info(f"Ejecutando traceroute: {' '.join(cmd)}")
         try:
             proc = subprocess.run(
                 cmd,
@@ -86,7 +90,18 @@ class TracerouteService:
             logger.error(f"Error ejecutando traceroute a '{target}': {exc}", exc_info=True)
             return []
 
-        return self._parse(proc.stdout or "")
+        hops = self._parse(proc.stdout or "")
+        if not hops:
+            # El comando se ejecutó pero no produjo saltos parseables. La causa
+            # más común en contenedores es la falta de CAP_NET_RAW (mensaje
+            # "Operation not permitted") o que la red filtre el ICMP. Se registra
+            # la salida cruda para poder diagnosticarlo sin adivinar.
+            snippet = (proc.stdout or "").strip()[:500] or "(sin salida)"
+            logger.warning(
+                f"Traceroute a '{target}' no devolvió saltos "
+                f"(returncode={proc.returncode}). Salida: {snippet}"
+            )
+        return hops
 
     # ──────────────────────────────────────────────────────────────────────
 
