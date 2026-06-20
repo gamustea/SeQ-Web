@@ -46,9 +46,10 @@ public record Pair<L, R>(L left, R right) {
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
-        if (!(obj instanceof Pair<?, ?>(Object left1, Object right1))) return false;
-        return Objects.equals(this.left, left1)
-                && Objects.equals(this.right, right1);
+        if (!(obj instanceof Pair<?, ?>)) return false;
+        Pair<?, ?> other = (Pair<?, ?>) obj;
+        return Objects.equals(this.left, other.left)
+                && Objects.equals(this.right, other.right);
     }
 
     /**

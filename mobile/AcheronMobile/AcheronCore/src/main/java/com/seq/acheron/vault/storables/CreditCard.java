@@ -191,23 +191,30 @@ public class CreditCard extends VaultObject {
 
     @Override
     public String toJson() {
-        String cardNumber = isEncrypted ?
-                this.cardNumber :
-                "****" + this.cardNumber.substring(this.cardNumber.length() - 4);
+        com.google.gson.JsonObject json = super.toJsonObject();
 
-        String cvv = isEncrypted ?
-                this.cvv :
-                "***";
+        String safeCardNumber = isEncrypted
+                ? this.cardNumber
+                : "****" + this.cardNumber.substring(this.cardNumber.length() - 4);
+        String safeCvv = isEncrypted ? this.cvv : "***";
 
-        return "{" +
-                super.toJson() +
-                "\"cardHolderName\": \"" + cardHolderName + "\"" +
-                // Never log full card number or CVV:
-                ", \"cardNumber\": \"" + cardNumber + "\"" +
-                ", \"expirationDate\": \"" + expirationDate + "\"" +
-                ", \"postalCode\": \"" + postalCode + "\"" +
-                ", \"cvv\": \"" + cvv + "\"" +
-                '}';
+        json.addProperty("cardHolderName", cardHolderName);
+        json.addProperty("cardNumber", safeCardNumber);
+        json.addProperty("expirationDate", expirationDate);
+        json.addProperty("postalCode", postalCode);
+        json.addProperty("cvv", safeCvv);
+
+        return json.toString();
+    }
+
+    String toStorageJson() {
+        com.google.gson.JsonObject json = super.toJsonObject();
+        json.addProperty("cardHolderName", cardHolderName);
+        json.addProperty("cardNumber", cardNumber);
+        json.addProperty("expirationDate", expirationDate);
+        json.addProperty("postalCode", postalCode);
+        json.addProperty("cvv", cvv);
+        return json.toString();
     }
 
     /**

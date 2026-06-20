@@ -22,9 +22,13 @@ import java.util.Base64;
  */
 public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy {
 
-    private static final int ARGON2_ITERATIONS   = 3;
-    private static final int ARGON2_MEMORY_KIB   = 65536;
-    private static final int ARGON2_PARALLELISM  = 1;
+    private static final int DEFAULT_ITERATIONS   = 3;
+    private static final int DEFAULT_MEMORY_KIB   = 65536;
+    private static final int DEFAULT_PARALLELISM  = 1;
+
+    private final int iterations;
+    private final int memoryKiB;
+    private final int parallelism;
 
     /**
      * Creates a new strategy instance that:
@@ -45,12 +49,27 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
             String saltBase64,
             boolean generateVaultKey
     ) throws GeneralSecurityException {
+        this(masterPassword, saltBase64, generateVaultKey, DEFAULT_ITERATIONS, DEFAULT_MEMORY_KIB, DEFAULT_PARALLELISM);
+    }
+
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            boolean generateVaultKey,
+            int iterations,
+            int memoryKiB,
+            int parallelism
+    ) throws GeneralSecurityException {
         super(
             masterPassword,
             "AES/GCM/NoPadding",
             saltBase64,
             generateVaultKey
         );
+        this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
+        this.memoryKiB = memoryKiB > 0 ? memoryKiB : DEFAULT_MEMORY_KIB;
+        this.parallelism = parallelism > 0 ? parallelism : DEFAULT_PARALLELISM;
+        this.derivedKey = deriveKey(masterPassword, saltBase64);
     }
 
     /**
@@ -69,12 +88,27 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
             String saltBase64,
             SecretKey vaultKey
     ) throws GeneralSecurityException {
+        this(masterPassword, saltBase64, vaultKey, DEFAULT_ITERATIONS, DEFAULT_MEMORY_KIB, DEFAULT_PARALLELISM);
+    }
+
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            SecretKey vaultKey,
+            int iterations,
+            int memoryKiB,
+            int parallelism
+    ) throws GeneralSecurityException {
         super(
                 masterPassword,
                 "AES/GCM/NoPadding",
                 saltBase64,
                 vaultKey
         );
+        this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
+        this.memoryKiB = memoryKiB > 0 ? memoryKiB : DEFAULT_MEMORY_KIB;
+        this.parallelism = parallelism > 0 ? parallelism : DEFAULT_PARALLELISM;
+        this.derivedKey = deriveKey(masterPassword, saltBase64);
     }
 
     public SecretKey deriveKey(
@@ -87,9 +121,9 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
             byte[] keyBytes = argon2.rawHash(
-                    ARGON2_ITERATIONS,
-                    ARGON2_MEMORY_KIB,
-                    ARGON2_PARALLELISM,
+                    iterations,
+                    memoryKiB,
+                    parallelism,
                     passwordChars,
                     saltBytes
             );
@@ -119,9 +153,9 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
         return "{" +
                     "\"transformation\": \"" + transformation + "\", " +
                     "\"kdf\": \"Argon2\", " +
-                    "\"kdfIterations\": \"" + ARGON2_ITERATIONS + "\", " +
-                    "\"kdfMemoryKiB\": \"" + ARGON2_MEMORY_KIB + "\", " +
-                    "\"kdfParallelism\": \"" + ARGON2_PARALLELISM + "\", " +
+                    "\"kdfIterations\": " + iterations + ", " +
+                    "\"kdfMemoryKiB\": " + memoryKiB + ", " +
+                    "\"kdfParallelism\": " + parallelism + ", " +
                     "\"salt\": \"" + saltBase64 + "\"" +
                 "}";
     }

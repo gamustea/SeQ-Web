@@ -9,7 +9,7 @@ import java.security.GeneralSecurityException;
 
 public class Main {
     static void main() throws GeneralSecurityException {
-        VaultFactory vf = VaultFactory.getInstance(
+        VaultFactory vf = new VaultFactory(
                 new User(
                         "ID",
                         "Gabriel",
@@ -21,9 +21,12 @@ public class Main {
 
         Vault mockVault = vf.getMockVault();
 
+        mockVault.encryptAll();
         System.out.println("Vault encriptado");
-        System.out.println(mockVault.encryptAll());
+        System.out.println(mockVault);
+
+        mockVault.decryptAll();
         System.out.println("Vault desencriptado");
-        System.out.println(mockVault.decryptAll());
+        System.out.println("Storables: " + mockVault.getStorables().size());
     }
 }

@@ -57,10 +57,9 @@ public abstract class VaultEncryptingStrategy {
 
     /**
      * Creates a new encrypting strategy and optionally generates a random
-     * {@link #vaultKey}.
-     * <p>
-     * Subclasses are expected to initialize {@link #derivedKey} in their
-     * constructors, typically by applying a KDF to the master password.
+     * {@link #vaultKey}.  Subclasses MUST set {@link #derivedKey} after
+     * their own fields are initialised; this constructor intentionally
+     * does NOT call {@link #deriveKey}.
      *
      * @param transformation  the cipher transformation, e.g. {@code "AES/GCM/NoPadding"}
      * @param generateVaultKey if {@code true}, a new random {@link #vaultKey}
@@ -76,7 +75,6 @@ public abstract class VaultEncryptingStrategy {
             boolean generateVaultKey
     ) throws GeneralSecurityException {
         this.saltBase64                     = saltBase64;
-        this.derivedKey                     = deriveKey(masterPassword, saltBase64);
         this.transformation                 = transformation;
         if (generateVaultKey) this.vaultKey = generateKey();
     }
@@ -84,8 +82,8 @@ public abstract class VaultEncryptingStrategy {
     /**
      * Creates a new encrypting strategy using an existing {@link #vaultKey}.
      * <p>
-     * This constructor is intended for reopening an existing vault where
-     * the vault key has already been unwrapped using the {@link #derivedKey}.
+     * Subclasses MUST set {@link #derivedKey} after their own fields are
+     * initialised.
      *
      * @param transformation the cipher transformation
      * @param vaultKey       an existing vault key to reuse
@@ -97,7 +95,6 @@ public abstract class VaultEncryptingStrategy {
             SecretKey vaultKey
     ) throws GeneralSecurityException {
         this.saltBase64     = saltBase64;
-        this.derivedKey     = deriveKey(masterPassword, saltBase64);
         this.transformation = transformation;
         this.vaultKey       = vaultKey;
     }

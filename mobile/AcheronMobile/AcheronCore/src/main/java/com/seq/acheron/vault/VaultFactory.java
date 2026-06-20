@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.seq.acheron.exceptions.AcheronException;
 import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.PBKDF2VaultEncryptingStrategy;
@@ -46,41 +47,10 @@ import static com.seq.acheron.util.CryptoUtils.generateSalt;
  */
 public record VaultFactory(User user) {
 
-    private static VaultFactory instance;
-    private static String defaultKdf = "Argon2";
-    private static final String MOCK_VAULT_PASSWD = "Contraseña";
+    private static final String MOCK_VAULT_PASSWD = "Contrase\u00f1a";
 
     public VaultFactory(User user) {
         this.user = Objects.requireNonNull(user, "user must not be null");
-    }
-
-
-    /**
-     * Returns the process-wide {@link VaultFactory} instance for the given user.
-     * <p>
-     * On the first call, a new instance bound to {@code user} is created.
-     * Subsequent calls will return the same instance, regardless of the
-     * {@code user} argument. This design is suitable for single-user clients
-     * but can be confusing in multi-user environments.
-     *
-     * @param user logical owner for vaults produced by this factory
-     * @return singleton {@link VaultFactory} instance
-     */
-    public static VaultFactory getInstance(User user) throws GeneralSecurityException {
-        if (instance == null) {
-            instance = new VaultFactory(user);
-        }
-        return instance;
-    }
-
-
-    /**
-     * Resets the global factory instance.
-     * <p>
-     * Useful in tests or when switching between users in a single process.
-     */
-    public static void resetInstance() {
-        instance = null;
     }
 
 
@@ -174,9 +144,10 @@ public record VaultFactory(User user) {
      *
      * <p>Expected top-level JSON keys:
      * <ul>
+     *   <li>{@code "version"}  — vault format version</li>
      *   <li>{@code "checker"}  — encrypted password verifier</li>
      *   <li>{@code "vaultKey"} — vault key encrypted with the derived key</li>
-     *   <li>{@code "algorithm"} — object with at least a {@code "kdf"} field</li>
+     *   <li>{@code "algorithm"} — object with at least a {@code "kdf"} and {@code "salt"} field</li>
      *   <li>{@code "accounts"} — optional array of Account objects</li>
      *   <li>{@code "creditcards"} — optional array of CreditCard objects</li>
      * </ul>
@@ -191,14 +162,32 @@ public record VaultFactory(User user) {
     ) throws GeneralSecurityException, WrongPasswordException {
 
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+
+        if (root.has("version")) {
+            int version = root.get("version").getAsInt();
+            if (version > Vault.VAULT_VERSION) {
+                throw new AcheronException(
+                    "Unsupported vault version " + version + " (max " + Vault.VAULT_VERSION + ")"
+                );
+            }
+        }
+
         JsonObject algorithmJson = root.getAsJsonObject("algorithm");
         String kdfId = algorithmJson.has("kdf") ?
                 algorithmJson.get("kdf").getAsString() :
                 "Argon2";
 
+        if (!algorithmJson.has("salt")) {
+            throw new AcheronException("Vault JSON is missing algorithm.salt");
+        }
         String salt = algorithmJson.get("salt").getAsString();
 
-        VaultEncryptingStrategy strategy = buildStrategy(kdfId, masterPassword, salt);
+        int kdfIterations = parseIntOrZero(algorithmJson, "kdfIterations");
+        int kdfMemoryKiB   = parseIntOrZero(algorithmJson, "kdfMemoryKiB");
+        int kdfParallelism = parseIntOrZero(algorithmJson, "kdfParallelism");
+
+        VaultEncryptingStrategy strategy = buildStrategy(kdfId, masterPassword, salt,
+                kdfIterations, kdfMemoryKiB, kdfParallelism);
         String checker = root
                 .get("checker")
                 .getAsString();
@@ -275,12 +264,30 @@ public record VaultFactory(User user) {
     private static VaultEncryptingStrategy buildStrategy(
             @NotNull String kdfId,
             @NotNull String masterPassword,
-            @NotNull String salt
+            @NotNull String salt,
+            int iterations,
+            int memoryKiB,
+            int parallelism
     ) throws GeneralSecurityException {
         if ("PBKDF2".equalsIgnoreCase(kdfId)) {
-            return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null);
+            return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null,
+                    iterations, 256);
         }
-        return new Argon2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null);
+        return new Argon2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null,
+                iterations, memoryKiB, parallelism);
+    }
+
+    private static int parseIntOrZero(JsonObject obj, String key) {
+        if (!obj.has(key)) return 0;
+        JsonElement el = obj.get(key);
+        if (el.isJsonPrimitive()) {
+            try {
+                return el.getAsInt();
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+        return 0;
     }
 
 }

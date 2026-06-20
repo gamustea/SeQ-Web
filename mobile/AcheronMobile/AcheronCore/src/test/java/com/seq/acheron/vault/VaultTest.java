@@ -26,15 +26,10 @@ public class VaultTest {
     void setUp() throws GeneralSecurityException {
         // Inicializamos con el objeto User real
         testUser = new User("a", "b", "c", "d", "e");
-        // NOTA: Si el constructor de User requiere parámetros en tu versión final,
-        // ajusta aquí (ej. new User("usuario")) o usa los setters que tengas disponibles.
 
         // Usamos la estrategia AES real con una contraseña de prueba y un salt generado
         String salt = CryptoUtils.generateSalt();
         testStrategy = new Argon2VaultEncryptingStrategy("MiPassSuperSegura123", salt, true);
-
-        // Reseteamos el singleton antes de cada prueba para evitar contaminación de estado
-        VaultFactory.resetInstance();
     }
 
     @Nested
@@ -117,7 +112,7 @@ public class VaultTest {
         @Test
         @DisplayName("El VaultFactory genera el mockVault esperado")
         void testFactoryMockVault() throws GeneralSecurityException {
-            VaultFactory factory = VaultFactory.getInstance(testUser);
+            VaultFactory factory = new VaultFactory(testUser);
             Vault mockVault = factory.getMockVault();
 
             assertNotNull(mockVault);
@@ -143,7 +138,7 @@ public class VaultTest {
         @DisplayName("Ciclo completo de vida: Creación -> Cifrado -> toJSON -> fromJSON -> Descifrado")
         void testVaultFullLifecycle() throws GeneralSecurityException {
             // 1. Configuramos el Factory y obtenemos el vault original
-            VaultFactory factory = VaultFactory.getInstance(testUser);
+            VaultFactory factory = new VaultFactory(testUser);
             Vault originalVault = factory.getMockVault();
 
             // 2. Modificamos y añadimos nuestros propios valores al mockVault base

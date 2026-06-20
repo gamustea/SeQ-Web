@@ -67,13 +67,13 @@ public class User implements Comparable<User> {
 
 
     public String toJson() {
-        return "\"user\": {" +
-                "\"id\": \"" + id + "\", " +
-                "\"name\": \"" + name + "\", " +
-                "\"surname\": \"" + surname + "\", " +
-                "\"email\": \"" + email + "\", " +
-                "\"username\": \"" + username + "\"" +
-                "}";
+        com.google.gson.JsonObject json = new com.google.gson.JsonObject();
+        json.addProperty("id", id);
+        json.addProperty("name", name);
+        json.addProperty("surname", surname);
+        json.addProperty("email", email);
+        json.addProperty("username", username);
+        return json.toString();
     }
 
     /**
