@@ -137,7 +137,8 @@ public abstract class VaultEncryptingStrategy {
      *                                  is malformed
      */
     public SecretKey importVaultKey(String encryptedVaultKeyBase64)
-            throws GeneralSecurityException {
+            throws GeneralSecurityException
+    {
 
         String vaultKeyBase64 = decryptWithKey(encryptedVaultKeyBase64, derivedKey);
         byte[] rawVaultKey = java.util.Base64.getDecoder().decode(vaultKeyBase64);

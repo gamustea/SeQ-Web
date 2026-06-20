@@ -7,7 +7,7 @@ import com.google.gson.JsonParser;
 import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.PBKDF2VaultEncryptingStrategy;
-import com.seq.acheron.vault.secrets.symmetric.StrategyRegistry;
+
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.util.Pair;
@@ -196,7 +196,9 @@ public record VaultFactory(User user) {
                 algorithmJson.get("kdf").getAsString() :
                 "Argon2";
 
-        VaultEncryptingStrategy tempStrategy = StrategyRegistry.build(kdfId, masterPassword, algorithmJson, null);
+        String salt = algorithmJson.get("salt").getAsString();
+
+        VaultEncryptingStrategy tempStrategy = buildStrategy(kdfId, masterPassword, salt, null);
         String checker = root
                 .get("checker")
                 .getAsString();
@@ -206,19 +208,13 @@ public record VaultFactory(User user) {
         }
 
         String vaultKeyStr = root.get("vaultKey").getAsString();
-        SecretKey vaultKey;
+        VaultEncryptingStrategy strategy;
         try {
-            vaultKey = tempStrategy.importVaultKey(vaultKeyStr);
+            SecretKey vaultKey = tempStrategy.importVaultKey(vaultKeyStr);
+            strategy = buildStrategy(kdfId, masterPassword, salt, vaultKey);
         } catch (AEADBadTagException e) {
             throw new WrongPasswordException("Decrypting Vault with wrong password attempt");
         }
-
-        VaultEncryptingStrategy strategy = StrategyRegistry.build(
-                        kdfId,
-                        masterPassword,
-                        algorithmJson,
-                        vaultKey
-                );
 
         Vault vault = new Vault(
                 strategy,
@@ -230,7 +226,6 @@ public record VaultFactory(User user) {
         if (root.has("accounts")) {
             JsonArray accounts = root.getAsJsonArray("accounts");
             for (JsonElement element : accounts) {
-                // Usamos el método fromJson de Account (que definimos en el paso anterior)
                 vault.add(Account.fromJson(element.getAsJsonObject()));
             }
         }
@@ -238,7 +233,6 @@ public record VaultFactory(User user) {
         if (root.has("creditcards")) {
             JsonArray creditCards = root.getAsJsonArray("creditcards");
             for (JsonElement element : creditCards) {
-                // Usamos el método fromJson de CreditCard
                 vault.add(CreditCard.fromJson(element.getAsJsonObject()));
             }
         }
@@ -279,22 +273,23 @@ public record VaultFactory(User user) {
         return constantTimeEquals(hex.toString(), decryptedChecker);
     }
 
-    /**
-     * Changes the default KDF used for newly created vaults.
-     * Must be a KDF registered in {@link StrategyRegistry}.
-     *
-     * @param kdfId e.g. "Argon2", "PBKDF2"
-     */
-    public static void setDefaultKdf(String kdfId) {
-        if (!StrategyRegistry.registeredKdfs().contains(kdfId)) {
-            throw new IllegalArgumentException("Unknown KDF: " + kdfId);
+
+    private static VaultEncryptingStrategy buildStrategy(
+            @NotNull String kdfId,
+            @NotNull String masterPassword,
+            @NotNull String salt,
+            SecretKey vaultKey
+    ) throws GeneralSecurityException {
+        if ("PBKDF2".equalsIgnoreCase(kdfId)) {
+            if (vaultKey != null) {
+                return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, vaultKey);
+            }
+            return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, true);
         }
-        defaultKdf = kdfId;
+        if (vaultKey != null) {
+            return new Argon2VaultEncryptingStrategy(masterPassword, salt, vaultKey);
+        }
+        return new Argon2VaultEncryptingStrategy(masterPassword, salt, true);
     }
 
-    /** Builds the default strategy for new vaults (no existing vault key). */
-    private VaultEncryptingStrategy buildDefaultStrategy(String masterPassword)
-            throws GeneralSecurityException {
-        return StrategyRegistry.build(defaultKdf, masterPassword, new JsonObject(), null);
-    }
 }
