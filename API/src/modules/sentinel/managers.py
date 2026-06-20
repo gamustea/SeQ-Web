@@ -1493,16 +1493,17 @@ class TracerouteManager(TaskTrackingMixin):
         """Submit the traceroute job to the background worker.
 
         Uses a stable job id per (user, target) so a refresh replaces any job
-        still in flight instead of piling up duplicate probes.
+        still in flight instead of piling up duplicate probes. The job name must
+        be RQ-safe (letters, numbers, _, -); external_id can have other chars.
         """
         key = self._trace_key(user_id, target)
         timeout = int(CR.get_sentinel_traceroute_timeout()) + 30
         self._tq.submit(
             func=TracerouteManager.execute_traceroute,
             args=(user_id, target),
-            name=self.external_id_for(key),
+            name=f"traceroute_{key}",  # RQ-safe job name
             category=self.TASK_CATEGORY,
-            external_id=self.external_id_for(key),
+            external_id=self.external_id_for(key),  # can have any chars
             timeout=timeout,
         )
         logger.info(f"Traceroute encolado para usuario {user_id}, target '{target}'")
