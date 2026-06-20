@@ -21,6 +21,7 @@ Usage:
     scan = manager.get_scan_by_id(scan_id)
 """
 
+import hashlib
 import ipaddress
 import itertools
 import logging
@@ -1560,8 +1561,13 @@ class TracerouteManager(TaskTrackingMixin):
 
     @staticmethod
     def _trace_key(user_id: int, target: str) -> str:
-        """Stable per (user, target) key for the job id / external id."""
-        return f"{user_id}:{target}"
+        """Stable per (user, target) key for the job id / external id.
+
+        Uses a hash because the target may contain URL characters (/, :, ?) that
+        RQ rejects in job IDs. The hash is deterministic and collision-resistant.
+        """
+        hash_obj = hashlib.sha256(f"{user_id}:{target}".encode())
+        return f"{user_id}_{hash_obj.hexdigest()[:12]}"
 
     @staticmethod
     def _probe_host(target: str) -> str:
