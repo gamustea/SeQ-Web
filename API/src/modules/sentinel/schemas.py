@@ -288,4 +288,5 @@ class TracerouteResponseSchema(Schema):
     hopCount = fields.Integer()
     computedAt = fields.String(allow_none=True)
     cached = fields.Boolean()
+    status = fields.String()  # "pending" | "done" | "failed"
     user = fields.String()

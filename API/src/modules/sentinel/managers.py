@@ -1414,22 +1414,53 @@ class ScanHistoryManager:
             return HistoryStatsService().build(scans, scan_type, target)
 
 
-class TracerouteManager:
+class TracerouteManager(TaskTrackingMixin):
     """
     Manager for cached traceroutes from the SeQ server to scan targets.
 
-    The traceroute is computed lazily (the first time a user opens a scan
-    detail for a given target) and cached per (user, target). Subsequent views
-    reuse the cached path until it goes stale (see ``cacheHours`` config), at
-    which point — or when the user explicitly refreshes — it is recomputed.
+    The traceroute is **computed asynchronously** by a background worker (the
+    probe can take up to a minute on an unreachable host, which must not block
+    the request thread). The REST endpoint never runs the command itself: it
+    serves the cached path when fresh, otherwise enqueues a job and replies
+    immediately with ``status="pending"`` so the client can poll until the
+    result is ready.
 
-    Every operation is scoped to the owning user via
+    State machine (no dedicated DB column — derived from the cached row plus the
+    live RQ task, which keeps this project migration-free):
+        - ``done``    → a row with hops exists and is within ``cacheHours``.
+        - ``failed``  → a row with **empty** hops exists and is within
+          ``retryFailedMinutes`` (a terminal "no route" result; kept briefly so
+          we do not re-probe an unreachable host on every modal open, but short
+          enough to retry soon and overridable via refresh).
+        - ``pending`` → a job is enqueued/running, or one was just submitted.
+
+    Results are cached per (user, target) and reused across all scan types
+    (Nmap, Nikto, OpenVAS). Every operation is scoped to the owning user via
     ``ScanManager.assert_scan_ownership`` so a user can only ever trace targets
     from their own scans.
     """
 
+    EXTERNAL_ID_PREFIX = "sentinel-traceroute:"
+    TASK_CATEGORY = "sentinel.traceroute"
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
+        """Initialize the manager.
+
+        Args:
+            task_queue: Task queue to use (injectable for tests). Defaults to
+                the singleton ``TaskQueue``.
+        """
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
+
+    # =========================================================================
+    # REQUEST-SIDE (non-blocking)
+    # =========================================================================
+
     def get_for_scan(self, scan_id: int, user_id: int, force_refresh: bool = False) -> dict:
-        """Return the (possibly cached) traceroute for a scan's target.
+        """Return the traceroute for a scan's target without blocking.
+
+        Serves a fresh cached result when available; otherwise enqueues a
+        background job and returns a ``pending`` payload for the client to poll.
 
         Args:
             scan_id:       Scan whose target to trace.
@@ -1438,7 +1469,8 @@ class TracerouteManager:
 
         Returns:
             JSON-serializable payload: ``target``, ``hops``, ``hopCount``,
-            ``computedAt`` (ISO) and ``cached`` (bool).
+            ``computedAt`` (ISO), ``cached`` (bool) and ``status`` (one of
+            ``pending`` / ``done`` / ``failed``).
         """
         scan = ScanManager.assert_scan_ownership(scan_id, user_id)
         target = scan.target
@@ -1448,44 +1480,88 @@ class TracerouteManager:
             if cached is not None:
                 return cached
 
-        hops = TracerouteService().trace(self._probe_host(target))
+            # A job already in flight for this (user, target): just report it.
+            task = self.find_task(self._trace_key(user_id, target))
+            if task is not None and task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+                return self._pending(target)
 
-        # No persistimos rutas vacías: un traceroute sin saltos es un fallo
-        # (binario ausente, host inalcanzable, timeout sin salida...). Cachearlo
-        # lo dejaría "pegajoso" durante todo el TTL e impediría reintentar. Se
-        # devuelve sin guardar para que la próxima apertura vuelva a intentarlo.
-        if not hops:
-            logger.warning(
-                f"Traceroute vacío para target '{target}' (escaneo {scan_id}); "
-                f"no se persiste. Revisa los logs de TracerouteService para la causa."
-            )
-            return {
-                "target": target,
-                "hops": [],
-                "hopCount": 0,
-                "computedAt": None,
-                "cached": False,
-            }
+        self._enqueue(user_id, target)
+        return self._pending(target)
 
-        with UnitOfWork() as uow:
-            trace = TracerouteRepository(uow).upsert(user_id, target, hops)
-            payload = self._format(trace, cached_hit=False)
-        return payload
+    def _enqueue(self, user_id: int, target: str) -> None:
+        """Submit the traceroute job to the background worker.
+
+        Uses a stable job id per (user, target) so a refresh replaces any job
+        still in flight instead of piling up duplicate probes.
+        """
+        key = self._trace_key(user_id, target)
+        timeout = int(CR.get_sentinel_traceroute_timeout()) + 30
+        self._tq.submit(
+            func=TracerouteManager.execute_traceroute,
+            args=(user_id, target),
+            name=self.external_id_for(key),
+            category=self.TASK_CATEGORY,
+            external_id=self.external_id_for(key),
+            timeout=timeout,
+        )
+        logger.info(f"Traceroute encolado para usuario {user_id}, target '{target}'")
 
     def _get_fresh_cached(self, user_id: int, target: str):
-        """Return the cached Traceroute if present, non-empty and within TTL."""
-        max_age = timedelta(hours=CR.get_sentinel_traceroute_cache_hours())
+        """Return the cached payload if the stored row is still fresh, else None.
+
+        A row with hops is fresh for ``cacheHours``; an empty (failed) row is
+        fresh for the much shorter ``retryFailedMinutes`` so transient failures
+        clear quickly without re-probing on every open.
+        """
         with UnitOfWork() as uow:
             trace = TracerouteRepository(uow).get_by_user_and_target(user_id, target)
             if trace is None:
                 return None
-            # Una entrada vacía cacheada (de un intento fallido previo) se trata
-            # como miss para forzar el recálculo en cuanto el traceroute funcione.
-            if not trace.hops:
-                return None
+            if trace.hops:
+                max_age = timedelta(hours=CR.get_sentinel_traceroute_cache_hours())
+            else:
+                max_age = timedelta(minutes=CR.get_sentinel_traceroute_retry_failed_minutes())
             if datetime.utcnow() - trace.created_at > max_age:
                 return None
             return self._format(trace, cached_hit=True)
+
+    # =========================================================================
+    # WORKER-SIDE (background)
+    # =========================================================================
+
+    @staticmethod
+    def execute_traceroute(user_id: int, target: str) -> None:
+        """Entry point submitted to the TaskQueue: run the probe and persist it.
+
+        Runs in the background worker. ``TracerouteService.trace`` swallows its
+        own errors and returns an empty list on failure, so the row is always
+        written — an empty ``hops`` list is the terminal "no route" marker that
+        stops the client from polling forever.
+        """
+        with job_context():
+            hops = TracerouteService().trace(TracerouteManager._probe_host(target))
+            with UnitOfWork() as uow:
+                TracerouteRepository(uow).upsert(user_id, target, hops)
+            if not hops:
+                logger.warning(
+                    f"Traceroute vacío para target '{target}' (usuario {user_id}); "
+                    f"se cachea como fallo temporal. Revisa los logs de "
+                    f"TracerouteService para la causa."
+                )
+            else:
+                logger.info(
+                    f"Traceroute calculado para target '{target}' "
+                    f"(usuario {user_id}): {len(hops)} saltos"
+                )
+
+    # =========================================================================
+    # HELPERS
+    # =========================================================================
+
+    @staticmethod
+    def _trace_key(user_id: int, target: str) -> str:
+        """Stable per (user, target) key for the job id / external id."""
+        return f"{user_id}:{target}"
 
     @staticmethod
     def _probe_host(target: str) -> str:
@@ -1502,14 +1578,31 @@ class TracerouteManager:
             return target
 
     @staticmethod
+    def _pending(target: str) -> dict:
+        """Payload returned while the traceroute is still being computed."""
+        return {
+            "target": target,
+            "hops": [],
+            "hopCount": 0,
+            "computedAt": None,
+            "cached": False,
+            "status": "pending",
+        }
+
+    @staticmethod
     def _format(trace, cached_hit: bool) -> dict:
-        """Format a Traceroute row as a JSON-serializable payload."""
+        """Format a Traceroute row as a JSON-serializable payload.
+
+        ``status`` is derived from the stored hops: a row with hops is a
+        successful ``done`` result, an empty row is a terminal ``failed`` one.
+        """
         return {
             "target": trace.target,
             "hops": trace.hops,
             "hopCount": trace.hop_count,
             "computedAt": trace.created_at.isoformat() if trace.created_at else None,
             "cached": cached_hit,
+            "status": "done" if trace.hops else "failed",
         }
 
 
