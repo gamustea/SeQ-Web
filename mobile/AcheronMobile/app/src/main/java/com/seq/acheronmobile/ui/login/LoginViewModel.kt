@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.seq.acheronmobile.data.repository.AuthRepository
 import com.seq.acheronmobile.data.repository.TokenRepository
+import com.seq.acheronmobile.di.VaultServiceLocator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +50,7 @@ class LoginViewModel(
 
             when (val result = authRepository.login(state.username, state.password)) {
                 is AuthRepository.AuthResult.Success -> {
+                    VaultServiceLocator.username = state.username
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
                 is AuthRepository.AuthResult.Error -> {

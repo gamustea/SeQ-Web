@@ -11,10 +11,12 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.rememberNavController
-import com.seq.acheronmobile.ui.theme.AcheronMobileTheme
 import com.seq.acheronmobile.data.network.NetworkModule
 import com.seq.acheronmobile.data.repository.AuthRepository
 import com.seq.acheronmobile.data.repository.TokenRepository
+import com.seq.acheronmobile.data.repository.VaultRemoteDataSource
+import com.seq.acheronmobile.data.vault.VaultCryptoService
+import com.seq.acheronmobile.di.VaultServiceLocator
 import com.seq.acheronmobile.navigation.AcheronNavGraph
 import com.seq.acheronmobile.ui.login.LoginViewModel
 import com.seq.acheronmobile.ui.theme.AcheronMobileTheme
@@ -35,6 +37,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val tokenRepo = TokenRepository(applicationContext)
         NetworkModule.initialize(tokenRepo)
+
+        // Init vault services (recreated on process death)
+        VaultServiceLocator.cryptoService = VaultCryptoService()
+        VaultServiceLocator.remoteDataSource = VaultRemoteDataSource()
+
         enableEdgeToEdge()
         setContent {
             AcheronMobileTheme(dynamicColor = false) {
