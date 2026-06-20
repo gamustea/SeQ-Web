@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
@@ -41,12 +41,15 @@ class VaultManager:
     @staticmethod
     def _parse_dt(value: Optional[str]) -> datetime:
         if not value:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc).replace(tzinfo=None)
         try:
-            return datetime.fromisoformat(value)
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
         except Exception as e:
             logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
-            return datetime.utcnow()
+            return datetime.now(timezone.utc).replace(tzinfo=None)
 
     def _ensure_vault_ownership(self, vault: Vault) -> None:
         if vault.user_id != self.active_user.id:
@@ -201,8 +204,8 @@ class VaultManager:
             base = {
                 "id": st.internal_id,
                 "title": st.title,
-                "createdAt": st.created_at.isoformat() if st.created_at else None,
-                "updatedAt": st.updated_at.isoformat() if st.updated_at else None,
+            "createdAt": st.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if st.created_at else None,
+            "updatedAt": st.updated_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if st.updated_at else None,
                 "allowedUsers": [],
             }
 
@@ -294,7 +297,7 @@ class VaultManager:
         if vault is None:
             raise ValueError(f"Vault {vault_id} no encontrado")
 
-        created_at = created_at or datetime.utcnow()
+        created_at = created_at or datetime.now(timezone.utc).replace(tzinfo=None)
         updated_at = updated_at or created_at
 
         if kind == "account":

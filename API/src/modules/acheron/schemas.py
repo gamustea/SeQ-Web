@@ -39,9 +39,9 @@ class StorableDeleteSchema(Schema):
 
 
 class BulkOperationSchema(Schema):
-    op = fields.String(required=True, validate=validate.OneOf(["update", "delete"]))
-    path = fields.String(required=True)
-    value = fields.Raw()
+    internalId = fields.String(required=True)
+    isRecovery = fields.Boolean(load_default=False)
+    changes = fields.Dict(keys=fields.String(), required=True)
 
 
 class VaultUpsertResponseSchema(Schema):

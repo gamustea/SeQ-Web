@@ -1,23 +1,8 @@
 """
 Database models for Acheron encrypted vault module.
-
-This module contains SQLAlchemy models for managing encrypted secrets
-including vaults, storables (polymorphic), accounts, and credit cards.
-
-Classes:
-    Vault: Encrypted vault for storing secrets.
-    Storable: Base class for storable secrets (polymorphic).
-    Account: Username/password account credential.
-    CreditCard: Credit card information.
-
-Example:
-    >>> from src.modules.acheron.model import Vault, Account
-    >>> vault = Vault(user_id=1, checker="https://example.com", vault_key="key123")
-    >>> print(vault)
-    <Vault id=None user_id=1 is_recovery=False>
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -129,12 +114,12 @@ class Storable(Base):
     internal_id = Column(String(128), nullable=True)
     title = Column(String(128), nullable=True)
 
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
     vault_id = Column(Integer, ForeignKey("Vault.id"), nullable=False)

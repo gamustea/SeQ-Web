@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import request
 from flask_smorest import Blueprint as SmorestBlueprint
 from contextlib import contextmanager
@@ -75,7 +75,6 @@ def get_vault(**kwargs):
 @handle_exceptions(default_exception=VaultError, logger=logger)
 def upsert_vault(**kwargs):
     """Crear o reemplazar completamente el vault del usuario"""
-    uid = get_current_user().id
     is_recovery = kwargs.get("isRecovery", False)
 
     if not request.is_json:
@@ -110,7 +109,6 @@ def upsert_vault(**kwargs):
 @handle_exceptions(default_exception=VaultError, logger=logger)
 def patch_vault_storables(data):
     """Actualizar en bulk uno o varios Storables del usuario (array de operaciones)"""
-    uid = get_current_user().id
     with get_vault_manager() as mgr:
         results = mgr.bulk_update_storables(operations=data)
         logger.info("Bulk update: %s operaciones | user=%s", len(data), current_actor())
@@ -133,7 +131,6 @@ def add_vault_storable(data):
     """Anadir un nuevo Account o CreditCard al vault del usuario"""
     kind = data["kind"]
 
-    uid = get_current_user().id
     is_recovery = data.get("isRecovery", False)
     internal_id = data.get("internalId")
     title = data.get("title")
@@ -195,7 +192,6 @@ def delete_vault_storable(data):
     """Eliminar un Storable del vault por su internalId"""
     internal_id = data["internalId"]
 
-    uid = get_current_user().id
     is_recovery = data.get("isRecovery", False)
     with get_vault_manager() as mgr:
         vault = mgr.get_vault_for_user(is_recovery=is_recovery)
@@ -220,16 +216,14 @@ def delete_vault_storable(data):
     }
 
 
-def _parse_is_recovery() -> bool:
-    val = request.args.get("isRecovery", "false").lower()
-    return val in ("true", "1", "yes")
-
-
 def _parse_dt(value):
     if not value:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
     try:
-        return datetime.fromisoformat(value)
-    except Exception as e:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
         logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
