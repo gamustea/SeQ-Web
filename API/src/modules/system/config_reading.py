@@ -499,6 +499,16 @@ def get_sentinel_traceroute_timeout() -> float:
     return float(_traceroute_cfg().get("timeout", 60))
 
 
+@_lazy_load
+def get_sentinel_traceroute_retry_failed_minutes() -> float:
+    """Minutos que una ruta fallida (sin saltos) se cachea antes de reintentar.
+
+    Mucho más corto que ``cacheHours``: evita re-sondear un host inalcanzable en
+    cada apertura del detalle, pero permite reintentar pronto (o de inmediato con
+    el botón de refresco)."""
+    return float(_traceroute_cfg().get("retryFailedMinutes", 15))
+
+
 # =============================================================================
 # CONFIGURACIÓN COMPLETA (GET/SET)
 # =============================================================================

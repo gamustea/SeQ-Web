@@ -177,7 +177,8 @@
     "traceroute": {
       "cacheHours": 24,
       "maxHops": 30,
-      "timeout": 60
+      "timeout": 60,
+      "retryFailedMinutes": 15
     },
     "directories": {
       "csv": "data/sentinel/csv",
