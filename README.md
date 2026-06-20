@@ -664,7 +664,7 @@ La interfaz de Iris (`/iris`) sigue un layout de **strip horizontal + contenido 
 
 > 🔐 **Acheron** es el sistema de gestión de secretos cifrados de SeQ. La API REST del vault está **operativa**. Las interfaces móvil y web están en desarrollo.
 
-Acheron permite a cada usuario gestionar un vault cifrado con credenciales (`Account`) y tarjetas de crédito (`CreditCard`), con soporte de **vault de recuperación** (`isRecovery`).
+Acheron permite a cada usuario gestionar un vault cifrado con credenciales (`Account`) y tarjetas de crédito (`CreditCard`).
 
 ### Endpoints
 
@@ -677,8 +677,6 @@ Todos los endpoints requieren autenticación OAuth (`Authorization: Bearer <acce
 | `GET` | `/acheron/vault` | Obtener el vault del usuario |
 | `POST` | `/acheron/vault` | Crear o reemplazar el vault completo (upsert) |
 | `PATCH` | `/acheron/storables` | Actualizar en bulk uno o varios Storables |
-
-> El parámetro de query `?isRecovery=true` permite operar sobre el vault de recuperación en lugar del principal.
 
 #### Storables (objetos del vault)
 
@@ -699,8 +697,7 @@ Content-Type: application/json
   "title": "GitHub",
   "username": "usuario",
   "domain": "github.com",
-  "password": "secreto",
-  "isRecovery": false
+  "password": "secreto"
 }
 ```
 
@@ -711,7 +708,6 @@ Content-Type: application/json
   "storableId": 7,
   "internalId": "ACC-001",
   "vaultId": 1,
-  "isRecovery": false,
   "kind": "account"
 }
 ```
@@ -730,8 +726,7 @@ Content-Type: application/json
   "cardNumber": "4111111111111111",
   "expirationDate": "12/27",
   "postalCode": "26360",
-  "cvv": "123",
-  "isRecovery": false
+  "cvv": "123"
 }
 ```
 

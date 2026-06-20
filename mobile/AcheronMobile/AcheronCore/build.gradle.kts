@@ -12,7 +12,9 @@ dependencies {
     annotationProcessor("org.projectlombok:lombok:1.18.40")
 
     implementation("com.google.code.gson:gson:2.11.0")
-    implementation("de.mkammerer:argon2-jvm:2.12")
+    // Argon2id puro-Java (sin binarios JNA nativos), funciona en cualquier ABI
+    // de Android a diferencia de de.mkammerer:argon2-jvm.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("org.jetbrains:annotations:26.0.2")
 
     testCompileOnly("org.projectlombok:lombok:1.18.40")
@@ -24,5 +26,4 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    jvmArgs("--enable-native-access=ALL-UNNAMED")
 }

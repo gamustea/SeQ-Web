@@ -1,11 +1,12 @@
 package com.seq.acheron.vault.secrets.symmetric;
 
-import de.mkammerer.argon2.Argon2Advanced;
-import de.mkammerer.argon2.Argon2Factory;
+import org.bouncycastle.crypto.generators.Argon2BytesGenerator;
+import org.bouncycastle.crypto.params.Argon2Parameters;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.Base64;
 
 /**
@@ -25,6 +26,10 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
     private static final int DEFAULT_ITERATIONS   = 3;
     private static final int DEFAULT_MEMORY_KIB   = 65536;
     private static final int DEFAULT_PARALLELISM  = 1;
+
+    // Largo de la clave derivada en bytes (AES-256). Coincide con el largo por
+    // defecto que producia de.mkammerer Argon2.rawHash(...).
+    private static final int DERIVED_KEY_LENGTH   = 32;
 
     private final int iterations;
     private final int memoryKiB;
@@ -115,22 +120,40 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
             String masterPassword,
             String saltBase64
     ) throws GeneralSecurityException {
-        Argon2Advanced argon2 = Argon2Factory.createAdvanced();
         char[] passwordChars = masterPassword.toCharArray();
+        byte[] passwordBytes = toUtf8Bytes(passwordChars);
 
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            byte[] keyBytes = argon2.rawHash(
-                    iterations,
-                    memoryKiB,
-                    parallelism,
-                    passwordChars,
-                    saltBytes
-            );
+
+            // Argon2id v1.3, mismos parametros que producia de.mkammerer, para
+            // mantener compatibilidad e interoperar con otros clientes.
+            Argon2Parameters params = new Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
+                    .withVersion(Argon2Parameters.ARGON2_VERSION_13)
+                    .withIterations(iterations)
+                    .withMemoryAsKB(memoryKiB)
+                    .withParallelism(parallelism)
+                    .withSalt(saltBytes)
+                    .build();
+
+            Argon2BytesGenerator generator = new Argon2BytesGenerator();
+            generator.init(params);
+
+            byte[] keyBytes = new byte[DERIVED_KEY_LENGTH];
+            generator.generateBytes(passwordBytes, keyBytes);
             return new SecretKeySpec(keyBytes, "AES");
         } finally {
-            argon2.wipeArray(passwordChars);
+            Arrays.fill(passwordChars, '\0');
+            Arrays.fill(passwordBytes, (byte) 0);
         }
+    }
+
+    private static byte[] toUtf8Bytes(char[] chars) {
+        java.nio.ByteBuffer buffer = java.nio.charset.StandardCharsets.UTF_8.encode(
+                java.nio.CharBuffer.wrap(chars));
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.get(bytes);
+        return bytes;
     }
 
     /**
