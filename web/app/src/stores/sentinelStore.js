@@ -219,6 +219,20 @@ export const useSentinelStore = defineStore('sentinel', () => {
   }
 
   /* ════════════════════════════════ VISTA PREVIA ══════════════════════ */
+
+  // El traceroute se calcula en segundo plano (worker): el endpoint responde
+  // "pending" al instante y aquí se hace polling hasta que esté "done"/"failed".
+  // El token de generación invalida polls en curso al cerrar o cambiar de modal.
+  const TRACE_POLL_INTERVAL_MS = 2000
+  const TRACE_POLL_MAX_ATTEMPTS = 30
+  let tracePollGen = 0
+  let tracePollTimer = null
+
+  function stopTracePoll() {
+    tracePollGen += 1
+    if (tracePollTimer) { clearTimeout(tracePollTimer); tracePollTimer = null }
+  }
+
   /** Abre el modal de vista previa y carga scan + documentos. */
   async function openPreview(scanId, type) {
     preview.scanId = scanId
@@ -246,37 +260,69 @@ export const useSentinelStore = defineStore('sentinel', () => {
     } catch { /* noop */ }
     finally { preview.docsLoading = false }
 
-    // El traceroute se carga aparte: en un fallo de caché ejecuta el comando en
-    // el servidor y puede tardar, así que no debe bloquear el resto del modal.
+    // El traceroute se carga aparte: el worker lo calcula en segundo plano y
+    // aquí se hace polling, así que no debe bloquear el resto del modal.
     loadPreviewTraceroute()
   }
 
   /**
    * Carga el traceroute del escaneo abierto en la vista previa.
+   *
+   * El cálculo es asíncrono (worker): si fuerza, primero dispara el recálculo
+   * con POST /refresh; en ambos casos hace polling del GET hasta que el estado
+   * deje de ser "pending".
    * @param {boolean} force - Si es true, fuerza el recálculo (ignora la caché).
    */
   async function loadPreviewTraceroute(force = false) {
     const scanId = preview.scanId
     if (!scanId) return
+
+    stopTracePoll()
+    const gen = tracePollGen
     if (!force) preview.traceroute = null
     preview.tracerouteLoading = true
-    try {
-      const url = `/sentinel/scan/${scanId}/traceroute${force ? '/refresh' : ''}`
-      const res = await apiFetch(url, force ? { method: 'POST' } : {})
-      if (res?.ok && preview.scanId === scanId) {
-        preview.traceroute = await res.json()
-      } else if (!res?.ok && force) {
-        toast.show('No se pudo recalcular el traceroute.', 'error')
+
+    if (force) {
+      try {
+        const res = await apiFetch(`/sentinel/scan/${scanId}/traceroute/refresh`, { method: 'POST' })
+        if (!res?.ok) toast.show('No se pudo recalcular el traceroute.', 'error')
+      } catch {
+        toast.show('Error al recalcular el traceroute.', 'error')
       }
-    } catch (e) {
-      if (force) toast.show('Error al recalcular el traceroute.', 'error')
-    } finally {
-      if (preview.scanId === scanId) preview.tracerouteLoading = false
+    }
+    pollPreviewTraceroute(scanId, gen, 0)
+  }
+
+  /** Sondea el estado del traceroute hasta que esté listo o se agoten los intentos. */
+  async function pollPreviewTraceroute(scanId, gen, attempt) {
+    if (gen !== tracePollGen || preview.scanId !== scanId) return
+    try {
+      const res = await apiFetch(`/sentinel/scan/${scanId}/traceroute`)
+      if (gen !== tracePollGen || preview.scanId !== scanId) return
+
+      if (res?.ok) {
+        const data = await res.json()
+        if (data.status === 'pending' && attempt < TRACE_POLL_MAX_ATTEMPTS) {
+          tracePollTimer = setTimeout(
+            () => pollPreviewTraceroute(scanId, gen, attempt + 1),
+            TRACE_POLL_INTERVAL_MS,
+          )
+          return
+        }
+        // "done"/"failed" (o se agotaron los intentos): resultado final.
+        preview.traceroute = data
+        preview.tracerouteLoading = false
+      } else {
+        preview.tracerouteLoading = false
+      }
+    } catch {
+      preview.tracerouteLoading = false
     }
   }
 
   /** Cierra el modal de vista previa. */
   function closePreview() {
+    stopTracePoll()
     preview.show = false
     preview.scanId = null
     preview.scan = null
