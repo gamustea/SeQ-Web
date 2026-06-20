@@ -35,8 +35,8 @@ export const useSentinelStore = defineStore('sentinel', () => {
   const scheduling = reactive({ showForm: false, submitting: false })
 
   /* ════════════════════════════════ MODALES ════════════════════════════ */
-  const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
-  const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false, traceroute: null, tracerouteLoading: false })
+  const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false, traceroute: null, tracerouteLoading: false })
+  const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
 
   /* ════════════════════════════════ VISTA DE CARPETAS ══════════════════ */
   const viewMode = ref('full') // 'full' | 'folders'
@@ -227,6 +227,8 @@ export const useSentinelStore = defineStore('sentinel', () => {
     preview.scan = null
     preview.docs = []
     preview.docsLoading = true
+    preview.traceroute = null
+    preview.tracerouteLoading = true
 
     try {
       const [scanRes, docsRes] = await Promise.all([
@@ -243,6 +245,34 @@ export const useSentinelStore = defineStore('sentinel', () => {
       }
     } catch { /* noop */ }
     finally { preview.docsLoading = false }
+
+    // El traceroute se carga aparte: en un fallo de caché ejecuta el comando en
+    // el servidor y puede tardar, así que no debe bloquear el resto del modal.
+    loadPreviewTraceroute()
+  }
+
+  /**
+   * Carga el traceroute del escaneo abierto en la vista previa.
+   * @param {boolean} force - Si es true, fuerza el recálculo (ignora la caché).
+   */
+  async function loadPreviewTraceroute(force = false) {
+    const scanId = preview.scanId
+    if (!scanId) return
+    if (!force) preview.traceroute = null
+    preview.tracerouteLoading = true
+    try {
+      const url = `/sentinel/scan/${scanId}/traceroute${force ? '/refresh' : ''}`
+      const res = await apiFetch(url, force ? { method: 'POST' } : {})
+      if (res?.ok && preview.scanId === scanId) {
+        preview.traceroute = await res.json()
+      } else if (!res?.ok && force) {
+        toast.show('No se pudo recalcular el traceroute.', 'error')
+      }
+    } catch (e) {
+      if (force) toast.show('Error al recalcular el traceroute.', 'error')
+    } finally {
+      if (preview.scanId === scanId) preview.tracerouteLoading = false
+    }
   }
 
   /** Cierra el modal de vista previa. */
@@ -251,6 +281,8 @@ export const useSentinelStore = defineStore('sentinel', () => {
     preview.scanId = null
     preview.scan = null
     preview.docs = []
+    preview.traceroute = null
+    preview.tracerouteLoading = false
   }
 
   /** Refresca los documentos dentro del modal de vista previa. */
@@ -275,8 +307,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
     details.scan = null
     details.docs = []
     details.docsLoading = true
-    details.traceroute = null
-    details.tracerouteLoading = true
 
     try {
       const [scanRes, docsRes] = await Promise.all([
@@ -292,34 +322,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
         details.docs = data.documents ?? []
       }
     } finally { details.docsLoading = false }
-
-    // El traceroute se carga aparte: en un fallo de caché ejecuta el comando en
-    // el servidor y puede tardar, así que no debe bloquear el resto del modal.
-    loadDetailsTraceroute()
-  }
-
-  /**
-   * Carga el traceroute del escaneo abierto en el modal de detalles.
-   * @param {boolean} force - Si es true, fuerza el recálculo (ignora la caché).
-   */
-  async function loadDetailsTraceroute(force = false) {
-    const scanId = details.scanId
-    if (!scanId) return
-    if (!force) details.traceroute = null
-    details.tracerouteLoading = true
-    try {
-      const url = `/sentinel/scan/${scanId}/traceroute${force ? '/refresh' : ''}`
-      const res = await apiFetch(url, force ? { method: 'POST' } : {})
-      if (res?.ok && details.scanId === scanId) {
-        details.traceroute = await res.json()
-      } else if (!res?.ok && force) {
-        toast.show('No se pudo recalcular el traceroute.', 'error')
-      }
-    } catch (e) {
-      if (force) toast.show('Error al recalcular el traceroute.', 'error')
-    } finally {
-      if (details.scanId === scanId) details.tracerouteLoading = false
-    }
   }
 
   /** Cierra el modal de detalles. */
@@ -328,8 +330,6 @@ export const useSentinelStore = defineStore('sentinel', () => {
     details.scanId = null
     details.scan = null
     details.docs = []
-    details.traceroute = null
-    details.tracerouteLoading = false
   }
 
   /** Refresca documentos en el modal de detalles. */
@@ -690,8 +690,8 @@ export const useSentinelStore = defineStore('sentinel', () => {
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
     loadScheduledScans, createScheduledScan, deactivateScheduledScan, deleteScheduledScan, toggleScheduledForm,
-    openPreview, closePreview, refreshPreviewDocs,
-    openDetails, closeDetails, refreshDetailsDocs, loadDetailsTraceroute,
+    openPreview, closePreview, refreshPreviewDocs, loadPreviewTraceroute,
+    openDetails, closeDetails, refreshDetailsDocs,
     generatePdf, downloadDocument, deleteDocument,
     setViewMode, loadFolders,
     history, loadHistoryHosts, loadHistoryStats,

@@ -40,6 +40,14 @@
             </template>
           </div>
         </div>
+        <div class="pv-card pv-trace-card">
+          <TracerouteGraph
+            :hops="traceroute?.hops ?? []"
+            :loading="tracerouteLoading"
+            :computed-at="traceroute?.computedAt ?? null"
+            :cached="traceroute?.cached ?? false"
+            @refresh="$emit('refresh-traceroute')" />
+        </div>
         <div class="pv-card pv-docs-card">
           <div class="pv-docs-head">
             <h4>Documentos <span class="pv-count">{{ docs.length }}</span></h4>
@@ -91,9 +99,18 @@
 <script setup>
 import { ref, computed } from 'vue'
 import StatusBadge from './StatusBadge.vue'
+import TracerouteGraph from './TracerouteGraph.vue'
 
-const props = defineProps({ show: Boolean, scan: Object, type: String, docs: { type: Array, default: () => [] }, docsLoading: Boolean })
-defineEmits(['close', 'refresh-docs', 'download-doc', 'delete-doc', 'generate-pdf'])
+const props = defineProps({
+  show: Boolean,
+  scan: Object,
+  type: String,
+  docs: { type: Array, default: () => [] },
+  docsLoading: Boolean,
+  traceroute: { type: Object, default: null },
+  tracerouteLoading: Boolean,
+})
+defineEmits(['close', 'refresh-docs', 'download-doc', 'delete-doc', 'generate-pdf', 'refresh-traceroute'])
 
 const useAi = ref(false)
 const typeLabels = { nmap: 'Vista Previa — Nmap', nikto: 'Vista Previa — Nikto', openvas: 'Vista Previa — OpenVAS' }

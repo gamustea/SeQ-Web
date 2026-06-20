@@ -60,14 +60,6 @@
         <div class="detail-section" v-if="!hasDetailData">
           <div class="empty-state">No hay datos disponibles.</div>
         </div>
-        <div class="detail-section traceroute-section">
-          <TracerouteGraph
-            :hops="traceroute?.hops ?? []"
-            :loading="tracerouteLoading"
-            :computed-at="traceroute?.computedAt ?? null"
-            :cached="traceroute?.cached ?? false"
-            @refresh="$emit('refresh-traceroute')" />
-        </div>
         <div class="detail-section document-section">
           <div class="docs-header">
             <div class="docs-title-wrap">
@@ -118,18 +110,9 @@
 <script setup>
 import { ref, computed } from 'vue'
 import StatusBadge from './StatusBadge.vue'
-import TracerouteGraph from './TracerouteGraph.vue'
 
-const props = defineProps({
-  show: Boolean,
-  scan: Object,
-  type: String,
-  docs: { type: Array, default: () => [] },
-  docsLoading: Boolean,
-  traceroute: { type: Object, default: null },
-  tracerouteLoading: Boolean,
-})
-defineEmits(['close', 'refresh-docs', 'download-doc', 'delete-doc', 'generate-pdf', 'refresh-traceroute'])
+const props = defineProps({ show: Boolean, scan: Object, type: String, docs: { type: Array, default: () => [] }, docsLoading: Boolean })
+defineEmits(['close', 'refresh-docs', 'download-doc', 'delete-doc', 'generate-pdf'])
 const useAiDocs = ref(false)
 
 const hasDetailData = computed(() => {
@@ -165,7 +148,6 @@ function sevClass(s) { if (!s) return 'low'; const x = s.toLowerCase(); if (x.in
 .severity-badge.high { background: rgba(212,160,74,0.12); color: var(--warn); border: 1px solid rgba(212,160,74,0.2); }
 .severity-badge.medium { background: rgba(96,128,224,0.12); color: var(--info); border: 1px solid rgba(96,128,224,0.2); }
 .severity-badge.low { background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border); }
-.traceroute-section { border-top: 1px solid var(--border); padding-top: 0.85rem; }
 .document-section { border-top: 1px solid var(--border); padding-top: 0.85rem; }
 .docs-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.65rem; }
 .docs-title-wrap { display: flex; align-items: center; gap: 0.4rem; }

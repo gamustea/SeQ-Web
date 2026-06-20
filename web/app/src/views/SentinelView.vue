@@ -10,7 +10,7 @@
         <ScanTabs :active="store.activeTab" @switch="handleTabSwitch" />
         <ScanForm :type="store.activeTab" :launching="store.launching" @launch="handleLaunch" />
         <ScanTable :type="store.activeTab" :rows="currentData.results" :loading="currentData.loading" :current-page="currentData.page" :total-count="currentData.totalCount" :per-page="currentData.perPage" :selected-ids="batchSelectedArray"
-          @preview="(id, type) => store.openDetails(id, type)" @cancel="handleCancel" @delete="handleDelete" @refresh="store.refreshCurrent()" @page-change="page => store.goToPage(store.activeTab, page)"
+          @preview="(id, type) => store.openPreview(id, type)" @cancel="handleCancel" @delete="handleDelete" @refresh="store.refreshCurrent()" @page-change="page => store.goToPage(store.activeTab, page)"
           @toggle-select="batchToggle" @select-all="batchSelectAll">
           <template #batch-actions="{ selectedCount }">
             <button v-if="selectedCount > 0" class="batch-btn" @click="openBatchAction('add-to-folder')">
@@ -27,7 +27,7 @@
       <ScanFolderView v-else-if="store.viewMode === 'folders'"
         :folders="store.folders.items" :loading="store.folders.loading"
         @refresh="store.loadFolders()"
-        @preview="(id, type) => store.openDetails(id, type)"
+        @preview="(id, type) => store.openPreview(id, type)"
         @cancel="handleCancel"
         @delete="handleDelete"
         @create-folder="store.folderForms.create.show = true"
@@ -40,10 +40,10 @@
     </main>
 
     <ScanPreviewModal :show="store.preview.show" :scan="store.preview.scan" :type="store.preview.type" :docs="store.preview.docs" :docs-loading="store.preview.docsLoading"
-      @close="store.closePreview()" @refresh-docs="store.refreshPreviewDocs()" @download-doc="store.downloadDocument" @delete-doc="handleDeletePreviewDoc" @generate-pdf="handlePreviewPdf" />
+      :traceroute="store.preview.traceroute" :traceroute-loading="store.preview.tracerouteLoading"
+      @close="store.closePreview()" @refresh-docs="store.refreshPreviewDocs()" @download-doc="store.downloadDocument" @delete-doc="handleDeletePreviewDoc" @generate-pdf="handlePreviewPdf" @refresh-traceroute="store.loadPreviewTraceroute(true)" />
     <ScanDetailsModal :show="store.details.show" :scan="store.details.scan" :type="store.details.type" :docs="store.details.docs" :docs-loading="store.details.docsLoading"
-      :traceroute="store.details.traceroute" :traceroute-loading="store.details.tracerouteLoading"
-      @close="store.closeDetails()" @refresh-docs="store.refreshDetailsDocs()" @download-doc="store.downloadDocument" @delete-doc="handleDeleteDetailsDoc" @generate-pdf="handleDetailsPdf" @refresh-traceroute="store.loadDetailsTraceroute(true)" />
+      @close="store.closeDetails()" @refresh-docs="store.refreshDetailsDocs()" @download-doc="store.downloadDocument" @delete-doc="handleDeleteDetailsDoc" @generate-pdf="handleDetailsPdf" />
     <FolderFormModal
       :key="'create-folder'"
       :show="store.folderForms.create.show"
