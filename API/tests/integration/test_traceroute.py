@@ -89,6 +89,55 @@ def test_refresh_forces_recompute(client, app, regular_user, auth_headers):
         assert traced.call_count == 2
 
 
+def test_empty_result_is_not_cached(client, app, regular_user, auth_headers):
+    # Un traceroute fallido (sin saltos: binario ausente, host inalcanzable) no
+    # debe persistirse ni servirse de caché: cada apertura reintenta.
+    scan_id = _create_scan(app, regular_user.id)
+    headers = auth_headers(regular_user)
+
+    with mock.patch(_TRACE_PATH, return_value=[]) as traced:
+        first = client.get(_url(scan_id), headers=headers)
+        assert first.status_code == 200
+        body = first.get_json()
+        assert body["hops"] == []
+        assert body["hopCount"] == 0
+        assert body["cached"] is False
+
+        # No se ha guardado ninguna fila para este target.
+        from src.modules.infrastructure import unit_of_work as uow_mod
+        from src.modules.sentinel.repositories import TracerouteRepository
+        with app.app_context():
+            with uow_mod.UnitOfWork() as uow:
+                assert TracerouteRepository(uow).get_by_user_and_target(
+                    regular_user.id, _TARGET
+                ) is None
+
+        # La segunda apertura vuelve a intentarlo (no hay caché que sirva).
+        client.get(_url(scan_id), headers=headers)
+        assert traced.call_count == 2
+
+
+def test_previously_cached_empty_entry_is_recomputed(client, app, regular_user, auth_headers):
+    # Una fila vacía heredada de un intento fallido previo debe tratarse como
+    # miss y recalcularse en cuanto el traceroute vuelve a funcionar.
+    scan_id = _create_scan(app, regular_user.id)
+    headers = auth_headers(regular_user)
+
+    from src.modules.infrastructure import unit_of_work as uow_mod
+    from src.modules.sentinel.repositories import TracerouteRepository
+    with app.app_context():
+        with uow_mod.UnitOfWork() as uow:
+            TracerouteRepository(uow).upsert(regular_user.id, _TARGET, [])
+
+    with mock.patch(_TRACE_PATH, return_value=_HOPS) as traced:
+        resp = client.get(_url(scan_id), headers=headers)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["hops"] == _HOPS
+        assert body["cached"] is False
+        assert traced.call_count == 1
+
+
 def test_stale_cache_is_recomputed(client, app, regular_user, auth_headers):
     scan_id = _create_scan(app, regular_user.id)
     headers = auth_headers(regular_user)

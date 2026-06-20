@@ -1449,17 +1449,35 @@ class TracerouteManager:
                 return cached
 
         hops = TracerouteService().trace(self._probe_host(target))
+
+        # No persistimos rutas vacías: un traceroute sin saltos es un fallo
+        # (binario ausente, host inalcanzable, timeout sin salida...). Cachearlo
+        # lo dejaría "pegajoso" durante todo el TTL e impediría reintentar. Se
+        # devuelve sin guardar para que la próxima apertura vuelva a intentarlo.
+        if not hops:
+            return {
+                "target": target,
+                "hops": [],
+                "hopCount": 0,
+                "computedAt": None,
+                "cached": False,
+            }
+
         with UnitOfWork() as uow:
             trace = TracerouteRepository(uow).upsert(user_id, target, hops)
             payload = self._format(trace, cached_hit=False)
         return payload
 
     def _get_fresh_cached(self, user_id: int, target: str):
-        """Return the cached Traceroute if present and still within TTL."""
+        """Return the cached Traceroute if present, non-empty and within TTL."""
         max_age = timedelta(hours=CR.get_sentinel_traceroute_cache_hours())
         with UnitOfWork() as uow:
             trace = TracerouteRepository(uow).get_by_user_and_target(user_id, target)
             if trace is None:
+                return None
+            # Una entrada vacía cacheada (de un intento fallido previo) se trata
+            # como miss para forzar el recálculo en cuanto el traceroute funcione.
+            if not trace.hops:
                 return None
             if datetime.utcnow() - trace.created_at > max_age:
                 return None
