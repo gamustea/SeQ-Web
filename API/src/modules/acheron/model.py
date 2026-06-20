@@ -5,7 +5,6 @@ Database models for Acheron encrypted vault module.
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -32,7 +31,6 @@ class Vault(Base):
     Attributes:
         id: Primary key, auto-incrementing integer.
         user_id: Foreign key to User.id.
-        is_recovery: Whether this is a recovery vault (for password reset).
         checker: URL used to verify vault access (obfuscated).
         vault_key: Encrypted vault master key.
         transformation: Encryption algorithm (e.g., "AES/GCM/NoPadding").
@@ -50,8 +48,7 @@ class Vault(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
-    is_recovery = Column(Boolean, nullable=False, default=False)
+    user_id = Column(Integer, ForeignKey("User.id"), nullable=False, unique=True)
 
     checker = Column(String(512), nullable=False)
     vault_key = Column(String(512), nullable=False)
@@ -75,9 +72,9 @@ class Vault(Base):
         Return a debug representation of the Vault instance.
 
         Returns:
-            String with id, user_id, and is_recovery flag.
+            String with id and user_id.
         """
-        return f"<Vault id={self.id} user_id={self.user_id} is_recovery={self.is_recovery}>"
+        return f"<Vault id={self.id} user_id={self.user_id}>"
 
 
 # =========================================================================
