@@ -6,8 +6,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class VaultUpsertResponse(
     val message: String,
-    val vaultId: Int,
-    val isRecovery: Boolean
+    val vaultId: Int
 )
 
 @Serializable
@@ -15,7 +14,6 @@ data class StorableCreateRequest(
     val kind: String,
     val title: String? = null,
     @SerialName("internalId") val internalId: String? = null,
-    @SerialName("isRecovery") val isRecovery: Boolean = false,
     @SerialName("createdAt") val createdAt: String? = null,
     @SerialName("updatedAt") val updatedAt: String? = null,
     val username: String? = null,
@@ -30,8 +28,7 @@ data class StorableCreateRequest(
 
 @Serializable
 data class StorableDeleteRequest(
-    @SerialName("internalId") val internalId: String,
-    @SerialName("isRecovery") val isRecovery: Boolean = false
+    @SerialName("internalId") val internalId: String
 )
 
 @Serializable
@@ -40,14 +37,12 @@ data class StorableResponse(
     val storableId: Int,
     val internalId: String,
     val vaultId: Int,
-    val isRecovery: Boolean,
     val kind: String
 )
 
 @Serializable
 data class BulkUpdateRequest(
     @SerialName("internalId") val internalId: String,
-    @SerialName("isRecovery") val isRecovery: Boolean = false,
     val changes: Map<String, String>
 )
 

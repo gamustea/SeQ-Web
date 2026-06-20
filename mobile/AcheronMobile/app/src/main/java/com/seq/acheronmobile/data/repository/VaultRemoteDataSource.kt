@@ -21,9 +21,9 @@ class VaultRemoteDataSource(
         data object NetworkError : Result<Nothing>()
     }
 
-    suspend fun fetchVault(isRecovery: Boolean = false): Result<JsonObject> {
+    suspend fun fetchVault(): Result<JsonObject> {
         return try {
-            val response = api.getVault(isRecovery)
+            val response = api.getVault()
             if (response.isSuccessful) {
                 Result.Success(response.body()!!)
             } else {
@@ -36,9 +36,9 @@ class VaultRemoteDataSource(
         }
     }
 
-    suspend fun pushVault(vault: JsonObject, isRecovery: Boolean = false): Result<VaultUpsertResponse> {
+    suspend fun pushVault(vault: JsonObject): Result<VaultUpsertResponse> {
         return try {
-            val response = api.upsertVault(vault, isRecovery)
+            val response = api.upsertVault(vault)
             if (response.isSuccessful) {
                 Result.Success(response.body()!!)
             } else {
@@ -66,9 +66,9 @@ class VaultRemoteDataSource(
         }
     }
 
-    suspend fun deleteStorable(internalId: String, isRecovery: Boolean = false): Result<StorableResponse> {
+    suspend fun deleteStorable(internalId: String): Result<StorableResponse> {
         return try {
-            val response = api.deleteStorable(StorableDeleteRequest(internalId, isRecovery))
+            val response = api.deleteStorable(StorableDeleteRequest(internalId))
             if (response.isSuccessful) {
                 Result.Success(response.body()!!)
             } else {

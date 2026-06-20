@@ -16,7 +16,6 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
-import retrofit2.http.Query
 
 interface SeqApiService {
 
@@ -34,30 +33,27 @@ interface SeqApiService {
 
     // ── Acheron Vault ──────────────────────────────────────────────────
 
-    @GET("vault")
-    suspend fun getVault(
-        @Query("isRecovery") isRecovery: Boolean = false
-    ): Response<JsonObject>
+    @GET("acheron/vault")
+    suspend fun getVault(): Response<JsonObject>
 
-    @POST("vault")
+    @POST("acheron/vault")
     suspend fun upsertVault(
-        @Body body: JsonObject,
-        @Query("isRecovery") isRecovery: Boolean = false
+        @Body body: JsonObject
     ): Response<VaultUpsertResponse>
 
     // ── Acheron Storables ──────────────────────────────────────────────
 
-    @POST("storables")
+    @POST("acheron/storables")
     suspend fun addStorable(
         @Body body: StorableCreateRequest
     ): Response<StorableResponse>
 
-    @DELETE("storables")
+    @DELETE("acheron/storables")
     suspend fun deleteStorable(
         @Body body: StorableDeleteRequest
     ): Response<StorableResponse>
 
-    @PATCH("storables")
+    @PATCH("acheron/storables")
     suspend fun bulkUpdateStorables(
         @Body body: List<BulkUpdateRequest>
     ): Response<BulkUpdateResponse>
