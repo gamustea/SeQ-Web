@@ -20,6 +20,7 @@ import com.seq.acheronmobile.di.VaultServiceLocator
 import com.seq.acheronmobile.navigation.AcheronNavGraph
 import com.seq.acheronmobile.ui.login.LoginViewModel
 import com.seq.acheronmobile.ui.theme.AcheronMobileTheme
+import com.seq.acheronmobile.ui.vault.VaultViewModel
 
 class MainActivity : ComponentActivity() {
 
@@ -33,6 +34,10 @@ class MainActivity : ComponentActivity() {
         })[LoginViewModel::class.java]
     }
 
+    private val vaultViewModel: VaultViewModel by lazy {
+        ViewModelProvider(this)[VaultViewModel::class.java]
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val tokenRepo = TokenRepository(applicationContext)
@@ -41,6 +46,9 @@ class MainActivity : ComponentActivity() {
         // Init vault services (recreated on process death)
         VaultServiceLocator.cryptoService = VaultCryptoService()
         VaultServiceLocator.remoteDataSource = VaultRemoteDataSource()
+        // Restaura el username de la sesion activa: necesario para validar el
+        // checker del vault si se arranca directamente en MASTER_KEY (ver #3).
+        VaultServiceLocator.username = tokenRepo.getUsername() ?: ""
 
         enableEdgeToEdge()
         setContent {
@@ -52,7 +60,8 @@ class MainActivity : ComponentActivity() {
                     val navController = rememberNavController()
                     AcheronNavGraph(
                         navController  = navController,
-                        loginViewModel = loginViewModel
+                        loginViewModel = loginViewModel,
+                        vaultViewModel = vaultViewModel
                     )
                 }
             }
