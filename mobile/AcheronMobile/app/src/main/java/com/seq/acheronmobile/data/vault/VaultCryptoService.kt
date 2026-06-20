@@ -45,8 +45,10 @@ class VaultCryptoService {
         val factory = VaultFactory(user(userId))
         vaultFactory = factory
         return try {
-            vault = factory.fromJson(vaultJson, password)
-            _state.value = VaultState.Unlocked(storablesToUi(vault!!))
+            val v = factory.fromJson(vaultJson, password)
+            v.decryptAll()
+            vault = v
+            _state.value = VaultState.Unlocked(storablesToUi(v))
             true
         } catch (_: com.seq.acheron.exceptions.WrongPasswordException) {
             _state.value = VaultState.Locked
@@ -178,7 +180,7 @@ class VaultCryptoService {
                     details = mapOf(
                         "username" to storable.username,
                         "domain" to storable.domain,
-                        "password" to "***"
+                        "password" to storable.password
                     )
                 )
                 is CreditCard -> {
@@ -195,7 +197,7 @@ class VaultCryptoService {
                             "cardNumber" to maskedPan,
                             "expirationDate" to (storable.expirationDate ?: ""),
                             "postalCode" to (storable.postalCode ?: ""),
-                            "cvv" to "***"
+                            "cvv" to (storable.cvv ?: "")
                         )
                     )
                 }

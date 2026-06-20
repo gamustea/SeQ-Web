@@ -51,6 +51,7 @@ class LoginViewModel(
             when (val result = authRepository.login(state.username, state.password)) {
                 is AuthRepository.AuthResult.Success -> {
                     VaultServiceLocator.username = state.username
+                    tokenRepository.saveUsername(state.username)
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
                 is AuthRepository.AuthResult.Error -> {

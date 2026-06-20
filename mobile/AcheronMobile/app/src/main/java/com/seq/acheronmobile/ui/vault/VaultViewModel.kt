@@ -74,7 +74,7 @@ class VaultViewModel : ViewModel() {
                     is VaultRemoteDataSource.Result.NetworkError -> {
                         _uiState.update {
                             it.copy(syncing = false,
-                                errorMessage = "Sin conexion")
+                                errorMessage = "Sin conexión")
                         }
                     }
                 }
@@ -87,95 +87,105 @@ class VaultViewModel : ViewModel() {
         }
     }
 
-    fun addAccount(title: String, username: String, domain: String, password: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            try {
-                val internalId = crypto.addAccount(title, username, domain, password)
-                val encryptedJson = crypto.exportEncryptedJson()
-                val json = Json.parseToJsonElement(encryptedJson).jsonObject
-                remote.pushVault(json)
-                _uiState.update { it.copy(isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isLoading = false,
-                        errorMessage = e.localizedMessage ?: "Error")
+    /**
+     * Cifra y sube el vault completo tras una mutacion local. Devuelve `false`
+     * y deja el motivo en `errorMessage` si el push al servidor falla, en vez
+     * de ignorarlo silenciosamente.
+     */
+    private suspend fun pushMutation(): Boolean {
+        return try {
+            val encryptedJson = crypto.exportEncryptedJson()
+            val json = Json.parseToJsonElement(encryptedJson).jsonObject
+            when (val result = remote.pushVault(json)) {
+                is VaultRemoteDataSource.Result.Success -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                    true
+                }
+                is VaultRemoteDataSource.Result.Error -> {
+                    _uiState.update {
+                        it.copy(isLoading = false, errorMessage = result.message)
+                    }
+                    false
+                }
+                is VaultRemoteDataSource.Result.NetworkError -> {
+                    _uiState.update {
+                        it.copy(isLoading = false, errorMessage = "Sin conexión")
+                    }
+                    false
                 }
             }
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
+            }
+            false
         }
     }
 
-    fun addCreditCard(title: String, holder: String, number: String,
-                      expiry: String, cvv: String, postal: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            try {
-                val internalId = crypto.addCreditCard(title, holder, number, expiry, cvv, postal)
-                val encryptedJson = crypto.exportEncryptedJson()
-                val json = Json.parseToJsonElement(encryptedJson).jsonObject
-                remote.pushVault(json)
-                _uiState.update { it.copy(isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isLoading = false,
-                        errorMessage = e.localizedMessage ?: "Error")
-                }
+    suspend fun addAccount(title: String, username: String, domain: String, password: String): Boolean {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        return try {
+            crypto.addAccount(title, username, domain, password)
+            pushMutation()
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
             }
+            false
         }
     }
 
-    fun deleteStorable(internalId: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            try {
-                crypto.removeStorable(internalId)
-                val encryptedJson = crypto.exportEncryptedJson()
-                val json = Json.parseToJsonElement(encryptedJson).jsonObject
-                remote.pushVault(json)
-                _uiState.update { it.copy(isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isLoading = false,
-                        errorMessage = e.localizedMessage ?: "Error")
-                }
+    suspend fun addCreditCard(title: String, holder: String, number: String,
+                      expiry: String, cvv: String, postal: String): Boolean {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        return try {
+            crypto.addCreditCard(title, holder, number, expiry, cvv, postal)
+            pushMutation()
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
             }
+            false
         }
     }
 
-    fun updateAccount(id: String, title: String?, username: String?, domain: String?, password: String?) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            try {
-                crypto.updateAccount(id, title, username, domain, password)
-                val encryptedJson = crypto.exportEncryptedJson()
-                val json = Json.parseToJsonElement(encryptedJson).jsonObject
-                remote.pushVault(json)
-                _uiState.update { it.copy(isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isLoading = false,
-                        errorMessage = e.localizedMessage ?: "Error")
-                }
+    suspend fun deleteStorable(internalId: String): Boolean {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        return try {
+            crypto.removeStorable(internalId)
+            pushMutation()
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
             }
+            false
         }
     }
 
-    fun updateCreditCard(id: String, title: String?, holder: String?, number: String?,
-                         expiry: String?, cvv: String?, postal: String?) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            try {
-                crypto.updateCreditCard(id, title, holder, number, expiry, cvv, postal)
-                val encryptedJson = crypto.exportEncryptedJson()
-                val json = Json.parseToJsonElement(encryptedJson).jsonObject
-                remote.pushVault(json)
-                _uiState.update { it.copy(isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isLoading = false,
-                        errorMessage = e.localizedMessage ?: "Error")
-                }
+    suspend fun updateAccount(id: String, title: String?, username: String?, domain: String?, password: String?): Boolean {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        return try {
+            crypto.updateAccount(id, title, username, domain, password)
+            pushMutation()
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
             }
+            false
+        }
+    }
+
+    suspend fun updateCreditCard(id: String, title: String?, holder: String?, number: String?,
+                         expiry: String?, cvv: String?, postal: String?): Boolean {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        return try {
+            crypto.updateCreditCard(id, title, holder, number, expiry, cvv, postal)
+            pushMutation()
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
+            }
+            false
         }
     }
 

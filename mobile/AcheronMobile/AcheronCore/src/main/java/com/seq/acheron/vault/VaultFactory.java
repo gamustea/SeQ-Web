@@ -245,7 +245,13 @@ public record VaultFactory(User user) {
             @NotNull String checker,
             @NotNull VaultEncryptingStrategy strategy
     ) throws GeneralSecurityException {
-        String decryptedChecker = strategy.decryptWithDerivedKey(checker);
+        String decryptedChecker;
+        try {
+            decryptedChecker = strategy.decryptWithDerivedKey(checker);
+        } catch (AEADBadTagException e) {
+            // Clave maestra incorrecta: no es un error criptografico generico.
+            return false;
+        }
 
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] hashBytes = digest.digest(

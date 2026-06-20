@@ -39,9 +39,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +55,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.seq.acheronmobile.data.vault.StorableUi
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,17 +67,22 @@ fun StorableDetailScreen(
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val uiState by vaultViewModel.uiState.collectAsState()
 
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("Eliminar \"${storable.title}\"") },
-            text = { Text("Esta accion es irreversible.") },
+            text = { Text("Esta acción es irreversible.") },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteDialog = false
-                    vaultViewModel.deleteStorable(storable.id)
-                    onDeleted()
+                    scope.launch {
+                        if (vaultViewModel.deleteStorable(storable.id)) {
+                            onDeleted()
+                        }
+                    }
                 }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
@@ -122,6 +130,10 @@ fun StorableDetailScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            uiState.errorMessage?.let { message ->
+                Text(message, color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
+            }
             Icon(
                 imageVector = if (storable.kind == "account") Icons.Filled.Person else Icons.Filled.CreditCard,
                 contentDescription = null,
@@ -189,12 +201,20 @@ fun StorableFormScreen(
     var domain by remember { mutableStateOf(storable?.details?.get("domain") ?: "") }
     var password by remember { mutableStateOf("") }
     var holder by remember { mutableStateOf(storable?.details?.get("cardHolderName") ?: "") }
-    var number by remember { mutableStateOf(storable?.details?.get("cardNumber") ?: "") }
+    // El numero de tarjeta llega enmascarado ("****1234") desde el listado/detalle;
+    // pre-rellenarlo aqui corromperia el PAN real al guardar (ver hallazgo #4).
+    var number by remember { mutableStateOf("") }
     var expiry by remember { mutableStateOf(storable?.details?.get("expirationDate") ?: "") }
     var cvv by remember { mutableStateOf("") }
     var postal by remember { mutableStateOf(storable?.details?.get("postalCode") ?: "") }
     var saving by remember { mutableStateOf(false) }
     var kindExpanded by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val uiState by vaultViewModel.uiState.collectAsState()
+    val isCardKind = kind == "creditcard"
+    // En alta, el numero es obligatorio; en edicion, vacio = sin cambios,
+    // pero si se reintroduce debe tener al menos 4 cifras (evita el crash de #5).
+    val cardNumberValid = !isCardKind || (isEdit && number.isBlank()) || number.trim().length >= 4
 
     Scaffold(
         topBar = {
@@ -238,7 +258,7 @@ fun StorableFormScreen(
             }
 
             OutlinedTextField(value = title, onValueChange = { title = it },
-                label = { Text("Titulo") }, singleLine = true,
+                label = { Text("Título") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth())
 
             if (kind == "account") {
@@ -249,7 +269,7 @@ fun StorableFormScreen(
                     label = { Text("Dominio / Servicio") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = password, onValueChange = { password = it },
-                    label = { Text(if (isEdit) "Nueva contrasena (dejar vacio = sin cambios)" else "Contrasena") },
+                    label = { Text(if (isEdit) "Nueva contraseña (dejar vacío = sin cambios)" else "Contraseña") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     visualTransformation = PasswordVisualTransformation())
@@ -258,21 +278,31 @@ fun StorableFormScreen(
                     label = { Text("Titular") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = number, onValueChange = { number = it },
-                    label = { Text("Numero de tarjeta") }, singleLine = true,
+                    label = { Text(if (isEdit) "Nuevo número (dejar vacío = sin cambios)" else "Número de tarjeta") },
+                    singleLine = true,
+                    isError = !cardNumberValid,
+                    supportingText = {
+                        if (!cardNumberValid) Text("Debe tener al menos 4 cifras")
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 OutlinedTextField(value = expiry, onValueChange = { expiry = it },
                     label = { Text("Caducidad (MM/YY)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = cvv, onValueChange = { cvv = it },
-                    label = { Text(if (isEdit) "Nuevo CVV (dejar vacio = sin cambios)" else "CVV") },
+                    label = { Text(if (isEdit) "Nuevo CVV (dejar vacío = sin cambios)" else "CVV") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     visualTransformation = PasswordVisualTransformation())
                 OutlinedTextField(value = postal, onValueChange = { postal = it },
-                    label = { Text("Codigo postal") }, singleLine = true,
+                    label = { Text("Código postal") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())
+            }
+
+            uiState.errorMessage?.let { message ->
+                Text(message, color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
             }
 
             Spacer(Modifier.height(8.dp))
@@ -280,29 +310,31 @@ fun StorableFormScreen(
             Button(
                 onClick = {
                     saving = true
-                    if (isEdit && storable != null) {
-                        if (kind == "account") {
-                            vaultViewModel.updateAccount(storable.id,
-                                title.ifBlank { null }, username.ifBlank { null },
-                                domain.ifBlank { null }, password.ifBlank { null })
+                    scope.launch {
+                        val ok = if (isEdit && storable != null) {
+                            if (kind == "account") {
+                                vaultViewModel.updateAccount(storable.id,
+                                    title.ifBlank { null }, username.ifBlank { null },
+                                    domain.ifBlank { null }, password.ifBlank { null })
+                            } else {
+                                vaultViewModel.updateCreditCard(storable.id,
+                                    title.ifBlank { null }, holder.ifBlank { null },
+                                    number.ifBlank { null }, expiry.ifBlank { null },
+                                    cvv.ifBlank { null }, postal.ifBlank { null })
+                            }
                         } else {
-                            vaultViewModel.updateCreditCard(storable.id,
-                                title.ifBlank { null }, holder.ifBlank { null },
-                                number.ifBlank { null }, expiry.ifBlank { null },
-                                cvv.ifBlank { null }, postal.ifBlank { null })
+                            if (kind == "account") {
+                                vaultViewModel.addAccount(title, username, domain, password)
+                            } else {
+                                vaultViewModel.addCreditCard(title, holder, number, expiry, cvv, postal)
+                            }
                         }
-                    } else {
-                        if (kind == "account") {
-                            vaultViewModel.addAccount(title, username, domain, password)
-                        } else {
-                            vaultViewModel.addCreditCard(title, holder, number, expiry, cvv, postal)
-                        }
+                        saving = false
+                        if (ok) onSaved()
                     }
-                    saving = false
-                    onSaved()
                 },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
-                enabled = !saving && title.isNotBlank()
+                enabled = !saving && title.isNotBlank() && cardNumberValid
             ) {
                 if (saving) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp,
@@ -318,11 +350,11 @@ fun StorableFormScreen(
 private fun fieldLabel(key: String): String = when (key) {
     "username" -> "Usuario"
     "domain" -> "Dominio"
-    "password" -> "Contrasena"
+    "password" -> "Contraseña"
     "cardHolderName" -> "Titular"
-    "cardNumber" -> "Numero de tarjeta"
+    "cardNumber" -> "Número de tarjeta"
     "expirationDate" -> "Caducidad"
-    "postalCode" -> "Codigo postal"
+    "postalCode" -> "Código postal"
     "cvv" -> "CVV"
     else -> key
 }

@@ -36,7 +36,14 @@ class TokenRepository(context: Context) {
         private const val KEY_ACCESS_TOKEN  = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_EXPIRES_AT    = "expires_at"
+        private const val KEY_USERNAME      = "username"
     }
+
+    fun saveUsername(username: String) {
+        prefs.edit { putString(KEY_USERNAME, username) }
+    }
+
+    fun getUsername(): String? = prefs.getString(KEY_USERNAME, null)
 
     fun saveTokens(accessToken: String, refreshToken: String?, expiresIn: Double) {
         val expiresAt = System.currentTimeMillis() + (expiresIn.toLong() * 1000L)
@@ -67,6 +74,7 @@ class TokenRepository(context: Context) {
             remove(KEY_ACCESS_TOKEN)
                 .remove(KEY_REFRESH_TOKEN)
                 .remove(KEY_EXPIRES_AT)
+                .remove(KEY_USERNAME)
         }
     }
 

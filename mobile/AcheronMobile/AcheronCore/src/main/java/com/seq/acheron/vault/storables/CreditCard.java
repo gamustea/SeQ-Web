@@ -195,7 +195,7 @@ public class CreditCard extends VaultObject {
 
         String safeCardNumber = isEncrypted
                 ? this.cardNumber
-                : "****" + this.cardNumber.substring(this.cardNumber.length() - 4);
+                : maskCardNumber(this.cardNumber);
         String safeCvv = isEncrypted ? this.cvv : "***";
 
         json.addProperty("cardHolderName", cardHolderName);
@@ -205,6 +205,13 @@ public class CreditCard extends VaultObject {
         json.addProperty("cvv", safeCvv);
 
         return json.toString();
+    }
+
+    private static String maskCardNumber(String cardNumber) {
+        if (cardNumber == null || cardNumber.length() < 4) {
+            return "****";
+        }
+        return "****" + cardNumber.substring(cardNumber.length() - 4);
     }
 
     String toStorageJson() {

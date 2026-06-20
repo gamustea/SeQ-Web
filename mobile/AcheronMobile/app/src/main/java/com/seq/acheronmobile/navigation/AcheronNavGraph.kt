@@ -30,7 +30,8 @@ object Routes {
 @Composable
 fun AcheronNavGraph(
     navController: NavHostController,
-    loginViewModel: LoginViewModel
+    loginViewModel: LoginViewModel,
+    vaultViewModel: VaultViewModel
 ) {
     val startDestination = if (loginViewModel.hasActiveSession)
         Routes.MASTER_KEY
@@ -65,9 +66,8 @@ fun AcheronNavGraph(
         }
 
         composable(Routes.VAULT_LIST) {
-            val vaultVM: VaultViewModel = viewModel()
             VaultListScreen(
-                viewModel = vaultVM,
+                viewModel = vaultViewModel,
                 onAddAccount = {
                     navController.navigate(Routes.STORABLE_ADD_ACCOUNT)
                 },
@@ -90,12 +90,11 @@ fun AcheronNavGraph(
             arguments = listOf(navArgument("id") { type = NavType.StringType })
         ) { backStackEntry ->
             val id = backStackEntry.arguments?.getString("id") ?: return@composable
-            val vaultVM: VaultViewModel = viewModel()
-            val storable = vaultVM.uiState.value.storables.find { it.id == id }
+            val storable = vaultViewModel.uiState.value.storables.find { it.id == id }
             if (storable != null) {
                 StorableDetailScreen(
                     storable = storable,
-                    vaultViewModel = vaultVM,
+                    vaultViewModel = vaultViewModel,
                     onBack = { navController.popBackStack() },
                     onDeleted = { navController.popBackStack() }
                 )
@@ -103,9 +102,8 @@ fun AcheronNavGraph(
         }
 
         composable(Routes.STORABLE_ADD_ACCOUNT) {
-            val vaultVM: VaultViewModel = viewModel()
             StorableFormScreen(
-                vaultViewModel = vaultVM,
+                vaultViewModel = vaultViewModel,
                 defaultKind = "account",
                 onSaved = { navController.popBackStack() },
                 onBack = { navController.popBackStack() }
@@ -113,9 +111,8 @@ fun AcheronNavGraph(
         }
 
         composable(Routes.STORABLE_ADD_CARD) {
-            val vaultVM: VaultViewModel = viewModel()
             StorableFormScreen(
-                vaultViewModel = vaultVM,
+                vaultViewModel = vaultViewModel,
                 defaultKind = "creditcard",
                 onSaved = { navController.popBackStack() },
                 onBack = { navController.popBackStack() }
@@ -127,12 +124,11 @@ fun AcheronNavGraph(
             arguments = listOf(navArgument("id") { type = NavType.StringType })
         ) { backStackEntry ->
             val id = backStackEntry.arguments?.getString("id") ?: return@composable
-            val vaultVM: VaultViewModel = viewModel()
-            val storable = vaultVM.uiState.value.storables.find { it.id == id }
+            val storable = vaultViewModel.uiState.value.storables.find { it.id == id }
             if (storable != null) {
                 StorableFormScreen(
                     storable = storable,
-                    vaultViewModel = vaultVM,
+                    vaultViewModel = vaultViewModel,
                     onSaved = { navController.popBackStack() },
                     onBack = { navController.popBackStack() }
                 )
