@@ -13,7 +13,7 @@ Example:
 >>> from src.modules.users.model import User, AccessToken
 >>> user = User(username="admin", email="admin@example.com")
 >>> print(user)
-'User(id=None, username='admin', person_id=None)'
+'User(id=None, username='admin', role='role_user')'
 """
 
 from datetime import datetime
@@ -69,7 +69,7 @@ class AccessToken(Base):
         Returns:
             True if token is not revoked and has not expired.
         """
-        return not self.revoked and datetime.utcnow() < self.expires_at  # type: ignore
+        return not self.revoked and datetime.utcnow() < self.expires_at
 
     def __str__(self):
         return f"AccessToken(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})"
@@ -131,8 +131,9 @@ class User(Base):
     Represents a user in the system with authentication credentials.
 
     Stores user identity information including username, email, and
-    hashed passwords. Maintains relationships to all user data
-    including scans, documents, tokens, and vaults.
+    hashed passwords. The `role` column captures the user's structural
+    identity (root / admin / user) and is kept separate from ABAC
+    attributes, which express fine-grained capabilities per module.
 
     Attributes:
         id: Primary key, auto-incrementing integer.
@@ -140,6 +141,7 @@ class User(Base):
         email: Unique email address (max 128 characters).
         first_name: User's first name (max 64 characters).
         last_name: User's last name (max 64 characters).
+        role: Structural role — one of "role_root", "role_admin", "role_user".
         created_at: Account creation timestamp (automatic).
         password_hash: Hashed password (max 128 characters).
         password_salt: Salt used for password hashing (max 128 characters).
@@ -149,21 +151,9 @@ class User(Base):
         tokens: List of AccessToken objects (active OAuth tokens).
         refresh_tokens: List of RefreshToken objects (token refresh tokens).
         vaults: List of Vault objects (encrypted secrets vaults).
+        analyses: List of IrisAnalysis objects (email header analyses).
         documents: List of all Document objects (polymorphic relationship).
-
-    Columnas:
-        id (int): Identificador único del usuario.
-        username (str): Nombre de usuario único (máx. 64 caracteres).
-        password_hash / password_salt: Credenciales hasheadas.
-        email (str): Correo electrónico (máx. 128 caracteres).
-
-    Relationships:
-        scans           → lista de Scan
-        tokens          → AccessToken
-        refresh_tokens  → RefreshToken
-        vaults          → Vault
-        aegis_documents → AegisDocument
-        documents       → Document (todos los documentos, polimórfico)
+        attributes: List of UserAttribute objects (ABAC capability attributes).
     """
 
     __tablename__ = "User"
@@ -173,14 +163,21 @@ class User(Base):
     email           = Column(String(128),   unique=True, nullable=False)
     first_name      = Column(String(64),    nullable=False)
     last_name       = Column(String(64),    nullable=False)
+    role            = Column(String(32),    nullable=False, default="role_user")
     created_at      = Column(DateTime,      nullable=False, default=datetime.utcnow)
     password_hash   = Column(String(128),   nullable=False)
     password_salt   = Column(String(128),   nullable=False)
-    
+
     scans          = relationship("Scan",         back_populates="user", cascade="all, delete-orphan")
     tokens         = relationship("AccessToken",  back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     vaults         = relationship("Vault",        back_populates="user")
+
+    analyses = relationship(
+        "IrisAnalysis",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     documents = relationship(
         "Document",
@@ -188,20 +185,55 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-    def __str__(self):
-        """
-        Return a string representation of the User instance.
+    attributes = relationship(
+        "UserAttribute",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
-        Returns:
-            String with id, username, and person_id.
-        """
-        return f"User(id={self.id}, username='{self.username}', person_id={self.person_id})"
+    def __str__(self):
+        return f"User(id={self.id}, username='{self.username}', role='{self.role}')"
 
     def __repr__(self):
-        """
-        Return a debug representation of the User instance.
+        return f"<User(id={self.id}, username='{self.username}', role='{self.role}')>"
 
-        Returns:
-            String with id and username.
-        """
-        return f"<User(id={self.id}, username='{self.username}')>"
+
+# =========================================================================
+# USER ATTRIBUTE MODEL
+# =========================================================================
+
+
+class UserAttribute(Base):
+    """
+    ABAC capability attributes assigned to a user.
+
+    Each row represents a single fine-grained permission (e.g.
+    "sentinel_read", "aegis_create"). Role-level identity
+    (root / admin / user) is stored exclusively in User.role and
+    must NEVER appear here.
+
+    Attributes:
+        user_id: Foreign key to User.id (part of composite PK).
+        attribute_name: Attribute identifier matching a Permission enum value
+                        (e.g. "sentinel_read", "acheron_delete").
+
+    Relationships:
+        user: User that owns this attribute assignment.
+
+    Example:
+    >>> ua = UserAttribute(user_id=1, attribute_name="sentinel_read")
+    >>> print(ua)
+    'UserAttribute(user_id=1, attribute_name='sentinel_read')'
+    """
+    __tablename__ = "UserAttribute"
+
+    user_id = Column(Integer, ForeignKey("User.id"), primary_key=True)
+    attribute_name = Column(String(64), primary_key=True)
+
+    user = relationship("User", back_populates="attributes")
+
+    def __str__(self):
+        return f"UserAttribute(user_id={self.user_id}, attribute_name='{self.attribute_name}')"
+
+    def __repr__(self):
+        return f"<UserAttribute(user_id={self.user_id}, attribute_name='{self.attribute_name}')>"

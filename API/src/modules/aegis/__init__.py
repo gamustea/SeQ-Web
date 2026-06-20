@@ -7,6 +7,8 @@ Exponente:
     - Endpoints: aegis_bp
 """
 
+from src.modules.system.taskqueue import QueueRegistry
+
 from .model import (
     AegisDocument,
     AegisDocumentAlert,
@@ -14,35 +16,22 @@ from .model import (
     Topic,
 )
 from .managers import AegisManager
-from .endpoints import aegis_bp
-from .pills import (
-    AegisAIWriter,
-    AegisContent,
-    AegisAlert,
-    AegisAlertFetcher,
-)
-from .exporters import (
-    ExportFormat,
-    ExportData,
-    get_exporter_for_format,
-)
+from .endpoints import aegis_blp
+
+# Registro de la categoría de cola de este módulo (OCP).
+QueueRegistry.register("aegis.generate")
 
 __all__ = [
-    # Models
     "AegisDocument",
     "AegisDocumentAlert",
     "AegisTip",
     "Topic",
-    # Managers
     "AegisManager",
-    # Endpoints
-    "aegis_bp",
-    # Pills
+    "aegis_blp",
     "AegisAIWriter",
     "AegisContent",
     "AegisAlert",
     "AegisAlertFetcher",
-    # Exporters
     "ExportFormat",
     "ExportData",
 ]

@@ -5,7 +5,7 @@ services:
     container_name: PostgresSeQ
     restart: unless-stopped
     env_file:
-      - API/docker/.env
+      - .env
     ports:
       - "127.0.0.1:15432:5432"
     volumes:
@@ -43,7 +43,7 @@ services:
     image: ollama/ollama:latest
     container_name: OllamaSeQ
     env_file:
-      - API/docker/.env
+      - .env
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
@@ -63,10 +63,34 @@ services:
           memory: 8G
         reservations:
           memory: 4G
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    networks:
+      - secops-net
+    profiles:
+      - dev
+      - container
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: RedisSeQ
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping || redis-cli ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     networks:
       - secops-net
     profiles:
@@ -82,6 +106,8 @@ services:
     image: immauss/openvas:latest
     container_name: openvas
     restart: unless-stopped
+    env_file:
+      - .env
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -89,18 +115,14 @@ services:
       - "127.0.0.1:9392:9392"
       - "127.0.0.1:9390:9390"
     environment:
-      - USERNAME=SecOps
-      - PASSWORD=djn38qudOdu89ADUSAHDd9831ydhg219hde19
-      - FEED_SYNC=false
+      USERNAME: ${OPENVAS_USERNAME}
+      PASSWORD: ${OPENVAS_PASSWORD}
+      FEED_SYNC: "true"
     volumes:
       - openvas_data:/data
     shm_size: "1gb"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9392"]
-      interval: 60s
-      timeout: 30s
-      retries: 5
-      start_period: 900s
+      disable: true          # <- anula el HEALTHCHECK del Dockerfile
     networks:
       - secops-net
     profiles:
@@ -115,27 +137,77 @@ services:
   seq:
     build:
       context: ./API
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
     container_name: SeQ-API
     restart: unless-stopped
-    env_file:
-      - API/.env
+    # traceroute (y el chequeo ICMP de alcanzabilidad) necesitan raw sockets
+    # para leer las respuestas ICMP TTL-exceeded.
+    cap_add:
+      - NET_RAW
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       ollama:
         condition: service_healthy
+      openvas:
+        condition: service_started
     ports:
       - "127.0.0.1:5000:5000"
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       OLLAMA_HOST: http://ollama:11434
       OPENVAS_HOST: openvas
       TEMP_DIR: /app/temp
       LOG_DIR: /app/logs
       OUTPUT_DIR: /app/data
-      RESOURCE_DIR: /app/resources
+    volumes:
+      - seq_data:/app/data
+      - scan_temp:/app/temp
+      - scan_logs:/app/logs
+    networks:
+      - secops-net
+    profiles:
+      - container
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  seq-worker:
+    build:
+      context: ./API
+      dockerfile: Dockerfile
+    container_name: SeQ-Worker
+    restart: unless-stopped
+    # traceroute necesita raw sockets para leer las respuestas ICMP TTL-exceeded.
+    cap_add:
+      - NET_RAW
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openvas:
+        condition: service_started
+    command: python -m src.modules.system.taskqueue.worker
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      OLLAMA_HOST: http://ollama:11434
+      OPENVAS_HOST: openvas
+      TEMP_DIR: /app/temp
+      LOG_DIR: /app/logs
+      OUTPUT_DIR: /app/data
     volumes:
       - seq_data:/app/data
       - scan_temp:/app/temp
@@ -152,7 +224,7 @@ services:
 
   web:
     build:
-      context: ./Interface/web
+      context: ./web
       dockerfile: Dockerfile
     container_name: SeQ-Web
     restart: unless-stopped
@@ -173,6 +245,7 @@ services:
 volumes:
   postgres_data:
     driver: local
+  redis_data:
   ollama_models:
   openvas_data:
   seq_data:

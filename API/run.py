@@ -6,183 +6,426 @@ Responsabilidades de este fiche:
     2. Configurar CORS y rate limiting.
     3. Registrar los blueprints.
     4. Instalar manejadores de error globales.
-    5. Servir la interfaz web estática.
-    6. Gestionar el apagado graceful.
-    7. Arrancar el servidor de desarrollo si se ejecuta directamente.
+    5. Gestionar el apagado graceful.
+    6. Arrancar el servidor de desarrollo si se ejecuta directamente.
 
-La ruta comodín de la UI se registra DESPUÉS de los blueprints para que
-los endpoints de la API siempre tengan prioridad.
+En producción, Nginx sirve el frontend Vue. En desarrollo, Vite sirve
+el frontend con proxy inverso al backend. La API no sirve contenido
+estático.
 """
 
 import os
+import re
 import signal
+import logging
+import subprocess
 import sys
+import threading
+import time
+import warnings
 
-from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
-from sqlalchemy import create_engine, text
-from urllib.parse import quote_plus
+from flask                  import Flask, jsonify, request
+from flask_cors             import CORS
+from flask_smorest          import Api as FlaskSmorestApi
+from sqlalchemy             import create_engine, text
+from urllib.parse           import quote_plus
 
-from src.modules.shared import BaseManager, Base, Document, limiter
-from src.modules.misc import SecOpsLogger, ConfigReader
-from src.modules.users import (
-    AccessToken, 
-    User, 
-    RefreshToken, 
-    oauth_bp, 
-    users_bp
+from src.modules.shared     import BaseManager, Base, limiter
+from src.modules.shared._exceptions import (
+    MissingParameterError,
+    MissingJsonBodyError,
+    SecOpsException,
+    create_error_response
 )
-from src.modules.sentinel import sentinel_bp
-from src.modules.acheron import acheron_bp
-from src.modules.aegis import aegis_bp
-from src.modules.health import health_bp
-from src.modules.pages import pages_bp
-
-
-_logger = SecOpsLogger(name="APIMain").get_logger()
-
-SHUTDOWN_TIMEOUT = 30
-
-_UI_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "Interface", "web")
+from src.modules.system     import configure_logging, config_reading, system_blp
+from src.modules.users      import (
+    UserManager,
+    oauth_blp,
+    users_blp
 )
+from src.modules.users.services.secrets import hash_password as _hash_password
+from src.modules.sentinel   import sentinel_blp
+from src.modules.acheron    import acheron_blp
+from src.modules.aegis      import aegis_blp
+from src.modules.iris       import iris_blp
+from src.modules.pages      import pages_bp
+
+import src.modules.system.config_reading as CR
 
 
-def register_blueprints(app: Flask) -> None:
-    """Registra todos los blueprints en la aplicación Flask."""
-    app.register_blueprint(health_bp)
-    app.register_blueprint(oauth_bp, url_prefix="/oauth")
-    app.register_blueprint(users_bp, url_prefix="/users")
-    app.register_blueprint(sentinel_bp, url_prefix="/sentinel")
-    app.register_blueprint(acheron_bp, url_prefix="/acheron")
-    app.register_blueprint(aegis_bp, url_prefix="/aegis")
-    app.register_blueprint(pages_bp, url_prefix="/pages")
+APP_CONTEXT = CR.get_app_context()
+
+_logger = logging.getLogger(__name__)
+
+warnings.filterwarnings("ignore", message="Multiple schemas resolved to the name")
+
+_IS_SHUTTING_DOWN = False
+_WORKER = {"proc": None}
+
+# Tope duro de apagado: pase lo que pase con la limpieza (Redis lento, scheduler
+# bloqueado, subproceso colgado), el proceso SIEMPRE sale antes de este límite.
+_SHUTDOWN_DEADLINE_S = 6
 
 
-def _graceful_shutdown(signum, frame) -> None:
-    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-    _logger.info(f"[Shutdown] {sig_name} recibido — iniciando apagado graceful...")
+def _kill_worker_tree() -> None:
+    """Mata el subproceso worker y TODOS sus descendientes (nmap, nikto…).
+
+    ``Popen.terminate()`` solo mata el worker; sus subprocesos de escaneo
+    quedarían huérfanos. Con ``psutil`` se recorre el árbol completo y nunca se
+    bloquea sin límite (``wait_procs`` con timeout).
+    """
+    proc = _WORKER["proc"]
+    if proc is None:
+        return
     try:
-        from src.modules.sentinel import ScanManager
-        _logger.info(
-            f"[Shutdown] Cancelando {len(ScanManager._running_tasks)} tarea(s) activa(s)..."
-        )
-        ScanManager.cancel_all_running(timeout=SHUTDOWN_TIMEOUT)
-        _logger.info("[Shutdown] Todas las tareas finalizadas.")
+        import psutil
+        try:
+            parent = psutil.Process(proc.pid)
+        except psutil.NoSuchProcess:
+            return
+        targets = parent.children(recursive=True) + [parent]
+        for p in targets:
+            try:
+                p.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(targets, timeout=3)
+        for p in alive:
+            try:
+                p.kill()
+            except psutil.NoSuchProcess:
+                pass
     except Exception as e:
-        _logger.error(f"[Shutdown] Error durante el apagado: {e}")
+        _logger.warning(f"Error matando el árbol del worker: {e}")
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    finally:
+        _WORKER["proc"] = None
 
-    _logger.info("[Shutdown] Proceso terminado.")
-    sys.exit(0)
 
-signal.signal(signal.SIGTERM, _graceful_shutdown)
-signal.signal(signal.SIGINT,  _graceful_shutdown)
+def _run_shutdown_cleanup() -> None:
+    """Limpieza de apagado. Se ejecuta en un hilo daemon con deadline.
 
-def create_app(fresh_db_init = False) -> Flask:
+    Cada paso va aislado en su propio try/except: un fallo o bloqueo de uno no
+    impide intentar los siguientes, y el hilo daemon garantiza que el proceso
+    pueda salir aunque alguno se quede colgado.
+    """
+    _logger.info("Deteniendo worker...")
+    try:
+        _kill_worker_tree()
+    except Exception as e:
+        _logger.error(f"Error deteniendo worker: {e}")
+
+    try:
+        from src.modules.system.taskqueue import TaskQueue
+        _logger.info("Cancelando tareas en segundo plano...")
+        TaskQueue.get_instance().cancel_all()
+        _logger.info("Tareas canceladas.")
+    except Exception as e:
+        _logger.error(f"Error cancelando tareas: {e}")
+
+    _logger.info("[Shutdown] Deteniendo scheduler...")
+    try:
+        from src.modules.sentinel.services.scheduling import Scheduler
+        Scheduler.stop()
+    except Exception as e:
+        _logger.error(f"Error deteniendo scheduler: {e}")
+
+    _logger.info("[Shutdown] Cerrando sesiones de base de datos...")
+    try:
+        BaseManager.close_all_sessions()
+    except Exception as e:
+        _logger.error(f"Error cerrando sesiones de BD: {e}")
+
+
+def _graceful_shutdown(signum, *args) -> None:
+    """
+    Manejador de señales para shutdown graceful de la aplicación.
+
+    Clave: la limpieza (que puede bloquearse en Redis, el scheduler o un
+    subproceso) se ejecuta en un **hilo daemon acotado por un deadline**, de
+    modo que el handler NUNCA se queda atascado en una llamada bloqueante. Si lo
+    hiciera, el hilo principal dejaría de estar en un punto seguro del bucle de
+    bytecode y los CTRL+C siguientes no se procesarían ("CTRL+C no funciona").
+    Pase lo que pase, ``os._exit`` se alcanza en <= ``_SHUTDOWN_DEADLINE_S`` s.
+
+    Args:
+        signum: Número de señal recibida (SIGTERM o SIGINT).
+        *args: Argumentos adicionales (compatibilidad con Werkzeug reloader).
+    """
+    global _IS_SHUTTING_DOWN
+
+    if _IS_SHUTTING_DOWN:
+        # Segundo CTRL+C: salida inmediata sin esperar a la limpieza.
+        os._exit(1)
+
+    _IS_SHUTTING_DOWN = True
+
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    _logger.info(f"{sig_name} recibido — iniciando apagado graceful...")
+
+    cleanup = threading.Thread(target=_run_shutdown_cleanup, name="shutdown", daemon=True)
+    cleanup.start()
+    cleanup.join(timeout=_SHUTDOWN_DEADLINE_S)
+    if cleanup.is_alive():
+        _logger.warning(
+            "Limpieza de apagado excedió %ss — forzando salida.", _SHUTDOWN_DEADLINE_S
+        )
+    os._exit(0)
+
+def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Flask:
+    """
+    Factory de la aplicación Flask SeQ.
+
+    Configura todos los componentes necesarios para servir la API REST.
+
+    Args:
+        fresh_db_init: Si True, reinicializa la base de datos completamente
+                        (destructivo). Por defecto False.
+
+    Returns:
+        Flask: Aplicación completamente configurada y lista para servir.
+    """
+    from src.modules.sentinel.services.scheduling import Scheduler
+
+    configure_logging()
+
     app = Flask(__name__)
 
     _logger.info("Inicializando la aplicación SeQ...")
     _logger.info("Inicializando CORS...")
-    _configure_cors(app)
-
-    _logger.info("Inicializando rate limiting...")
-    _configure_rate_limiting(app)
-
-    _logger.info("Añadiendo endpoints...")
-    register_blueprints(app)
-    _register_ui_route(app)
-
-    _logger.info("Registrando manejadores de error globales...")
-    _register_error_handlers(app)
-
-    if fresh_db_init:
-        _init_db()
-
-    _logger.info("Inicializando base de datos...")
-    BaseManager.warmup_connection()
-
-    _logger.info("Aplicación SeQ iniciada correctamente")
-    return app
-
-def _configure_cors(app: Flask) -> None:
     raw     = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8080")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
     origins.append("http://127.0.0.1:3000")
     CORS(app, origins=origins, supports_credentials=True)
 
-def _configure_rate_limiting(app: Flask) -> None:
-    """
-    Asocia el único Limiter de la aplicación (definido en _shared.py)
-    a esta instancia de Flask.
-    """ 
+    _logger.info("Inicializando rate limiting...")
     limiter.init_app(app)
 
-def _register_ui_route(app: Flask) -> None:
-    """
-    Sirve la interfaz web estática (Interface/web/) bajo la ruta raíz.
+    _logger.info("Inicializando documentación OpenAPI...")
+    app.config["API_TITLE"]             = "SeQ API"
+    app.config["API_VERSION"]           = "3.2"
+    app.config["OPENAPI_VERSION"]       = "3.0.3"
+    app.config["OPENAPI_URL_PREFIX"]    = "/api-docs"
+    app.config["OPENAPI_SWAGGER_UI_PATH"] = "/swagger"
+    app.config["OPENAPI_SWAGGER_UI_URL"] = "https://cdn.jsdelivr.net/npm/swagger-ui-dist/"
+    flask_smorest_api = FlaskSmorestApi(app)
 
-    Reglas de resolución:
-      - Si la ruta coincide con un fichero existente dentro de _UI_DIR,
-        se sirve directamente (CSS, JS, imágenes, etc.).
-      - Cualquier otra ruta desconocida redirige al hub principal
-        (hub/index.html), lo que permite navegación client-side.
+    _logger.info("Añadiendo endpoints...")
+    flask_smorest_api.register_blueprint(system_blp,  url_prefix="/system")
+    flask_smorest_api.register_blueprint(oauth_blp,   url_prefix="/oauth")
+    flask_smorest_api.register_blueprint(users_blp,   url_prefix="/users")
+    flask_smorest_api.register_blueprint(sentinel_blp, url_prefix="/sentinel")
+    flask_smorest_api.register_blueprint(acheron_blp,  url_prefix="/acheron")
+    flask_smorest_api.register_blueprint(aegis_blp,    url_prefix="/aegis")
+    flask_smorest_api.register_blueprint(iris_blp,     url_prefix="/iris")
+    app.register_blueprint(pages_bp,    url_prefix="/pages")
 
-    IMPORTANTE: esta función debe llamarse DESPUÉS de register_blueprints()
-    para que los endpoints de la API (/oauth/*, /sentinel/*, etc.) tengan
-    prioridad sobre el comodín.
-    """
-    @app.route("/", defaults={"path": ""})
-    @app.route("/<path:path>")
-    def serve_ui(path: str):
-        # No interceptar rutas de la API ni del blueprint /pages
-        if path.startswith(("pages/", "oauth/", "sentinel/", "aegis/", "users/", "acheron/")):
-            from flask import abort
-            abort(404)
+    _logger.info("Registrando manejadores de error globales...")
+    _register_error_handlers(app)
 
-        target = os.path.join(_UI_DIR, path)
-        if path and os.path.isfile(target):
-            return send_from_directory(_UI_DIR, path)
+    _logger.info("Registrando auditoría de peticiones...")
+    _register_request_audit(app)
 
-        return send_from_directory(_UI_DIR, "pages/hub.html")
+    if fresh_db_init:
+        _init_db()
+
+    _logger.info("Inicializando base de datos...")
+    engine = BaseManager._initialize_engine()
+    Base.metadata.create_all(engine)
+    BaseManager.warmup_connection()
+
+    _logger.info("Configurando sesión por-request...")
+    from src.modules.infrastructure.session import shutdown_request_session
+    app.teardown_request(shutdown_request_session)
+
+    if start_scheduler:
+        _logger.info("Reconciliando escaneos huérfanos...")
+        try:
+            from src.modules.sentinel.managers import ScanManager
+            fixed = ScanManager.reconcile_orphaned_scans()
+            if fixed:
+                _logger.info("Se marcaron %d escaneo(s) huérfano(s) como FAILED", fixed)
+        except Exception as e:
+            _logger.warning("No se pudo reconciliar escaneos huérfanos: %s", e)
+
+        _logger.info("Arrancando scheduler de tareas programadas...")
+        Scheduler.start()
+
+    _logger.info("Verificando conexion a Redis...")
+    import redis as redis_lib
+    try:
+        redis_cfg = CR.get_redis_config()
+        r = redis_lib.Redis(
+            host=redis_cfg["host"],
+            port=redis_cfg["port"],
+            db=redis_cfg["db"],
+            password=redis_cfg["password"],
+            socket_connect_timeout=redis_cfg.get("socket_connect_timeout", 2),
+        )
+        r.ping()
+        r.close()
+        _logger.info("Redis conectado correctamente")
+    except Exception as e:
+        _logger.warning("Redis no disponible — la cola de tareas no funcionara: %s", e)
+
+    _logger.info("Aplicación SeQ iniciada correctamente")
+    return app
 
 def _register_error_handlers(app: Flask) -> None:
+    """
+    Registra manejadores de errores HTTP globales para la aplicación.
+
+    Configura respuestas JSON consistentes para los códigos de estado
+    más comunes, incluyendo logging de advertencias para debugging.
+
+    Args:
+        app: Instancia de la aplicación Flask.
+
+    Handlers:
+        - 404 Not Found: Rutas que no coinciden con ningún blueprint.
+        - 405 Method Not Allowed: Métodos HTTP no permitidos.
+        - 429 Too Many Requests: Rate limit superado.
+        - 500 Internal Server Error: Errores inesperados.
+    """
     @app.errorhandler(404)
     def not_found(error):
         _logger.warning(f"Ruta no encontrada: {request.method} {request.url}")
         return jsonify({
-            "error":   "not_found",
-            "message": "La ruta solicitada no existe",
-            "path":    request.path,
+            "error": "not_found",
+            "error_description": "La ruta solicitada no existe",
+            "path": request.path,
         }), 404
 
     @app.errorhandler(405)
     def method_not_allowed(error):
-        _logger.warning(f"Método no permitido: {request.method} {request.url}")
+        _logger.warning(
+            f"Método no permitido: {request.method} {request.url}"
+        )
         return jsonify({
-            "error":          "method_not_allowed",
-            "message":        f"El método {request.method} no está permitido en esta ruta",
+            "error": "method_not_allowed",
+            "error_description": f"El método {request.method} no está permitido en esta ruta",
             "allowedMethods": list(error.valid_methods) if hasattr(error, "valid_methods") else [],
         }), 405
 
-    @app.errorhandler(429)
-    def too_many_requests(error):
+    @app.errorhandler(429) # type: ignore
+    def too_many_requests():
         _logger.warning("Rate limit superado: %s", request.remote_addr)
         return jsonify({
-            "error":   "too_many_requests",
-            "message": "Has superado el límite de peticiones. Espera un momento e inténtalo de nuevo.",
+            "error": "too_many_requests",
+            "error_description": "Has superado el límite de peticiones. Espera un momento e inténtalo de nuevo.",
         }), 429
+
+    @app.errorhandler(SecOpsException)
+    def handle_secops_exception(error):
+        if error.traceback:
+            _logger.error(f"[{error.code.name}] {error.message}\n{error.traceback}")
+        else:
+            _logger.error(f"[{error.code.name}] {error.message}")
+        include_debug = config_reading.is_development()
+        err, code = create_error_response(error, include_debug_info=include_debug)
+        return jsonify(err), code
+
+    @app.errorhandler(MissingParameterError)
+    def handle_missing_parameter(error):
+        _logger.warning(f"Parámetro faltante: {error}")
+        return jsonify({
+            "error": "missing_parameter",
+            "error_description": str(error),
+        }), 400
+
+    @app.errorhandler(MissingJsonBodyError)
+    def handle_missing_json_body(error):
+        _logger.warning(f"Body JSON inválido: {error}")
+        return jsonify({
+            "error": "invalid_json",
+            "error_description": str(error),
+        }), 400
 
     @app.errorhandler(500)
     def internal_error(error):
-        _logger.error(f"Error interno del servidor: {error}", exc_info=True)
+        _logger.error(
+            f"Error interno del servidor: {error}",
+            exc_info=True
+        )
         return jsonify({
-            "error":   "internal_server_error",
-            "message": "Ha ocurrido un error inesperado en el servidor.",
+            "error": "internal_server_error",
+            "error_description": "Ha ocurrido un error inesperado en el servidor.",
         }), 500
 
+def _register_request_audit(app: Flask) -> None:
+    """
+    Registra la auditoría de acceso de la API.
+
+    Un único par de hooks ``before_request`` / ``after_request`` garantiza que
+    TODA petición a cualquier endpoint deje una línea de log con: método, ruta,
+    código de estado, usuario que la realizó, IP de origen y duración.
+
+    El usuario se lee de ``request.current_username`` / ``request.current_user_id``,
+    que ``@require_oauth_token`` inyecta durante el dispatch de la vista; por eso
+    el log se emite en ``after_request`` (cuando esos atributos ya existen) y no
+    en ``before_request``. Las peticiones anónimas se registran como ``anonymous``.
+
+    Args:
+        app: Instancia de la aplicación Flask.
+    """
+    audit_logger = logging.getLogger("seq.audit")
+
+    @app.before_request
+    def _audit_start():
+        request._audit_start = time.perf_counter()  # type: ignore[attr-defined]
+
+    @app.after_request
+    def _audit_access(response):
+        # Ignora el preflight CORS y los assets de la documentación OpenAPI.
+        if request.method == "OPTIONS" or request.path.startswith("/api-docs"):
+            return response
+
+        username = getattr(request, "current_username", None) or "anonymous"
+        user_id  = getattr(request, "current_user_id", None)
+        start    = getattr(request, "_audit_start", None)
+        duration_ms = (time.perf_counter() - start) * 1000 if start else -1.0
+
+        audit_logger.info(
+            "%s %s -> %s | user=%s(id=%s) ip=%s %.1fms",
+            request.method,
+            request.path,
+            response.status_code,
+            username,
+            user_id,
+            request.remote_addr,
+            duration_ms,
+        )
+        return response
+
 def _init_db() -> None:
-    """Inicializa la base de datos y tabla"""
-    db_creds = ConfigReader.get_db_credentials()
+    """
+    Inicializa la base de datos completa de SeQ desde cero.
+
+    Este proceso destructivo elimina cualquier base de datos existente
+    y la recrea con la estructura y datos iniciales:
+
+    1. Conexión a PostgreSQL con AUTOCOMMIT.
+    2. Eliminación de conexiones activas a la DB.
+    3. DROP DATABASE IF EXISTS + CREATE DATABASE.
+    4. Conexión a la nueva DB y creación de tablas via SQLAlchemy.
+    5. Inserción de usuario root por defecto.
+    6. Inserción de temas iniciales de concienciación (Topics).
+
+    Warning:
+        Esta función elimina TODOS los datos existentes. Usar solo en
+        desarrollo o cuando se requiera un reset completo.
+
+    Raises:
+        SQLAlchemy Error: Si falla la conexión o ejecución de SQL.
+
+    Example:
+    >>> from run import create_app
+    >>> app = create_app(fresh_db_init=True)  # Crea DB limpia
+    """
+    db_creds = CR.get_db_credentials()
 
     username = db_creds["username"]
     password = db_creds["password"]
@@ -191,60 +434,52 @@ def _init_db() -> None:
     dialect = db_creds["dialect"]
     port = db_creds["port"]
 
-    # 1. Conexión a la base de datos 'postgres' por defecto para recrear 'SeQ'
     default_db_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/postgres"
-    print(f"[*] Conectando a la base de datos por defecto para configurar '{dbname}'...")
-    # Es necesario AUTOCOMMIT para crear y eliminar bases de datos en PostgreSQL
     engine_postgres = create_engine(default_db_url, isolation_level="AUTOCOMMIT")
 
+    _SAFE_IDENTIFIER = re.compile(r'^[A-Za-z0-9_]+$')
+    if not _SAFE_IDENTIFIER.match(dbname):
+        raise ValueError(f"Nombre de base de datos inválido: {dbname!r}")
+
     with engine_postgres.connect() as conn:
-        # Cerrar conexiones activas de otros usuarios a la base de datos antes de eliminarla
-        print(f"[*] Terminando conexiones activas a la base de datos '{dbname}'...")
-        conn.execute(text(f"""
-            SELECT pg_terminate_backend(pg_stat_activity.pid)
-            FROM pg_stat_activity
-            WHERE pg_stat_activity.datname = '{dbname}'
-            AND pid <> pg_backend_pid();
-        """))
-        
-        # Eliminar y recrear la base de datos
-        print(f"[*] Eliminando la base de datos '{dbname}' si existe...")
+        conn.execute(
+            text(
+                "SELECT pg_terminate_backend(pg_stat_activity.pid) "
+                "FROM pg_stat_activity "
+                "WHERE pg_stat_activity.datname = :dbname "
+                "AND pid <> pg_backend_pid();"
+            ),
+            {"dbname": dbname},
+        )
+
+        # DDL identifiers cannot use bind params; dbname is validated above.
         conn.execute(text(f'DROP DATABASE IF EXISTS "{dbname}";'))
-        
-        print(f"[*] Creando la base de datos '{dbname}'...")
         conn.execute(text(f'CREATE DATABASE "{dbname}";'))
 
     engine_postgres.dispose()
 
-    # 2. Conexión a la base de datos recién creada 'SeQ'
-    DATABASE_URL = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
-    print(f"[*] Conectando a: {dialect}://{username}:***@{host}:{port}/{dbname}")
-    engine = create_engine(DATABASE_URL)
+    database_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
+    engine = create_engine(database_url)
 
-    # 1. Eliminar las tablas si ya existen (en lugar de borrar toda la DB)
-    print("[*] Eliminando tablas existentes (si las hay)...")
     Base.metadata.drop_all(engine)
-
-    # 2. Creación de las tablas
-    print("[*] Creando tablas en PostgreSQL...")
     Base.metadata.create_all(engine)
-    print("[+] ¡Tablas creadas correctamente!")
+    root_password_hash = _hash_password("root")
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                'INSERT INTO "User" '
+                "(username, first_name, last_name, password_hash, password_salt, email, created_at, role) "
+                "VALUES ('root', 'Gabe', 'Joe', :pwdhash, '', 'gjoe@seq.com', CURRENT_DATE, 'role_root');"
+            ),
+            {"pwdhash": root_password_hash},
+        )
 
-    # 3. Inserción de los datos iniciales
-    print("[*] Insertando datos de prueba (User)...")
-    with engine.connect() as conn:        
-        conn.execute(text("""
-            INSERT INTO "User" (username, first_name, last_name, password_hash, password_salt, email, created_at)
-            VALUES (
-            'root',
-            'Gabriel', 
-            'Musteata',
-            '683ae8fa196c380db02e5d97435c6981a591693d1b695f23e769500c046c2f6a',
-            'c167837c1c2a860031d861164d69bd79',
-            'gmiganescu@gmail.com',
-            CURRENT_DATE
-            );
-        """))
+        root_attributes = UserManager.get_all_available_attributes()
+        for attr in root_attributes:
+            conn.execute(
+                text('INSERT INTO "UserAttribute" (user_id, attribute_name) VALUES (1, :attr);'),
+                {"attr": attr},
+            )
 
         conn.execute(text(("""
         INSERT INTO "Topic" (title) VALUES
@@ -338,11 +573,49 @@ def _init_db() -> None:
             ('El factor humano en ciberseguridad'),
             ('Cultura de seguridad en la empresa');"""
         )))
-        conn.commit() 
-
-    print("[+] ¡Datos iniciales insertados con éxito!")
+        conn.commit()
 
 
 if __name__ == "__main__":
-    app = create_app(False)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    import argparse
+    parser = argparse.ArgumentParser(description="SeQ API server")
+    parser.add_argument("--with-worker", action="store_true", help="Start RQ worker as subprocess")
+    _args, _ = parser.parse_known_args()
+
+    signal.signal(
+        signal.SIGTERM,
+        _graceful_shutdown
+    )
+    signal.signal(
+        signal.SIGINT,
+        _graceful_shutdown
+    )
+
+    app = create_app(APP_CONTEXT.create_database)
+
+    if _args.with_worker:
+        # El worker se lanza en su PROPIA sesión para que el CTRL+C de la
+        # consola NO se le difunda (ni a sus descendientes: nmap, nikto).
+        # Así run.py es el único gestor de la señal y su _graceful_shutdown
+        # termina el worker explícitamente, evitando carreras de señales.
+        popen_kwargs = {
+            "cwd": os.path.dirname(os.path.abspath(__file__)),
+            "start_new_session": True,
+        }
+
+        _WORKER["proc"] = subprocess.Popen( # type: ignore
+            [sys.executable, "-m", "src.modules.system.taskqueue.worker"],
+            **popen_kwargs,
+        )
+        _logger.info("Worker iniciado como subproceso (PID %d)", _WORKER["proc"].pid)
+
+    try:
+        app.run(
+            debug=APP_CONTEXT.debug,
+            host=APP_CONTEXT.host,
+            port=APP_CONTEXT.port,
+            use_reloader=False
+        )
+    except KeyboardInterrupt:
+        _logger.info("KeyboardInterrupt caught, initiating shutdown...")
+        _graceful_shutdown(signal.SIGINT)

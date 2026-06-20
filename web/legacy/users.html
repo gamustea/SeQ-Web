@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Usuarios — SeQ</title>
+<link rel="stylesheet" href="/resources/css/shared.css" />
+<link rel="stylesheet" href="/resources/css/users.css" />
+<link rel="icon" type="image/png" href="/resources/images/favicon.ico" />
+</head>
+<body data-module="sentinel">
+
+<div class="stars" id="stars"></div>
+
+<header class="topbar">
+<div class="topbar-left">
+<a href="/pages/hub.html" class="back-link">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+<path d="M19 12H5M12 19l-7-7 7-7"/>
+</svg>
+Volver al Hub
+</a>
+<span class="topbar-sep">/</span>
+<span class="topbar-title">Gestión de Usuarios</span>
+</div>
+<div class="topbar-right">
+<span class="users-count" id="users-count">0 usuarios</span>
+<button class="btn btn--primary" id="btn-create-user">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+<path d="M12 5v14M5 12h14"/>
+</svg>
+Nuevo Usuario
+</button>
+</div>
+</header>
+
+<main class="users-container">
+<div class="users-header">
+<h1>Usuarios del Sistema</h1>
+<p>Gestión y administración de usuarios registrados</p>
+</div>
+
+<div class="users-grid" id="users-grid">
+<div class="user-card-skeleton">
+<div class="skeleton-line skeleton-id"></div>
+<div class="skeleton-line skeleton-name"></div>
+<div class="skeleton-line skeleton-email"></div>
+</div>
+</div>
+
+</div>
+
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="/resources/js/shared.js"></script>
+<script src="/resources/js/users.js"></script>
+</body>
+</html>

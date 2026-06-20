@@ -1,0 +1,117 @@
+import { defineStore } from 'pinia'
+import { reactive, ref } from 'vue'
+import { useApi } from '@/composables/useApi'
+import { useToastStore } from '@/stores/toastStore'
+import { useCache } from '@/composables/useCache'
+
+const CACHE_KEY = 'me'
+const PROFILE_TTL = 5 * 60 * 1000
+
+/**
+ * Store de perfil de usuario — carga y actualiza los datos personales.
+ *
+ * Sustituye la lógica de profile.js (122 líneas de manipulación DOM directa).
+ * Centraliza las llamadas GET/PUT de /users/me y el cambio de contraseña.
+ * Cachea GET /users/me con TTL de 5min para evitar peticiones redundantes.
+ */
+export const useProfileStore = defineStore('profile', () => {
+  const { apiFetch } = useApi()
+  const toast = useToastStore()
+  const profileCache = useCache({ storage: 'session', keyPrefix: 'profile:', ttl: PROFILE_TTL, maxSize: 20 })
+
+  /** Datos del perfil del usuario autenticado */
+  const profile = reactive({ first_name: '', last_name: '', email: '', username: '', role: '', created_at: '' })
+  /** Indicador de carga en curso */
+  const loading = ref(false)
+
+  function _hydrate(data) {
+    Object.assign(profile, {
+      first_name: data.first_name || '',
+      last_name: data.last_name || '',
+      email: data.email || '',
+      username: data.username || '',
+      role: data.role || '',
+      created_at: data.created_at || '',
+    })
+  }
+
+  function _snapshot() {
+    return {
+      first_name: profile.first_name,
+      last_name: profile.last_name,
+      email: profile.email,
+      username: profile.username,
+      role: profile.role,
+      created_at: profile.created_at,
+    }
+  }
+
+  /**
+   * Obtiene el perfil del usuario autenticado desde GET /users/me.
+   * Usa caché con TTL de 5 minutos para evitar peticiones redundantes.
+   */
+  async function loadProfile() {
+    const cached = profileCache.get(CACHE_KEY)
+    if (cached) {
+      _hydrate(cached)
+      console.log('[profileStore] cache HIT — usando datos cacheados')
+      return
+    }
+
+    console.log('[profileStore] cache MISS — fetching from API')
+    loading.value = true
+    try {
+      const res = await apiFetch('/users/me')
+      if (!res?.ok) return
+      const data = await res.json()
+      _hydrate(data)
+      profileCache.set(CACHE_KEY, _snapshot())
+      console.log('[profileStore] datos cacheados en sessionStorage:', !!sessionStorage.getItem('profile:me'))
+    } finally { loading.value = false }
+  }
+
+  /**
+   * Actualiza el nombre y apellido del usuario vía PUT /users/me.
+   * Actualiza la caché y el estado reactivo sin re-fetch.
+   * @param {string} first_name - Nuevo nombre
+   * @param {string} last_name - Nuevo apellido
+   * @returns {Promise<boolean>} True si se actualizó correctamente
+   */
+  async function updateProfile(first_name, last_name) {
+    const res = await apiFetch('/users/me', {
+      method: 'PUT',
+      body: JSON.stringify({ first_name, last_name }),
+    })
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => ({}))
+      toast.show(data.message || 'Error al actualizar el perfil.', 'error')
+      return false
+    }
+    profile.first_name = first_name
+    profile.last_name = last_name
+    profileCache.set(CACHE_KEY, _snapshot())
+    toast.show('Perfil actualizado.', 'success')
+    return true
+  }
+
+  /**
+   * Cambia la contraseña del usuario vía PUT /users/change-password.
+   * @param {string} newPassword - Nueva contraseña (mín. 8 caracteres)
+   * @returns {Promise<boolean>} True si se cambió correctamente
+   */
+  async function changePassword(newPassword) {
+    const res = await apiFetch('/users/change-password', {
+      method: 'PUT',
+      body: JSON.stringify({ newPassword }),
+    })
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => ({}))
+      toast.show(data.message || 'Error al cambiar la contraseña.', 'error')
+      return false
+    }
+    toast.show('Contraseña actualizada. Cerrando sesión…', 'success')
+    return true
+  }
+
+  return { profile, loading, loadProfile, updateProfile, changePassword }
+})

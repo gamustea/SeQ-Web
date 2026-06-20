@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Configuración — SeQ</title>
+<link rel="stylesheet" href="/resources/css/shared.css" />
+<link rel="stylesheet" href="/resources/css/config.css" />
+<link rel="icon" type="image/png" href="/resources/images/favicon.ico" />
+</head>
+<body>
+
+<div class="stars" id="stars"></div>
+
+<header class="topbar">
+<div class="topbar-left">
+<a href="/pages/hub.html" class="back-link">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+<path d="M19 12H5M12 19l-7-7 7-7"/>
+</svg>
+Volver al Hub
+</a>
+<span class="topbar-sep">/</span>
+<span class="topbar-title">Configuración</span>
+</div>
+<div class="topbar-right">
+<span class="session-pill">
+<span class="session-dot"></span>
+Sesión activa
+</span>
+</div>
+</header>
+
+<main class="config-container">
+<form id="config-form">
+<section class="config-section" id="section-general">
+<h2>General</h2>
+<div class="config-subsection">
+<h3>Directorios</h3>
+<div class="form-group">
+<label for="general-tempdir">Directorio temporal</label>
+<input type="text" id="general-tempdir" name="general.directories.tempdir" />
+</div>
+<div class="form-group">
+<label for="general-logdir">Directorio de logs</label>
+<input type="text" id="general-logdir" name="general.directories.logdir" />
+</div>
+</div>
+</section>
+
+<section class="config-section" id="section-sentinel">
+<h2>Sentinel</h2>
+<div class="config-subsection">
+<h3>Habilitación</h3>
+<div class="form-group checkbox-group">
+<label class="checkbox-label">
+<input type="checkbox" id="sentinel-enabled" name="sentinel.enabled" />
+<span>Module Enabled</span>
+</label>
+</div>
+</div>
+<div class="config-subsection">
+<h3>Directorios</h3>
+<div class="form-group">
+<label for="sentinel-output">Directorio de salida</label>
+<input type="text" id="sentinel-output" name="sentinel.directories.output" />
+</div>
+</div>
+<div class="config-subsection">
+<h3>Nmap</h3>
+<div class="color-palette" id="nmap-palette">
+<label>Paleta de colores</label>
+<div class="palette-grid">
+<div class="palette-item"><input type="color" id="nmap-black" name="sentinel.nmap.colorPalette.black" /><span>black</span></div>
+<div class="palette-item"><input type="color" id="nmap-dark" name="sentinel.nmap.colorPalette.dark" /><span>dark</span></div>
+<div class="palette-item"><input type="color" id="nmap-main" name="sentinel.nmap.colorPalette.main" /><span>main</span></div>
+<div class="palette-item"><input type="color" id="nmap-secondary" name="sentinel.nmap.colorPalette.secondary" /><span>secondary</span></div>
+<div class="palette-item"><input type="color" id="nmap-light" name="sentinel.nmap.colorPalette.light" /><span>light</span></div>
+<div class="palette-item"><input type="color" id="nmap-white" name="sentinel.nmap.colorPalette.white" /><span>white</span></div>
+</div>
+</div>
+<div class="form-group">
+<label for="nmap-system">Prompt del sistema</label>
+<textarea id="nmap-system" name="sentinel.nmap.prompts.system" rows="6"></textarea>
+</div>
+</div>
+<div class="config-subsection">
+<h3>Nikto</h3>
+<div class="color-palette" id="nikto-palette">
+<label>Paleta de colores</label>
+<div class="palette-grid">
+<div class="palette-item"><input type="color" id="nikto-black" name="sentinel.nikto.colorPalette.black" /><span>black</span></div>
+<div class="palette-item"><input type="color" id="nikto-dark" name="sentinel.nikto.colorPalette.dark" /><span>dark</span></div>
+<div class="palette-item"><input type="color" id="nikto-main" name="sentinel.nikto.colorPalette.main" /><span>main</span></div>
+<div class="palette-item"><input type="color" id="nikto-secondary" name="sentinel.nikto.colorPalette.secondary" /><span>secondary</span></div>
+<div class="palette-item"><input type="color" id="nikto-light" name="sentinel.nikto.colorPalette.light" /><span>light</span></div>
+<div class="palette-item"><input type="color" id="nikto-white" name="sentinel.nikto.colorPalette.white" /><span>white</span></div>
+</div>
+</div>
+<div class="form-group">
+<label for="nikto-system">Prompt del sistema</label>
+<textarea id="nikto-system" name="sentinel.nikto.prompts.system" rows="6"></textarea>
+</div>
+</div>
+<div class="config-subsection">
+<h3>OpenVAS</h3>
+<div class="color-palette" id="openvas-palette">
+<label>Paleta de colores</label>
+<div class="palette-grid">
+<div class="palette-item"><input type="color" id="openvas-black" name="sentinel.openvas.colorPalette.black" /><span>black</span></div>
+<div class="palette-item"><input type="color" id="openvas-dark" name="sentinel.openvas.colorPalette.dark" /><span>dark</span></div>
+<div class="palette-item"><input type="color" id="openvas-main" name="sentinel.openvas.colorPalette.main" /><span>main</span></div>
+<div class="palette-item"><input type="color" id="openvas-secondary" name="sentinel.openvas.colorPalette.secondary" /><span>secondary</span></div>
+<div class="palette-item"><input type="color" id="openvas-light" name="sentinel.openvas.colorPalette.light" /><span>light</span></div>
+<div class="palette-item"><input type="color" id="openvas-white" name="sentinel.openvas.colorPalette.white" /><span>white</span></div>
+</div>
+</div>
+<div class="form-group">
+<label for="openvas-system">Prompt del sistema</label>
+<textarea id="openvas-system" name="sentinel.openvas.prompts.system" rows="6"></textarea>
+</div>
+</div>
+</section>
+
+<section class="config-section" id="section-aegis">
+<h2>Aegis</h2>
+<div class="config-subsection">
+<h3>Habilitación</h3>
+<div class="form-group checkbox-group">
+<label class="checkbox-label">
+<input type="checkbox" id="aegis-enabled" name="aegis.enabled" />
+<span>Module Enabled</span>
+</label>
+</div>
+</div>
+<div class="config-subsection">
+<h3>Directorios</h3>
+<div class="form-group">
+<label for="aegis-output">Directorio de salida</label>
+<input type="text" id="aegis-output" name="aegis.directories.output" />
+</div>
+<div class="form-group">
+<label for="aegis-stack">Directorio de stack</label>
+<input type="text" id="aegis-stack" name="aegis.directories.stack" />
+</div>
+</div>
+<div class="config-subsection">
+<h3>Prompts</h3>
+<div class="form-group">
+<label for="aegis-system">Prompt del sistema</label>
+<textarea id="aegis-system" name="aegis.prompts.system" rows="10"></textarea>
+</div>
+</div>
+</section>
+
+<div class="form-actions">
+<button type="button" class="btn btn--secondary" id="btn-reset">Restablecer</button>
+<button type="submit" class="btn btn--primary" id="btn-save">Guardar Cambios</button>
+</div>
+</form>
+</main>
+
+<div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+<script src="/resources/js/shared.js"></script>
+<script src="/resources/js/config.js"></script>
+</body>
+</html>

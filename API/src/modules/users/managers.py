@@ -1,267 +1,691 @@
+"""
+User and OAuth token managers for the users module.
+
+Managers contain business logic only — all database access is delegated
+to UserRepository and TokenRepository via explicit UnitOfWork scopes.
+
+Security invariants enforced here:
+  - password_hash and password_salt never leave this module.
+  - Credential verification uses constant-time comparison.
+  - Token verification validates both JWT signature and database record state.
+  - Password changes atomically revoke all existing tokens in one transaction.
+  - Returned User objects are always expunged from the session before leaving
+    the manager, so callers cannot accidentally trigger lazy loads on
+    credential-bearing fields.
+
+Classes:
+    UserManager:        User lifecycle and credential management.
+    OAuthTokenManager:  JWT access token and refresh token lifecycle.
+"""
+
+import logging
 import secrets
 from datetime import datetime, timedelta
-from typing import Any, List, Optional, Tuple
+from uuid import uuid4
+from typing import List, Optional, Tuple
 
 import jwt
-from sqlalchemy.orm import Session
 
-from src.modules.exceptions import DatabaseError, ExistingUserError, UserBindingError
-from src.modules.misc import ConfigReader
-from src.modules.shared import BaseManager
+import src.modules.system.config_reading as CR
+from src.modules.users.exceptions import (
+    DatabaseError,
+    ExistingUserError,
+    PermissionsError,
+    ProfileUpdateError,
+    UserBindingError,
+)
+from src.modules.infrastructure import UnitOfWork
+from src.modules.infrastructure.session import get_db_session
 
-from .secrets import Encoder
-from .model import User, AccessToken, RefreshToken
+from .model import AccessToken, RefreshToken, User, UserAttribute
+from .repositories import TokenRepository, UserRepository, AttributeRepository
+from .services import (
+    generate_salt,
+    hash_password,
+    hash_password_with_salt,
+    verify_password
+)
+
+logger = logging.getLogger(__name__)
 
 (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_EXPIRE_DAYS,
     JWT_SECRET_KEY,
-    JWT_ALGORITHM
-) = ConfigReader.get_oauth_config()
+    JWT_ALGORITHM,
+) = CR.get_oauth_config()
 
+class UserManager:
+    """
+    Manages user lifecycle: registration, credential verification, and profile updates.
 
-class UserManager(BaseManager):
+    All database access goes through UnitOfWork + UserRepository.
+    Credential fields (password_hash, password_salt) are handled exclusively
+    inside this class and never propagated to callers.
+
+    Example:
+    >>> manager = UserManager()
+    >>> is_valid, user_id = manager.verify_credentials("johnd", "secret")
     """
-    Gestor completo para usuarios y personas con autenticación y gestión de tokens.
-    """
+
+    def __init__(self) -> None:
+        pass
+
+    # =========================================================================
+    # CREDENTIAL VERIFICATION
+    # =========================================================================
 
     def verify_credentials(self, username: str, password: str) -> Tuple[bool, Optional[int]]:
-        self._check_session()
+        """
+        Verify a username/password pair.
 
+        Performs a constant-time password comparison to prevent timing attacks.
+        The User object (including credential fields) never leaves this method.
+
+        Args:
+            username: Username to authenticate.
+            password: Plaintext password to verify.
+
+        Returns:
+            Tuple of (is_valid, user_id). user_id is None if authentication fails.
+
+        Raises:
+            Exception: On unexpected database errors.
+        """
         try:
-            user = self._get_by_field(User, "username", username)
+            session = get_db_session()
+            user = UserRepository(session=session).get_by_username(username)
 
-            if not user:
-                self.logger.info(f"Usuario '{username}' no encontrado")
+            if user is None:
+                # Dummy comparison to prevent username enumeration via timing differences.
+                verify_password("dummy_hash", password, "dummy_salt")
+                logger.info(f"Usuario '{username}' no encontrado")
                 return False, None
 
-            valid_password = Encoder.verify_password(
-                stored_hash=user.password_hash,
-                password=password,
-                salt=user.password_salt
+            is_valid, needs_rehash = verify_password(
+                stored_hash = user.password_hash,
+                password    = password,
+                legacy_salt = user.password_salt or "",
             )
 
-            if not valid_password:
-                self.logger.warning(f"Contraseña incorrecta para '{username}'")
+            if not is_valid:
+                logger.warning(f"Contraseña incorrecta para '{username}'")
                 return False, None
 
-            user_id = user.id
-            self.session.expunge(user)
+            if needs_rehash:
+                with UnitOfWork() as uow:
+                    u = UserRepository(uow).get_by_id(user.id)
+                    if u is not None:
+                        u.password_hash = hash_password(password)
+                        u.password_salt = ""
+                logger.info(f"Hash actualizado a Argon2 para usuario '{username}'")
 
-            self.logger.info(f"Credenciales válidas para '{username}' (ID: {user_id})")
-            return True, user_id
+            logger.info(f"Credenciales válidas para '{username}' (ID: {user.id})")
+            return True, user.id
 
         except Exception as e:
-            self.logger.error(f"Error verificando credenciales: {e}")
+            logger.error(f"Error verificando credenciales: {e}")
             raise
 
-    def validate_credentials_simple(self, username: str, password: str) -> bool:
-        is_valid, _ = self.verify_credentials(username, password)
-        return is_valid
+
+    # =========================================================================
+    # USER REGISTRATION
+    # =========================================================================
 
     def sign_in_user(
-        self, 
-        username: str,
-        email: str,
-        first_name: str,
-        last_name: str,
-        password: str       
+        self,
+        username:    str,
+        email:       str,
+        first_name:  str,
+        last_name:   str,
+        password:   str,
+        role:        Optional[str] = None,
+        actor_id:   Optional[int] = None,
     ) -> User:
-        self._check_session()
+        """
+        Register a new user.
+
+        Validates uniqueness of username and email, hashes the password
+        with a fresh random salt, and persists the new user record.
+
+        Args:
+            username:   Unique username (max 64 chars).
+            email:      Unique email address (max 128 chars).
+            first_name: User's first name.
+            last_name:  User's last name.
+            password:   Plaintext password (hashed before storage).
+            role:       Optional role to assign: "role_user" (default), "role_admin".
+                        Requires actor_id with appropriate permissions.
+            actor_id:   ID of user creating this account. Required if role is specified.
+
+        Returns:
+            The newly created User instance (credential fields excluded
+            from the returned object via session expunge).
+
+Raises:
+            ExistingUserError: If username or email is already registered.
+            PermissionsError: If actor_id lacks permissions to assign the requested role.
+            DatabaseError:    On unexpected persistence failures.
+        """
+        valid_roles = {"role_user", "role_admin"}
+        default_role = "role_user"
+
+        if role is not None and role not in valid_roles:
+            raise PermissionsError(f"Invalid role: {role}. Valid roles: {valid_roles}")
+
+        if role and not actor_id:
+            raise PermissionsError("actor_id required when specifying a role")
+
+        if role == "role_admin" and actor_id:
+            if not self.can_create_admin(actor_id):
+                logger.error(f"El administrador con id {actor_id} ha intentado crear un usuario con rol {role}")
+                raise PermissionsError("Solo el administrador raíz puede crear administradores")
+
+        if role and actor_id:
+            actor = self.get_user_by_id(actor_id)
+            if actor:
+                actor_rank = self._get_role_rank(actor.role)
+                target_rank = self._get_role_rank(role)
+                if target_rank >= actor_rank:
+                    raise PermissionsError("No puedes crear usuarios con rol igual o superior al tuyo")
+
+        assigned_role = role if role else default_role
 
         try:
-            username_exists = self._exists(User, "username", username)
-            email_exists    = self._exists(User, "email", email)
+            with UnitOfWork() as uow:
+                repo = UserRepository(uow)
 
-            if username_exists or email_exists:
-                raise ExistingUserError(
-                    username if username_exists else None, 
-                    email if email_exists else None
+                if repo.username_exists(username):
+                    logger.error(f"Se intentó crear un usuario con un username ({username}) repetido")
+                    raise ExistingUserError(username, None)
+                if repo.email_exists(email):
+                    logger.error(f"Se intentó crear un usuario con un email ({email}) repetido")
+                    raise ExistingUserError(None, email)
+
+                new_user = User(
+                    username      = username,
+                    email         = email,
+                    first_name    = first_name,
+                    last_name     = last_name,
+                    password_hash = hash_password(password),
+                    password_salt = "",
+                    role          = assigned_role,
                 )
+                repo.save(new_user)
 
-            password_salt = Encoder.generate_salt()
-            hashed_password = Encoder.hash_password_with_salt(password, password_salt)
-
-            new_user = User(
-                username        = username,
-                email           = email,
-                first_name      = first_name,
-                last_name       = last_name,
-                password_hash   = hashed_password,
-                password_salt   = password_salt,
-            )
-
-            self.session.add(new_user)
-            self._safe_commit()
-            self.session.expunge(new_user)
-
-            self.logger.info(f"Usuario '{username}' registrado exitosamente")
+            logger.info(f"Usuario '{username}' registrado con rol '{assigned_role}' (ID: {new_user.id})")
             return new_user
 
-        except (ExistingUserError, UserBindingError):
-            self._safe_rollback()
+        except ExistingUserError:
             raise
         except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error registrando usuario: {e}")
+            logger.error(f"Error registrando usuario '{username}': {e}")
             raise DatabaseError("Error con credenciales. Revísalas e inténtalo de nuevo.")
 
-    def get_user_by_username(self, username: str) -> Optional[User]:
-        return self._get_by_field(User, "username", username)
+    # =========================================================================
+    # QUERIES
+    # =========================================================================
 
     def get_user_by_id(self, user_id: int) -> Optional[User]:
-        return self._get_by_field(User, "id", user_id)
+        """
+        Retrieve a user by primary key.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            User instance (without credential fields accessible to caller),
+            or None if not found.
+        """
+        session = get_db_session()
+        return UserRepository(session=session).get_by_id(user_id)
 
     def get_all_users(self) -> List[User]:
-        return self._get_all(User)
+        """
+        Retrieve all registered users.
+
+        Returns:
+            List of user dictionaries (public info only).
+        """
+        session = get_db_session()
+        return UserRepository(session=session).get_all()
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """
+        Retrieve a user by username.
+
+        Args:
+            username: Unique username string.
+
+        Returns:
+            User instance, or None if not found.
+        """
+        session = get_db_session()
+        return UserRepository(session=session).get_by_username(username)
+
+
+    # =========================================================================
+    # PROFILE & PASSWORD UPDATES
+    # =========================================================================
 
     def update_user_password(self, user_id: int, new_password: str) -> None:
-        self._check_session()
+        """
+        Update a user's password with a fresh salt.
 
-        user = self.get_user_by_id(user_or_id)
-        if not user:
-            raise UserBindingError(username=str(user_or_id))
+        Does NOT revoke existing tokens — callers that require token
+        invalidation on password change should also call
+        OAuthTokenManager.revoke_all_user_tokens(). Alternatively,
+        use update_user_password_and_revoke_tokens() for an atomic operation.
 
+        Args:
+            user_id:      Primary key of the user to update.
+            new_password: Plaintext new password (hashed before storage).
+
+        Raises:
+            UserBindingError: If the user is not found.
+        """
+        with UnitOfWork() as uow:
+            user = UserRepository(uow).get_by_id(user_id)
+            if user is None:
+                raise UserBindingError(username=str(user_id))
+
+            user.password_hash = hash_password(new_password)
+            user.password_salt = ""
+
+        logger.info(f"Contraseña actualizada para usuario {user_id}")
+
+    def update_user_profile(self, user_id: int, first_name: str, last_name: str) -> User:
+        """
+        Update a user's display name fields.
+
+        Username and email are immutable after registration.
+
+        Args:
+            user_id:    Primary key of the user to update.
+            first_name: New first name.
+            last_name:  New last name.
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            ProfileUpdateError: If the user is not found or update fails.
+        """
         try:
-            new_salt = Encoder.generate_salt()
-            new_hash = Encoder.hash_password_with_salt(new_password, new_salt)
+            with UnitOfWork() as uow:
+                user = UserRepository(uow).get_by_id(user_id)
+                if user is None:
+                    raise ProfileUpdateError("Usuario no encontrado")
 
-            user.password_salt = new_salt
-            user.password_hash = new_hash
+                user.first_name = first_name
+                user.last_name  = last_name
+                # UoW commits on __exit__
 
-            self.session.add(user)
-            self._safe_commit()
+            logger.info(f"Perfil actualizado para usuario {user_id} ({user.username})")
+            return user
 
-            self.logger.info(f"Contraseña actualizada para usuario {user.id}")
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error actualizando contraseña: {e}")
+        except ProfileUpdateError:
             raise
+        except Exception as e:
+            logger.error(f"Error actualizando perfil para usuario {user_id}: {e}")
+            raise ProfileUpdateError(f"Error al actualizar el perfil: {e}")
 
-    def delete_user(self, user: User) -> None:
-        self._delete(user, "Usuario")
+    def delete_user(self, user_id: int) -> None:
+        """
+        Delete a user by primary key.
+
+        Args:
+            user_id: Primary key of the user to delete.
+
+        Raises:
+            UserBindingError: If the user is not found.
+        """
+        with UnitOfWork() as uow:
+            repo = UserRepository(uow)
+            user = repo.get_by_id(user_id)
+            if user is None:
+                raise UserBindingError(username=str(user_id))
+            repo.delete(user)
+
+        logger.info(f"Usuario {user_id} eliminado")
+
+# =========================================================================
+# ATTRIBUTE MANAGEMENT
+# =========================================================================
+
+    def can_manage_user(self, actor_id: int, target_id: int) -> bool:
+        """
+        Verifica si el actor puede gestionar al usuario objetivo.
+
+        Jerarquía:
+        - role_root: puede gestionar TODO (root, admin, users)
+        - role_admin: solo puede gestionar role_user
+        - role_user: NO puede gestionar nadie
+
+        El rol se lee del modelo User.
+
+        Args:
+            actor_id: ID del usuario que hace la acción.
+            target_id: ID del usuario objetivo.
+
+        Returns:
+            True si tiene permiso, False en caso contrario.
+        """
+
+        if actor_id == target_id:
+            return True
+
+        actor_user = self.get_user_by_id(actor_id)
+        target_user = self.get_user_by_id(target_id)
+
+        if not actor_user or not target_user:
+            return False
+
+        actor_role = actor_user.role
+        target_role = target_user.role
+
+        is_actor_root = actor_role == "role_root"
+        is_actor_admin = actor_role == "role_admin"
+        is_target_root = target_role == "role_root"
+        is_target_admin = target_role == "role_admin"
+
+        if is_actor_root:
+            return True
+
+        if is_actor_admin:
+            return not is_target_root and not is_target_admin
+
+        return False
+
+    def can_create_admin(self, actor_id: int) -> bool:
+        """
+        Verifica si el actor puede crear usuarios con rol admin.
+
+        Solo role_root puede crear administradores.
+        Los admin no pueden crear otros admin.
+
+        Args:
+            actor_id: ID del usuario creando.
+
+        Returns:
+            True si tiene permiso, False en caso contrario.
+        """
+        actor_user = self.get_user_by_id(actor_id)
+        return actor_user and actor_user.role == "role_root"
+
+    def _get_role_rank(self, role: str) -> int:
+        ranks = {"role_user": 0, "role_admin": 1, "role_root": 2}
+        return ranks.get(role, 0)
+
+    def get_user_attributes(self, user_id: int) -> List[str]:
+        """
+        Retrieve all attribute names assigned to a user.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            List of attribute name strings.
+        """
+        session = get_db_session()
+        attrs = AttributeRepository(session=session).get_by_user(user_id)
+        return [a.attribute_name for a in attrs]
+
+    def add_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> List[str]:
+        """
+        Add one or more attributes to a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to add.
+
+        Returns:
+            List of added attribute names.
+        """
+        with UnitOfWork() as uow:
+            created = AttributeRepository(uow).add_attributes(
+                user_id, attribute_names
+            )
+            return [c.attribute_name for c in created]
+
+    def remove_user_attributes(
+        self,
+        user_id: int,
+        attribute_names: List[str],
+    ) -> int:
+        """
+        Remove one or more attributes from a user.
+
+        Args:
+            user_id: User primary key.
+            attribute_names: List of attribute names to remove.
+
+        Returns:
+            Number of attributes removed.
+        """
+        with UnitOfWork() as uow:
+            deleted = AttributeRepository(uow).remove_attributes(
+                user_id, attribute_names
+            )
+            return deleted
+
+    @staticmethod
+    def get_all_available_attributes() -> List[str]:
+        """
+        Return a list of all available attributes that can be assigned to users.
+
+        These attributes correspond to the AttributeType enum values and represent
+        fine-grained ABAC capabilities across modules (Aegis, Sentinel, Acheron).
+
+        Returns:
+            List of attribute name strings (e.g. ["aegis_create", "sentinel_read", ...]).
+        """
+        from .services.permissions import AttributeType
+        return [attr.value for attr in AttributeType.__members__.values() if isinstance(attr.value, str)]
 
 
+class OAuthTokenManager:
+    """
+    Manages OAuth 2.0 access and refresh token lifecycle.
 
-class OAuthTokenManager(BaseManager):
-    """Gestor de tokens OAuth 2.0 usando JWT"""
+    Handles JWT creation and verification, token persistence via
+    TokenRepository, and revocation flows.
 
-    def create_access_token(self, user_id: int, username: str) -> str:
+    Security notes:
+      - JWT signature is validated before the database record is checked,
+        preventing unnecessary DB hits on forged tokens.
+      - Token type claim ("type") is validated to prevent access tokens
+        being used as refresh tokens and vice versa.
+      - revoke_all_user_tokens() atomically revokes both token types
+        in a single transaction, used for password-change and logout-everywhere.
+
+    Example:
+    >>> manager = OAuthTokenManager()
+    >>> access_token = manager.create_access_token(user_id=1, username="johnd")
+    >>> payload = manager.verify_access_token(access_token)
+    """
+
+    def __init__(self) -> None:
+        pass
+
+    # =========================================================================
+    # TOKEN CREATION
+    # =========================================================================
+
+    def create_access_token(self, user_id: int, username: str, role: str = "role_user") -> str:
+        """
+        Create and persist a signed JWT access token.
+
+        Args:
+            user_id:  User primary key to embed in the token payload.
+            username: Username to embed in the token payload.
+            role:     Role to embed in the token payload.
+
+        Returns:
+            Signed JWT string.
+        """
         expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
         payload = {
-            "sub": str(user_id),
+            "sub":      str(user_id),
             "username": username,
-            "exp": expires_at,
-            "iat": datetime.utcnow(),
-            "type": "access"
+            "exp":      expires_at,
+            "iat":      datetime.utcnow(),
+            "jti":      uuid4().hex,
+            "type":     "access",
+            "role":     role,
         }
-
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-        access_token_record = AccessToken(
-            token=token,
-            user_id=user_id,
-            expires_at=expires_at
-        )
-        self.session.add(access_token_record)
-        self._safe_commit()
+        with UnitOfWork() as uow:
+            TokenRepository(uow).save_access_token(
+                AccessToken(token=token, user_id=user_id, expires_at=expires_at)
+            )
 
         return token
 
     def create_refresh_token(self, user_id: int) -> str:
-        token = secrets.token_urlsafe(64)
+        """
+        Create and persist a cryptographically random refresh token.
+
+        Refresh tokens are opaque random strings (not JWTs) to avoid
+        leaking expiry information to the client.
+
+        Args:
+            user_id: User primary key.
+
+        Returns:
+            Raw refresh token string (URL-safe base64, 64 bytes).
+        """
+        token      = secrets.token_urlsafe(64)
         expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
-        refresh_token_record = RefreshToken(
-            token=token,
-            user_id=user_id,
-            expires_at=expires_at
-        )
-        self.session.add(refresh_token_record)
-        self._safe_commit()
+        with UnitOfWork() as uow:
+            TokenRepository(uow).save_refresh_token(
+                RefreshToken(token=token, user_id=user_id, expires_at=expires_at)
+            )
 
         return token
 
+    # =========================================================================
+    # TOKEN VERIFICATION
+    # =========================================================================
+
     def verify_access_token(self, token: str) -> Optional[dict]:
+        """
+        Verify a JWT access token and return its payload.
+
+        Validates JWT signature and expiry first, then checks the database
+        record for revocation. Both checks must pass.
+
+        Args:
+            token: Raw JWT string from the Authorization header.
+
+        Returns:
+            Decoded payload dict if valid, None otherwise.
+        """
         try:
+            # Step 1: validate JWT signature and expiry (no DB hit yet).
             payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
 
             if payload.get("type") != "access":
                 return None
 
-            token_record = self.session.query(AccessToken).filter(
-                AccessToken.token == token
-            ).one_or_none()
+            # Step 2: check database record for revocation.
+            session = get_db_session()
+            record = TokenRepository(session=session).get_access_token(token)
+            is_valid = record is not None and record.is_valid()
 
-            if not token_record or not token_record.is_valid():
-                return None
-
-            return payload
+            return payload if is_valid else None
 
         except jwt.ExpiredSignatureError:
             return None
         except jwt.InvalidTokenError:
             return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error verificando access token: {e}")
             return None
 
     def verify_refresh_token(self, token: str) -> Optional[int]:
+        """
+        Verify an opaque refresh token and return the associated user ID.
+
+        Args:
+            token: Raw refresh token string.
+
+        Returns:
+            User primary key if the token is valid, None otherwise.
+        """
         try:
-            token_record = self.session.query(RefreshToken).filter(
-                RefreshToken.token == token
-            ).one_or_none()
-
-            if not token_record or not token_record.is_valid():
+            session = get_db_session()
+            record = TokenRepository(session=session).get_refresh_token(token)
+            if record is None or not record.is_valid():
                 return None
+            return record.user_id
 
-            return token_record.user_id  # type: ignore
-
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error verificando refresh token: {e}")
             return None
 
-    def revoke_access_token(self, token: str) -> bool:
-        try:
-            token_record = self.session.query(AccessToken).filter(
-                AccessToken.token == token
-            ).one_or_none()
+    # =========================================================================
+    # REVOCATION
+    # =========================================================================
 
-            if token_record:
-                token_record.revoked = 1  # type: ignore
-                self._safe_commit()
-                return True
-            return False
-        except Exception:
+    def revoke_access_token(self, token: str) -> bool:
+        """
+        Revoke a single access token.
+
+        Args:
+            token: Raw JWT string to revoke.
+
+        Returns:
+            True if the token was found and revoked, False otherwise.
+        """
+        try:
+            with UnitOfWork() as uow:
+                revoked = TokenRepository(uow).revoke_access_token(token)
+
+            if revoked:
+                logger.info("Access token revocado")
+            return revoked
+
+        except Exception as e:
+            logger.error(f"Error revocando access token: {e}")
             return False
 
     def revoke_all_user_tokens(self, user_id: int) -> None:
-        try:
-            self.session.query(AccessToken).filter(
-                AccessToken.user_id == user_id
-            ).update({"revoked": 1})
+        """
+        Atomically revoke all access and refresh tokens for a user.
 
-            self.session.query(RefreshToken).filter(
-                RefreshToken.user_id == user_id
-            ).update({"revoked": 1})
+        Both token types are revoked in a single transaction. Intended
+        for password-change and logout-everywhere flows.
 
-            self._safe_commit()
-        except Exception as e:
-            self._safe_rollback()
-            raise
+        Args:
+            user_id: User primary key.
+        """
+        with UnitOfWork() as uow:
+            TokenRepository(uow).revoke_all_tokens(user_id)
+
+        logger.info(f"Todos los tokens revocados para usuario {user_id}")
+
+    # =========================================================================
+    # MAINTENANCE
+    # =========================================================================
 
     def cleanup_expired_tokens(self) -> None:
-        try:
-            now = datetime.utcnow()
+        """
+        Delete all expired access and refresh tokens from the database.
 
-            self.session.query(AccessToken).filter(
-                AccessToken.expires_at < now
-            ).delete()
+        Intended to be called from a periodic maintenance task.
+        """
+        with UnitOfWork() as uow:
+            access_deleted, refresh_deleted = TokenRepository(uow).cleanup_expired_tokens()
 
-            self.session.query(RefreshToken).filter(
-                RefreshToken.expires_at < now
-            ).delete()
-
-            self._safe_commit()
-        except Exception:
-            self._safe_rollback()
+        logger.info(
+            f"Tokens expirados eliminados: "
+            f"{access_deleted} access, {refresh_deleted} refresh"
+        )

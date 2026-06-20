@@ -9,6 +9,8 @@ Exponente:
     - Endpoints: sentinel_bp
 """
 
+from src.modules.system.taskqueue import QueueRegistry
+
 from .model import (
     Host,
     NiktoIncident,
@@ -19,7 +21,9 @@ from .model import (
     OpenVASScanResult,
     OpenVASVulnerability,
     Port,
+    ProgramedScan,
     Scan,
+    ScanFolder,
     ScanIncident,
     ScanStatus,
     SentinelDocument,
@@ -30,44 +34,41 @@ from .managers import (
     NmapScanManager,
     NiktoScanManager,
     OpenVASScanManager,
+    ProgramedScanManager,
     ScanManager,
+    ScanFolderManager,
 )
 
-from .reports import (
+from .repositories import (
+    ProgramedScanRepository,
+    ScanRepository,
+    SentinelReportRepository,
+)
+
+from .services import (
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy,
-    PDFCreator
+    PDFCreator,
+    Scheduler,
 )
 
-from .endpoints import sentinel_bp
+from .endpoints import sentinel_blp
+
+# Registro de las categorías de cola de este módulo (OCP).
+QueueRegistry.register("sentinel.scan", "sentinel.report", "sentinel.traceroute")
 
 __all__ = [
-    # Models
-    "Host",
-    "NiktoIncident",
-    "NiktoScan",
-    "NmapScan",
-    "OpenPort",
-    "OpenVASScan",
-    "OpenVASScanResult",
-    "OpenVASVulnerability",
-    "Port",
-    "Scan",
-    "ScanIncident",
-    "ScanStatus",
-    "SentinelDocument",
-    "TargetPort",
-    # Managers
-    "NmapScanManager",
-    "NiktoScanManager",
-    "OpenVASScanManager",
-    "ScanManager",
-    # Endpoints
-    "sentinel_bp",
-    # Reports
-    "PDFCreator",
-    "NmapPrintingStrategy",
-    "NiktoPrintingStrategy",
+    "Host", "NiktoIncident", "NiktoScan", "NmapScan", "OpenPort",
+    "OpenVASScan", "OpenVASScanResult", "OpenVASVulnerability", "Port",
+    "ProgramedScan", "Scan", "ScanFolder", "ScanIncident", "ScanStatus",
+    "SentinelDocument", "TargetPort",
+    "NmapScanManager", "NiktoScanManager", "OpenVASScanManager",
+    "ProgramedScanManager", "ScanManager", "ScanFolderManager",
+    "ProgramedScanRepository", "ScanRepository", "ScanFolderRepository",
+    "SentinelReportRepository",
+    "sentinel_blp",
+    "PDFCreator", "NmapPrintingStrategy", "NiktoPrintingStrategy",
     "OpenVASPrintingStrategy",
+    "Scheduler",
 ]

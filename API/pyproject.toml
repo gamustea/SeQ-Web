@@ -1,0 +1,15 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-q --strict-markers --cov=src --cov-report=term-missing"
+markers = [
+    "unit: tests unitarios rápidos, sin base de datos ni aplicación Flask",
+    "integration: tests que arrancan la aplicación y usan el cliente HTTP de pruebas",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:Multiple schemas resolved to the name:UserWarning",
+]

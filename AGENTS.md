@@ -1,87 +1,132 @@
-# SeQ — Developer Guide
-
-## Quick Start
-
-```bash
-# 1. Levantar servicios Docker (infraestructura)
-docker compose --profile dev up -d
-
-# 2. Inicializar y arrancar API (desarrollo local)
-cd API
-python run.py       # Start API at http://0.0.0.0:5000
-```
+# SeQ — Agent Guide
 
 ## Architecture
 
-Three modules under `/API/src/`:
-- **Sentinel** — Vulnerability scanning (Nmap, Nikto, OpenVAS + AI reports via Ollama)
-- **Aegis** — Security awareness content generation (Ollama-powered pills)
-- **Acheron** — Encrypted secrets vault
+Monorepo:
+- **API** (`API/`) — Python/Flask REST backend (primary work area)
+- **web** (`web/app/`) — Vue 3 SPA (Vite + Pinia + Vue Router)
+- **mobile** (`mobile/AcheronMobile/`) — Android/Kotlin + AcheronCore Java
 
-Entry point: `API/run.py`
-Blueprints: `API/src/endpoints/`
-Models: `API/src/core/model/`
+## Platform
 
-## Docker Setup
+The API assumes **Linux** (native, WSL, or Docker). The scan tools (Nmap, Nikto,
+OpenVAS/Greenbone) are Linux-native — there is no Windows/WSL bridge in the code. On Windows,
+run the entrypoint inside WSL or use `docker compose`. Scan subprocesses are launched with
+`start_new_session=True` so cancellation kills the full descendant tree via `psutil`.
 
-Uses profiles to switch between development and container modes:
+## Entry Point
+
+`API/run.py` → `create_app()` factory. Does this in order:
+1. Register CORS, rate limiter, FlaskSmorest API
+2. Register blueprints (system, oauth, users, sentinel, acheron, aegis, iris, pages)
+3. Init DB engine + create tables
+4. **Start APScheduler** (`Scheduler.start()`) (API only, not workers)
+5. **Ping Redis** — health check (worker tasks require Redis to be available)
+6. Signal handlers (SIGTERM/SIGINT) → cancel TaskQueue → stop Scheduler → close DB
 
 ```bash
-# Modo desarrollo: levanta BD + Ollama + OpenVAS en Docker; API corre en local
-docker compose --profile dev up -d
-python API/run.py
-
-# Modo contenedor: todo dentro de Docker (API + Web incluidas)
-docker compose --profile container up -d
-
-# Limpiar
-docker compose down
+docker compose --profile dev up -d   # postgres(15432), redis(6379), ollama, openvas
+cd API && python run.py               # 0.0.0.0:5000
+python -m src.modules.system.taskqueue.worker  # RQ worker (separate terminal)
 ```
 
-Los servicios de infra (postgres, ollama, openvas) están siempre en el perfil `dev`, por lo que puedes cambiar de un modo a otro sin tocar nada.
+## TaskQueue — Background Task System (RQ + Redis)
 
-## Commands
+Replaces the legacy in-process SeQueue. Uses **RQ** (Redis Queue) for persistence,
+scalability, and process isolation.
 
-| Action | Command |
-|--------|---------|
-| Run API (desarrollo) | `python API/run.py` |
-| Docker infra | `docker compose --profile dev up -d` |
-| Docker todo | `docker compose --profile container up -d` |
-| Test user | username: `root`, password: default (admin) |
+Key files: **`task.py`** (Task dataclass + TaskStatus enum), **`queue.py`** (TaskQueue
+singleton with RQ + Redis backend), **`worker.py`** (RQ worker entry point).
 
-## Key Config Files
+Facts:
+- Jobs persist in Redis → survive API crashes
+- Workers are **separate OS processes** (not threads) — isolated from the API
+- `TaskQueue.get_instance().submit(func, name=, category=, external_id=, args=, timeout=)`
+- **No callback parameters** — `on_cancel`, `on_complete`, `on_error` were removed
+- Cancellation: sets a Redis key `taskqueue:cancel:{job_id}` checked cooperatively by workers
+- Each module has its own `services/rq_tasks.py` with standalone entry-point functions:
+  - `sentinel/services/rq_tasks.py` → `execute_nmap_scan`, `execute_nikto_scan`, `execute_openvas_scan`, `execute_report_generation`
+  - `aegis/services/rq_tasks.py` → `execute_aegis_generation`
+  - `iris/services/rq_tasks.py` → `execute_iris_analysis`
+- Categories: `"sentinel.scan"`, `"sentinel.report"`, `"aegis.generate"`, `"iris.analyze"`
+- External IDs: `f"scan:{scan_id}"`, `f"sentinel-doc:{doc_id}"`, `f"aegis-doc:{doc_id}"`, `f"iris-analysis:{analysis_id}"`
+- REST API (admin-only, `/system/tasks/*`): status, list tasks, detail, cancel
+- Workers listen on category-specific queues: `sentinel.scan`, `sentinel.report`, `aegis.generate`, `iris.analyze`, `default`
+- Separate `TaskStatus` enum exists in `sentinel/services/tasks.py` — not the same as `taskqueue.TaskStatus`
 
-- `API/SecOpsConfig.json` — AI prompts
-- `API/.env` — Credenciales, conecta a `localhost:15432` (desarrollo local)
-- `API/.env.docker` — Overrides para cuando la API corre dentro del contenedor (`POSTGRES_HOST=postgres`, etc.)
-- `API/entrypoint.sh` — Carga `.env.docker` antes de arrancar la API dentro del contenedor
-- `API/requirements.txt` — Python dependencies
+### RQ Task Execution Pattern
 
-## API Patterns
+Standalone module-level functions (not methods) are submitted to the queue. These:
+1. Are serializable by pickle (module-level, simple args)
+2. Reconstruct manager/task objects inside the worker
+3. Periodically check `TaskQueue.is_cancelled(job_id)` via `_Task.wait(cancel_check=...)`
+4. Report progress via `_Task(progress_callback=...)` → `job.meta["progress"]`
+5. Workers run with Flask app context pushed at startup (DB sessions work)
 
-- **All endpoints except register/login require OAuth token:**
-  ```
-  Authorization: Bearer <access_token>
-  ```
-- Token via `POST /oauth/token` with `grant_type: password`
-- Refresh via `POST /oauth/token` with `grant_type: refresh_token`
+## Config System
 
-## Web UI
+`API/src/modules/system/config_reading.py` (imported as `CR`):
+1. `API/SecOpsConfig.json` — JSON config (DB fallback, prompts, directories, taskqueue)
+2. `API/.env` — env vars override JSON. Required for OAuth (JWT_SECRET_KEY, JWT_ALGORITHM, etc.) and DB.
+3. Root `.env` — for docker-compose only (Postgres, Redis, OpenVAS creds). Not for the API.
 
-Static files served from `Interface/web/` at root. API routes (`/sentinel/*`, `/aegis/*`, etc.) are excluded from UI fallback.
+All config keys lazily loaded via `@_lazy_load` decorator.
 
-## Testing
+## Auth
 
-Uses `pytest`. Run with:
-```bash
-cd API
-pip install -r requirements.txt
-pytest
+OAuth 2.0 + JWT. **JSON keys use camelCase** (`grantType`, `refresh_token`).
+
+```
+POST /oauth/token  {"grantType": "password", "username": "root", "password": "admin"}
 ```
 
-## Important Constraints
+Protected endpoints require `Authorization: Bearer <access_token>`. Roles checked via `require_role()`.
 
-- PostgreSQL runs on **port 15432** (check `.env` if connection fails)
-- OpenVAS first run takes several minutes (NVT feed download)
-- `.env` contains credentials — never commit changes
-- `.gitignore` excludes `API/data/*` (scan outputs)
+## Database
+
+- PostgreSQL port **15432** (container maps 15432→5432)
+- Init: set `CREATE_DATABASE=True` in `API/.env`, then run the app. `_init_db()` in `run.py` is destructive (drops + recreates DB + inserts root user and Topic rows).
+- Models: SQLAlchemy, each module has `model.py`, base from `src.modules.shared`.
+- All DB ops use `UnitOfWork` + repository pattern. No direct session management outside repos.
+
+## Scan System (sentinel)
+
+- `sentinel/services/tasks.py`: `_Task` base class → `NmapScanTask`, `NiktoScanTask`, `OpenVASTask`
+- Each scan manager (NmapScanManager, NiktoScanManager, OpenVASScanManager) submits to TaskQueue with `category="sentinel.scan"` and `external_id=f"scan:{scan_id}"`
+- Cancellation: RQ sets Redis key `taskqueue:cancel:{job_id}` → worker checks `_Task.wait(cancel_check=...)` → triggers `task.cancel()` (subprocess.terminate / GMP stop)
+- OpenVAS: GMP API (not CLI). Uses `python-gvm`. Targets, port lists, scan configs auto-managed.
+- Scheduled scans via APScheduler (`sentinel/services/scheduling.py`). `Scheduler` class with interval/cron triggers. Synced from DB.
+
+## Aegis
+
+- `aegis/managers.py`: `AegisManager` submits to TaskQueue with `category="aegis.generate"`, `external_id=f"aegis-doc:{doc_id}"`
+- Uses Ollama (`llama3.2` default, override via `OLLAMA_MODEL` env var)
+
+## Ports
+
+| Service | Port | Note |
+|---|---|---|---|
+| API | 5000 | `0.0.0.0:5000` |
+| PostgreSQL | 15432 | Container maps 5432→15432 |
+| Redis | 6379 | Container maps 6379→6379 |
+| OpenVAS | 9390/9392 | ~15min first start (NVT feed) |
+| Ollama | 11434 | |
+
+## Docker
+
+Two profiles:
+- `dev` — infrastructure only (postgres, redis, ollama, openvas)
+- `container` — everything including API, worker, and web containers
+
+GPU: `-f docker-compose.gpu-nvidia.yml / .gpu-intel.yml / .gpu-amd.yml`
+
+## Things That Bite
+
+- `.env` files contain credentials — never commit. `API/.env` is gitignored.
+- `API/src/data/` and `docs/` are gitignored.
+- `_init_db()` is destructive — drops and recreates everything.
+- OpenVAS only accepts a single host per scan (not CIDR ranges).
+- `SecOpsConfig.json` values are lazily cached — changes require app restart unless written via `PUT /system` endpoint.
+- `sentinel/services/tasks.py` has its own `TaskStatus` enum separate from `taskqueue.TaskStatus`.
+- RQ workers must be running for background tasks to execute. Launch with `python -m src.modules.system.taskqueue.worker`.
+- API version is **3.2** (not from config, hardcoded in `create_app()`).

@@ -67,6 +67,44 @@ ScanIncident = Table(
     Column("nikto_incident_id", Integer, ForeignKey("NiktoIncident.id"), primary_key=True),
 )
 
+# =========================================================================
+# ENUMS
+# =========================================================================
+
+class ScanStatus(Enum):
+    """
+    Enumeration of possible scan execution states.
+
+    Attributes:
+        PENDING: Scan created but not yet started.
+        RUNNING: Scan is currently executing.
+        FINISHED: Scan completed successfully.
+        FAILED: Scan encountered an error.
+        CANCELLED: Scan was cancelled by user.
+    """
+    PENDING   = "pending"
+    RUNNING   = "running"
+    FINISHED  = "finished"
+    FAILED    = "failed"
+    CANCELLED = "cancelled"
+
+class ScanType(str, Enum):
+    """
+    Enumeration of supported scan tool types.
+
+    Inherits from str so that ScanType.NMAP == "nmap" is True,
+    making it directly compatible with SQLAlchemy's polymorphic_identity
+    and with any existing string comparisons.
+
+    Attributes:
+        NMAP:    Nmap network and port scanner.
+        NIKTO:   Nikto web server vulnerability scanner.
+        OPENVAS: OpenVAS comprehensive vulnerability manager.
+    """
+    NMAP    = "nmap"
+    NIKTO   = "nikto"
+    OPENVAS = "openvas"
+
 
 # =========================================================================
 # HOST MODEL
@@ -101,25 +139,88 @@ class Host(Base):
 
 
 # =========================================================================
-# ENUMS
+# TRACEROUTE
 # =========================================================================
 
-class ScanStatus(Enum):
+class Traceroute(Base):
     """
-    Enumeration of possible scan execution states.
+    Cached network path (traceroute) from the SeQ server to a scan target.
+
+    The hops are a property of the *route to the destination*, not of any
+    individual scan, and change slowly over time. We therefore cache one row
+    per (user, target) and reuse it across all scan types (Nmap, Nikto,
+    OpenVAS) instead of re-running the traceroute on every scan. ``created_at``
+    drives cache invalidation (see ``TracerouteManager``).
 
     Attributes:
-        PENDING: Scan created but not yet started.
-        RUNNING: Scan is currently executing.
-        FINISHED: Scan completed successfully.
-        FAILED: Scan encountered an error.
-        CANCELLED: Scan was cancelled by user.
+        id: Primary key, auto-incrementing integer.
+        user_id: Owner user foreign key (scopes the cache per user).
+        target: The scan target string (IP or domain), the cache key.
+        hops: Ordered list of hops as JSONB. Each hop is a dict:
+            ``{"ttl": int, "ip": str|None, "hostname": str|None, "rtt_ms": float|None}``.
+            A hop with ``ip == None`` represents a non-responding (timed-out) hop.
+        hop_count: Number of hops stored (denormalized for convenience).
+        created_at: Timestamp the traceroute was computed (cache TTL anchor).
+        updated_at: Last refresh timestamp (automatic).
+
+    Table Constraints:
+        Unique constraint on (user_id, target) so each target has a single
+        cached path per user (upserted on refresh).
     """
-    PENDING   = "pending"
-    RUNNING   = "running"
-    FINISHED  = "finished"
-    FAILED    = "failed"
-    CANCELLED = "cancelled"
+
+    __tablename__ = "Traceroute"
+
+    id         = Column(Integer,     primary_key=True, autoincrement=True)
+    user_id    = Column(Integer,     ForeignKey("User.id"), nullable=False, index=True)
+    target     = Column(String(255), nullable=False, index=True)
+    hops       = Column(JSONB,       nullable=False)
+    hop_count  = Column(Integer,     nullable=False, default=0)
+    created_at = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime,    nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "target", name="unique_user_target_trace"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Traceroute(id={self.id}, target='{self.target}', hops={self.hop_count})>"
+
+
+# =========================================================================
+# SCAN FOLDER
+# =========================================================================
+
+class ScanFolder(Base):
+    """
+    Logical grouping of scans created by a user.
+
+    A scan may belong to zero or one folder. Deleting a folder leaves its
+    scans orphaned (folder_id becomes NULL) so they appear in the default
+    virtual folder.
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        user_id: Owner user foreign key.
+        name: Folder name (max 255 characters).
+        created_at: Creation timestamp (automatic).
+        updated_at: Last update timestamp (automatic).
+
+    Relationships:
+        scans: Scan objects contained in this folder.
+    """
+
+    __tablename__ = "ScanFolder"
+
+    id         = Column(Integer,    primary_key=True, autoincrement=True)
+    user_id    = Column(Integer,    ForeignKey("User.id"), nullable=False)
+    name       = Column(String(255), nullable=False)
+    created_at = Column(DateTime,   nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime,   nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    scans = relationship("Scan", back_populates="folder")
+
+    def __repr__(self) -> str:
+        return f"<ScanFolder(id={self.id}, name='{self.name}', user_id={self.user_id})>"
 
 
 # =========================================================================
@@ -172,7 +273,12 @@ class Scan(Base):
     user = relationship("User", back_populates="scans")
     host = relationship("Host", back_populates="scans")
 
-    # Un escaneo puede tener como mucho un SentinelDocument asociado
+    programed_scan_id = Column(Integer, ForeignKey("ProgramedScan.id"), nullable=True)
+    programed_scan = relationship("ProgramedScan", back_populates="scans")
+
+    folder_id = Column(Integer, ForeignKey("ScanFolder.id"), nullable=True)
+    folder = relationship("ScanFolder", back_populates="scans")
+
     sentinel_document = relationship(
         "SentinelDocument",
         back_populates="scan",
@@ -191,8 +297,9 @@ class Scan(Base):
         Returns:
             String with id, type, target, and start time.
         """
-        started = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
-        return f"Scan(id={self.id}, tipo='{self.scan_type}', target='{self.target}', inicio={started})"
+        started = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A" # type: ignore
+        return f"Scan(id={self.id}, tipo='{self.scan_type}',\
+            target='{self.target}', inicio={started})"
 
     def __repr__(self):
         """
@@ -202,6 +309,33 @@ class Scan(Base):
             String with id, type, and target.
         """
         return f"<Scan(id={self.id}, type='{self.scan_type}', target='{self.target}')>"
+
+
+# =========================================================================
+# PROGRAMED SCAN
+# =========================================================================
+
+class ProgramedScan(Base):
+    __tablename__ = "ProgramedScan"
+
+    id              = Column(Integer, primary_key=True)
+    user_id         = Column(Integer, ForeignKey("User.id"), nullable=False)
+    scan_type       = Column(String(20), nullable=False)  # "nmap" | "nikto" | "openvas"
+    arguments       = Column(JSONB, nullable=False)       # {"ports": "22,80", "timeout": 300}
+
+    # Schedule
+    schedule_type    = Column(String(10), nullable=False)   # "interval" | "cron"
+    schedule_config  = Column(JSONB, nullable=False)        # {"every": 60, "unit": "minutes"}
+                                                             # o {"cron": "0 2 * * *"}
+    # Estado
+    is_active       = Column(Boolean, default=True)
+    last_run_at     = Column(DateTime, nullable=True)
+    next_run_at     = Column(DateTime, nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    # Relación
+    scans = relationship("Scan", back_populates="programed_scan")
+    user  = relationship("User")
 
 
 # =========================================================================
@@ -293,7 +427,7 @@ class NmapScan(Scan):
         "OpenPort", back_populates="nmap_scan", cascade="all, delete-orphan"
     )
 
-    __mapper_args__ = {"polymorphic_identity": "nmap"}
+    __mapper_args__ = {"polymorphic_identity": ScanType.NMAP}
 
     def __str__(self):
         """
@@ -302,7 +436,7 @@ class NmapScan(Scan):
         Returns:
             String with id, target, open port count, and start time.
         """
-        started   = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A"
+        started   = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else "N/A" # type: ignore
         num_ports = len(self.open_ports_relation) if self.open_ports_relation else 0
         return f"NmapScan(id={self.id}, target='{self.target}', puertos_abiertos={num_ports}, inicio={started})"
 
@@ -380,7 +514,7 @@ class NiktoScan(Scan):
         "NiktoIncident", secondary=ScanIncident, back_populates="nikto_scans"
     )
 
-    __mapper_args__ = {"polymorphic_identity": "nikto"}
+    __mapper_args__ = {"polymorphic_identity": ScanType.NIKTO}
 
     def __repr__(self):
         """
@@ -473,7 +607,7 @@ class OpenVASScan(Scan):
         "OpenVASScanResult", back_populates="openvas_scan", cascade="all, delete-orphan"
     )
 
-    __mapper_args__ = {"polymorphic_identity": "openvas"}
+    __mapper_args__ = {"polymorphic_identity": ScanType.OPENVAS}
 
     __table_args__ = (
         UniqueConstraint("task_id", "report_id", name="unique_task_report"),

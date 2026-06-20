@@ -1,10 +1,14 @@
 # SeQ — Security Operations Platform
 
-**SeQ** es una plataforma de operaciones de seguridad compuesta por tres módulos principales:
+**SeQ** es una plataforma de operaciones de seguridad compuesta por cuatro módulos principales, con interfaces web y móvil:
 
 - **Sentinel** — API REST de escaneo de vulnerabilidades con análisis de IA (operativo).
+- **Iris** — Análisis de cabeceras de correo para detección de phishing mediante reglas (operativo).
 - **Acheron** — Sistema de gestión de secretos cifrados mediante Vaults (operativo, en expansión).
-- **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades,potenciado por IA local (operativo).
+- **Aegis** — Módulo de concienciación en ciberseguridad y alertas de vulnerabilidades, potenciado por IA local (operativo).
+- **SeQ Web** — Interfaz web SPA (Vue 3 + Vite + Pinia) para interactuar con todos los módulos.
+- **AcheronMobile** — App Android/Kotlin con módulo de cifrado AcheronCore (Java).
+- **SeQ Hub** — Dashboard central con acceso rápido a todos los módulos.
 
 ---
 
@@ -30,7 +34,9 @@
       - [Generar PDF con análisis de IA](#generar-pdf-con-análisis-de-ia)
       - [Prompts especializados](#prompts-especializados)
     - [Consulta de resultados](#consulta-de-resultados)
-    - [Generación de informes PDF](#generación-de-informes-pdf)
+    - [Generación y consulta de informes PDF](#generación-y-consulta-de-informes-pdf)
+    - [Escaneos programados (Scheduled Scans)](#escaneos-programados-scheduled-scans)
+    - [Gestión de carpetas (Folders)](#gestión-de-carpetas-folders)
   - [Módulo Aegis — Concienciación y alertas](#módulo-aegis--concienciación-y-alertas)
     - [¿Qué hace Aegis?](#qué-hace-aegis)
     - [Endpoints principales](#endpoints-principales)
@@ -39,23 +45,42 @@
       - [Descargar la píldora como Markdown](#descargar-la-píldora-como-markdown)
       - [Otros endpoints Aegis](#otros-endpoints-aegis)
       - [Arquitectura de IA en Aegis](#arquitectura-de-ia-en-aegis)
-  - [Módulo Acheron — Vault](#módulo-acheron--vault)
+  - [Módulo Iris — Análisis Anti-Phishing](#módulo-iris--análisis-anti-phishing)
     - [Endpoints](#endpoints)
+    - [Iniciar un análisis](#iniciar-un-análisis)
+    - [Consultar estado](#consultar-estado)
+    - [Informe completo](#informe-completo)
+    - [Reglas de análisis](#reglas-de-análisis)
+    - [Validación de entrada](#validación-de-entrada)
+    - [Frontend web](#frontend-web)
+  - [Módulo Acheron — Vault](#módulo-acheron--vault)
+    - [Endpoints](#endpoints-1)
       - [Vault](#vault)
       - [Storables (objetos del vault)](#storables-objetos-del-vault)
       - [Ejemplo: añadir una cuenta](#ejemplo-añadir-una-cuenta)
       - [Ejemplo: añadir una tarjeta de crédito](#ejemplo-añadir-una-tarjeta-de-crédito)
     - [Componentes](#componentes)
+  - [Web Frontend — SeQ Hub](#web-frontend--seq-hub)
+    - [Dashboard Hub (`/hub`)](#dashboard-hub-hub)
   - [Infraestructura Docker](#infraestructura-docker)
     - [Servicios principales](#servicios-principales)
     - [Levantamiento de servicios](#levantamiento-de-servicios)
     - [Configuración de Ollama](#configuración-de-ollama)
   - [Estructura del proyecto](#estructura-del-proyecto)
   - [Stack tecnológico](#stack-tecnológico)
+  - [Quick Start](#quick-start)
+  - [Cambios recientes](#cambios-recientes-2026-06-16)
+  - [Notas Importantes](#notas-importantes)
 
 ---
 
 ## Requisitos previos
+
+> **Plataforma:** la API de SeQ asume un entorno **Linux**. Las herramientas de escaneo
+> (Nmap, Nikto y OpenVAS/Greenbone) son nativas de Linux —OpenVAS ni siquiera corre nativo en
+> Windows— por lo que la API debe ejecutarse en **Linux nativo, dentro de WSL, o vía Docker**.
+> En Windows, ejecuta el entrypoint dentro de WSL (`wsl` → `cd .../API && python run.py`) o usa
+> `docker compose`.
 
 Antes de ejecutar el proyecto, asegúrate de tener instalado:
 
@@ -65,12 +90,12 @@ Antes de ejecutar el proyecto, asegúrate de tener instalado:
 - Nikto (`sudo apt install nikto`)
 - OpenVAS / Greenbone Vulnerability Manager (GVM)
 - Docker y Docker Compose (para levantar los servicios de infraestructura)
-- (Opcional, para Aegis) **Ollama** con al menos un modelo de lenguaje compatible con tool calling (por ejemplo, `llama3.1`)
+- (Opcional, para Aegis) **Ollama** con al menos un modelo de lenguaje compatible con tool calling (por ejemplo, `llama3.2`)
 
 Instala las dependencias de Python:
 
 ```bash
-pip install -r REQUIREMENTS.txt
+pip install -r requirements.txt
 ```
 
 ---
@@ -80,7 +105,7 @@ pip install -r REQUIREMENTS.txt
 ```bash
 git clone https://github.com/gamustea/SeQ.git
 cd SeQ/API
-python init_db.py   # Inicializa el esquema de la base de datos
+# Configurar CREATE_DATABASE=True en API/.env para inicializar la BD
 python run.py
 ```
 
@@ -158,7 +183,7 @@ Nmap realiza descubrimiento de puertos abiertos en hosts o rangos de red. Soport
 #### Iniciar escaneo
 
 ```http
-POST /sentinel/nmap/start
+POST /sentinel/nmap
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -201,7 +226,7 @@ Nikto realiza análisis de vulnerabilidades web sobre servidores HTTP/HTTPS, det
 #### Iniciar escaneo
 
 ```http
-POST /sentinel/nikto/start
+POST /sentinel/nikto
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -240,7 +265,7 @@ OpenVAS realiza análisis completos de vulnerabilidades con base en la base de d
 #### Iniciar escaneo
 
 ```http
-POST /sentinel/openvas/start
+POST /sentinel/openvas
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -250,7 +275,7 @@ Content-Type: application/json
 }
 ```
 
-> Configuraciones disponibles: `full_fast`, `full_deep`, `full_ultimate`.  
+> Configuraciones disponibles: `full_fast`, `full_deep`, `full_ultimate`.
 > OpenVAS solo acepta **un host** por escaneo.
 
 **Resultado de un escaneo OpenVAS:**
@@ -295,11 +320,17 @@ Sentinel integra análisis de inteligencia artificial mediante **Ollama** para t
 #### Generar PDF con análisis de IA
 
 ```http
-GET /sentinel/generate-pdf?id=<id>&aiReport=true
+POST /sentinel/generate-pdf
 Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "id": 123,
+  "aiReport": true
+}
 ```
 
-El parámetro `aiReport=true` activa la generación del análisis IA. El proceso:
+El parámetro `aiReport` activa la generación del análisis IA. El proceso:
 
 1. **Preprocesamiento**: Los hallazgos se agrupan por controles de seguridad (no por cantidad de hallazgos individuales).
 2. **Prompt ingeniería**: Se usa un system prompt especializado que aplica el principio "Controls, Not Counts":
@@ -310,7 +341,7 @@ El parámetro `aiReport=true` activa la generación del análisis IA. El proceso
 
 #### Prompts especializados
 
-Los prompts están centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`:
+Los prompts están centralizados en `SecOpsConfig.json` y se accede a través de `CR`:
 
 | Escáner | Sistema de prompts |
 |---|---|
@@ -329,22 +360,78 @@ Cada prompt enforcing:
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET` | `/sentinel/results?type=all` | Lista todos los escaneos del usuario (filtrable por `nmap`, `nikto`, `openvas`) |
+| `GET` | `/sentinel/results?type=all&page=1&per_page=10` | Lista escaneos (filtrable: `nmap`, `nikto`, `openvas`; paginado) |
 | `GET` | `/sentinel/results/<id>` | Detalle completo de un escaneo por ID |
-| `GET` | `/sentinel/scan-status?id=<id>` | Estado actual del escaneo (`pending`, `running`, `done`, `cancelled`) |
+| `GET` | `/sentinel/scan-status?id=<id>` | Estado del escaneo (`pending`, `running`, `done`, `cancelled`) |
 | `GET` | `/sentinel/is-finished?id=<id>` | Comprobación rápida de si el escaneo ha finalizado |
 | `POST` | `/sentinel/scans/<id>/cancel` | Cancela un escaneo en estado `pending` o `running` |
+| `DELETE` | `/sentinel/<id>` | Elimina un escaneo completado |
+| `DELETE` | `/sentinel/scans` | Elimina múltiples escaneos (body: lista de IDs) |
+| `GET` | `/sentinel/stats` | Estadísticas globales del usuario (total escaneos, últimos 30 días, etc.) |
 
 ---
 
-### Generación de informes PDF
+### Escaneos programados (Scheduled Scans)
 
-Una vez finalizado un escaneo, se puede exportar como informe PDF estructurado.
+Permite programar escaneos recurrentes automáticos mediante cron o intervalos.
+
+#### Crear escaneo programado
+
+```http
+POST /sentinel/scheduled-scans
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "scan_type": "nmap",
+  "arguments": {
+    "target": "192.168.1.0/24",
+    "ports": "80,443,22"
+  },
+  "schedule_type": "cron",
+  "schedule_config": {
+    "cron": "0 2 * * *"
+  }
+}
+```
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET` | `/sentinel/generate-pdf?id=<id>` | Descarga directa del PDF |
-| `GET` | `/sentinel/generate-pdf-base64?id=<id>` | Devuelve el PDF codificado en Base64 (útil para apps móviles) |
+| `POST` | `/sentinel/scheduled-scans` | Crea un escaneo programado |
+| `GET` | `/sentinel/scheduled-scans` | Lista escaneos programados del usuario |
+| `DELETE` | `/sentinel/scheduled-scans/<id>` | Revoca (desactiva) un escaneo programado |
+| `DELETE` | `/sentinel/scheduled-scans/<id>/permanent` | Elimina permanentemente de la BD |
+
+---
+
+### Gestión de carpetas (Folders)
+
+Organiza escaneos en carpetas para mejor clasificación.
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/sentinel/folders` | Crea una carpeta (body: `{"name": "..."}`) |
+| `GET` | `/sentinel/folders` | Lista carpetas del usuario y escaneos sin carpeta |
+| `PUT` | `/sentinel/folders/<id>` | Renombra una carpeta (body: `{"name": "..."}`) |
+| `DELETE` | `/sentinel/folders/<id>` | Elimina una carpeta (mueve escaneos a "Sin carpeta") |
+| `POST` | `/sentinel/folders/<id>/scans` | Añade un escaneo a una carpeta (body: `{"scanId": ...}`) |
+| `POST` | `/sentinel/folders/<id>/scans/batch` | Añade múltiples escaneos a una carpeta (body: `{"scanIds": [...]}`) |
+| `DELETE` | `/sentinel/folders/<id>/scans/<scan_id>` | Elimina escaneo de una carpeta |
+
+---
+
+### Generación y consulta de informes PDF
+
+Sentinel gestiona los informes PDF de forma asíncrona. Primero solicitas la generación, luego consultas su estado y descarga.
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/sentinel/generate-pdf` | Solicita generación asíncrona de un PDF (body: `{"id": scanId, "aiReport": bool}`) |
+| `GET` | `/sentinel/document-status?document_id=<id>` | Consulta el estado de generación del PDF |
+| `GET` | `/sentinel/documents` | Lista todos los documentos PDF del usuario |
+| `GET` | `/sentinel/scan/<scan_id>/documents` | Documentos PDF asociados a un escaneo |
+| `GET` | `/sentinel/document/<document_id>/download` | Descarga del PDF (se genera si aún no existe) |
+| `DELETE` | `/sentinel/document/<document_id>` | Elimina un documento PDF |
 
 Los informes adaptan su formato al tipo de escaneo (Nmap, Nikto u OpenVAS) mediante el patrón Strategy.
 
@@ -429,7 +516,7 @@ GET /aegis/download_as_md?id=42
 Authorization: Bearer <token>
 ```
 
-Devuelve el fichero `.md` como descarga (`Content-Type: text/markdown`). El cuerpo incluye:
+Devuelve el ficheгro `.md` como descarga (`Content-Type: text/markdown`). El cuerpo incluye:
 
 - La píldora principal redactada por el modelo de IA.
 - Una sección adicional con **vulnerabilidades y avisos de seguridad** formateados en Markdown.
@@ -447,7 +534,129 @@ Devuelve el fichero `.md` como descarga (`Content-Type: text/markdown`). El cuer
 
 #### Arquitectura de IA en Aegis
 
-Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se accede a través de `ConfigReader`. El sistema prompt incluye generación exclusiva en JSON válido, intro extensiva (mínimo 1500 caracteres), subtítulo creativo y original, y tips accionables con enlaces verificados.
+Aegis usa prompts especializados centralizados en `SecOpsConfig.json` y se accede a través de `CR`. El sistema prompt incluye generación exclusiva en JSON válido, intro extensiva (mínimo 1500 caracteres), subtítulo creativo y original, y tips accionables con enlaces verificados.
+
+---
+
+## Módulo Iris — Análisis Anti-Phishing
+
+> 🕵️ **Iris** analiza cabeceras de correo electrónico para detectar intentos de phishing mediante un sistema de reglas atómicas. Cada regla evalúa un aspecto concreto de las cabeceras y devuelve una puntuación; la suma determina un veredicto final (Legitimate / Suspicious / Phishing).
+
+Las cabeceras se envían en texto plano a la API, que las procesa en segundo plano mediante **SeQueue** (cola de tareas asíncrona). El usuario puede consultar el estado del análisis y, una vez completado, obtener un informe detallado con la puntuación de cada regla y recomendaciones.
+
+### Endpoints
+
+| Método | Endpoint | Permiso | Descripción |
+|---|---|---|---|
+| `POST` | `/iris/analyze` | `IRIS_CREATE` | Enviar cabeceras para análisis (opcional: `title`) |
+| `GET` | `/iris/status?id={{id}}` | `IRIS_READ` | Estado y progreso del análisis |
+| `GET` | `/iris/results?page=&per_page=` | `IRIS_READ` | Lista paginada de análisis del usuario |
+| `GET` | `/iris/results/{{id}}` | `IRIS_READ` | Informe completo con reglas, scores y veredicto |
+| `POST` | `/iris/analyze/{{id}}/cancel` | `IRIS_UPDATE` | Cancelar un análisis en curso |
+| `DELETE` | `/iris/results/{{id}}` | `IRIS_DELETE` | Eliminar un análisis |
+
+### Iniciar un análisis
+
+```http
+POST /iris/analyze
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "Correo sospechoso de Amazon",
+  "headers": "Received: from mail.evil.com (10.0.0.1)\nFrom: \"Amazon\" <no-reply@amaz0n-secure.com>\nReply-To: phisher@evil.com\nDKIM-Signature: v=1; a=rsa-sha256; d=amaz0n-secure.com;\nAuthentication-Results: spf=fail; dkim=fail; dmarc=fail"
+}
+```
+
+**Respuesta (asíncrona):**
+```json
+{
+  "message": "Analisis de cabeceras iniciado correctamente",
+  "analysisId": 42,
+  "status": "pending"
+}
+```
+
+### Consultar estado
+
+```http
+GET /iris/status?id=42
+Authorization: Bearer <token>
+```
+
+**Respuesta (en ejecución):**
+```json
+{
+  "analysisId": 42,
+  "status": "running",
+  "progress": 60
+}
+```
+
+### Informe completo
+
+```http
+GET /iris/results/42
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "analysisId": 42,
+  "title": "Correo sospechoso de Amazon",
+  "status": "finished",
+  "totalScore": -35,
+  "verdict": "Phishing",
+  "rules": [
+    { "ruleName": "SPF", "category": "authentication", "score": -20, "verdict": "fail", "recommendation": "..." },
+    { "ruleName": "DKIM", "category": "authentication", "score": -15, "verdict": "fail", "recommendation": "..." },
+    { "ruleName": "Reply-To check", "category": "header_analysis", "score": -10, "verdict": "fail", "recommendation": "..." }
+  ],
+  "recommendations": [
+    "El servidor de envío no está autorizado por el registro SPF...",
+    "La dirección Reply-To apunta a un dominio diferente al remitente..."
+  ]
+}
+```
+
+### Reglas de análisis
+
+Iris ejecuta **8 reglas atómicas** registradas mediante decorador (`@iris_rules.register`), cada una en su propio archivo dentro de `rules/`:
+
+| Regla | Categoría | Score máx | Score mín |
+|---|---|---|---|
+| SPF | authentication | +15 | -20 |
+| DKIM | authentication | +15 | -15 |
+| DMARC | authentication | +15 | -20 |
+| Reply-To check | header_analysis | +3 | -10 |
+| Return-Path mismatch | header_analysis | 0 | -8 |
+| Message-ID check | header_analysis | 0 | -4 |
+| Content-Type check | header_analysis | 0 | -2 |
+| From header check | header_analysis | 0 | -10 |
+
+Los umbrales de veredicto se configuran en `SecOpsConfig.json`:
+```json
+"iris": {
+  "legitimate_threshold": 30,
+  "suspicious_threshold": -10,
+  "min_headers": 2
+}
+```
+
+### Validación de entrada
+
+Antes de crear un análisis, Iris verifica que el texto contenga al menos `min_headers` líneas con formato de cabecera (`Clave: Valor`). Si no supera esta validación, la API responde con un error 400.
+
+### Frontend web
+
+La interfaz de Iris (`/iris`) sigue un layout de **strip horizontal + contenido completo**, diferenciándose de Sentinel (scroll vertical) y Aegis (tres paneles). Incluye:
+
+- **Strip de historial**: pestañas horizontales con scroll para cada análisis, con título (si se proporcionó), score y veredicto.
+- **Hover card**: al pasar el ratón sobre un ítem del strip, aparece una card con el título completo, fecha, puntuación y veredicto.
+- **Formulario de entrada**: textarea monoespaciada para pegar cabeceras + campo de título opcional.
+- **Visor de informe**: tarjetas expandibles por regla, sección de recomendaciones y cabeceras originales colapsables.
+- **Polling automático cada 2s** mientras el análisis está en ejecución.
+- **Eliminación**: desde el strip (con confirmación inline) o desde el visor del informe.
 
 ---
 
@@ -475,13 +684,13 @@ Todos los endpoints requieren autenticación OAuth (`Authorization: Bearer <acce
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `POST` | `/vaults/storables` | Añadir un `Account` o `CreditCard` al vault |
-| `DELETE` | `/vaults/storables` | Eliminar un Storable por `internalId` |
+| `POST` | `/acheron/storables` | Añadir un `Account` o `CreditCard` al vault |
+| `DELETE` | `/acheron/storables` | Eliminar un Storable por `internalId` |
 
 #### Ejemplo: añadir una cuenta
 
 ```http
-POST /vaults/storables
+POST /acheron/storables
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -510,7 +719,7 @@ Content-Type: application/json
 #### Ejemplo: añadir una tarjeta de crédito
 
 ```http
-POST /vaults/storables
+POST /acheron/storables
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -537,56 +746,92 @@ Content-Type: application/json
 
 ---
 
+## Web Frontend — SeQ Hub
+
+La interfaz web SPA (Vue 3 + Vite + Pinia + Vue Router) cuenta con un **hub central** rediseñado como dashboard de operaciones de seguridad:
+
+### Dashboard Hub (`/hub`)
+
+- **Layout partido 2/3 + 1/3**: Columna izquierda con hero `[ SeQ ]`; columna derecha con fichas de módulos scrolleables.
+- **Terminal de comandos**: Panel con efecto glass morphism (`backdrop-filter: blur(16px)`) y borde neón dorado. Reproduce escaneos reales (nikto, nmap, openvas) con typewriter y highlight sintáctico de JSON. Indicador LIVE pulsante en la barra de título.
+- **Fondo animado**: Orbes de color con blur 150px, rejilla hexagonal SVG, partículas flotantes, scan-lines CRT y granulado SVG — todo con animación CSS.
+- **Módulos glass**: Fichas con `backdrop-filter: blur(12px)`, borde izquierdo neón de 3px por módulo (verde Sentinel, azul Aegis, naranja Iris, púrpura Acheron). Hover con elevación y glow expansivo.
+- **Quick-stats**: Acceso directo al repositorio GitHub del proyecto y versión del sistema.
+- **Perfil**: Avatar circular fijo en esquina superior derecha, dropdown glass con perfil, rutas de administración y cierre de sesión.
+- **Tipografía**: Syne (display), Sora (body), JetBrains Mono (terminal).
+- **Responsive**: Colapsa a columna única en ≤1024px, scroll de página normal en móvil.
+
+---
+
 ## Infraestructura Docker
 
-El directorio `API/docker/` contiene los archivos Docker Compose para levantar los servicios de apoyo necesarios.
+El archivo `docker-compose.yml` en la raíz del repositorio orquesta todos los servicios mediante dos perfiles:
+
+- **`dev`**: Infraestructura únicamente (PostgreSQL, Ollama, OpenVAS). Para desarrollo local con la API ejecutándose en Python.
+- **`container`**: Infraestructura + contenedores de la API y frontend web. Para despliegue completo.
 
 ### Servicios principales
 
 | Servicio | Puerto | Descripción |
 |---|---|---|
-| **PostgreSQL** | 5432 | Base de datos principal |
-| **OpenVAS/GVM** | 9390 | Escáner de vulnerabilidades (API Greenbone) |
+| **PostgreSQL** | 15432 | Base de datos principal |
+| **OpenVAS/GVM** | 9390, 9392 | Escáner de vulnerabilidades (API Greenbone y UI web) |
 | **Ollama** | 11434 | IA local para Sentinel y Aegis |
 
 ### Levantamiento de servicios
 
 ```bash
-# Levantar todos los servicios de infraestructura
-cd API/docker
-docker-compose up -d
+# Solo infraestructura (desarrollo local)
+docker compose --profile dev up -d
 
-# O individualmente por servicio:
-cd API/docker/postgres     # PostgreSQL
-docker-compose up -d
-
-cd API/docker/openvas       # OpenVAS / GVM
-docker-compose up -d
-
-cd API/docker/ollama        # Ollama (IA local)
-docker-compose up -d
+# Despliegue completo (API + frontend web + infraestructura)
+docker compose --profile container up -d
 ```
 
-### Configuración de Ollama
+### Configuración de IA (módulo `scribe`)
 
-Para IA en Sentinel y Aegis, se requiere Ollama con un modelo compatible (ej. `llama3.1`):
+La generación con IA está centralizada en el módulo `scribe`, que llama al modelo
+mediante una **estrategia** inyectable. Hay dos estrategias disponibles:
+
+- **`ollama`** — modelo local (por defecto `llama3.2`), ideal para máquinas con GPU.
+- **`openai`** — API de OpenAI (por defecto `gpt-4o-mini`), pensada para desplegar
+  en un VPS sin GPU.
+
+La estrategia se elige en `API/SecOpsConfig.json`, con la posibilidad de usar una
+distinta por módulo:
+
+```json
+"ai": {
+  "defaultStrategy": "ollama",
+  "strategies": { "ollama": {}, "openai": {} },
+  "modules": { "sentinel": "ollama", "aegis": "openai" }
+}
+```
+
+Para la estrategia Ollama se requiere un modelo compatible:
 
 ```bash
 # Desde el contenedor Ollama
-docker exec -it ollama ollama pull llama3.1
+docker exec -it OllamaSeQ ollama pull llama3.2
 
 # O directamente en el host si Ollama está instalado
-ollama pull llama3.1
+ollama pull llama3.2
 ```
 
-Las variables de entorno para la API se configuran en `.env`:
+Las variables de entorno para la API se configuran en `API/.env`:
 
 ```
+# Estrategia Ollama (local)
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.1
+OLLAMA_MODEL=llama3.2
+
+# Estrategia OpenAI (requerida solo si algún módulo usa "openai")
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL=        # opcional (proxies / Azure / endpoints compatibles)
 ```
 
-> **Nota**: OpenVAS puede tardar varios minutos en iniciar la primera vez (descarga de plugins NVT). Verifica el estado en `http://localhost:9390`.
+> **Nota**: OpenVAS puede tardar ~15 minutos en iniciar la primera vez (descarga de plugins NVT). Verifica el estado en `http://localhost:9392`.
 
 ---
 
@@ -594,38 +839,33 @@ OLLAMA_MODEL=llama3.1
 
 ```
 SeQ/
-├── API/                        # API REST Flask (Sentinel + Aegis + Acheron)
-│   ├── run.py                  # Punto de entrada de la aplicación
-│   ├── init_db.py              # Inicialización del esquema de base de datos
-│   ├── docker/
-│   │   ├── openvas/            # Docker Compose para OpenVAS/GVM
-│   │   ├── postgres/           # Docker Compose para PostgreSQL
-│   │   └── ollama/             # Docker Compose para Ollama (IA local)
+├── API/                          # API REST Flask
+│   ├── run.py                    # Punto de entrada
+│   ├── Dockerfile                # Imagen Docker de la API
+│   ├── requirements.txt          # Dependencias Python
+│   ├── SecOpsConfig.json        # Configuración y prompts de IA
 │   └── src/
-│       ├── core/               # Modelos ORM y excepciones
-│       │   └── model/          # acheron.py, sentinel.py, aegis_model.py, general.py
-│       ├── endpoints/          # Blueprints Flask por módulo
-│       │   ├── sentinel.py     # Endpoints de escaneo
-│       │   ├── aegis_endpoints.py
-│       │   ├── acheron.py      # Endpoints del vault (operativo)
-│       │   ├── oauth.py
-│       │   ├── users.py
-│       │   └── health.py       # Health check
-│       ├── logic/              # Managers y lógica de negocio
-│       │   ├── managers/       # sentinel.py, acheron.py, aegis_managers.py, general.py
-│       │   ├── tasks.py        # Tareas asíncronas (escaneos, generación Aegis)
-│       │   ├── processors.py   # Procesadores de resultados (patrón Strategy)
-│       │   └── secrets.py      # Gestión de secretos de aplicación
-│       └── misc/               # Logging y utilidades
-├── Interface/
-│   ├── AcheronMobile/          # App Android (Kotlin) — Vault
-│   │   └── AcheronCore/        # Lógica de dominio del vault (Java)
-│   ├── AcheronWeb/             # Interfaz web del vault
-│   └── index.html              # Portal de entrada
-├── seq-landing/                # Landing page del proyecto
-├── shared/
-│   └── resources/              # Recursos compartidos
-└── REQUIREMENTS.txt
+│       └── modules/
+│           ├── users/            # Usuarios, OAuth 2.0 + JWT
+│           ├── shared/           # Componentes compartidos
+│           ├── sentinel/         # Escaneo: Nmap, Nikto, OpenVAS
+│           ├── iris/             # Análisis anti-phishing de cabeceras
+│           ├── aegis/            # Píldoras de concienciación
+│           ├── acheron/          # Vault de secretos cifrados
+│           ├── pages/            # UI estática
+│           ├── system/           # Configuración y logging
+│           └── infrastructure/   # Utilidades internas
+├── web/                          # Frontend web
+│   ├── Dockerfile                # Imagen Docker del frontend
+│   ├── nginx.conf                # Configuración Nginx (producción)
+│   └── app/                      # Vue 3 SPA (Vite + Pinia + Vue Router)
+├── mobile/                       # App móvil
+│   └── AcheronMobile/            # Android/Kotlin + AcheronCore (Java)
+├── docker-compose.yml            # Orquestación de servicios
+├── .github/workflows/            # CI/CD
+│   ├── sync-docs.yml             # Generación de docs (pdoc)
+│   └── static.yml                # Deploy a GitHub Pages
+└── .env                          # Variables de entorno (no commitear)
 ```
 
 ---
@@ -636,14 +876,59 @@ SeQ/
 |---|---|
 | API Backend | Python 3, Flask 3.0, SQLAlchemy 2.0 |
 | Base de datos | PostgreSQL (psycopg2) |
-| Autenticación | OAuth 2.0 + JWT (PyJWT) |
+| Autenticación | OAuth 2.0 + JWT (PyJWT, con `jti` claim) |
+| Hash de contraseñas | Argon2id (via argon2-cffi) |
 | Escaneo de puertos | Nmap + python-nmap |
 | Escaneo web | Nikto |
 | Análisis de vulnerabilidades | OpenVAS / GVM |
 | Generación de PDFs | ReportLab + Pillow |
-| Concienciación y generación de contenido | Ollama (IA local) + prompts especializados |
-| Obtención de vulnerabilidades recientes | Feeds de INCIBE-CERT + API pública CIRCL/NVD |
-| App móvil | Android / Kotlin |
-| Lógica de vault | Java + Lombok |
+| Concienciación y generación de contenido | Ollama (IA local, llama3.2) + prompts especializados |
+| Obtención de vulnerabilidades recientes | INCIBE-CERT + API pública CIRCL/NVD |
+| Análisis anti-phishing | Iris (reglas atómicas con registro por decorador) |
+| Frontend web | Vue 3 (Vite + Pinia + Vue Router) |
+| App móvil | Android / Kotlin + Jetpack Compose |
+| Lógica de vault | AcheronCore (Java) |
 | Rate limiting | Flask-Limiter |
+| Cola de tareas | SeQueue (threads + SimpleWorker) |
 | Infraestructura | Docker + Docker Compose |
+
+---
+
+## Quick Start
+
+```bash
+# Levantar infraestructura (BD, Ollama, OpenVAS)
+docker compose --profile dev up -d
+
+# Arrancar API
+cd API && python run.py
+# → http://0.0.0.0:5000
+```
+
+---
+
+---
+
+## Cambios recientes (2026-06-16)
+
+**Commit: `5e16faa` — 13 mejoras de seguridad y estabilidad**
+
+- ✅ **Autenticación JWT**: Tokens ahora incluyen claim `jti` (UUID4) para prevenir colisiones UNIQUE
+- ✅ **Hash de contraseñas**: Migrado de SHA-256 a **Argon2id** vía argon2-cffi (rehash transparente en login)
+- ✅ **Rutas de Acheron**: Corregido doble prefijo (`/acheron/acheron/vault` → `/acheron/vault`)
+- ✅ **Endpoints de páginas**: `/pages` ahora requieren OAuth token (anterior: públicos)
+- ✅ **Manejo de excepciones**: `require_attributes` ya no oculta excepciones de dominio (4xx/5xx correctos)
+- ✅ **Configuración centralizada**: `isolation_level` y `redis.socket_connect_timeout` ahora en `SecOpsConfig.json`
+- ✅ **SQL segura**: `_init_db` usa parámetros en lugar de f-strings
+- ✅ **Motor de BD**: Delegado a `unit_of_work` (singleton centralizado)
+
+---
+
+## Notas Importantes
+
+- `.env` contiene credenciales — **NO hacer commit**
+- `API/src/data/` está en `.gitignore` (outputs de escaneos)
+- OpenVAS tarda ~15min en iniciar la primera vez (descarga NVT feed)
+- PostgreSQL usa el puerto **15432** (no el estándar 5432) en desarrollo local
+- La documentación se genera automáticamente en la rama `docs` y se despliega a GitHub Pages
+- Los tokens JWT incluyen claim `jti` desde **2026-06-16** — es obligatorio en nueva emisión

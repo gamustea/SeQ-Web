@@ -1,16 +1,19 @@
 """
 Managers for security scan orchestration and result persistence.
 
-This module provides manager classes for coordinating various security scans:
-- NmapScanManager: Network exploration and security scanning
-- NiktoScanManager: Web server vulnerability scanning
-- OpenVASScanManager: Comprehensive vulnerability management
+This module provides manager classes for coordinating security scans:
+- NmapScanManager: Network exploration and security scanning.
+- NiktoScanManager: Web server vulnerability scanning.
+- OpenVASScanManager: Comprehensive vulnerability management.
 
-Each manager handles the complete lifecycle of a scan including:
-- Creating scan records in the database
-- Executing scans in background threads
-- Processing and saving results
-- Generating PDF reports
+Each manager handles the complete lifecycle of a scan:
+- Creating scan records via ScanRepository.
+- Executing scans in background threads.
+- Processing and saving results.
+- Generating PDF reports asynchronously.
+
+Database access is performed exclusively through UnitOfWork + ScanRepository.
+ScanManager no longer inherits from BaseManager.
 
 Usage:
     manager = NmapScanManager(user)
@@ -18,1412 +21,2340 @@ Usage:
     scan = manager.get_scan_by_id(scan_id)
 """
 
-import threading
+import hashlib
+import ipaddress
+import itertools
+import logging
+import os
+import re
 import uuid
-from enum import Enum
+
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Callable, Dict, List, Optional
+from urllib.parse import urlparse
 
-from sqlalchemy.orm import Session, joinedload
 
-from src.modules.users import User
-from src.modules.misc import ConfigReader, normalize_target
-from src.modules.shared import BaseManager
+import src.modules.system.config_reading as CR
+from src.modules.system.taskqueue import ITaskQueue, TaskQueue, TaskTrackingMixin, job_context
+from src.modules.aegis.exceptions import DocumentError
+from src.modules.shared import Document
+from src.modules.infrastructure import UnitOfWork
+from src.modules.infrastructure.session import get_db_session
+from .services.csv_logger import ScanLoggerFactory
 
+from .repositories import (
+    ScanRepository,
+    ScanFolderRepository,
+    SentinelReportRepository,
+    ProgramedScanRepository,
+    TracerouteRepository)
 from .model import (
     NiktoScan,
     NmapScan,
-    OpenPort,
     OpenVASScan,
-    OpenVASScanResult,
+    ProgramedScan,
     Scan,
+    ScanFolder,
     ScanStatus,
+    ScanType,
     SentinelDocument,
 )
-from .processors import (
+from .services import (
     NiktoResultProcessor,
     NmapResultProcessor,
     OpenVASResultProcessor,
-    ScanResultProcessor,
+    NiktoPrintingStrategy,
+    NmapPrintingStrategy,
+    OpenVASPrintingStrategy,
+    PDFCreator,
+    OpenVASTask,
+    TaskStatus,
+    _Task,
+    Scheduler,
+    HistoryStatsService,
+    TracerouteService,
 )
-from .reports import PDFCreator, NmapPrintingStrategy, NiktoPrintingStrategy, OpenVASPrintingStrategy
-from .tasks import NiktoScanTask, NmapScanTask, OpenVASTask, TaskStatus, _Task
+from .exceptions import (
+    ScanNotFoundError,
+    IPValidationError,
+    MaxHostsExceededError,
+    PortValidationError,
+    PrivateIPRequested,
+    InvalidProgramedTaskArgumentError,
+    ProgramedScanNotFoundError,
+    FolderNotFoundError,
+    FolderNameInvalidError,
+    ScanAlreadyInFolderError,
+)
 
 
-class ScanManager(BaseManager, ABC):
-    """Base class for scan managers.
+logger = logging.getLogger(__name__)
 
-    Responsibilities:
-        - Coordinate task execution and result persistence
-        - Manage scan lifecycle (create, execute, cancel, delete)
-        - Track running tasks and threads
-        - Provide common scan operations
+
+class ScanManager(TaskTrackingMixin, ABC):
+    """
+    Base class for scan managers.
+
+    Coordinates task execution and result persistence without inheriting from
+    BaseManager. All database access is performed through UnitOfWork and
+    ScanRepository, keeping transaction boundaries explicit.
+
+     Task lifecycle is managed by TaskQueue (the Redis-backed task queue).
 
     Class Attributes:
-        _running_tasks: Dictionary mapping scan_id to running task.
-        _running_threads: Dictionary mapping scan_id to running thread.
-        _running_tasks_lock: RLock for thread-safe task management.
+        _scan_timeout_margin: Seconds added to task timeout for wait().
 
     Attributes:
-        active_user: User executing the scan operations.
+        user: User executing the scan operations.
+        logger:      Logger instance for this manager.
     """
 
-    _running_tasks: Dict[int, _Task] = {}
-    _running_threads: Dict[int, threading.Thread] = {}
-    _running_tasks_lock = threading.RLock()
+    _scan_timeout_margin: int = 30
+    _registry: Dict[ScanType, type["ScanManager"]] = {}
 
-    def __init__(self, user: User, session: Optional[Session] = None):
-        """Initialize the scan manager.
+    SCAN_TYPE: Optional[ScanType] = None
+
+    EXTERNAL_ID_PREFIX = "scan:"
+    TASK_CATEGORY = "sentinel.scan"
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
+        """
+        Initialize the scan manager.
 
         Args:
-            user: User performing the scan operations.
-            session: Optional database session.
+            task_queue: Cola de tareas a usar (inyectable para tests). Por
+                defecto, el singleton ``TaskQueue``.
         """
-        super().__init__(session)
-        self.active_user = user
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
 
-    @classmethod
-    def _register_task(cls, scan_id: int, task: _Task, thread: Optional[threading.Thread] = None) -> None:
-        """Register a running task and its thread.
 
-        Args:
-            scan_id: ID of the scan.
-            task: Task instance to register.
-            thread: Thread running the task.
-        """
-        with cls._running_tasks_lock:
-            cls._running_tasks[scan_id] = task
-            if thread is not None:
-                cls._running_threads[scan_id] = thread
-
-    @classmethod
-    def _get_task(cls, scan_id: int) -> Optional[_Task]:
-        """Get a registered task by scan ID.
-
-        Args:
-            scan_id: ID of the scan.
-
-        Returns:
-            Task instance or None if not found.
-        """
-        with cls._running_tasks_lock:
-            return cls._running_tasks.get(scan_id)
-
-    @classmethod
-    def _unregister_task(cls, scan_id: int) -> None:
-        """Unregister a task and its thread.
-
-        Args:
-            scan_id: ID of the scan to unregister.
-        """
-        with cls._running_tasks_lock:
-            cls._running_tasks.pop(scan_id, None)
-            cls._running_threads.pop(scan_id, None)
-
-    @classmethod
-    def cancel_all_running(cls, timeout: float = 10.0) -> None:
-        """Cancel all running tasks and wait for threads to finish.
-
-        Intended to be called from the shutdown signal handler.
-
-        Args:
-            timeout: Maximum time to wait for threads to join.
-        """
-        with cls._running_tasks_lock:
-            task_snapshot = dict(cls._running_tasks)
-            thread_snapshot = dict(cls._running_threads)
-
-        for scan_id, task in task_snapshot.items():
-            try:
-                task.cancel()
-            except Exception:
-                pass
-
-        for scan_id, thread in thread_snapshot.items():
-            thread.join(timeout=timeout)
+    # =========================================================================
+    # SCAN QUERIES
+    # =========================================================================
 
     def get_scan_by_id(self, scan_id: int) -> Optional[Scan]:
-        """Get a scan by its ID.
+        """
+        Retrieve a scan by its primary key.
 
         Args:
-            scan_id: ID of the scan to retrieve.
+            scan_id: Primary key of the scan.
 
         Returns:
-            Scan instance or None if not found.
+            Scan instance (polymorphic subtype), or None if not found.
         """
-        try:
-            self._check_session()
-            scan = self.session.query(Scan).filter(Scan.id == scan_id).one_or_none()
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id(scan_id)
 
-            if scan:
-                self.logger.info(f"Escaneo {scan_id} encontrado")
-            else:
-                self.logger.warning(f"Escaneo {scan_id} no encontrado")
+        if not scan:
+            logger.warning(f"Escaneo {scan_id} no encontrado")
 
-            return scan
+        return scan
 
-        except Exception as e:
-            self.logger.error(f"Error obteniendo escaneo {scan_id}: {e}", exc_info=True)
-            raise
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
+        """
+        Retrieve all scans belonging to the active user.
 
-    def get_scans_for_user(self) -> List[Scan]:
-        """Get all scans for the active user.
+        Subclasses override this to apply joinedload for type-specific
+        relationships (open_ports_relation, incidents, results…).
 
         Returns:
-            List of Scan instances.
+            List of Scan instances ordered by start time descending.
         """
-        try:
-            self._check_session()
-            scans = self.session.query(Scan).filter(
-                Scan.user_id == self.active_user.id
-            ).all()
+        session = get_db_session()
+        scans = ScanRepository(session=session).get_by_user(user_id) # pyright: ignore[reportArgumentType]
 
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos")
-            return scans
+        logger.info(
+            f"Se obtuvieron {len(scans)} escaneos para el usuario {user_id}"
+        )
+        return scans
 
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo escaneos: {e}", exc_info=True)
-            raise
+    def get_scans_paginated(self, user_id: int, page: int = 1, per_page: int = 10):
+        """
+        Retrieve a paginated, formatted list of scans for a user.
 
-    def delete_scan(self, scan_id: int) -> bool:
-        """Delete a scan and its associated documents.
+        Uses the subclass's SCAN_TYPE to filter by scan type and delegates
+        formatting to format_scan().
 
         Args:
-            scan_id: ID of the scan to delete.
+            user_id:   Owner user primary key.
+            page:      1‑based page number.
+            per_page:  Items per page.
 
         Returns:
-            True if deleted successfully, False otherwise.
+            Tuple of (formatted_results: list[dict], total_count: int).
         """
-        try:
-            self._check_session()
-            scan = self.get_scan_by_id(scan_id)
-
-            if not scan:
-                return False
-
-            from src.modules.sentinel import SentinelDocument
-            docs = self.session.query(SentinelDocument).filter(
-                SentinelDocument.scan_id == scan_id
-            ).all()
-            for doc in docs:
-                self.session.delete(doc)
-            
-            self.session.delete(scan)
-            self._safe_commit()
-
-            self.logger.info(f"Escaneo {scan_id} eliminado")
-            return True
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error eliminando escaneo {scan_id}: {e}")
-            raise
+        if self.SCAN_TYPE is None:
+            raise NotImplementedError("SCAN_TYPE must be defined in subclass")
+        session = get_db_session()
+        repo = ScanRepository(session=session)
+        items, total_count = repo.get_scans_by_type_paginated(
+            user_id, self.SCAN_TYPE, page, per_page
+        )
+        formatted = [self.format_scan(item.id) for item in items]
+        return formatted, total_count
 
     def get_scan_progress(self, scan_id: int) -> Optional[int]:
-        """Get the progress percentage of a running scan.
+        """
+        Return the progress percentage (0-100) of a running scan.
+
+        Delegates to the TaskQueue registry via ``TaskTrackingMixin``.
 
         Args:
-            scan_id: ID of the scan.
+            scan_id: Primary key of the scan.
 
         Returns:
-            Progress percentage (0-100) or None if not running.
+            Integer percentage, or None if the scan is not in the task registry.
         """
-        task = self._get_task(scan_id)
-        if task:
-            progress = task.progress
-            self.logger.debug(f"Progreso de escaneo {scan_id}: {progress}%")
-            return progress
-        return None
+        return self.task_progress_of(scan_id)
 
     def get_scan_status(self, scan_id: int) -> Optional[str]:
-        """Get the status of a scan.
+        """
+        Return the current status string of a scan.
+
+        Checks the TaskQueue registry first (via ``TaskTrackingMixin``); falls
+        back to the database.
 
         Args:
-            scan_id: ID of the scan.
+            scan_id: Primary key of the scan.
 
         Returns:
-            Status string or None if not found.
+            Status string, or None if not found.
         """
-        task = self._get_task(scan_id)
-        if task:
-            return str(task.status)
+        status = self.task_status_of(scan_id)
+        if status is not None:
+            return status
         if self.is_scan_finished(scan_id):
             return str(TaskStatus.COMPLETED)
         return None
 
-    def get_document_by_id(self, document_id: int):
-        """Get a document by its ID.
+    def is_scan_finished(self, scan_id: int) -> bool:
+        """
+        Check whether a scan has reached FINISHED status.
 
         Args:
-            document_id: ID of the document to retrieve.
+            scan_id: Primary key of the scan.
 
         Returns:
-            SentinelDocument instance or None if not found.
-        """
-        try:
-            self._check_session()
-            document = self.session.query(SentinelDocument).filter(
-                SentinelDocument.id == document_id
-            ).one_or_none()
-
-            if document:
-                self.logger.info(f"Documento {document_id} encontrado")
-            else:
-                self.logger.warning(f"Documento {document_id} no encontrado")
-
-            return document
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo documento {document_id}: {e}", exc_info=True)
-            raise
-
-    def get_latest_document_by_scan_id(self, scan_id: int) -> Optional[SentinelDocument]:
-        """Get the most recent document for a scan.
-
-        Args:
-            scan_id: ID of the scan.
-
-        Returns:
-            SentinelDocument instance or None if not found.
-        """
-        try:
-            self._check_session()
-            document = self.session.query(SentinelDocument).filter(
-                SentinelDocument.scan_id == scan_id
-            ).order_by(
-                SentinelDocument.created_at.desc()
-            ).first()
-
-            if document:
-                self.logger.info(f"Último documento para scan {scan_id}: {document.id}")
-            else:
-                self.logger.warning(f"No hay documentos para scan {scan_id}")
-
-            return document
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo documento: {e}", exc_info=True)
-            raise
-
-    def get_documents_for_user(self) -> List[SentinelDocument]:
-        """Get all documents for the active user.
-
-        Returns:
-            List of SentinelDocument instances.
-        """
-        try:
-            self._check_session()
-            documents = self.session.query(SentinelDocument).filter(
-                SentinelDocument.user_id == self.active_user.id
-            ).order_by(
-                SentinelDocument.created_at.desc()
-            ).all()
-
-            self.logger.info(f"Se obtuvieron {len(documents)} documentos")
-            return documents
-
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo documentos: {e}", exc_info=True)
-            raise
-
-    def is_scan_finished(self, scan_id: int) -> Optional[bool]:
-        """Check if a scan has finished.
-
-        Args:
-            scan_id: ID of the scan to check.
-
-        Returns:
-            True if finished, False otherwise.
+            True if status == FINISHED, False otherwise (including not found).
         """
         scan = self.get_scan_by_id(scan_id)
         if not scan:
-            self.logger.warning(f"Escaneo {scan_id} no encontrado para verificar finalización")
+            logger.warning(f"Escaneo {scan_id} no encontrado para verificar finalización")
             return False
 
-        is_finished = scan.status == ScanStatus.FINISHED.value
-        return is_finished
+        return scan.status == ScanStatus.FINISHED.value # pyright: ignore[reportReturnType]
 
-    def cancel_scan(self, scan_id: int) -> bool:
-        """Cancel a running scan.
+    def delete_scan(self, scan_id: int) -> bool:
+        """
+        Delete a scan and its associated documents (including PDF files on disk).
 
         Args:
-            scan_id: ID of the scan to cancel.
+            scan_id: Primary key of the scan to delete.
+
+        Returns:
+            True if deleted successfully, False if the scan was not found.
+        """
+        try:
+            with UnitOfWork() as uow:
+                scan_repo = ScanRepository(uow)
+                doc_repo = SentinelReportRepository(uow)
+
+                scan = scan_repo.get_by_id(scan_id)
+                if not scan:
+                    return False
+
+                docs = doc_repo.get_documents_by_scan(scan_id)
+
+                for doc in docs:
+                    if doc.filename and os.path.exists(doc.filename): # type: ignore
+                        try:
+                            os.remove(doc.filename) # type: ignore
+                            logger.info(f"Archivo eliminado: {doc.filename}")
+                        except (OSError, IOError) as e:
+                            logger.warning(f"No se pudo eliminar archivo {doc.filename}: {e}", exc_info=True)
+                    doc_repo.delete(doc)
+
+                scan_repo.delete(scan)
+                # UnitOfWork commits on __exit__
+
+            logger.info(f"Escaneo {scan_id} eliminado")
+            return True
+
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Error eliminando escaneo {scan_id}: {e}", exc_info=True)
+            raise
+
+
+    @classmethod
+    def bulk_delete_scans(cls, scan_ids: list[int], user_id: int) -> dict:
+        """
+        Delete multiple scans and their documents in a single operation.
+
+        Cancels running scans before deleting. Returns per-scan status.
+
+        Args:
+            scan_ids: List of scan primary keys.
+            user_id:  Owner user primary key.
+
+        Returns:
+            Dict with ``deletedCount``, ``failedCount``, and ``results`` list.
+        """
+        results = []
+        for scan_id in scan_ids:
+            try:
+                mgr = cls.resolve_manager(scan_id)
+                cls.assert_scan_ownership(scan_id, user_id)
+                scan = mgr.get_scan_by_id(scan_id)
+                if not scan:
+                    results.append({"scanId": scan_id, "status": "error", "error": "not_found"})
+                    continue
+
+                if scan.status in ("pending", "running"):
+                    mgr.cancel_scan(scan_id, user_id)
+
+                mgr.delete_scan(scan_id)
+                results.append({"scanId": scan_id, "status": "ok", "error": None})
+            except Exception as e:
+                results.append({"scanId": scan_id, "status": "error", "error": str(e)})
+
+        deleted = sum(1 for r in results if r["status"] == "ok")
+        failed = len(results) - deleted
+        return {
+            "deletedCount": deleted,
+            "failedCount": failed,
+            "results": results,
+        }
+
+
+    # =========================================================================
+    # OWNERSHIP ASSERTIONS
+    # =========================================================================
+
+    @classmethod
+    def assert_scan_ownership(cls, scan_id: int, user_id: int) -> Scan:
+        """
+        Verifica que el escaneo pertenece al usuario. Lanza ScanNotFoundError
+        si no pertenece para evitar enumerar IDs ajenos.
+
+        Args:
+            scan_id: ID del escaneo a verificar.
+            user_id: ID del usuario que debería ser propietario.
+
+        Raises:
+            ScanNotFoundError: Si el escaneo no pertenece al usuario.
+        """
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id(scan_id)
+        if not scan:
+            raise ScanNotFoundError(scan_id)
+
+        from src.modules.users.exceptions import UserNotFoundError
+        from src.modules.users import UserManager
+        user = UserManager().get_user_by_id(user_id)
+        if not user:
+            raise UserNotFoundError(user_id)
+
+        if scan.user_id != user_id: # type: ignore
+            raise ScanNotFoundError(scan_id)
+
+        return scan
+
+    # =========================================================================
+    # LIFECYCLE OPERATIONS
+    # =========================================================================
+
+    def cancel_scan(self, scan_id: int, user_id: int) -> bool:
+        """
+        Cancel a running scan.
+
+        Signals the TaskQueue task to stop and marks the scan as CANCELLED
+        in the database.
+
+        Args:
+            scan_id: Primary key of the scan to cancel.
+            user_id: ID of the user requesting cancellation.
 
         Returns:
             True if cancelled successfully, False otherwise.
         """
         try:
-            scan = self.get_scan_by_id(scan_id)
-            if not scan:
-                self.logger.warning(f"Escaneo {scan_id} no encontrado, no se puede cancelar")
-                return False
+            # Valida existencia del escaneo, del usuario y la propiedad en un
+            # único punto (lanza ScanNotFoundError/UserNotFoundError si falla).
+            scan = self.assert_scan_ownership(scan_id, user_id)
 
-            if scan.user_id != self.active_user.id:
-                self.logger.warning(
-                    f"El usuario {self.active_user.username} no tiene permisos para cancelar el escaneo {scan_id}"
+            if scan.status not in ("pending", "running"):
+                logger.warning(
+                    f"El escaneo {scan_id} no se puede cancelar "
+                    f"(estado actual: {scan.status})"
                 )
                 return False
 
-            if scan.status not in ['pending', 'running']:
-                self.logger.warning(
-                    f"El escaneo {scan_id} no se puede cancelar (estado actual: {scan.status})"
+            sq_task = self.find_task(scan_id)
+
+            if sq_task is None:
+                logger.warning(
+                    f"No se encontro tarea activa para el escaneo {scan_id}"
                 )
                 return False
 
-            task = self._get_task(scan_id)
-            if task:
-                try:
-                    task.cancel()
-                    self.logger.info(f"Tarea del escaneo {scan_id} cancelada")
-                except Exception as e:
-                    self.logger.error(f"Error cancelando tarea del escaneo {scan_id}: {e}")
-                finally:
-                    self._unregister_task(scan_id)
-            else:
-                self.logger.warning(f"No se encontró tarea en ejecución para el escaneo {scan_id}")
+            cancelled = self._tq.cancel(sq_task.id)
+            if not cancelled:
+                logger.warning(f"No se pudo cancelar la tarea del escaneo {scan_id}")
                 return False
 
-            self._mark_scan_as(scan, ScanStatus.CANCELLED)
-            self._safe_commit()
+            with UnitOfWork() as uow:
+                scan_repo = ScanRepository(uow)
+                fresh_scan = scan_repo.get_by_id(scan_id)
+                if fresh_scan:
+                    scan_repo.update_status(fresh_scan, ScanStatus.CANCELLED)
 
-            self.logger.info(f"Escaneo {scan_id} cancelado exitosamente")
+            logger.info(f"Escaneo {scan_id} cancelado exitosamente")
             return True
 
-        except Exception as e:
-            self.logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Error cancelando escaneo {scan_id}: {e}", exc_info=True)
             return False
+
+    @classmethod
+    def reconcile_orphaned_scans(cls) -> int:
+        """
+        Marca como FAILED los escaneos huérfanos tras un apagado abrupto.
+
+        Si el proceso se mata mientras un escaneo está en PENDING/RUNNING, no
+        queda ninguna tarea viva en TaskQueue que lo actualice tras reiniciar:
+        el registro se queda en "running" para siempre y bloquea, p. ej., que
+        ``Scheduler`` vuelva a lanzar ese escaneo programado (ver
+        ``scheduling.py``). Se llama una vez al arrancar la API.
+
+        Returns:
+            Número de escaneos marcados como FAILED.
+        """
+        tq = TaskQueue.get_instance()
+        fixed = 0
+        with UnitOfWork() as uow:
+            repo = ScanRepository(uow)
+            for scan in repo.get_active_scans():
+                external_id = f"{cls.EXTERNAL_ID_PREFIX}{scan.id}"
+                task = tq.get_task_by_external_id(external_id, cls.TASK_CATEGORY)
+                # PENDING: el job sigue encolado en Redis y un nuevo worker lo
+                # recogerá normalmente. Cualquier otro caso (None, RUNNING
+                # "started" sin worker vivo, o un estado terminal que no llegó
+                # a sincronizarse) es un huérfano del proceso anterior.
+                if task is not None and task.status == TaskStatus.PENDING:
+                    continue
+                repo.update_status(scan, ScanStatus.FAILED)
+                fixed += 1
+        return fixed
+
+    # =========================================================================
+    # INTERNAL SCAN EXECUTION
+    # =========================================================================
+
+    def _execute_scan(
+        self,
+        scan_id: int,
+        task: _Task,
+        skip_normalize: bool = False,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """
+        Execute a scan and persist its results, with cancellation support.
+
+        Args:
+            scan_id:       Primary key of the scan being executed.
+            task:          Task instance that drives the actual scanning.
+            skip_normalize: Skip IP normalization if True.
+            cancel_check:  Optional callable returning True to cancel the scan.
+        """
+        thread_manager = self.__class__()
+        fresh_scan = None
+
+        try:
+            with UnitOfWork() as uow:
+                scan = ScanRepository(uow).get_by_id(scan_id)
+            if not scan:
+                logger.error(f"Escaneo {scan_id} no encontrado en el hilo")
+                return
+
+            thread_manager.update_scan_status(scan_id, ScanStatus.RUNNING)
+            logger.info(f"Iniciando escaneo {scan_id}")
+
+            if CR.is_host_reachability_check_enabled():
+                raw_target = scan.target if "://" in scan.target else f"tcp://{scan.target}"
+                parsed_target = urlparse(url=raw_target) # type: ignore
+                host = parsed_target.hostname or scan.target
+                reachable_port = parsed_target.port or CR.get_host_reachability_check_port()
+                reachable_timeout = CR.get_host_reachability_check_timeout()
+                if not self.is_host_reachable(host=host, port=reachable_port, timeout=reachable_timeout): # type: ignore
+                    logger.warning(
+                        f"Host '{host}' inalcanzable en puerto {reachable_port}. "
+                        f"Marcando escaneo {scan_id} como FAILED"
+                    )
+                    thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+                    return
+
+            task.scan()
+            success = task.wait(
+                timeout=task.timeout + self._scan_timeout_margin,
+                cancel_check=cancel_check,
+            )
+
+            no_results = task.results is None
+            if not success or no_results:
+                if task.status == TaskStatus.CANCELLED:
+                    logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                    thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
+                else:
+                    logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
+                    thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+                return
+
+            logger.info(f"Procesando resultados de escaneo {scan_id}")
+
+            processor  = thread_manager.result_processor # type: ignore
+            scan_type = scan.scan_type
+            domain_data = processor.process(task.results, scan.target) if scan_type == "nmap" else processor.process(task.results) # type: ignore
+
+            with UnitOfWork() as uow:
+                fresh_scan              = ScanRepository(uow).get_by_id(scan_id)
+                thread_manager._persist_scan_results(uow, fresh_scan, domain_data)
+                fresh_scan.status       = ScanStatus.FINISHED.value # type: ignore
+                fresh_scan.finished_at  = datetime.now() # type: ignore
+
+            logger.info(f"Escaneo {scan_id} completado exitosamente")
+            thread_manager._log_to_csv(scan_id, fresh_scan, task)
+
+        except (OSError, RuntimeError) as e:
+            if task.status == TaskStatus.CANCELLED:
+                logger.info(f"Escaneo {scan_id} cancelado por el usuario")
+                thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
+            else:
+                logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
+                thread_manager.update_scan_status(scan_id, ScanStatus.FAILED)
+            thread_manager._log_to_csv(scan_id, fresh_scan, task)
+
+    def update_scan_status(self, scan_id: int, status: ScanStatus) -> None:
+        """
+        Persist a status change for a scan, ignoring errors (best-effort).
+
+        Args:
+            scan_id: Primary key of the scan.
+            status:  New ScanStatus value.
+        """
+        try:
+            with UnitOfWork() as uow:
+                repo = ScanRepository(uow)
+                scan = repo.get_by_id(scan_id)
+                if scan:
+                    repo.update_status(scan, status)
+        except (OSError, RuntimeError) as update_err:
+            logger.error(f"Error actualizando estado de escaneo {scan_id}: {update_err}", exc_info=True)
+
+    def _log_to_csv(self, scan_id: int, scan: Scan, task: "_Task") -> None:
+        """
+        Registra el escaneo en el CSV correspondiente.
+        Fallos en logging no interrumpen el flujo del scan.
+
+        Args:
+            scan_id: Primary key del escaneo.
+            scan: Instancia del scan (puede estar detached de la sesión).
+            task: Task que ejecutó el scan.
+        """
+        try:
+            with UnitOfWork() as uow:
+                fresh_scan = ScanRepository(uow).get_by_id(scan_id)
+                scan_type = fresh_scan.scan_type # type: ignore
+                start = fresh_scan.started_at # type: ignore
+                end = fresh_scan.finished_at # type: ignore
+                status = fresh_scan.status # type: ignore
+                duration = (end - start).total_seconds() if end and start else 0 # type: ignore
+
+                data = {
+                    "duration_sec": round(duration, 2),
+                    "status": status,
+                    "concurrent_tasks": self._tq.get_status()["runningCount"],
+                }
+
+                self.append_csv_data(data, fresh_scan, task)
+
+            logger_obj = ScanLoggerFactory.get(scan_type) # type: ignore
+            logger_obj.log(data)
+            logger.debug(f"Escaneo {scan_id} registrado en CSV ({scan_type})")
+        except Exception as csv_err:
+            logger.warning(f"Error registrando escaneo {scan_id} en CSV: {csv_err}", exc_info=True)
+
+
+    # =========================================================================
+    # STATIC UTILITIES
+    # =========================================================================
+
+    @classmethod
+    def register(cls, scan_type: ScanType):
+        def decorator(subclass: type["ScanManager"]):
+            cls._registry[scan_type] = subclass
+            return subclass
+        return decorator
+
+    @classmethod
+    def resolve_manager(cls, scan_id: int) -> "ScanManager":
+        raw_type = cls.get_scan_type(scan_id)
+        try:
+            scan_type = ScanType(raw_type)
+        except ValueError:
+            raise ScanNotFoundError(scan_id)
+        manager_class = cls._registry.get(scan_type)
+        if manager_class is None:
+            raise ScanNotFoundError(scan_id)
+        return manager_class()
+
+    @classmethod
+    def get_scan_rich(cls, scan_id: int) -> Scan:
+        """Get scan with relationships eagerly loaded for background threads.
+
+        Uses UnitOfWork with eager-loading repository methods so that the
+        returned scan is fully populated before the session closes. Only
+        needed when lazy loading is unavailable (e.g. PDF generation thread).
+
+        Args:
+            scan_id: Primary key of the scan.
+
+        Returns:
+            Scan instance with all relationships loaded.
+
+        Raises:
+            ScanNotFoundError: If scan_id not found or type not registered.
+        """
+        with UnitOfWork() as uow:
+            repo = ScanRepository(uow)
+            scan = repo.get_by_id(scan_id)
+            if scan is None:
+                raise ScanNotFoundError(scan_id)
+            scan_type_raw = scan.scan_type
+
+            try:
+                scan_type = ScanType(scan_type_raw)
+            except ValueError:
+                raise ScanNotFoundError(scan_id)
+
+            if scan_type == ScanType.NMAP:
+                scan =  repo.get_nmap_rich(scan_id)
+            elif scan_type == ScanType.NIKTO:
+                scan = repo.get_nikto_rich(scan_id)
+            else:
+                scan = repo.get_openvas_rich(scan_id)
+
+        return scan
+
+    @staticmethod
+    def _require_non_empty(
+        value: object,
+        ErrorClass: type,
+        default_msg: str = "El parámetro debe ser una cadena no vacía"
+    ) -> str:
+        """Validate and strip a string, raising ErrorClass if empty/invalid."""
+        if not value or not isinstance(value, str):
+            raise ErrorClass(message=default_msg, ip_spec=str(value) if ErrorClass.__name__ == "IPValidationError" else str(value))
+        stripped = value.strip()
+        if not stripped:
+            msg_map = {
+                "IPValidationError": "La cadena de IPs está vacía",
+                "PortValidationError": "La cadena de puertos está vacía",
+            }
+            raise ErrorClass(
+                message=msg_map.get(ErrorClass.__name__, default_msg),
+                port_spec=stripped if ErrorClass.__name__ == "PortValidationError" else str(value)
+            )
+        return stripped
+
+    @classmethod
+    def get_scan_type(cls, scan_id: int) -> Optional[str]:
+        """
+        Devuelve el tipo del escaneo en función de su id.
+
+        Uses UnitOfWork because it is called from both request context
+        (resolve_manager) and background threads (resolve_printing_strategy).
+
+        Args:
+            scan_id: Id del escaneo a revisar
+
+        Returns:
+            Tipo del escaneo ("nmap", "nikto", "openvas")
+        """
+
+        with UnitOfWork() as uow:
+            scan = ScanRepository(uow).get_by_id(scan_id)
+            if scan is None:
+                raise ScanNotFoundError(scan_id)
+
+            scan_type = scan.scan_type
+
+            if scan_type is None:
+                return None
+
+            return scan_type # pyright: ignore[reportReturnType]
+
+    @classmethod
+    def _append_document_info(cls, scan, result: dict) -> None:
+        """Append the latest document ID and status to a scan result dict."""
+        inst = SentinelReportManager()
+        doc = inst.get_latest_document_by_scan_id(scan.id)
+        if doc:
+            result["documentId"] = doc.id
+            result["documentStatus"] = doc.status
+
+    @staticmethod
+    def validate_ip(ips_str: str, max_hosts: int = 10) -> List[str]:
+        """
+        Valida y expande una especificación de IPs/rangos.
+
+        Formatos soportados:
+        - IP individual: "192.168.1.1"
+        - CIDR: "192.168.1.0/24"
+        - Rangos por octeto: "192.168.1.1-10" o "192.168.1-2.1-10"
+        - Lista separada por comas: "192.168.1.1,192.168.1.5"
+        - Wildcards: "192.168.1.*" (equivalente a 192.168.1.0-255)
+
+        Raises:
+            IPValidationError: Si el formato es inválido.
+            MaxHostsExceededError: Si se excede max_hosts.
+
+        Returns:
+            Lista de IPs expandidas (sin duplicados).
+        """
+        def _expand_octal(rango_str: str) -> List[str]:
+            rango_str = rango_str.replace("*", "0-255")
+            octetos = rango_str.split(".")
+
+            if len(octetos) != 4:
+                raise IPValidationError(
+                    message="Deben ser exactamente 4 octetos",
+                    ip_spec=rango_str
+                )
+
+            rangos_octetos: List[range | List[int]] = []
+
+            for octeto in octetos:
+                if "-" in octeto:
+                    partes = octeto.split("-")
+                    if len(partes) != 2:
+                        raise IPValidationError(
+                            message="Rango de octeto inválido",
+                            ip_spec=rango_str
+                        )
+                    try:
+                        inicio = int(partes[0])
+                        fin = int(partes[1])
+                    except ValueError:
+                        raise IPValidationError(
+                            message="Los límites del rango deben ser numéricos",
+                            ip_spec=rango_str
+                        )
+                    if inicio > fin:
+                        raise IPValidationError(
+                            message="El inicio del rango no puede ser mayor que el fin",
+                            ip_spec=rango_str
+                        )
+                    rangos_octetos.append(range(inicio, fin + 1))
+                else:
+                    try:
+                        valor = int(octeto)
+                    except ValueError:
+                        raise IPValidationError(
+                            message="El octeto debe ser numérico",
+                            ip_spec=rango_str
+                        )
+                    rangos_octetos.append([valor])
+
+            lista_ips = []
+            for combinacion in itertools.product(*rangos_octetos):
+                ip_str = ".".join(map(str, combinacion))
+                try:
+                    ipaddress.ip_address(ip_str)
+                    lista_ips.append(ip_str)
+                except ValueError:
+                    continue
+
+            if not lista_ips:
+                raise IPValidationError(
+                    message="No se generaron IPs válidas desde el rango",
+                    ip_spec=rango_str
+                )
+            return lista_ips
+
+        ips_str = ScanManager._require_non_empty(ips_str, IPValidationError)
+
+        segmentos = [s.strip() for s in ips_str.split(",")]
+        lista_ips = []
+        for segmento in segmentos:
+            if not segmento:
+                raise IPValidationError(
+                    message="Segmento vacío encontrado",
+                    ip_spec=ips_str
+                )
+
+            if "/" in segmento:
+                try:
+                    red = ipaddress.ip_network(segmento, strict=False)
+                    num_hosts = red.num_addresses - 2 if red.num_addresses > 2 else red.num_addresses
+
+                    if num_hosts > max_hosts:
+                        raise MaxHostsExceededError(max_hosts=max_hosts, found=num_hosts)
+                    else:
+                        lista_ips.extend([str(ip) for ip in red.hosts()])
+                        if not lista_ips or red.prefixlen >= 31:
+                            lista_ips.extend([str(ip) for ip in red])
+                except ValueError as e:
+                    raise IPValidationError(
+                        message=f"Notación CIDR inválida: {str(e)}",
+                        ip_spec=segmento
+                    )
+
+            elif "-" in segmento:
+                try:
+                    ips_expandidas = _expand_octal(segmento)
+                    if len(ips_expandidas) > max_hosts:
+                        raise MaxHostsExceededError(max_hosts=max_hosts, found=len(ips_expandidas))
+                    lista_ips.extend(ips_expandidas)
+                except (ValueError, OSError) as e:
+                    raise IPValidationError(
+                        message=f"Error al procesar rango: {str(e)}",
+                        ip_spec=segmento
+                    )
+
+            else:
+                try:
+                    ip = ipaddress.ip_address(segmento)
+                    lista_ips.append(str(ip))
+                except ValueError:
+                    raise IPValidationError(
+                        message="Dirección IP inválida",
+                        ip_spec=segmento
+                    )
+
+        if not lista_ips:
+            raise IPValidationError(
+                message="No se generaron IPs válidas",
+                ip_spec=ips_str
+            )
+
+        if not CR.are_local_ips_allowed():
+            private_ips = [
+                ip for ip in lista_ips
+                if ipaddress.ip_address(ip).is_private
+            ]
+            if private_ips:
+                raise PrivateIPRequested(private_ips)
+
+        return list(dict.fromkeys(lista_ips))
+
+    @staticmethod
+    def validate_port(ports_str: str) -> List[int]:
+        """
+        Valida y expande una especificación de puertos.
+
+        Reglas de validación:
+        - Puertos en rango 1-65535
+        - Puertos y rangos en orden ascendente
+        - Rangos válidos (inicio < fin)
+        - No solapamiento de rangos
+        - Formato: "80", "80,443", "1-1000", "80,443-8080,9000"
+
+        Raises:
+            PortValidationError: Si el formato es inválido.
+
+        Returns:
+            Lista de puertos expandida (sin duplicados, ordenada).
+        """
+        ports_str = ScanManager._require_non_empty(ports_str, PortValidationError)
+
+        segmentos = ports_str.split(",")
+        ultimo_puerto = 0
+        lista_puertos: List[int] = []
+
+        for i, segmento in enumerate(segmentos):
+            segmento = segmento.strip()
+
+            if not segmento:
+                raise PortValidationError(
+                    message=f"Segmento vacío encontrado en la posición {i + 1}",
+                    port_spec=ports_str
+                )
+
+            if "-" in segmento:
+                partes = segmento.split("-")
+
+                if segmento.startswith("-"):
+                    if len(partes) != 2 or partes[0] != "":
+                        raise PortValidationError(
+                            message=f"Formato de rango incorrecto: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    try:
+                        fin = int(partes[1])
+                    except ValueError:
+                        raise PortValidationError(
+                            message=f"Puerto de fin no válido en rango: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    if fin < 1 or fin > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de fin fuera de rango (1-65535): {fin}",
+                            port_spec=ports_str
+                        )
+                    inicio = 1
+
+                elif segmento.endswith("-"):
+                    if len(partes) != 2 or partes[1] != "":
+                        raise PortValidationError(
+                            message=f"Formato de rango incorrecto: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    try:
+                        inicio = int(partes[0])
+                    except ValueError:
+                        raise PortValidationError(
+                            message=f"Puerto de inicio no válido en rango: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    if inicio < 1 or inicio > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                            port_spec=ports_str
+                        )
+                    fin = 65535
+
+                else:
+                    if len(partes) != 2:
+                        raise PortValidationError(
+                            message=f"Formato de rango incorrecto (demasiados guiones): '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    try:
+                        inicio = int(partes[0])
+                        fin = int(partes[1])
+                    except ValueError:
+                        raise PortValidationError(
+                            message=f"Puertos no numéricos en rango: '{segmento}'",
+                            port_spec=ports_str
+                        )
+                    if inicio < 1 or inicio > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                            port_spec=ports_str
+                        )
+                    if fin < 1 or fin > 65535:
+                        raise PortValidationError(
+                            message=f"Puerto de fin fuera de rango (1-65535): {fin}",
+                            port_spec=ports_str
+                        )
+                    if inicio >= fin:
+                        raise PortValidationError(
+                            message=f"Rango inválido: el inicio ({inicio}) debe ser menor que el fin ({fin})",
+                            port_spec=ports_str
+                        )
+
+                if inicio <= ultimo_puerto:
+                    raise PortValidationError(
+                        message=f"Los puertos no están en orden ascendente: {inicio} aparece después de {ultimo_puerto}",
+                        port_spec=ports_str
+                    )
+
+                lista_puertos.extend(range(inicio, fin + 1))
+                ultimo_puerto = fin
+
+            else:
+                try:
+                    puerto = int(segmento)
+                except ValueError:
+                    raise PortValidationError(
+                        message=f"Puerto no numérico: '{segmento}'",
+                        port_spec=ports_str
+                    )
+                if puerto < 1 or puerto > 65535:
+                    raise PortValidationError(
+                        message=f"Puerto fuera de rango (1-65535): {puerto}",
+                        port_spec=ports_str
+                    )
+                if puerto <= ultimo_puerto:
+                    raise PortValidationError(
+                        message=f"Los puertos no están en orden ascendente: {puerto} aparece después de {ultimo_puerto}",
+                        port_spec=ports_str
+                    )
+                lista_puertos.append(puerto)
+                ultimo_puerto = puerto
+
+        return list(dict.fromkeys(lista_puertos))
+
+    @staticmethod
+    def is_host_reachable(host: str, port: int = 80, timeout: float = 3.0) -> bool:
+        """
+        Verifica conectividad básica con un host sin dependencias externas.
+
+        Primero intenta TCP con ``socket.create_connection`` (maneja resolución
+        DNS automáticamente). Si el host responde con ``ConnectionRefusedError``
+        se considera alcanzable (el puerto está cerrado pero el host está vivo
+        y responde).
+
+        Si el puerto TCP no responde (timeout/sin ruta), se hace un fallback a
+        ``ping`` (ICMP echo): un host con firewall que descarta silenciosamente
+        los paquetes a puertos cerrados (p. ej. Windows Firewall por defecto)
+        daría un falso "inalcanzable" con solo el chequeo TCP, aunque nmap
+        encontraría puertos abiertos en otros rangos.
+
+        Args:
+            host:    Dirección IP o hostname a comprobar.
+            port:    Puerto TCP de destino (default: 80).
+            timeout: Tiempo máximo de espera en segundos (default: 3.0).
+
+        Returns:
+            ``True`` si el host responde (TCP aceptado/rechazado o ping ICMP).
+            ``False`` si no hay respuesta por ninguna vía.
+        """
+        import socket
+        try:
+            sock = socket.create_connection((host, port), timeout=timeout)
+            sock.close()
+            return True
+        except ConnectionRefusedError:
+            return True
+        except (socket.timeout, OSError):
+            pass
+
+        return ScanManager._ping_host(host, timeout)
+
+    @staticmethod
+    def _ping_host(host: str, timeout: float) -> bool:
+        """Fallback ICMP echo (``ping -c 1``) cuando el puerto TCP no responde."""
+        import subprocess
+        deadline = max(1, int(round(timeout)))
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", str(deadline), host],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=deadline + 1,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    # =========================================================================
+    # ABSTRACT INTERFACE
+    # =========================================================================
 
     @abstractmethod
     def run_scan(self, **kwargs) -> int:
-        """Start a new scan.
-
-        Returns:
-            Scan ID of the created scan.
-        """
-        pass
+        """Start a new scan. Returns the scan's primary key."""
 
     @abstractmethod
     def _create_scan_record(self, **kwargs) -> Scan:
-        """Create a new scan record in the database.
-
-        Returns:
-            Created scan record.
-        """
-        pass
+        """Create and persist the initial scan record."""
 
     @abstractmethod
-    def _get_result_processor(self) -> ScanResultProcessor:
-        """Get the result processor for this scan type.
-
-        Returns:
-            Result processor instance.
-        """
-        pass
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
+        """Persist domain data into the database within the given UnitOfWork."""
 
     @abstractmethod
-    def generate_report(self, scan_id: int) -> bytes:
-        """Generate a PDF report for the scan.
+    def format_scan(self, scan_id: int) -> dict:
+        """
+        Formatea un escaneo como diccionario JSON.
 
         Args:
-            scan_id: ID of the scan to generate report for.
+            scan_id: ID del escaneo.
 
         Returns:
-            Report bytes.
+            Diccionario con los datos del escaneo en formato JSON.
         """
+
+    @abstractmethod
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        """Añade datos específicos del tipo de scan al diccionario data para el CSV."""
         pass
 
-    def _execute_scan_in_thread(self, scan_id: int, task: _Task) -> None:
-        """Ejecuta escaneo en hilo background y persiste resultados."""
-        thread_manager = self.__class__(self.active_user)
 
-        try:
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan:
-                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado")
-                return
+class ProgramedScanManager():
 
-            thread_manager.logger.info(f"Iniciando escaneo {scan_id}")
+    _REQUIRED_ARGS: dict[ScanType, List[str]] = {
+        ScanType.NMAP:      ["target_host", "target_ports"],
+        ScanType.NIKTO:     ["target_domain"],
+        ScanType.OPENVAS:   ["target"]
+    }
 
-            TIME_MARGIN = 30
-            task.scan()
-            success = task.wait(timeout=task.timeout + TIME_MARGIN)
-            has_no_results = task.results is None
+    @classmethod
+    def register(
+        cls,
+        user_id: int,
+        scan_type: ScanType,
+        arguments: dict[str, str],
+        schedule_type: str,
+        schedule_config: dict
+    ):
+        cls._assert_valid_arguments(
+            scan_type=scan_type,
+            arguments=arguments
+        )
+        cls._assert_valid_scheduling_config(
+            schedule_type=schedule_type,
+            schedule_config=schedule_config
+        )
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.create(
+                user_id=user_id,
+                scan_type=scan_type,
+                arguments=arguments,
+                schedule_type=schedule_type,
+                schedule_config=schedule_config
+            )
+            next_run = Scheduler.calculate_next_run(
+                schedule_config=schedule_config,
+                schedule_type=schedule_type,
+                last_run=ps.last_run_at # type: ignore
+            )
+            repo.update_next_run(ps, next_run)
 
-            if not success or has_no_results:
-                thread_manager.logger.error(f"Escaneo {scan_id} falló. Estado: {task.status}")
-                thread_manager._mark_scan_as(scan, ScanStatus.FAILED)
-                thread_manager._safe_commit()
-                return
+        Scheduler.schedule(ps)
+        return ps
 
-            thread_manager.logger.info(f"Procesando resultados de escaneo {scan_id}")
-            
-            processor = thread_manager._get_result_processor()
-            domain_data = thread_manager._extract_domain_data(processor, task, scan)
-            thread_manager._persist_scan_results(scan, domain_data)
-            
-            thread_manager._mark_scan_as(scan, ScanStatus.FINISHED)
-            thread_manager._safe_commit()
+    @classmethod
+    def _assert_valid_arguments(cls, scan_type: ScanType, arguments: dict[str, str]):
+        required_list = cls._REQUIRED_ARGS[scan_type]
 
-            thread_manager.logger.info(f"Escaneo {scan_id} completado exitosamente")
+        for field in required_list:
+            if arguments.get(field) is None:
+                raise InvalidProgramedTaskArgumentError(scan_type, field)
 
-        except Exception as e:
-            thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
+    @classmethod
+    def _assert_valid_scheduling_config(
+        cls,
+        schedule_type: str,
+        schedule_config: dict
+    ):
+        if schedule_type == "interval":
+            every = schedule_config.get("every")
+            if not isinstance(every, (int, float)) or every <= 0:
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, f"interval every must be > 0, got: {every}"
+                )
+            unit = schedule_config.get("unit")
+            if unit not in ("minutes", "hours", "days"):
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, f"invalid interval unit: {unit}"
+                )
+
+        elif schedule_type == "cron":
+            cron_expr = schedule_config.get("cron")
+            if not cron_expr:
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, "missing cron expression"
+                )
             try:
-                thread_manager._safe_rollback()
-                error_scan = thread_manager.get_scan_by_id(scan_id)
-                if error_scan:
-                    thread_manager._mark_scan_as(error_scan, ScanStatus.FAILED)
-                    thread_manager._safe_commit()
-            except Exception as update_err:
-                thread_manager.logger.error(f"Error actualizando estado: {update_err}")
-        finally:
-            thread_manager.close_session()
-            self._unregister_task(scan_id)
+                from croniter import croniter as _ci
+                _ci(cron_expr, datetime.now())
+            except Exception:
+                raise InvalidProgramedTaskArgumentError(
+                    schedule_type, f"invalid cron expression: {cron_expr}"
+                )
 
-    def _mark_scan_as(self, scan: Scan, status: ScanStatus) -> None:
-        """Update scan status and finished timestamp.
+        else:
+            raise InvalidProgramedTaskArgumentError(
+                schedule_type, f"unknown schedule_type: {schedule_type}"
+            )
 
-        Args:
-            scan: Scan instance to update.
-            status: New status to set.
-        """
-        old_status = scan.status
-        scan.status = status.value
-        scan.finished_at = datetime.now()
-        self.logger.info(f"Estado del escaneo {scan.id} actualizado: {old_status} -> {status.value}")
-    
-    def _get_or_create_host(self, hostname: str, ip_address: str):
-        """Versión simplificada para Nikto."""
-        from src.modules.sentinel import Host
-        from src.modules.misc import normalize_target
-        
-        # Normalizar si es necesario
-        ip, host = normalize_target(hostname, resolve_hostname=True)
-        final_hostname = host or ip or hostname
-        final_ip = ip or ip_address
-        
-        host_obj = self.session.query(Host).filter(Host.hostname == final_hostname).first()
-        if host_obj:
-            return host_obj
-        
-        host_obj = Host(hostname=final_hostname, ip_address=final_ip, mac_address="")
-        self.session.add(host_obj)
-        self.session.flush()
-        return host_obj
+    @classmethod
+    def assert_ownership(cls, ps_id: int, user_id: int) -> ProgramedScan:
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            if not ps:
+                raise ProgramedScanNotFoundError(ps_id)
+            if ps.user_id != user_id: # type: ignore
+                raise ProgramedScanNotFoundError(ps_id)
+            return ps
 
-    @abstractmethod
-    def _extract_domain_data(self, processor, task, scan):
-        """Extrae datos de dominio del processor."""
-        pass
-    
-    @abstractmethod
-    def _persist_scan_results(self, scan, domain_data):
-        """Persiste los datos procesados en la base de datos."""
-        pass   
+    @classmethod
+    def get_scans_for_user(cls, user_id: int) -> List[ProgramedScan]:
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            programed_scans = repo.get_by_user(user_id)
+
+        return programed_scans
+
+    @classmethod
+    def revoke(cls, ps_id: int, user_id: int) -> None:
+        Scheduler.unschedule(ps_id)
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            if ps is None:
+                raise ProgramedScanNotFoundError(ps_id)
+            if ps.user_id != user_id: # type: ignore
+                raise ProgramedScanNotFoundError(ps_id)
+            ps.is_active = False # type: ignore
+            repo.update(ps)
+
+    @classmethod
+    def delete(cls, ps_id: int, user_id: int) -> None:
+        Scheduler.unschedule(ps_id)
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            if ps is None:
+                raise ProgramedScanNotFoundError(ps_id)
+            if ps.user_id != user_id: # type: ignore
+                raise ProgramedScanNotFoundError(ps_id)
+            repo.delete(ps)
 
 
-class NmapScanManager(ScanManager):
-    """Manager for Nmap network security scans.
+# =============================================================================
+# SCAN FOLDERS
+# =============================================================================
 
-    Handles Nmap scan execution, result processing, and PDF report generation.
-    Inherits from ScanManager to provide common scan operations.
+class ScanFolderManager:
+    """
+    Manager for scan folder lifecycle.
 
-    Attributes:
-        scan_type: Type identifier for this manager ('nmap').
-
-    Example:
-        >>> manager = NmapScanManager(user)
-        >>> scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
+    Handles creation, renaming, deletion and scan assignment. A scan can belong
+    to at most one folder; deleting a folder leaves its scans unassigned.
     """
 
-    def run_scan(self, target_host: str, target_ports: str, timeout: int = 300) -> int:
-        """Start an Nmap scan.
+    _FOLDER_NAME_RE = re.compile(r"^[a-zA-Z0-9\s_-]+$")
 
-        Args:
-            target_host: Target IP address or hostname.
-            target_ports: Port range to scan (e.g., "1-1000").
-            timeout: Maximum scan duration in seconds.
+    @staticmethod
+    def _validate_name(name: str) -> str:
+        """Strip and validate a folder name, raising FolderNameInvalidError if invalid."""
+        stripped = (name or "").strip()
+        if not stripped or not ScanFolderManager._FOLDER_NAME_RE.match(stripped):
+            raise FolderNameInvalidError(name)
+        return stripped
 
-        Returns:
-            Scan ID of the created scan record.
-        """
-        try:
-            scan = self._create_scan_record(target=target_host)
-            scan_id = scan.id
+    @staticmethod
+    def _assert_scan_ownership(scan: Scan, user_id: int) -> None:
+        """Raise ScanNotFoundError if the scan does not belong to the user."""
+        if scan is None or scan.user_id != user_id:
+            raise ScanNotFoundError(scan.id if scan else 0)
 
-            task = NmapScanTask(
-                target_host=target_host,
-                target_ports=target_ports,
-                timeout=timeout
-            )
+    @staticmethod
+    def _assert_folder_ownership(folder: ScanFolder, user_id: int) -> None:
+        """Raise FolderNotFoundError if the folder does not belong to the user."""
+        if folder is None or folder.user_id != user_id:
+            raise FolderNotFoundError(folder.id if folder else 0)
 
-            thread = threading.Thread(
-                target=self._execute_scan_in_thread,
-                args=(scan_id, task),
-                daemon=True,
-                name=f"NmapScan-{scan_id}"
-            )
+    def create_folder(self, user_id: int, name: str) -> ScanFolder:
+        """Create and persist a new folder for the user."""
+        validated_name = self._validate_name(name)
+        with UnitOfWork() as uow:
+            folder = ScanFolder(user_id=user_id, name=validated_name)
+            ScanFolderRepository(uow).save(folder)
+        logger.info(f"Carpeta '{validated_name}' creada para usuario {user_id}")
+        return folder
 
-            self._register_task(scan_id, task, thread)
-            thread.start()
+    def rename_folder(self, folder_id: int, user_id: int, name: str) -> ScanFolder:
+        """Rename an existing folder owned by the user."""
+        validated_name = self._validate_name(name)
+        with UnitOfWork() as uow:
+            repo = ScanFolderRepository(uow)
+            folder = repo.get_by_id_and_user(folder_id, user_id)
+            self._assert_folder_ownership(folder, user_id)
+            folder.name = validated_name  # type: ignore
+            repo.update(folder)
+        logger.info(f"Carpeta {folder_id} renombrada a '{validated_name}'")
+        return folder
 
-            self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
-            return scan_id
+    def delete_folder(self, folder_id: int, user_id: int) -> None:
+        """Delete a folder and unassign its scans (folder_id -> NULL)."""
+        with UnitOfWork() as uow:
+            folder_repo = ScanFolderRepository(uow)
+            folder = folder_repo.get_by_id_and_user(folder_id, user_id)
+            self._assert_folder_ownership(folder, user_id)
 
-        except Exception as e:
-            self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
+            scan_repo = ScanRepository(uow)
+            for scan in scan_repo.get_by_folder(folder_id, user_id):
+                scan_repo.unset_folder(scan)
 
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        scan = self.get_scan_by_id(scan_id)
-        if not scan:
-            self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
-            raise ValueError(f"Escaneo {scan_id} no encontrado")
+            folder_repo.delete(folder)
+        logger.info(f"Carpeta {folder_id} eliminada por usuario {user_id}")
 
-        print(f"Creando documento con ia: {ai_report}")
-        document = SentinelDocument(
-            scan_id         = scan.id,
-            scan_type       = scan.scan_type,
-            document_type   = "sentinel",
-            filename        = "",
-            format          = "pdf",
-            status          = "pending",
-            user_id         = scan.user_id,
-            is_ai_generated = 1 if ai_report else 0,
-        )
-         
-        self.session.add(document)
-        self.session.flush()
-         
-        document.status = "running"
-        self.session.commit()
+    def move_scan_to_folder(self, scan_id: int, folder_id: int, user_id: int) -> Scan:
+        """Move a scan into a folder, replacing any previous folder assignment."""
+        with UnitOfWork() as uow:
+            scan_repo = ScanRepository(uow)
+            scan = scan_repo.get_by_id(scan_id)
+            self._assert_scan_ownership(scan, user_id)
 
-        thread = threading.Thread(
-            target=self._generate_pdf_async,
-            args=(document.id, scan.id, ai_report),
-            daemon=True,
-            name=f"PDFGeneration-Scan-{scan.id}"
-        )
+            folder_repo = ScanFolderRepository(uow)
+            folder = folder_repo.get_by_id_and_user(folder_id, user_id)
+            self._assert_folder_ownership(folder, user_id)
 
-        thread.start()
-        return document.id
-        """Start an Nmap scan.
+            if scan.folder_id == folder_id:
+                raise ScanAlreadyInFolderError(scan_id, folder_id)
 
-        Args:
-            target_host: Target IP address or hostname.
-            target_ports: Port range to scan (e.g., "1-1000").
-            timeout: Maximum scan duration in seconds.
-
-        Returns:
-            Scan ID of the created scan record.
-        """
-        try:
-            scan = self._create_scan_record(target=target_host)
-            scan_id = scan.id
-
-            task = NmapScanTask(
-                target_host=target_host,
-                target_ports=target_ports,
-                timeout=timeout
-            )
-
-            thread = threading.Thread(
-                target=self._execute_scan_in_thread,
-                args=(scan_id, task),
-                daemon=True,
-                name=f"NmapScan-{scan_id}"
-            )
-
-            self._register_task(scan_id, task, thread)
-            thread.start()
-
-            self.logger.info(f"Escaneo Nmap {scan_id} iniciado")
-            return scan_id
-
-        except Exception as e:
-            self.logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
-            raise
-
-    def _create_scan_record(self, target: str) -> NmapScan:
-        """Create an NmapScan record in the database.
-
-        Args:
-            target: Target host or IP address.
-
-        Returns:
-            Created NmapScan instance.
-        """
-        scan = NmapScan(
-            target=target,
-            user=self.active_user,
-            started_at=datetime.now()
-        )
-        self.session.add(scan)
-        self._safe_commit()
+            scan_repo.set_folder(scan, folder)
+        logger.info(f"Escaneo {scan_id} movido a carpeta {folder_id}")
         return scan
 
-    def _get_result_processor(self) -> NmapResultProcessor:
-        """Get the Nmap result processor.
+    def add_scans_to_folder(self, scan_ids: list[int], folder_id: int, user_id: int) -> list[Scan]:
+        """Add multiple scans to a folder at once."""
+        with UnitOfWork() as uow:
+            scan_repo = ScanRepository(uow)
+            folder_repo = ScanFolderRepository(uow)
+
+            folder = folder_repo.get_by_id_and_user(folder_id, user_id)
+            self._assert_folder_ownership(folder, user_id)
+
+            added = []
+            for scan_id in scan_ids:
+                scan = scan_repo.get_by_id(scan_id)
+                self._assert_scan_ownership(scan, user_id)
+                if scan.folder_id == folder_id:
+                    continue
+                scan_repo.set_folder(scan, folder)
+                added.append(scan)
+
+        logger.info(f"{len(added)} escaneos añadidos a carpeta {folder_id}")
+        return added
+
+    def remove_scan_from_folder(self, scan_id: int, user_id: int) -> Scan:
+        """Remove a scan from its current folder."""
+        with UnitOfWork() as uow:
+            scan_repo = ScanRepository(uow)
+            scan = scan_repo.get_by_id(scan_id)
+            self._assert_scan_ownership(scan, user_id)
+
+            if scan.folder_id is None:
+                return scan
+
+            scan_repo.unset_folder(scan)
+        logger.info(f"Escaneo {scan_id} sacado de su carpeta")
+        return scan
+
+    def get_folders_with_scans(self, user_id: int) -> dict:
+        """
+        Return all user folders with their scans plus an unfoldered group.
 
         Returns:
-            NmapResultProcessor instance.
+            Dict with keys ``folders`` (list) and ``unfoldered`` (dict).
         """
-        return NmapResultProcessor(self.logger)
+        default_name = CR.get_sentinel_default_folder_name()
 
-    def get_scans_for_user(self) -> List[NmapScan]:
-        """Get all Nmap scans for the active user.
+        with UnitOfWork() as uow:
+            folder_repo = ScanFolderRepository(uow)
+            scan_repo = ScanRepository(uow)
 
-        Returns:
-            List of NmapScan instances with loaded relationships.
-        """
-        try:
-            self._check_session()
-            scans = (
-                self.session.query(NmapScan)
-                .filter(NmapScan.user_id == self.active_user.id)
-                .options(
-                    joinedload(NmapScan.open_ports_relation).joinedload(OpenPort.port),
-                )
-                .all()
-            )
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
-            return scans
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo escaneos Nmap: {e}", exc_info=True)
-            raise
+            folders = folder_repo.get_by_user(user_id)
+            result_folders = []
+            for folder in folders:
+                scans = scan_repo.get_by_folder(folder.id, user_id)
+                result_folders.append({
+                    "id": folder.id,
+                    "name": folder.name,
+                    "createdAt": folder.created_at,
+                    "updatedAt": folder.updated_at,
+                    "scanCount": len(scans),
+                    "scans": [self._format_scan(scan) for scan in scans],
+                })
 
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        """Generate a PDF report for an Nmap scan.
+            unfoldered_scans = scan_repo.get_unfoldered_by_user(user_id)
+            unfoldered = {
+                "id": None,
+                "name": default_name,
+                "scanCount": len(unfoldered_scans),
+                "scans": [self._format_scan(scan) for scan in unfoldered_scans],
+            }
 
-        Args:
-            scan_id: ID of the scan.
-            ai_report: Include AI-generated analysis in the report.
+        return {
+            "folders": result_folders,
+            "unfoldered": unfoldered,
+        }
 
-        Returns:
-            Document ID of the generated document.
-        """
-        scan = self.get_scan_by_id(scan_id)
-        if not scan:
-            self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
-            raise ValueError(f"Escaneo {scan_id} no encontrado")
-
-        
-        self.logger.info(f"Creando documento con ai_report: {ai_report}")
-        document = SentinelDocument(
-            scan_id=scan.id,
-            scan_type=scan.scan_type,
-            document_type="sentinel",
-            filename="",
-            format="pdf",
-            status="pending",
-            user_id=scan.user_id,
-            is_ai_generated = 1 if ai_report else 0
-        )
-        
-        self.session.add(document)
-        self.session.flush()
-        
-        document.status = "running"
-        self.session.commit()
-
-        thread = threading.Thread(
-            target=self._generate_pdf_async,
-            args=(document.id, scan.id, ai_report),
-            daemon=True,
-            name=f"PDFGeneration-Scan-{scan.id}"
-        )
-
-        thread.start()
-        return document.id
-
-    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False):
-        """Generate PDF asynchronously in a background thread.
-
-        Args:
-            document_id: ID of the document to update.
-            scan_id: ID of the source scan.
-            ai_report: Include AI-generated analysis in the report.
-        """
-        thread_manager = self.__class__(self.active_user)
-        document = None
-        
-        try:
-            document = thread_manager.get_document_by_id(document_id)
-            if not document:
-                thread_manager.logger.error(f"Documento {document_id} no encontrado para generación de PDF")
-                return
-
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan:
-                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado para generación de PDF")
-                return
-
-            scan_type = scan.scan_type
-            if scan_type != "nmap":
-                thread_manager.logger.error(f"Tipo de escaneo {scan_type} no soportado para generación de PDF a traves de NmapScanManager")
-                return
-
-            thread_manager.logger.info(f"Generando análisis de seguridad con IA para el informe del escaneo {scan_id}")
-            
-            strategy = NmapPrintingStrategy(scan)
-            pdf_creator = PDFCreator(strategy)
-            pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
-
-            document.filename = pdf_path
-            document.status = "done"
-            document.generated_at = datetime.utcnow()
-            thread_manager._safe_commit()
-            
-            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
-
-        except Exception as e:
-            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
-            if document:
-                document.status = "error"
-                thread_manager._safe_commit()
-        
-        finally:
-            thread_manager.close_session()
-
-    def _extract_domain_data(self, processor, task, scan):
-        """Extrae datos de hosts y puertos."""
-        return processor.process(task.results, scan.target)
-
-    def _persist_scan_results(self, scan, domain_data):
-        """Persiste resultados Nmap."""
-        host_data, ports_data = domain_data
-        
-        # Persistir host
-        host = self._get_or_create_host(
-            hostname=host_data['hostname'],
-            ip_address=host_data['ip_address'],
-            mac_address=host_data['mac_address'],
-            vendor=host_data['vendor']
-        )
-        scan.host_id = host.id
-        
-        # Persistir puertos
-        for port_info in ports_data:
-            port = self._obtain_or_create_port(port_info['protocol'])
-            if port not in scan.target_ports:
-                scan.target_ports.append(port)
-            
-            open_port = OpenPort(
-                nmap_scan_id=scan.id,
-                port_id=port.id,
-                reason=port_info['reason'],
-                product=port_info['product'],
-                version=port_info['version'],
-                given_use=port_info['given_use']
-            )
-            self.session.add(open_port)
-
-    def _obtain_or_create_port(self, protocol: str):
-        """Obtiene o crea un puerto por su protocolo."""
-        from src.modules.sentinel import Port
-        port = self.session.query(Port).filter(Port.protocol == protocol).one_or_none()
-        if port:
-            return port
-        
-        new_port = Port(protocol=protocol)
-        self.session.add(new_port)
-        self.session.flush()
-        return new_port
-    
-    def _get_or_create_host(self, hostname: str, ip_address: str, mac_address: str = "", vendor: str = ""):
-        """Obtiene o crea un host."""
-        from src.modules.sentinel import Host
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        
-        host = self.session.query(Host).filter(Host.hostname == hostname).first()
-        if host:
-            return host
-        
-        stmt = pg_insert(Host).values(
-            hostname=hostname,
-            ip_address=ip_address,
-            mac_address=mac_address or "",
-            vendor=vendor
-        ).on_conflict_do_nothing(index_elements=["hostname"])
-        
-        self.session.execute(stmt)
-        self.session.flush()
-        
-        return self.session.query(Host).filter(Host.hostname == hostname).first()
+    @staticmethod
+    def _format_scan(scan: Scan) -> dict:
+        """Format a scan using the appropriate type manager."""
+        manager = ScanManager.resolve_manager(scan.id)
+        return manager.format_scan(scan.id)
 
 
-class NiktoScanManager(ScanManager):
-    """Manager for Nikto web vulnerability scans.
+# =============================================================================
+# NMAP
+# =============================================================================
 
-    Handles Nikto scan execution, result processing, and PDF report generation.
-    Inherits from ScanManager to provide common scan operations.
+class ScanHistoryManager:
+    """
+    Manager for per-host historical scan statistics.
 
-    Attributes:
-        scan_type: Type identifier for this manager ('nikto').
-
-    Example:
-        >>> manager = NiktoScanManager(user)
-        >>> scan_id = manager.run_scan(target_domain="example.com")
+    Orchestrates UnitOfWork + ScanRepository + HistoryStatsService to produce
+    the chart-ready payload consumed by both the REST endpoint and the PDF
+    report. Every query is scoped to the owning user, so a user can only ever
+    see statistics built from their own scans.
     """
 
-    def run_scan(self, target_domain: str, timeout: int = 60) -> int:
-        """Start a Nikto scan.
+    def list_scanned_hosts(self, user_id: int) -> List[dict]:
+        """Return the distinct hosts the user has finished scanning."""
+        with UnitOfWork() as uow:
+            return ScanRepository(uow).get_scanned_targets(user_id)
+
+    def get_host_history(self, user_id: int, target: str, scan_type: ScanType) -> dict:
+        """Build the historical statistics payload for a host + tool.
+
+        Args:
+            user_id:   Owner user primary key (enforces the security scope).
+            target:    The scanned host.
+            scan_type: The tool discriminator (nmap/nikto/openvas).
+
+        Returns:
+            JSON-serializable statistics payload (see HistoryStatsService.build).
+        """
+        scan_type = ScanType(scan_type)
+        limit = CR.get_sentinel_history_size()
+        with UnitOfWork() as uow:
+            scans = ScanRepository(uow).get_recent_finished(
+                user_id, target, scan_type, limit
+            )
+            scans = list(reversed(scans))  # ascending (oldest -> newest) for charting
+            return HistoryStatsService().build(scans, scan_type, target)
+
+
+class TracerouteManager(TaskTrackingMixin):
+    """
+    Manager for cached traceroutes from the SeQ server to scan targets.
+
+    The traceroute is **computed asynchronously** by a background worker (the
+    probe can take up to a minute on an unreachable host, which must not block
+    the request thread). The REST endpoint never runs the command itself: it
+    serves the cached path when fresh, otherwise enqueues a job and replies
+    immediately with ``status="pending"`` so the client can poll until the
+    result is ready.
+
+    State machine (no dedicated DB column — derived from the cached row plus the
+    live RQ task, which keeps this project migration-free):
+        - ``done``    → a row with hops exists and is within ``cacheHours``.
+        - ``failed``  → a row with **empty** hops exists and is within
+          ``retryFailedMinutes`` (a terminal "no route" result; kept briefly so
+          we do not re-probe an unreachable host on every modal open, but short
+          enough to retry soon and overridable via refresh).
+        - ``pending`` → a job is enqueued/running, or one was just submitted.
+
+    Results are cached per (user, target) and reused across all scan types
+    (Nmap, Nikto, OpenVAS). Every operation is scoped to the owning user via
+    ``ScanManager.assert_scan_ownership`` so a user can only ever trace targets
+    from their own scans.
+    """
+
+    EXTERNAL_ID_PREFIX = "sentinel-traceroute:"
+    TASK_CATEGORY = "sentinel.traceroute"
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
+        """Initialize the manager.
+
+        Args:
+            task_queue: Task queue to use (injectable for tests). Defaults to
+                the singleton ``TaskQueue``.
+        """
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
+
+    # =========================================================================
+    # REQUEST-SIDE (non-blocking)
+    # =========================================================================
+
+    def get_for_scan(self, scan_id: int, user_id: int, force_refresh: bool = False) -> dict:
+        """Return the traceroute for a scan's target without blocking.
+
+        Serves a fresh cached result when available; otherwise enqueues a
+        background job and returns a ``pending`` payload for the client to poll.
+
+        Args:
+            scan_id:       Scan whose target to trace.
+            user_id:       Owner user primary key (enforces the security scope).
+            force_refresh: If True, ignore the cache and recompute.
+
+        Returns:
+            JSON-serializable payload: ``target``, ``hops``, ``hopCount``,
+            ``computedAt`` (ISO), ``cached`` (bool) and ``status`` (one of
+            ``pending`` / ``done`` / ``failed``).
+        """
+        scan = ScanManager.assert_scan_ownership(scan_id, user_id)
+        target = scan.target
+
+        if not force_refresh:
+            cached = self._get_fresh_cached(user_id, target)
+            if cached is not None:
+                return cached
+
+            # A job already in flight for this (user, target): just report it.
+            task = self.find_task(self._trace_key(user_id, target))
+            if task is not None and task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+                return self._pending(target)
+
+        self._enqueue(user_id, target)
+        return self._pending(target)
+
+    def _enqueue(self, user_id: int, target: str) -> None:
+        """Submit the traceroute job to the background worker.
+
+        Uses a stable job id per (user, target) so a refresh replaces any job
+        still in flight instead of piling up duplicate probes. The job name must
+        be RQ-safe (letters, numbers, _, -); external_id can have other chars.
+        """
+        key = self._trace_key(user_id, target)
+        timeout = int(CR.get_sentinel_traceroute_timeout()) + 30
+        self._tq.submit(
+            func=TracerouteManager.execute_traceroute,
+            args=(user_id, target),
+            name=f"traceroute_{key}",  # RQ-safe job name
+            category=self.TASK_CATEGORY,
+            external_id=self.external_id_for(key),  # can have any chars
+            timeout=timeout,
+        )
+        logger.info(f"Traceroute encolado para usuario {user_id}, target '{target}'")
+
+    def _get_fresh_cached(self, user_id: int, target: str):
+        """Return the cached payload if the stored row is still fresh, else None.
+
+        A row with hops is fresh for ``cacheHours``; an empty (failed) row is
+        fresh for the much shorter ``retryFailedMinutes`` so transient failures
+        clear quickly without re-probing on every open.
+        """
+        with UnitOfWork() as uow:
+            trace = TracerouteRepository(uow).get_by_user_and_target(user_id, target)
+            if trace is None:
+                return None
+            if trace.hops:
+                max_age = timedelta(hours=CR.get_sentinel_traceroute_cache_hours())
+            else:
+                max_age = timedelta(minutes=CR.get_sentinel_traceroute_retry_failed_minutes())
+            if datetime.utcnow() - trace.created_at > max_age:
+                return None
+            return self._format(trace, cached_hit=True)
+
+    # =========================================================================
+    # WORKER-SIDE (background)
+    # =========================================================================
+
+    @staticmethod
+    def execute_traceroute(user_id: int, target: str) -> None:
+        """Entry point submitted to the TaskQueue: run the probe and persist it.
+
+        Runs in the background worker. ``TracerouteService.trace`` swallows its
+        own errors and returns an empty list on failure, so the row is always
+        written — an empty ``hops`` list is the terminal "no route" marker that
+        stops the client from polling forever.
+        """
+        with job_context():
+            hops = TracerouteService().trace(TracerouteManager._probe_host(target))
+            with UnitOfWork() as uow:
+                TracerouteRepository(uow).upsert(user_id, target, hops)
+            if not hops:
+                logger.warning(
+                    f"Traceroute vacío para target '{target}' (usuario {user_id}); "
+                    f"se cachea como fallo temporal. Revisa los logs de "
+                    f"TracerouteService para la causa."
+                )
+            else:
+                logger.info(
+                    f"Traceroute calculado para target '{target}' "
+                    f"(usuario {user_id}): {len(hops)} saltos"
+                )
+
+    # =========================================================================
+    # HELPERS
+    # =========================================================================
+
+    @staticmethod
+    def _trace_key(user_id: int, target: str) -> str:
+        """Stable per (user, target) key for the job id / external id.
+
+        Uses a hash because the target may contain URL characters (/, :, ?) that
+        RQ rejects in job IDs. The hash is deterministic and collision-resistant.
+        """
+        hash_obj = hashlib.sha256(f"{user_id}:{target}".encode())
+        return f"{user_id}_{hash_obj.hexdigest()[:12]}"
+
+    @staticmethod
+    def _probe_host(target: str) -> str:
+        """Resolve the host to probe from a stored target (strips URL/scheme).
+
+        The cache key stays the user-facing ``target`` string, but the actual
+        probe goes to the resolved IP for reliability (Nikto stores URLs).
+        """
+        from src.modules.shared._endpoints import normalize_target
+        try:
+            ip, _ = normalize_target(target)
+            return ip or target
+        except ValueError:
+            return target
+
+    @staticmethod
+    def _pending(target: str) -> dict:
+        """Payload returned while the traceroute is still being computed."""
+        return {
+            "target": target,
+            "hops": [],
+            "hopCount": 0,
+            "computedAt": None,
+            "cached": False,
+            "status": "pending",
+        }
+
+    @staticmethod
+    def _format(trace, cached_hit: bool) -> dict:
+        """Format a Traceroute row as a JSON-serializable payload.
+
+        ``status`` is derived from the stored hops: a row with hops is a
+        successful ``done`` result, an empty row is a terminal ``failed`` one.
+        """
+        return {
+            "target": trace.target,
+            "hops": trace.hops,
+            "hopCount": trace.hop_count,
+            "computedAt": trace.created_at.isoformat() if trace.created_at else None,
+            "cached": cached_hit,
+            "status": "done" if trace.hops else "failed",
+        }
+
+
+@ScanManager.register(ScanType.NMAP)
+class NmapScanManager(ScanManager):
+    SCAN_TYPE = ScanType.NMAP
+    _strategy_class = NmapPrintingStrategy
+
+    """
+    Manager for Nmap network security scans.
+
+    Handles Nmap scan execution, result processing, and async PDF generation.
+
+    Example:
+    >>> manager = NmapScanManager(user)
+    >>> scan_id = manager.run_scan(target_host="192.168.1.1", target_ports="1-1000")
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.result_processor = NmapResultProcessor()
+
+    def run_scan(
+            self,
+            target_host: str,
+            target_ports: str,
+            user_id: int,
+            timeout: int = 300,
+            programed_scan_id: Optional[int] = None
+    ) -> int:  # pylint: disable=arguments-differ
+        """
+        Start an Nmap scan in a background thread.
+
+        Args:
+            target_host:  Target IP address or hostname.
+            target_ports: Port range to scan (e.g., "1-1000").
+            timeout:      Maximum scan duration in seconds.
+
+        Returns:
+            Primary key of the created NmapScan record.
+        """
+        try:
+            scan    = self._create_scan_record(
+                target=target_host,
+                user_id=user_id,
+                programed_scan_id=programed_scan_id,
+            )
+            scan_id = scan.id
+
+            self._tq.submit(
+                func=NmapScanManager.execute_nmap_scan,
+                args=(scan_id, target_host, target_ports, timeout),
+                name=f"NmapScan-{scan_id}",
+                category=self.TASK_CATEGORY,
+                external_id=self.external_id_for(scan_id),
+                timeout=timeout + self._scan_timeout_margin,
+            )
+
+            logger.info(f"Escaneo Nmap {scan_id} iniciado")
+
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Error iniciando escaneo Nmap: {e}", exc_info=True)
+
+        return scan_id # type: ignore
+
+    @staticmethod
+    def execute_nmap_scan(scan_id: int, target_host: str, target_ports: str, timeout: int) -> None:
+        """Entry point submitted to the TaskQueue. Executes the Nmap scan with progress and cancellation support."""
+        with job_context() as job:
+            from src.modules.sentinel.services.tasks import NmapScanTask
+
+            task = NmapScanTask(
+                target_host=target_host,
+                target_ports=target_ports,
+                timeout=timeout,
+                progress_callback=job.progress,
+            )
+            NmapScanManager()._execute_scan(scan_id, task, cancel_check=job.cancelled)
+
+    def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NmapScan: # pylint: disable=arguments-differ
+        """Create and persist an NmapScan row."""
+        scan = NmapScan(target=target, user_id=user_id, started_at=datetime.now(), programed_scan_id=programed_scan_id)
+        with UnitOfWork() as uow:
+            ScanRepository(uow).save(scan)
+        return scan
+
+    def get_scan_by_id(self, scan_id: int) -> Optional[NmapScan]:
+        """
+        Retrieve an NmapScan by its primary key.
+
+        With request-scoped sessions, lazy loading of relationships
+        (host, open_ports_relation) works transparently.
+
+        Args:
+            scan_id: Primary key of the scan.
+
+        Returns:
+            NmapScan instance, or None.
+        """
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id_and_type(NmapScan, scan_id)
+
+        if not scan:
+            logger.warning(f"Escaneo Nmap {scan_id} no encontrado")
+
+        return scan
+
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
+        """
+        Retrieve all NmapScans for the active user with relationships eagerly loaded.
+
+        Returns:
+            List of NmapScan instances.
+        """
+        session = get_db_session()
+        scans = ScanRepository(session=session).get_by_type_and_user(NmapScan, user_id) # type: ignore
+
+        logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
+        return scans
+
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
+        """Persist Nmap host and port data into the database."""
+        host_data, ports_data = domain_data
+        scan_repo = ScanRepository(uow)
+        host = scan_repo.get_or_create_host(
+            hostname    = host_data["hostname"],
+            ip_address  = host_data["ip_address"],
+            mac_address = host_data["mac_address"],
+            vendor      = host_data["vendor"],
+        )
+        scan_repo.persist_nmap_results(scan, host, ports_data)
+
+    def format_scan(self, scan_id: int) -> dict:
+        scan = self.get_scan_by_id(scan_id)
+        if not scan:
+            raise ScanNotFoundError(scan_id)
+
+        result = {
+            "id": scan.id,
+            "scanType": "nmap",
+            "target": scan.target,
+            "status": getattr(scan, "status", "unknown"),
+            "startedAt": scan.started_at.isoformat(),
+            "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None, # type: ignore
+            "openPorts": [
+                {"port": f"{p.port_id}/{p.port.protocol}", "reason": p.reason}
+                for p in scan.open_ports_relation
+            ],
+            "totalOpenPorts": len(scan.open_ports_relation),
+        }
+        self._append_document_info(scan, result)
+        return result
+
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        data["target_host"] = scan.target
+        data["target_ports"] = getattr(task, "target_ports", "")
+        data["timeout_sec"] = task.timeout
+
+
+# =============================================================================
+# NIKTO
+# =============================================================================
+
+@ScanManager.register(ScanType.NIKTO)
+class NiktoScanManager(ScanManager):
+    SCAN_TYPE = ScanType.NIKTO
+    _strategy_class = NiktoPrintingStrategy
+
+    """
+    Manager for Nikto web vulnerability scans.
+
+    Example:
+    >>> manager = NiktoScanManager(user)
+    >>> scan_id = manager.run_scan(target_domain="example.com")
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.result_processor = NiktoResultProcessor()
+
+    def run_scan(self, target_domain: str, user_id: int, timeout: int = 6000, programed_scan_id: Optional[int] = None) -> int:  # pylint: disable=arguments-differ
+        """
+        Start a Nikto scan in a background thread.
 
         Args:
             target_domain: Target domain or hostname.
-            timeout: Maximum scan duration in seconds.
+            timeout:       Maximum scan duration in seconds.
 
         Returns:
-            Scan ID of the created scan record.
+            Primary key of the created NiktoScan record.
         """
         try:
-            scan = self._create_scan_record(target=target_domain)
+            scan = self._create_scan_record(
+                target=target_domain,
+                user_id=user_id,
+                programed_scan_id=programed_scan_id,
+            )
             scan_id = scan.id
+
+            self._tq.submit(
+                func=NiktoScanManager.execute_nikto_scan,
+                args=(scan_id, target_domain, timeout),
+                name=f"NiktoScan-{scan_id}",
+                category=self.TASK_CATEGORY,
+                external_id=self.external_id_for(scan_id),
+                timeout=timeout + self._scan_timeout_margin,
+            )
+
+            logger.info(f"Escaneo Nikto {scan_id} iniciado")
+            return scan_id # type: ignore
+
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
+            raise
+
+    @staticmethod
+    def execute_nikto_scan(scan_id: int, target_domain: str, timeout: int) -> None:
+        """Entry point submitted to the TaskQueue. Executes the Nikto scan with progress and cancellation support."""
+        with job_context() as job:
+            from src.modules.sentinel.services.tasks import NiktoScanTask
 
             task = NiktoScanTask(
-                target_domain=target_domain, 
-                timeout=timeout
+                target_domain=target_domain,
+                timeout=timeout,
+                progress_callback=job.progress,
             )
+            NiktoScanManager()._execute_scan(scan_id, task, cancel_check=job.cancelled)
 
-            thread = threading.Thread(
-                target=self._execute_scan_in_thread,
-                args=(scan_id, task),
-                daemon=True,
-                name=f"NiktoScan-{scan_id}"
-            )
-
-            self._register_task(scan_id, task, thread)
-            thread.start()
-
-            self.logger.info(f"Escaneo Nikto {scan_id} iniciado")
-            return scan_id
-
-        except Exception as e:
-            self.logger.error(f"Error iniciando escaneo Nikto: {e}", exc_info=True)
-            raise
-
-    def _create_scan_record(self, target: str) -> NiktoScan:
-        """Create a NiktoScan record in the database.
-
-        Args:
-            target: Target domain.
-
-        Returns:
-            Created NiktoScan instance.
-        """
-        scan = NiktoScan(
-            target=target,
-            user=self.active_user,
-            started_at=datetime.now()
-        )
-        self.session.add(scan)
-        self._safe_commit()
+    def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> NiktoScan: # pylint: disable=arguments-differ
+        """Create and persist a NiktoScan row."""
+        scan = NiktoScan(target=target, user_id=user_id, started_at=datetime.now(), programed_scan_id=programed_scan_id)
+        with UnitOfWork() as uow:
+            ScanRepository(uow).save(scan)
         return scan
 
-    def _get_result_processor(self) -> NiktoResultProcessor:
-        """Get the Nikto result processor.
-
-        Returns:
-            NiktoResultProcessor instance.
+    def get_scan_by_id(self, scan_id: int) -> Optional[NiktoScan]:
         """
-        return NiktoResultProcessor(self.logger)
+        Retrieve a NiktoScan by its primary key.
 
-    def get_scans_for_user(self) -> List[NiktoScan]:
-        """Get all Nikto scans for the active user.
-
-        Returns:
-            List of NiktoScan instances with loaded relationships.
-        """
-        try:
-            self._check_session()
-            scans = (
-                self.session.query(NiktoScan)
-                .filter(NiktoScan.user_id == self.active_user.id)
-                .options(
-                    joinedload(NiktoScan.incidents),
-                )
-                .all()
-            )
-            self.logger.info(f"Se obtuvoeron {len(scans)} escaneos Nikto")
-            return scans
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo escaneos Nikto: {e}", exc_info=True)
-            raise
-
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        """Generate a PDF report for a Nikto scan.
+        With request-scoped sessions, lazy loading of relationships
+        (incidents, host) works transparently.
 
         Args:
-            scan_id: ID of the scan.
-            ai_report: Include AI-generated analysis in the report.
+            scan_id: Primary key of the scan.
 
         Returns:
-            Document ID of the generated document.
+            NiktoScan instance, or None.
         """
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id_and_type(NiktoScan, scan_id)
+
+        if not scan:
+            logger.warning(f"Escaneo Nikto {scan_id} no encontrado")
+
+        return scan
+
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
+        """
+        Retrieve all NiktoScans for the active user with incidents eagerly loaded.
+
+        Returns:
+            List of NiktoScan instances.
+        """
+        session = get_db_session()
+        repo    = ScanRepository(session=session)
+        scans   = repo.get_by_type_and_user(NiktoScan, user_id)
+
+        logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
+        return scans
+
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
+        """Persist Nikto incidents and associate a host."""
+        incidents_data = domain_data
+        scan_repo = ScanRepository(uow)
+
+        from src.modules.shared._endpoints import normalize_target
+        ip, host = normalize_target(scan.target, resolve_hostname=True)
+        host = scan_repo.get_or_create_host(
+            hostname   = host or ip or scan.target,
+            ip_address = ip or scan.target,
+        )
+
+        scan_repo.persist_nikto_results(scan, host, incidents_data)
+
+    def format_scan(self, scan_id: int) -> dict:
         scan = self.get_scan_by_id(scan_id)
         if not scan:
-            self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
-            raise ValueError(f"Escaneo {scan_id} no encontrado")
+            raise ScanNotFoundError(scan_id)
 
-        document = SentinelDocument(
-            scan_id         = scan.id,
-            scan_type       = scan.scan_type,
-            document_type   = "sentinel",
-            filename        = "",
-            format          = "pdf",
-            status          = "pending",
-            user_id         = scan.user_id,
-            is_ai_generated = 1 if ai_report else 0,
-        )
-        
-        self.session.add(document)
-        self.session.flush()
-        
-        document.status = "running"
-        self.session.commit()
+        result = {
+            "id": scan.id,
+            "scanType": "nikto",
+            "target": scan.target,
+            "status": getattr(scan, "status", "unknown"),
+            "startedAt": scan.started_at.isoformat(),
+            "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None, # type: ignore
+            "incidents": [
+                {
+                    "osvdbId": i.osvdb_id,
+                    "method": i.method,
+                    "url": i.url,
+                    "description": i.description,
+                    "severity": getattr(i, "severity", "UNKNOWN"),
+                    "discoveredAt": i.discovered_at.isoformat() if i.discovered_at else None,
+                }
+                for i in scan.incidents
+            ],
+            "totalIncidents": len(scan.incidents),
+        }
+        self._append_document_info(scan, result)
+        return result
 
-        thread = threading.Thread(
-            target=self._generate_pdf_async,
-            args=(document.id, scan.id, ai_report),
-            daemon=True,
-            name=f"PDFGeneration-Scan-{scan.id}"
-        )
-
-        thread.start()
-        return document.id
-
-    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False):
-        """Generate PDF asynchronously in a background thread.
-
-        Args:
-            document_id: ID of the document to update.
-            scan_id: ID of the source scan.
-            ai_report: Include AI-generated analysis in the report.
-        """
-        thread_manager = self.__class__(self.active_user)
-        document = None
-        
-        try:
-            document = thread_manager.get_document_by_id(document_id)
-            if not document:
-                thread_manager.logger.error(f"Documento {document_id} no encontrado para generación de PDF")
-                return
-
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan:
-                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado para generación de PDF")
-                return
-
-            scan_type = scan.scan_type
-            if scan_type != "nikto":
-                thread_manager.logger.error(f"Tipo de escaneo {scan_type} no soportado para generación de PDF para NiktoScanManager")
-                return
-
-            thread_manager.logger.info(f"Generando análisis de seguridad con IA para el informe del escaneo {scan_id}")
-            
-            strategy = NiktoPrintingStrategy(scan)
-            pdf_creator = PDFCreator(strategy)
-            pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
-
-            document.filename = pdf_path
-            document.status = "done"
-            document.generated_at = datetime.utcnow()
-            thread_manager._safe_commit()
-            
-            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
-
-        except Exception as e:
-            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
-            if document:
-                document.status = "error"
-                thread_manager._safe_commit()
-        
-        finally:
-            thread_manager.close_session()
-
-    def _extract_domain_data(self, processor, task, scan):
-        return processor.process(task.results)
-
-    def _persist_scan_results(self, scan, domain_data):
-        """Persiste incidentes Nikto y asocia host."""
-        from src.modules.sentinel import Host
-        
-        incidents_data = domain_data
-        
-        # Crear/obtener incidentes
-        for inc_data in incidents_data:
-            incident = self._obtain_or_create_incident(inc_data)
-            if incident not in scan.incidents:
-                scan.incidents.append(incident)
-        
-        # Asociar host (usando target del scan)
-        host = self._get_or_create_host(
-            hostname=scan.target,  # Nikto usa el target como hostname inicial
-            ip_address=scan.target
-        )
-        scan.host = host
-    
-    def _obtain_or_create_incident(self, inc_data: dict):
-        """Obtiene o crea un incidente Nikto."""
-        from src.modules.sentinel import NiktoIncident
-        
-        existing = self.session.query(NiktoIncident).filter(
-            NiktoIncident.description == inc_data['description'],
-            NiktoIncident.url == inc_data['url'],
-            NiktoIncident.method == inc_data['method'],
-        ).first()
-        
-        if existing:
-            return existing
-        
-        incident = NiktoIncident(
-            description=inc_data['description'],
-            osvdb_id=inc_data['osvdb_id'],
-            method=inc_data['method'],
-            url=inc_data['url'],
-            severity=inc_data['severity']
-        )
-        self.session.add(incident)
-        self.session.flush()
-        return incident
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        data["target_domain"] = scan.target
+        data["timeout_sec"] = getattr(scan, "timeout", task.timeout) if hasattr(scan, "timeout") else task.timeout
 
 
+# =============================================================================
+# OPENVAS
+# =============================================================================
+
+@ScanManager.register(ScanType.OPENVAS)
 class OpenVASScanManager(ScanManager):
-    """Manager for OpenVAS vulnerability scans.
+    """
+    Manager for OpenVAS vulnerability scans.
 
-    Handles OpenVAS scan execution, result processing, and integration
-    with the OpenVAS manager service. Inherits from ScanManager to
-    provide common scan operations.
+    Reads OpenVAS connection parameters from the configuration module on init.
 
     Class Attributes:
-        SCAN_CONFIGS: Available OpenVAS scan configuration IDs.
-        PORT_LISTS: Available port list IDs for scanning.
-
-    Attributes:
-        hostname: OpenVAS manager hostname.
-        port: OpenVAS manager port.
-        username: OpenVAS manager username.
-        password: OpenVAS manager password.
-        scan_type: Type identifier for this manager ('openvas').
+        SCAN_CONFIGS: Known scan configuration UUIDs.
+        PORT_LISTS:   Known port list UUIDs.
 
     Example:
-        >>> manager = OpenVASScanManager(user)
-        >>> scan_id = manager.run_scan(target="192.168.1.1")
+    >>> manager = OpenVASScanManager(user)
+    ... scan_id = manager.run_scan(target="192.168.1.1")
     """
 
-    SCAN_CONFIGS = {
-        'full_fast': 'daba56c8-73ec-11df-a475-002264764cea',
-        'full_deep': '8715c877-47a0-438d-98a3-27c7a6ab2196',
-        'full_ultimate': '085569ce-73ed-11df-83c3-002264764cea'
-    }
+    SCAN_CONFIGS = CR.get_openvas_scan_configs()
+    PORT_LISTS = CR.get_openvas_port_list()
 
-    PORT_LISTS = {
-        'tcp_all': '33d0cd82-57c6-11e1-8ed1-406186ea4fc5',
-        'tcp_udp_all': '4a4717fe-57d2-11e1-9a26-406186ea4fc5',
-        'tcp_all_udp_top100': '730ef368-57e2-11e1-a90f-406186ea4fc5'
-    }
+    SCAN_TYPE = ScanType.OPENVAS
+    _strategy_class = OpenVASPrintingStrategy
 
-    def __init__(self, user: User, session: Optional[Session] = None):
-        """Initialize OpenVAS manager.
+    def __init__(self) -> None:
+        super().__init__()
 
-        Args:
-            user: User performing the scan.
-            session: Optional database session.
+        config = CR.get_openvas_environment()
+        self.hostname  = config["hostname"]
+        self.port      = config["port"]
+        self.username  = config["username"]
+        self.password  = config["password"]
+
+        self.result_processor = OpenVASResultProcessor()
+
+    def run_scan(               # pylint: disable=arguments-differ
+        self,
+        target: str,
+        user_id: int,
+        scan_config: str = "full_fast",
+        skip_normalize: bool = False,
+        programed_scan_id: Optional[int] = None,
+    ) -> int:
         """
-        super().__init__(user, session)
-
-        config = ConfigReader.get_openvas_config()
-        self.hostname = config["hostname"]  # type: ignore
-        self.port = config["port"]          # type: ignore
-        self.username = config["username"]  # type: ignore
-        self.password = config["password"]  # type: ignore
-
-    def run_scan(self, target: str, scan_config: str = 'full_fast', skip_normalize: bool = False) -> int:
-        """Start an OpenVAS scan.
+        Start an OpenVAS scan in a background thread.
 
         Args:
-            target: Target IP address or hostname.
-            scan_config: Scan configuration name (default: 'full_fast').
+            target:         Target IP address or hostname.
+            scan_config:    Scan configuration key (default: 'full_fast').
             skip_normalize: Skip target normalization if True.
 
         Returns:
-            Scan ID of the created scan record.
+            Primary key of the created OpenVASScan record.
         """
         try:
-            target_ip = target if skip_normalize else normalize_target(target)[0]
-            config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS['full_fast'])
-            scan = self._create_scan_record(target=target)
-            scan_id = scan.id
+            config_id = self.SCAN_CONFIGS.get(scan_config, self.SCAN_CONFIGS["full_fast"])
+            scan      = self._create_scan_record(
+                target=target,
+                user_id=user_id,
+                programed_scan_id=programed_scan_id,
+            )
+            scan_id   = scan.id
 
+            self._tq.submit(
+                func=OpenVASScanManager.execute_openvas_scan,
+                args=(scan_id, target, config_id, skip_normalize),
+                name=f"OpenVASScan-{scan_id}",
+                category=self.TASK_CATEGORY,
+                external_id=self.external_id_for(scan_id),
+                timeout=14400,
+            )
+
+            logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
+            return scan_id # type: ignore
+
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
+            raise
+
+    @staticmethod
+    def execute_openvas_scan(scan_id: int, target: str, scan_config_id: str, skip_normalize: bool) -> None:
+        """Entry point submitted to the TaskQueue. Executes the OpenVAS scan with progress and cancellation support."""
+        with job_context() as job:
+            from src.modules.sentinel.services.tasks import OpenVASTask
+
+            manager = OpenVASScanManager()
             task = OpenVASTask(
                 target=target,
-                hostname=self.hostname,
-                port=self.port,
-                username=self.username,
-                password=self.password,
-                scan_config=config_id
+                hostname=manager.hostname,
+                port=manager.port,
+                username=manager.username,
+                password=manager.password,
+                scan_config=scan_config_id,
+                progress_callback=job.progress,
             )
+            manager._execute_scan(scan_id, task, skip_normalize, cancel_check=job.cancelled)
 
-            thread = threading.Thread(
-                target=self._execute_scan_in_thread,
-                args=(scan_id, task, skip_normalize),
-                daemon=True,
-                name=f"OpenVASScan-{scan_id}"
-            )
-
-            self._register_task(scan_id, task, thread)
-            thread.start()
-
-            self.logger.info(f"Escaneo OpenVAS {scan_id} iniciado")
-            return scan_id
-
-        except Exception as e:
-            self.logger.error(f"Error iniciando escaneo OpenVAS: {e}", exc_info=True)
-            raise
-
-    def _create_scan_record(self, target: str) -> OpenVASScan:
-        """Create an OpenVASScan record in the database.
-
-        Args:
-            target: Target IP address or hostname.
-
-        Returns:
-            Created OpenVASScan instance.
-        """
-        temp_task_id = f"PENDING_{uuid.uuid4()}"
-
+    def _create_scan_record(self, target: str, user_id: int, programed_scan_id: Optional[int] = None) -> OpenVASScan: # pylint: disable=arguments-differ
+        """Create and persist an OpenVASScan row with placeholder task/report IDs."""
+        placeholder = f"PENDING_{uuid.uuid4()}"
         scan = OpenVASScan(
-            target=target,
-            user_id=self.active_user.id,
-            task_id=temp_task_id,
-            report_id=temp_task_id
+            target    = target,
+            user_id   = user_id,
+            task_id   = placeholder,
+            report_id = placeholder,
+            programed_scan_id = programed_scan_id,
         )
-        self.session.add(scan)
-        self._safe_commit()
+        with UnitOfWork() as uow:
+            ScanRepository(uow).save(scan)
         return scan
 
-    def _create_task(self, target: str, scan_config: str, timeout: int) -> OpenVASTask:
-        """Create an OpenVAS task.
+    def get_scan_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
+        """
+        Retrieve an OpenVASScan by its primary key.
+
+        With request-scoped sessions, lazy loading of relationships
+        (results, vulnerabilities, hosts) works transparently.
 
         Args:
-            target: Target IP address or hostname.
-            scan_config: Scan configuration ID.
-            timeout: Task timeout in seconds.
+            scan_id: Primary key of the scan.
 
         Returns:
-            OpenVASTask instance.
+            OpenVASScan instance, or None.
         """
-        return OpenVASTask(
-            target=target,
-            hostname=self.hostname,
-            port=self.port,
-            username=self.username,
-            password=self.password,
-            scan_config=scan_config,
-            timeout=timeout
-        )
+        session = get_db_session()
+        scan = ScanRepository(session=session).get_by_id_and_type(OpenVASScan, scan_id)
 
-    def _get_result_processor(self):
-        return OpenVASResultProcessor(self.logger)
-
-    def get_scans_for_user(self) -> List[OpenVASScan]:
-        """Get all OpenVAS scans for the active user.
-
-        Returns:
-            List of OpenVASScan instances with loaded relationships.
-        """
-        try:
-            self._check_session()
-            scans = (
-                self.session.query(OpenVASScan)
-                .filter(OpenVASScan.user_id == self.active_user.id)
-                .options(
-                    joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.vulnerability),
-                    joinedload(OpenVASScan.results).joinedload(OpenVASScanResult.host),
-                )
-                .all()
-            )
-            self.logger.info(f"Se obtuvieron {len(scans)} escaneos OpenVAS")
-            return scans
-        except Exception as e:
-            self._safe_rollback()
-            self.logger.error(f"Error obteniendo escaneos OpenVAS: {e}", exc_info=True)
-            raise
-
-    def _execute_scan_in_thread(self, scan_id: int, task: OpenVASTask, skip_normalize: bool = False) -> None:
-        """Execute OpenVAS scan in a background thread.
-
-        Args:
-            scan_id: ID of the scan to execute.
-            task: OpenVASTask instance to run.
-            skip_normalize: Skip target normalization if True.
-        """
-        thread_manager = self.__class__(self.active_user)
-
-        try:
-            if not skip_normalize:
-                target_ip, _ = normalize_target(task.target)
-                task.target = target_ip
-
-            super()._execute_scan_in_thread(scan_id, task)
-
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if scan and task.task_id:
-                scan.task_id = task.task_id
-                scan.report_id = task.report_id
-                thread_manager._safe_commit()
-
-        except Exception as e:
-            thread_manager.logger.error(f"Error en escaneo {scan_id}: {e}", exc_info=True)
-            try:
-                thread_manager._safe_rollback()
-                error_scan = thread_manager.get_scan_by_id(scan_id)
-                if error_scan:
-                    thread_manager._mark_scan_as(error_scan, ScanStatus.FAILED)
-                    thread_manager._safe_commit()
-            except Exception as update_err:
-                thread_manager.logger.error(f"Error actualizando estado: {update_err}")
-        finally:
-            thread_manager.close_session()
-
-    def generate_report(self, scan_id: int, ai_report: bool = False) -> int:
-        """Generate a PDF report for an OpenVAS scan.
-
-        Args:
-            scan_id: ID of the scan.
-            ai_report: Include AI-generated analysis in the report.
-
-        Returns:
-            Document ID of the generated document.
-        """
-        scan = self.get_scan_by_id(scan_id)
         if not scan:
-            self.logger.error(f"Escaneo {scan_id} no encontrado para generar reporte")
-            raise ValueError(f"Escaneo {scan_id} no encontrado")
+            logger.warning(f"Escaneo OpenVAS {scan_id} no encontrado")
 
-        document = SentinelDocument(
-            scan_id         = scan.id,
-            scan_type       = scan.scan_type,
-            document_type   = "sentinel",
-            filename        = "",
-            format          = "pdf",
-            status          = "pending",
-            user_id         = scan.user_id,
-            is_ai_generated = 1 if ai_report else 0,
+        return scan
+
+    def get_scans_for_user(self, user_id: int) -> List[Scan]:
+        """
+        Retrieve all OpenVASScans for the active user with relationships eagerly loaded.
+
+        Returns:
+            List of OpenVASScan instances.
+        """
+        session = get_db_session()
+        scans = ScanRepository(session=session).get_by_type_and_user(OpenVASScan, user_id)
+
+        logger.info(
+            f"Se obtuvieron {len(scans)} escaneos OpenVAS"
         )
-        
-        self.session.add(document)
-        self.session.flush()
-        
-        document.status = "running"
-        self.session.commit()
+        return scans
 
-        thread = threading.Thread(
-            target=self._generate_pdf_async,
-            args=(document.id, scan.id, ai_report),
-            daemon=True,
-            name=f"PDFGeneration-Scan-{scan.id}"
-        )
-
-        thread.start()
-        return document.id
-
-    def _generate_pdf_async(self, document_id: int, scan_id: int, ai_report: bool = False):
-        """Generate PDF asynchronously in a background thread.
+    def _execute_scan(
+        self,
+        scan_id: int,
+        task: OpenVASTask,
+        skip_normalize: bool = False,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """
+        Override: after the base execution, persist the OpenVAS task/report IDs.
 
         Args:
-            document_id: ID of the document to update.
-            scan_id: ID of the source scan.
-            ai_report: Include AI-generated analysis in the report.
+            scan_id:        Primary key of the scan.
+            task:           OpenVASTask instance.
+            skip_normalize: Skip IP normalization if True.
+            cancel_check:   Optional callable returning True to cancel the scan.
         """
-        thread_manager = self.__class__(self.active_user)
-        document = None
-        
-        try:
-            document = thread_manager.get_document_by_id(document_id)
-            if not document:
-                thread_manager.logger.error(f"Documento {document_id} no encontrado para generación de PDF")
-                return
+        from src.modules.shared._endpoints import normalize_target
+        if not skip_normalize:
+            target_ip, _ = normalize_target(task.target)
+            task.target  = target_ip # type: ignore
 
-            scan = thread_manager.get_scan_by_id(scan_id)
-            if not scan:
-                thread_manager.logger.error(f"Escaneo {scan_id} no encontrado para generación de PDF")
-                return
+        super()._execute_scan(scan_id, task, skip_normalize, cancel_check)
 
-            scan_type = scan.scan_type
-            if scan_type != "openvas":
-                thread_manager.logger.error(f"Tipo de escaneo {scan_type} no soportado para generación de PDF para OpenVASScanManager")
-                return
+        if task.task_id:
+            try:
+                with UnitOfWork() as uow:
+                    scan = ScanRepository(uow).get_by_id(scan_id)
+                    if scan:
+                        scan.task_id   = task.task_id
+                        scan.report_id = task.report_id
+            except (OSError, RuntimeError) as e:
+                logger.error(
+                    f"Error actualizando task_id/report_id para escaneo {scan_id}: {e}",
+                    exc_info=True
+                )
 
-            thread_manager.logger.info(f"Generando informe para el escaneo OpenVAS {scan_id}")
-            
-            strategy = OpenVASPrintingStrategy(scan)
-            pdf_creator = PDFCreator(strategy)
-            pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
+    def _persist_scan_results(self, uow, scan, domain_data) -> None:
+        """Persist OpenVAS vulnerabilities, hosts, and scan results."""
+        vulnerabilities_data, scan_results_data, _ = domain_data
+        scan_repo = ScanRepository(uow)
 
-            document.filename = pdf_path
-            document.status = "done"
-            document.generated_at = datetime.utcnow()
-            thread_manager._safe_commit()
-            
-            thread_manager.logger.info(f"PDF generado exitosamente para documento {document_id}")
-
-        except Exception as e:
-            thread_manager.logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
-            if document:
-                document.status = "error"
-                thread_manager._safe_commit()
-        
-        finally:
-            thread_manager.close_session()
-
-    def _extract_domain_data(self, processor, task, scan):
-        return processor.process(task.results)
-
-    def _persist_scan_results(self, scan, domain_data):
-        """Persiste vulnerabilidades y resultados OpenVAS."""
-        vulnerabilities_data, scan_results_data, hosts_ips = domain_data
-        
-        # 1. Procesar y guardar vulnerabilidades únicas
         vulnerability_map = {}
         for vuln_data in vulnerabilities_data:
-            vuln = self._obtain_or_create_vulnerability(vuln_data)
+            vuln = scan_repo.get_or_create_vulnerability(vuln_data)
             vulnerability_map[vuln.nvt_oid] = vuln
-        
-        # 2. Procesar hosts y crear resultados
-        for result_data in scan_results_data:
-            host = self._get_or_create_host(
-                hostname=result_data['host_ip'],
-                ip_address=result_data['host_ip']
-            )
-            
-            scan_result = OpenVASScanResult(
-                openvas_scan_id=scan.id,
-                vulnerability_id=vulnerability_map[result_data['nvt_oid']].id,
-                host_id=host.id
-            )
-            self.session.add(scan_result)
-        
-        self.session.flush()
 
-    def _obtain_or_create_vulnerability(self, vuln_data: dict):
-        """Obtiene o crea una vulnerabilidad OpenVAS."""
-        from src.modules.sentinel import OpenVASVulnerability
-        
-        nvt_oid = vuln_data['nvt_oid']
-        vuln = self.session.query(OpenVASVulnerability).filter(
-            OpenVASVulnerability.nvt_oid == nvt_oid
-        ).one_or_none()
-        
-        if vuln:
-            return vuln
-        
-        vuln = OpenVASVulnerability(**vuln_data)
-        self.session.add(vuln)
-        self.session.flush()
-        return vuln
+        scan_repo.persist_openvas_results(scan, scan_results_data, vulnerability_map)
+
+    def format_scan(self, scan_id: int) -> dict:
+        scan = self.get_scan_by_id(scan_id)
+        if not scan:
+            raise ScanNotFoundError(scan_id)
+
+        result = {
+            "id": scan.id,
+            "scanType": "openvas",
+            "target": scan.target,
+            "taskId": scan.task_id,
+            "reportId": scan.report_id,
+            "status": getattr(scan, "status", "unknown"),
+            "startedAt": scan.started_at.isoformat(),
+            "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None, # type: ignore
+            "vulnerabilities": [
+                {
+                    "nvtOid": r.vulnerability.nvt_oid,
+                    "name": r.vulnerability.name,
+                    "severityScore": r.vulnerability.severity_score,
+                    "severityClass": r.vulnerability.severity_class,
+                    "cvssBaseScore": r.vulnerability.cvss_base_score,
+                    "cvssVector": r.vulnerability.cvss_vector,
+                    "cveIds": r.vulnerability.cve_ids,
+                    "description": r.vulnerability.description,
+                    "solution": r.vulnerability.solution,
+                    "solutionType": r.vulnerability.solution_type,
+                    "affectedSoftware": r.vulnerability.affected_software,
+                    "hostIp": r.host.ip_address if r.host else None,
+                    "hostName": r.host.hostname if r.host else None,
+                }
+                for r in scan.results
+            ],
+            "totalVulnerabilities": len(scan.results),
+            "criticalCount": sum(1 for r in scan.results if r.vulnerability.severity_class == "Critical"),
+            "highCount": sum(1 for r in scan.results if r.vulnerability.severity_class == "High"),
+        }
+        self._append_document_info(scan, result)
+        return result
+
+    def append_csv_data(self, data: dict, scan: Scan, task: "_Task") -> None:
+        data["scan_config"] = getattr(scan, "scan_config_name", "")
+        data["skip_normalize"] = getattr(scan, "skip_normalize", False)
+
+
+# =============================================================================
+# SENTINEL REPORT MANAGER
+# =============================================================================
+
+class SentinelReportManager:
+    """
+    Manager for Sentinel document lifecycle and PDF report generation.
+
+    Handles document CRUD operations, ownership verification, and async
+    PDF generation for security scan reports.
+
+    Attributes:
+        user: User performing the operations.
+    """
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
+
+    @staticmethod
+    def _create_document(scan, ai_report: bool) -> int:
+        """Create a SentinelDocument for a scan and return its ID."""
+        with UnitOfWork() as uow:
+            document = SentinelDocument(
+                scan_id         = scan.id,
+                scan_type       = scan.scan_type,
+                document_type   = "sentinel",
+                filename        = "",
+                format          = "pdf",
+                status          = "running",
+                user_id         = scan.user_id,
+                is_ai_generated = 1 if ai_report else 0,
+            )
+            SentinelReportRepository(uow).save(document)
+
+        return document.id  # type: ignore
+
+    def get_document_by_id(self, document_id: int) -> Optional[SentinelDocument]:
+        """Retrieve a SentinelDocument by its primary key."""
+        session = get_db_session()
+        doc = SentinelReportRepository(session=session).get_by_id(document_id)
+
+        if not doc:
+            logger.warning(f"Documento {document_id} no encontrado")
+
+        return doc
+
+    def get_latest_document_by_scan_id(self, scan_id: int) -> Optional[SentinelDocument]:
+        """Retrieve the most recently created document for a scan."""
+        session = get_db_session()
+        doc = SentinelReportRepository(session=session).get_latest_document(scan_id)
+
+        return doc
+
+    def get_documents_for_user(self, user_id: int) -> List[SentinelDocument]:
+        """Retrieve all documents belonging to the active user."""
+        session = get_db_session()
+        docs = SentinelReportRepository(session=session).get_documents_by_user(user_id)  # type: ignore
+
+        logger.info(f"Se obtuvieron {len(docs)} documentos")
+        return docs
+
+    def get_documents_by_scan_id(self, scan_id: int) -> List[SentinelDocument]:
+        """Retrieve all documents associated with a specific scan."""
+        session = get_db_session()
+        docs = SentinelReportRepository(session=session).get_documents_by_scan(scan_id)
+
+        logger.info(f"Se obtuvieron {len(docs)} documentos para scan {scan_id}")
+        return docs
+
+    def delete_document(self, document_id: int) -> bool:
+        """
+        Delete a document and its associated file on disk.
+
+        Returns:
+            True if deleted successfully.
+
+        Raises:
+            DocumentError: If the document was not found.
+        """
+        with UnitOfWork() as uow:
+            doc_repo = SentinelReportRepository(uow)
+            doc = doc_repo.get_by_id(document_id)
+
+            if not doc:
+                raise DocumentError(f"Documento {document_id} no encontrado")
+
+            if doc.filename and os.path.exists(doc.filename):  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
+                try:
+                    os.remove(doc.filename)  # type: ignore
+                except (OSError, IOError) as e:
+                    logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}", exc_info=True)
+
+            doc_repo.delete(doc)
+
+        return True
+
+    def assert_document_ownership(self, document_id: int, user_id: int) -> Document:
+        """
+        Verify document ownership and return the document.
+
+        Args:
+            document_id: ID of the document.
+
+        Returns:
+            Document instance.
+
+        Raises:
+            DocumentError: If document not found or not owned by user.
+        """
+        session = get_db_session()
+        doc_repo = SentinelReportRepository(session=session)
+        doc = doc_repo.get_by_id(document_id)
+        if not doc:
+            raise DocumentError(f"Documento {document_id} no encontrado")
+
+        if doc.user_id != user_id: # type: ignore
+            raise DocumentError(f"Documento {document_id} no encontrado")
+
+        return doc
+
+    def generate_report(self, scan_id: int, ai_report: bool = False, strategy_class=None) -> int:
+        """
+        Create a SentinelDocument and start async PDF generation.
+
+        Args:
+            scan_id:        Primary key of the scan.
+            ai_report:      Include AI-generated analysis.
+            strategy_class: Printing strategy class for the scan type.
+
+        Returns:
+            Primary key of the created SentinelDocument.
+        """
+        scan_manager = ScanManager.resolve_manager(scan_id)
+        scan = scan_manager.get_scan_by_id(scan_id)
+        if not scan:
+            raise ValueError(f"Escaneo {scan_id} no encontrado")
+
+        doc_id = self._create_document(scan, ai_report)
+
+        self._tq.submit(
+            func=SentinelReportManager.execute_report_generation,
+            args=(doc_id, scan.id, ai_report),
+            name=f"PDFGeneration-Scan-{scan.id}",
+            category="sentinel.report",
+            external_id=f"sentinel-doc:{doc_id}",
+        )
+        return doc_id  # type: ignore
+
+    @staticmethod
+    def execute_report_generation(doc_id: int, scan_id: int, ai_report: bool) -> None:
+        """Entry point submitted to the TaskQueue for background PDF generation."""
+        SentinelReportManager()._generate_pdf_async(doc_id, scan_id, ai_report)
+
+    def _generate_pdf_async(
+        self,
+        document_id: int,
+        scan_id: int,
+        ai_report: bool,
+    ) -> None:
+        """Generate PDF in a background thread and update document status."""
+
+        try:
+            pdf_creator = PDFCreator(scan_id)
+            pdf_path = pdf_creator.print_pdf(ai_report=ai_report)
+
+            with UnitOfWork() as uow:
+                doc = SentinelReportRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.filename     = pdf_path  # type: ignore
+                    doc.status       = "done"  # type: ignore
+                    doc.generated_at = datetime.utcnow()  # type: ignore
+
+            logger.info(f"PDF generado exitosamente para documento {document_id}")
+
+        except (OSError, RuntimeError) as e:
+            logger.error(
+                f"Error generando PDF para documento {document_id}: {e}",
+                exc_info=True
+            )
+            self._update_document_status(document_id, "error")
+
+    def _update_document_status(self, document_id: int, status: str) -> None:
+        """Update document status in database."""
+        try:
+            with UnitOfWork() as uow:
+                doc = SentinelReportRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.status = status  # type: ignore
+        except (OSError, RuntimeError) as e:
+            logger.exception(f"Error updating document status for document {document_id}")
