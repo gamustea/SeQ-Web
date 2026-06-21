@@ -70,7 +70,7 @@ class VaultManager:
     def get_vault_for_user(self, is_recovery: bool = False) -> Optional[Vault]:
         session = get_db_session()
         repo = VaultRepository(session=session)
-        vault = repo.get_by_user(self.active_user.id, is_recovery)
+        vault = repo.get_by_user(self.active_user.id)
         return vault
 
     def upsert_vault_from_json(
@@ -84,13 +84,12 @@ class VaultManager:
             with UnitOfWork() as uow:
                 vault_repo = VaultRepository(uow)
 
-                existing_vault = vault_repo.get_by_user(self.active_user.id, is_recovery)
+                existing_vault = vault_repo.get_by_user(self.active_user.id)
                 created = existing_vault is None
 
                 if existing_vault is None:
                     vault = Vault(
                         user_id=self.active_user.id,
-                        is_recovery=is_recovery,
                         checker=data["checker"],
                         vault_key=data["vaultKey"],
                         transformation=algorithm.get("transformation", ""),
@@ -122,7 +121,7 @@ class VaultManager:
                 accounts_data = []
                 for acc in data.get("accounts", []) or []:
                     accounts_data.append({
-                        "id": acc.get("id"),
+                        "internal_id": acc.get("id"),
                         "title": acc.get("title"),
                         "created_at": self._parse_dt(acc.get("createdAt")),
                         "updated_at": self._parse_dt(acc.get("updatedAt")),
@@ -134,7 +133,7 @@ class VaultManager:
                 creditcards_data = []
                 for card in data.get("creditcards", []) or []:
                     creditcards_data.append({
-                        "id": card.get("id"),
+                        "internal_id": card.get("id"),
                         "title": card.get("title"),
                         "created_at": self._parse_dt(card.get("createdAt")),
                         "updated_at": self._parse_dt(card.get("updatedAt")),
