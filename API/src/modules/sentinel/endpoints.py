@@ -33,6 +33,7 @@ from .managers import (
 )
 from .model import ScanType
 from .exceptions import (
+    ScanError,
     ScanExecutionError,
     ScanNotFoundError,
     IPValidationError,
