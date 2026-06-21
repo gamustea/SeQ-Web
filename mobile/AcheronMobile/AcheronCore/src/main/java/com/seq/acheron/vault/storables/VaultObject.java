@@ -14,11 +14,13 @@ import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -55,6 +57,30 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
 
     private String pendingPrefix;
 
+    /**
+     * Generates a unique ID from the encrypted JSON content of a storable using SHA256.
+     * <p>
+     * The generated ID is deterministic: the same content always produces the same ID.
+     * This enables collision-free offline synchronization across multiple devices.
+     *
+     * @param encryptedJson the encrypted JSON representation of the storable
+     * @return a 16-character hexadecimal string (128 bits) derived from SHA256
+     * @throws RuntimeException if SHA256 is not available (should never happen on Android)
+     */
+    public static String generateIdFromContent(@NotNull String encryptedJson) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(encryptedJson.getBytes());
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.substring(0, 16);
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException("SHA-256 hash algorithm not available", e);
+        }
+    }
+
     public VaultObject(String code, String title, boolean isEncrypted, boolean needsAutoId) {
         this(code, title, isEncrypted, new Date(), new Date(), needsAutoId);
     }
@@ -84,6 +110,17 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
 
     public void assignId(String prefix, int seq) {
         this.id = prefix + seq;
+        this.pendingPrefix = null;
+    }
+
+    /**
+     * Assigns an ID directly (used for hash-based IDs).
+     *
+     * @param id the complete ID (e.g., a 16-char hash)
+     */
+    public void assignIdDirect(String id) {
+        Objects.requireNonNull(id, "id must not be null");
+        this.id = id;
         this.pendingPrefix = null;
     }
 

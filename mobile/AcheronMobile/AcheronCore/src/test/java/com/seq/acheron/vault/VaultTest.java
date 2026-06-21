@@ -103,6 +103,56 @@ public class VaultTest {
             // Si está descifrado, no puedo volver a descifrar
             assertThrows(IllegalStateException.class, vault::decryptAll);
         }
+
+        @Test
+        @DisplayName("Los IDs nuevos se generan como hash SHA256 de 16 caracteres")
+        void testHashIdGeneration() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+
+            // Crear un Account sin ID explícito (necesita auto-assignment)
+            Account acc = new Account("TestAccount", "user1", "example.com", "password123", false);
+            vault.add(acc);
+
+            String id = acc.getId();
+            assertNotNull(id, "El ID no debe ser null");
+            assertEquals(16, id.length(), "El ID debe tener 16 caracteres (truncado SHA256)");
+            assertTrue(id.matches("[0-9a-f]{16}"), "El ID debe ser 16 caracteres hexadecimales");
+        }
+
+        @Test
+        @DisplayName("Los hash IDs son únicos para storables distintos")
+        void testHashIdUniqueness() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+
+            // Crear accounts diferentes en el mismo vault
+            Account acc1 = new Account("TestAccount1", "user1", "example.com", "password123", false);
+            Account acc2 = new Account("TestAccount2", "user2", "example.com", "password456", false);
+
+            vault.add(acc1);
+            vault.add(acc2);
+
+            String id1 = acc1.getId();
+            String id2 = acc2.getId();
+
+            assertNotEquals(id1, id2, "Accounts diferentes deben generar hash IDs diferentes");
+        }
+
+        @Test
+        @DisplayName("El hash ID es fijo después de ser asignado")
+        void testHashIdImmutable() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+
+            Account acc = new Account("TestAccount", "user1", "example.com", "password123", false);
+            vault.add(acc);
+            String originalId = acc.getId();
+
+            // Editar el storable (cambiar contraseña)
+            acc.setPassword("newpassword456");
+            String editedId = acc.getId();
+
+            // El ID debe ser el mismo porque no se recalcula automáticamente
+            assertEquals(originalId, editedId, "El ID no cambia automáticamente tras editar el storable en memoria");
+        }
     }
 
     @Nested

@@ -97,11 +97,11 @@ public class CreditCardTest {
         String id1 = c1.getId();
         String id2 = c2.getId();
 
-        assertTrue(id1.startsWith("CDC"), "First card ID must start with CDC");
-        assertTrue(id2.startsWith("CDC"), "Second card ID must start with CDC");
-
-        assertEquals("CDC0", id1, "First card should have sequence 0");
-        assertEquals("CDC1", id2, "Second card should have sequence 1");
+        // IDs nuevos son hash de 16 caracteres hexadecimales
+        assertEquals(16, id1.length(), "Card ID should be 16 hex characters");
+        assertEquals(16, id2.length(), "Card ID should be 16 hex characters");
+        assertTrue(id1.matches("[0-9a-f]{16}"), "Card ID should be hexadecimal");
+        assertTrue(id2.matches("[0-9a-f]{16}"), "Card ID should be hexadecimal");
 
         assertNotEquals(id1, id2, "IDs must be unique");
 

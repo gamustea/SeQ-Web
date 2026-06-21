@@ -77,11 +77,11 @@ public class AccountTest {
         String id1 = acc1.getId();
         String id2 = acc2.getId();
 
-        assertTrue(id1.startsWith("ACC"), "First account ID must start with ACC");
-        assertTrue(id2.startsWith("ACC"), "Second account ID must start with ACC");
-
-        assertEquals("ACC0", id1, "First account should have sequence 0");
-        assertEquals("ACC1", id2, "Second account should have sequence 1");
+        // IDs nuevos son hash de 16 caracteres hexadecimales
+        assertEquals(16, id1.length(), "Account ID should be 16 hex characters");
+        assertEquals(16, id2.length(), "Account ID should be 16 hex characters");
+        assertTrue(id1.matches("[0-9a-f]{16}"), "Account ID should be hexadecimal");
+        assertTrue(id2.matches("[0-9a-f]{16}"), "Account ID should be hexadecimal");
 
         assertNotEquals(id1, id2, "IDs must be unique");
 

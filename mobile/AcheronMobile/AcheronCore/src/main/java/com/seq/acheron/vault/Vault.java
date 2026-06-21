@@ -15,6 +15,7 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -187,6 +188,42 @@ public class Vault implements JsonSerializable {
     }
 
     /**
+     * Produces the encrypted JSON of a single stored item <b>without</b>
+     * mutating the live, decrypted item.
+     * <p>
+     * The vault must currently be decrypted. The target item is located by its
+     * {@link Storable#getId() id}, {@link Storable#copy() copied}, and only the
+     * copy is encrypted using this vault's {@link VaultEncryptingStrategy}; the
+     * in-memory item is left untouched in plain-text state.
+     * <p>
+     * This enables surgical, per-item updates: the caller can ship just one
+     * item's ciphertext to the server (e.g. to a partial-update endpoint keyed
+     * by the item's id) instead of re-encrypting and re-uploading the whole
+     * vault for every single change.
+     *
+     * @param id the id of the item to export (e.g. {@code "ACC0"}, {@code "CDC1"})
+     * @return the encrypted JSON representation of the matching item
+     * @throws IllegalStateException   if the vault is currently encrypted
+     * @throws NoSuchElementException  if no item matches {@code id}
+     */
+    public String exportEncryptedStorable(String id) {
+        Objects.requireNonNull(id, "id must not be null");
+        if (isEncrypted) {
+            throw new IllegalStateException(
+                    "Vault must be decrypted to export a single storable");
+        }
+
+        Storable target = get(id);
+        if (target == null) {
+            throw new NoSuchElementException("No storable with id " + id);
+        }
+
+        Storable copy = target.copy();
+        copy.encrypt(strategy);
+        return copy.toJson();
+    }
+
+    /**
      * Adds an item to the vault.
      * <p>
      * If the storable was constructed with auto-ID generation
@@ -205,13 +242,13 @@ public class Vault implements JsonSerializable {
         Objects.requireNonNull(storable, "storable must not be null");
         if (storable instanceof VaultObject vo) {
             if (vo.needsIdAssignment()) {
-                String prefix = vo.getPendingPrefix();
-                int seq = prefixSequences
-                        .computeIfAbsent(prefix, k -> new AtomicInteger(0))
-                        .getAndIncrement();
-                vo.assignId(prefix, seq);
+                Storable copy = vo.copy();
+                ((Cypher) copy).encrypt(strategy);
+                String hashId = VaultObject.generateIdFromContent(copy.toJson());
+                vo.assignIdDirect(hashId);
+            } else {
+                syncPrefixSequence(vo.getId());
             }
-            syncPrefixSequence(vo.getId());
         }
         storables.add(storable);
         storables.sort(null);
