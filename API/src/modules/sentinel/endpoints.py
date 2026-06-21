@@ -315,7 +315,7 @@ def start_openvas_scan(data):
 @require_oauth_token
 @require_attributes(at_least_one=[AttributeType.SENTINEL_READ])
 @limiter.limit("300 per hour; 2000 per day")
-@handle_exceptions(default_exception=ScanNotFoundError, logger=logger)
+@handle_exceptions(default_exception=ScanError, logger=logger)
 def retrieve_all_scans(args):
     """Listar todos los escaneos del usuario con paginacion opcional"""
     scan_type = args["type"]
