@@ -1,6 +1,7 @@
 package com.seq.acheronmobile.data.vault
 
 import com.seq.acheron.util.CryptoUtils
+import com.seq.acheronmobile.data.model.StorableCreateRequest
 import com.seq.acheron.vault.User
 import com.seq.acheron.vault.Vault
 import com.seq.acheron.vault.VaultFactory
@@ -11,6 +12,10 @@ import com.seq.acheron.vault.storables.VaultObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.security.GeneralSecurityException
 
 data class StorableUi(
@@ -95,26 +100,72 @@ class VaultCryptoService {
         }
     }
 
+    /**
+     * Crea un Account en el vault (en claro, para el estado local) y devuelve la
+     * peticion de alta con sus campos ya cifrados, lista para `POST /storables`.
+     */
     fun addAccount(
         title: String, username: String, domain: String, password: String
-    ): String {
+    ): StorableCreateRequest {
         val v = vault ?: throw IllegalStateException("Vault not open")
         val acc = Account(title, username, domain, password, false)
         v.add(acc)
+        val request = buildCreateRequest(acc.id, "account")
         refreshState()
-        return acc.id
+        return request
     }
 
+    /**
+     * Crea un CreditCard en el vault (en claro, para el estado local) y devuelve
+     * la peticion de alta con sus campos ya cifrados, lista para `POST /storables`.
+     */
     fun addCreditCard(
         title: String, cardHolderName: String, cardNumber: String,
         expirationDate: String, cvv: String, postalCode: String
-    ): String {
+    ): StorableCreateRequest {
         val v = vault ?: throw IllegalStateException("Vault not open")
         val cc = CreditCard(title, cardHolderName, cardNumber, expirationDate,
             cvv, postalCode, false)
         v.add(cc)
+        val request = buildCreateRequest(cc.id, "creditcard")
         refreshState()
-        return cc.id
+        return request
+    }
+
+    /**
+     * Cifra el storable recien creado (sobre una copia) y arma el
+     * [StorableCreateRequest] con sus campos. Las claves del JSON cifrado que
+     * produce el Vault coinciden con los nombres esperados por la API.
+     */
+    private fun buildCreateRequest(id: String, kind: String): StorableCreateRequest {
+        val v = vault ?: throw IllegalStateException("Vault not open")
+        val j = Json.parseToJsonElement(v.exportEncryptedStorable(id)).jsonObject
+        fun field(name: String): String? = j[name]?.jsonPrimitive?.contentOrNull
+        return if (kind == "account") {
+            StorableCreateRequest(
+                kind = "account",
+                title = field("title"),
+                internalId = id,
+                createdAt = field("createdAt"),
+                updatedAt = field("updatedAt"),
+                username = field("username"),
+                domain = field("domain"),
+                password = field("password"),
+            )
+        } else {
+            StorableCreateRequest(
+                kind = "creditcard",
+                title = field("title"),
+                internalId = id,
+                createdAt = field("createdAt"),
+                updatedAt = field("updatedAt"),
+                cardHolderName = field("cardHolderName"),
+                cardNumber = field("cardNumber"),
+                expirationDate = field("expirationDate"),
+                postalCode = field("postalCode"),
+                cvv = field("cvv"),
+            )
+        }
     }
 
     fun removeStorable(internalId: String): Boolean {
@@ -125,33 +176,71 @@ class VaultCryptoService {
         return true
     }
 
-    fun updateAccount(id: String, title: String?, username: String?, domain: String?, password: String?): Boolean {
+    /**
+     * Aplica los cambios en claro al Account en memoria y devuelve SOLO los
+     * campos modificados ya cifrados, listos para enviarse a `PATCH /storables`.
+     *
+     * @return mapa `campo -> valor cifrado`; vacío si no hubo cambios;
+     *         `null` si el id no existe o no es un Account.
+     */
+    fun updateAccount(id: String, title: String?, username: String?, domain: String?, password: String?): Map<String, String>? {
         val v = vault ?: throw IllegalStateException("Vault not open")
-        val storable = v.get(id) ?: return false
-        if (storable !is Account) return false
-        title?.let { storable.title = it }
-        username?.let { storable.username = it }
-        domain?.let { storable.domain = it }
-        password?.let { storable.password = it }
+        val storable = v.get(id) ?: return null
+        if (storable !is Account) return null
+
+        val changed = mutableListOf<String>()
+        title?.let { storable.title = it; changed += "title" }
+        username?.let { storable.username = it; changed += "username" }
+        domain?.let { storable.domain = it; changed += "domain" }
+        password?.let { storable.password = it; changed += "password" }
+        if (changed.isEmpty()) return emptyMap()
+
         storable.updatedAt = java.util.Date()
+        val changes = encryptChangedFields(id, changed)
         refreshState()
-        return true
+        return changes
     }
 
+    /**
+     * Aplica los cambios en claro al CreditCard en memoria y devuelve SOLO los
+     * campos modificados ya cifrados, listos para enviarse a `PATCH /storables`.
+     *
+     * @return mapa `campo -> valor cifrado`; vacío si no hubo cambios;
+     *         `null` si el id no existe o no es un CreditCard.
+     */
     fun updateCreditCard(id: String, title: String?, cardHolderName: String?, cardNumber: String?,
-                         expirationDate: String?, cvv: String?, postalCode: String?): Boolean {
+                         expirationDate: String?, cvv: String?, postalCode: String?): Map<String, String>? {
         val v = vault ?: throw IllegalStateException("Vault not open")
-        val storable = v.get(id) ?: return false
-        if (storable !is CreditCard) return false
-        title?.let { storable.title = it }
-        cardHolderName?.let { storable.cardHolderName = it }
-        cardNumber?.let { storable.cardNumber = it }
-        expirationDate?.let { storable.expirationDate = it }
-        cvv?.let { storable.cvv = it }
-        postalCode?.let { storable.postalCode = it }
+        val storable = v.get(id) ?: return null
+        if (storable !is CreditCard) return null
+
+        val changed = mutableListOf<String>()
+        title?.let { storable.title = it; changed += "title" }
+        cardHolderName?.let { storable.cardHolderName = it; changed += "cardHolderName" }
+        cardNumber?.let { storable.cardNumber = it; changed += "cardNumber" }
+        expirationDate?.let { storable.expirationDate = it; changed += "expirationDate" }
+        cvv?.let { storable.cvv = it; changed += "cvv" }
+        postalCode?.let { storable.postalCode = it; changed += "postalCode" }
+        if (changed.isEmpty()) return emptyMap()
+
         storable.updatedAt = java.util.Date()
+        val changes = encryptChangedFields(id, changed)
         refreshState()
-        return true
+        return changes
+    }
+
+    /**
+     * Cifra el storable indicado (sobre una copia, sin tocar el item vivo) y
+     * extrae únicamente los campos listados. Las claves del JSON cifrado que
+     * produce el Vault coinciden con los nombres de campo esperados por la API.
+     */
+    private fun encryptChangedFields(id: String, fields: List<String>): Map<String, String> {
+        val v = vault ?: throw IllegalStateException("Vault not open")
+        val encrypted = Json.parseToJsonElement(v.exportEncryptedStorable(id)).jsonObject
+        return fields.associateWith { field ->
+            encrypted[field]?.jsonPrimitive?.content
+                ?: throw IllegalStateException("Missing encrypted field '$field' for storable $id")
+        }
     }
 
     fun lock() {
