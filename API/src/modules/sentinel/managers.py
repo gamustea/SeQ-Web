@@ -525,7 +525,7 @@ class ScanManager(TaskTrackingMixin, ABC):
             logger.info(f"Escaneo {scan_id} completado exitosamente")
             thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
-        except (OSError, RuntimeError) as e:
+        except Exception as e:
             if task.status == TaskStatus.CANCELLED:
                 logger.info(f"Escaneo {scan_id} cancelado por el usuario")
                 thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
