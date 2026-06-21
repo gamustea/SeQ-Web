@@ -110,19 +110,18 @@ public class Account extends VaultObject {
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
         Account oldAccount = (Account) copy();
+        super.transform(encryptor, encrypt);
 
         try {
             username = encrypt ?
                     encryptor.encrypt(username) :
                     encryptor.decrypt(username);
             domain = encrypt ?
-                    encryptor.encrypt(domain)
-                    : encryptor.decrypt(domain);
+                    encryptor.encrypt(domain) :
+                    encryptor.decrypt(domain);
             password = encrypt ?
                     encryptor.encrypt(password) :
                     encryptor.decrypt(password);
-
-            isEncrypted = encrypt;
         } catch (GeneralSecurityException e) {
             throw new RuntimeException("Error transforming account fields", e);
         }
@@ -151,14 +150,22 @@ public class Account extends VaultObject {
 
     @Override
     public String toJson() {
-        String safePassword = isEncrypted ? password : "***";
+        com.google.gson.JsonObject json = super.toJsonObject();
 
-        return "{" +
-                super.toJson() +
-                "\"username\":\"" + username + "\", " +
-                "\"domain\":\"" + domain + "\", " +
-                "\"password\":\"" + safePassword + "\"" +
-                '}';
+        String safePassword = isEncrypted ? password : "***";
+        json.addProperty("username", username);
+        json.addProperty("domain", domain);
+        json.addProperty("password", safePassword);
+
+        return json.toString();
+    }
+
+    String toStorageJson() {
+        com.google.gson.JsonObject json = super.toJsonObject();
+        json.addProperty("username", username);
+        json.addProperty("domain", domain);
+        json.addProperty("password", password);
+        return json.toString();
     }
 
     /**

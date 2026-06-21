@@ -1,15 +1,10 @@
 from marshmallow import Schema, fields, validate, validates_schema, ValidationError
 
 
-class IsRecoveryQuerySchema(Schema):
-    isRecovery = fields.Boolean(load_default=False)
-
-
 class StorableCreateSchema(Schema):
     kind = fields.String(required=True, validate=validate.OneOf(["account", "creditcard"]))
     title = fields.String()
     internalId = fields.String()
-    isRecovery = fields.Boolean(load_default=False)
     createdAt = fields.String()
     updatedAt = fields.String()
     username = fields.String()
@@ -35,19 +30,16 @@ class StorableCreateSchema(Schema):
 
 class StorableDeleteSchema(Schema):
     internalId = fields.String(required=True)
-    isRecovery = fields.Boolean(load_default=False)
 
 
 class BulkOperationSchema(Schema):
-    op = fields.String(required=True, validate=validate.OneOf(["update", "delete"]))
-    path = fields.String(required=True)
-    value = fields.Raw()
+    internalId = fields.String(required=True)
+    changes = fields.Dict(keys=fields.String(), required=True)
 
 
 class VaultUpsertResponseSchema(Schema):
     message = fields.String()
     vaultId = fields.Integer()
-    isRecovery = fields.Boolean()
 
 
 class StorableResponseSchema(Schema):
@@ -55,7 +47,6 @@ class StorableResponseSchema(Schema):
     storableId = fields.Integer()
     internalId = fields.String()
     vaultId = fields.Integer()
-    isRecovery = fields.Boolean()
     kind = fields.String()
 
 

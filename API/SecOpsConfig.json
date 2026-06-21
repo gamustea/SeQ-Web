@@ -171,6 +171,15 @@
     "folders": {
       "defaultFolderName": "Sin carpeta"
     },
+    "history": {
+      "maxScans": 5
+    },
+    "traceroute": {
+      "cacheHours": 24,
+      "maxHops": 30,
+      "timeout": 60,
+      "retryFailedMinutes": 15
+    },
     "directories": {
       "csv": "data/sentinel/csv",
       "output": "data/sentinel/output",
@@ -241,5 +250,16 @@
     "legitimate_threshold": 30,
     "suspicious_threshold": -10,
     "min_headers": 2
+  },
+  "ai": {
+    "defaultStrategy": "ollama",
+    "strategies": {
+      "ollama": {},
+      "openai": {}
+    },
+    "modules": {
+      "sentinel": "ollama",
+      "aegis": "ollama"
+    }
   }
 }

@@ -117,6 +117,28 @@ def get_ollama_environment() -> tuple[str, str]:
     return host, model
 
 
+def get_openai_environment() -> dict[str, str]:
+    """Credenciales de OpenAI desde variables de entorno.
+
+    Returns:
+        dict con 'api_key', 'model' y 'base_url' (este último opcional, "").
+
+    Raises:
+        ValueError: Si falta OPENAI_API_KEY.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    base_url = os.getenv("OPENAI_BASE_URL", "")
+
+    if not api_key:
+        raise ValueError(
+            "Falta la variable de entorno OPENAI_API_KEY. "
+            "Defínela en el archivo .env junto a las credenciales de Ollama."
+        )
+
+    return {"api_key": api_key, "model": model, "base_url": base_url}
+
+
 def get_oauth_config() -> tuple[float, float, Optional[str], Optional[str]]:
     """Solo variables de entorno."""
     secret      = os.getenv("JWT_SECRET_KEY")
@@ -315,6 +337,39 @@ def get_aegis_prompts() -> dict:
 
 
 # =============================================================================
+# CONFIGURACIÓN DE IA (scribe)
+# =============================================================================
+
+@_lazy_load
+def get_ai_config() -> dict:
+    """Devuelve el bloque 'ai' de SecOpsConfig.json (puede estar vacío)."""
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+
+    return _configs.get("ai", {})
+
+
+@_lazy_load
+def get_ai_strategy_for(module: str | None = None) -> str:
+    """Resuelve la estrategia de IA para un módulo.
+
+    Busca primero un override por módulo en ``ai.modules.<module>`` y, si no
+    existe, devuelve ``ai.defaultStrategy`` (o 'ollama' como último recurso).
+
+    Args:
+        module: Nombre del módulo consumidor ('aegis', 'sentinel', …).
+
+    Returns:
+        Nombre de la estrategia ('ollama' | 'openai' | …).
+    """
+    ai_cfg = get_ai_config()
+    default = ai_cfg.get("defaultStrategy", "ollama")
+    if module:
+        return ai_cfg.get("modules", {}).get(module, default)
+    return default
+
+
+# =============================================================================
 # CONFIGURACIÓN DE SENTINEL
 # =============================================================================
 
@@ -412,6 +467,46 @@ def get_sentinel_default_folder_name() -> str:
 
     sentinel = _configs.get("sentinel", {})
     return sentinel.get("folders", {}).get("defaultFolderName", "Sin carpeta")
+
+
+@_lazy_load
+def get_sentinel_history_size() -> int:
+    """Número de escaneos recientes a considerar en las estadísticas históricas."""
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    return int(sentinel.get("history", {}).get("maxScans", 5))
+
+
+def _traceroute_cfg() -> dict:
+    sentinel = _configs.get("sentinel", {}) if _configs else {}
+    return sentinel.get("traceroute", {})
+
+
+@_lazy_load
+def get_sentinel_traceroute_cache_hours() -> float:
+    """Horas que una ruta cacheada se considera válida antes de recalcularse."""
+    return float(_traceroute_cfg().get("cacheHours", 24))
+
+
+@_lazy_load
+def get_sentinel_traceroute_max_hops() -> int:
+    """Número máximo de saltos a sondear (``-m`` en traceroute)."""
+    return int(_traceroute_cfg().get("maxHops", 30))
+
+
+@_lazy_load
+def get_sentinel_traceroute_timeout() -> float:
+    """Tiempo máximo total (segundos) para el comando traceroute."""
+    return float(_traceroute_cfg().get("timeout", 60))
+
+
+@_lazy_load
+def get_sentinel_traceroute_retry_failed_minutes() -> float:
+    """Minutos que una ruta fallida (sin saltos) se cachea antes de reintentar.
+
+    Mucho más corto que ``cacheHours``: evita re-sondear un host inalcanzable en
+    cada apertura del detalle, pero permite reintentar pronto (o de inmediato con
+    el botón de refresco)."""
+    return float(_traceroute_cfg().get("retryFailedMinutes", 15))
 
 
 # =============================================================================

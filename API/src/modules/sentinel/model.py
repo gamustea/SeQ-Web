@@ -139,6 +139,54 @@ class Host(Base):
 
 
 # =========================================================================
+# TRACEROUTE
+# =========================================================================
+
+class Traceroute(Base):
+    """
+    Cached network path (traceroute) from the SeQ server to a scan target.
+
+    The hops are a property of the *route to the destination*, not of any
+    individual scan, and change slowly over time. We therefore cache one row
+    per (user, target) and reuse it across all scan types (Nmap, Nikto,
+    OpenVAS) instead of re-running the traceroute on every scan. ``created_at``
+    drives cache invalidation (see ``TracerouteManager``).
+
+    Attributes:
+        id: Primary key, auto-incrementing integer.
+        user_id: Owner user foreign key (scopes the cache per user).
+        target: The scan target string (IP or domain), the cache key.
+        hops: Ordered list of hops as JSONB. Each hop is a dict:
+            ``{"ttl": int, "ip": str|None, "hostname": str|None, "rtt_ms": float|None}``.
+            A hop with ``ip == None`` represents a non-responding (timed-out) hop.
+        hop_count: Number of hops stored (denormalized for convenience).
+        created_at: Timestamp the traceroute was computed (cache TTL anchor).
+        updated_at: Last refresh timestamp (automatic).
+
+    Table Constraints:
+        Unique constraint on (user_id, target) so each target has a single
+        cached path per user (upserted on refresh).
+    """
+
+    __tablename__ = "Traceroute"
+
+    id         = Column(Integer,     primary_key=True, autoincrement=True)
+    user_id    = Column(Integer,     ForeignKey("User.id"), nullable=False, index=True)
+    target     = Column(String(255), nullable=False, index=True)
+    hops       = Column(JSONB,       nullable=False)
+    hop_count  = Column(Integer,     nullable=False, default=0)
+    created_at = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime,    nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "target", name="unique_user_target_trace"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Traceroute(id={self.id}, target='{self.target}', hops={self.hop_count})>"
+
+
+# =========================================================================
 # SCAN FOLDER
 # =========================================================================
 

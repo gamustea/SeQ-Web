@@ -240,3 +240,53 @@ class BulkDeleteScansResponseSchema(Schema):
     failedCount = fields.Integer()
     results = fields.List(fields.Nested(BulkDeleteResultSchema))
     user = fields.String()
+
+
+# =========================================================================
+# HISTORY / STATISTICS SCHEMAS
+# =========================================================================
+
+class HistoryHostItemSchema(Schema):
+    target = fields.String()
+    scanType = fields.String()
+    scanCount = fields.Integer()
+    lastScannedAt = fields.DateTime(format="iso", allow_none=True)
+
+
+class HistoryHostsResponseSchema(Schema):
+    message = fields.String()
+    hosts = fields.List(fields.Nested(HistoryHostItemSchema))
+    user = fields.String()
+
+
+class HistoryStatsQuerySchema(Schema):
+    target = fields.String(required=True)
+    type = fields.String(required=True, validate=validate.OneOf(["nmap", "nikto", "openvas"]))
+
+
+class HistoryStatsResponseSchema(Schema):
+    message = fields.String()
+    scanType = fields.String()
+    target = fields.String()
+    metricLabel = fields.String()
+    axes = fields.Dict()
+    series = fields.List(fields.Dict())
+    diff = fields.Dict()
+    legend = fields.List(fields.Dict())
+    scanCount = fields.Integer()
+    user = fields.String()
+
+
+# =========================================================================
+# TRACEROUTE SCHEMAS
+# =========================================================================
+
+class TracerouteResponseSchema(Schema):
+    message = fields.String()
+    target = fields.String()
+    hops = fields.List(fields.Dict())
+    hopCount = fields.Integer()
+    computedAt = fields.String(allow_none=True)
+    cached = fields.Boolean()
+    status = fields.String()  # "pending" | "done" | "failed"
+    user = fields.String()

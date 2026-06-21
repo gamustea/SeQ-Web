@@ -205,13 +205,22 @@ class UnitOfWork:
 
     def _try_share_request_session(self) -> None:
         """If running inside a Flask request with an active g.db_session,
-        reuse it and relinquish ownership so close() is a no-op."""
+        reuse it and relinquish ownership so close() is a no-op.
+
+        The check is intentionally ``has_request_context()`` and **not**
+        ``has_app_context()``. Session sharing is only safe within the HTTP
+        request lifecycle, where ``before_request`` opens ``g.db_session`` and
+        ``teardown_request`` commits/closes it. Background RQ workers run under
+        a long-lived *application* context (see taskqueue/worker.py) with no
+        request and therefore no teardown hook: if we shared ``g.db_session``
+        there, ``__exit__`` would relinquish ownership and never commit, so
+        every write performed in a worker job would be silently discarded."""
         try:
-            from flask import g, has_app_context
+            from flask import g, has_request_context
         except ImportError:
             return
         try:
-            if has_app_context() and "db_session" in g:
+            if has_request_context() and "db_session" in g:
                 if not self._owns_session:
                     return  # externally provided session
                 self.session = g.db_session

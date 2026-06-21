@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
@@ -41,12 +41,15 @@ class VaultManager:
     @staticmethod
     def _parse_dt(value: Optional[str]) -> datetime:
         if not value:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc).replace(tzinfo=None)
         try:
-            return datetime.fromisoformat(value)
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
         except Exception as e:
             logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
-            return datetime.utcnow()
+            return datetime.now(timezone.utc).replace(tzinfo=None)
 
     def _ensure_vault_ownership(self, vault: Vault) -> None:
         if vault.user_id != self.active_user.id:
@@ -67,7 +70,7 @@ class VaultManager:
     def get_vault_for_user(self, is_recovery: bool = False) -> Optional[Vault]:
         session = get_db_session()
         repo = VaultRepository(session=session)
-        vault = repo.get_by_user(self.active_user.id, is_recovery)
+        vault = repo.get_by_user(self.active_user.id)
         return vault
 
     def upsert_vault_from_json(
@@ -81,13 +84,12 @@ class VaultManager:
             with UnitOfWork() as uow:
                 vault_repo = VaultRepository(uow)
 
-                existing_vault = vault_repo.get_by_user(self.active_user.id, is_recovery)
+                existing_vault = vault_repo.get_by_user(self.active_user.id)
                 created = existing_vault is None
 
                 if existing_vault is None:
                     vault = Vault(
                         user_id=self.active_user.id,
-                        is_recovery=is_recovery,
                         checker=data["checker"],
                         vault_key=data["vaultKey"],
                         transformation=algorithm.get("transformation", ""),
@@ -119,7 +121,7 @@ class VaultManager:
                 accounts_data = []
                 for acc in data.get("accounts", []) or []:
                     accounts_data.append({
-                        "id": acc.get("id"),
+                        "internal_id": acc.get("id"),
                         "title": acc.get("title"),
                         "created_at": self._parse_dt(acc.get("createdAt")),
                         "updated_at": self._parse_dt(acc.get("updatedAt")),
@@ -131,7 +133,7 @@ class VaultManager:
                 creditcards_data = []
                 for card in data.get("creditcards", []) or []:
                     creditcards_data.append({
-                        "id": card.get("id"),
+                        "internal_id": card.get("id"),
                         "title": card.get("title"),
                         "created_at": self._parse_dt(card.get("createdAt")),
                         "updated_at": self._parse_dt(card.get("updatedAt")),
@@ -201,8 +203,8 @@ class VaultManager:
             base = {
                 "id": st.internal_id,
                 "title": st.title,
-                "createdAt": st.created_at.isoformat() if st.created_at else None,
-                "updatedAt": st.updated_at.isoformat() if st.updated_at else None,
+            "createdAt": st.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if st.created_at else None,
+            "updatedAt": st.updated_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if st.updated_at else None,
                 "allowedUsers": [],
             }
 
@@ -294,7 +296,7 @@ class VaultManager:
         if vault is None:
             raise ValueError(f"Vault {vault_id} no encontrado")
 
-        created_at = created_at or datetime.utcnow()
+        created_at = created_at or datetime.now(timezone.utc).replace(tzinfo=None)
         updated_at = updated_at or created_at
 
         if kind == "account":

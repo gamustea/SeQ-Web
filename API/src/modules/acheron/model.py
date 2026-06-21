@@ -1,26 +1,10 @@
 """
 Database models for Acheron encrypted vault module.
-
-This module contains SQLAlchemy models for managing encrypted secrets
-including vaults, storables (polymorphic), accounts, and credit cards.
-
-Classes:
-    Vault: Encrypted vault for storing secrets.
-    Storable: Base class for storable secrets (polymorphic).
-    Account: Username/password account credential.
-    CreditCard: Credit card information.
-
-Example:
-    >>> from src.modules.acheron.model import Vault, Account
-    >>> vault = Vault(user_id=1, checker="https://example.com", vault_key="key123")
-    >>> print(vault)
-    <Vault id=None user_id=1 is_recovery=False>
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -47,7 +31,6 @@ class Vault(Base):
     Attributes:
         id: Primary key, auto-incrementing integer.
         user_id: Foreign key to User.id.
-        is_recovery: Whether this is a recovery vault (for password reset).
         checker: URL used to verify vault access (obfuscated).
         vault_key: Encrypted vault master key.
         transformation: Encryption algorithm (e.g., "AES/GCM/NoPadding").
@@ -65,8 +48,7 @@ class Vault(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    user_id = Column(Integer, ForeignKey("User.id"), nullable=False)
-    is_recovery = Column(Boolean, nullable=False, default=False)
+    user_id = Column(Integer, ForeignKey("User.id"), nullable=False, unique=True)
 
     checker = Column(String(512), nullable=False)
     vault_key = Column(String(512), nullable=False)
@@ -90,9 +72,9 @@ class Vault(Base):
         Return a debug representation of the Vault instance.
 
         Returns:
-            String with id, user_id, and is_recovery flag.
+            String with id and user_id.
         """
-        return f"<Vault id={self.id} user_id={self.user_id} is_recovery={self.is_recovery}>"
+        return f"<Vault id={self.id} user_id={self.user_id}>"
 
 
 # =========================================================================
@@ -129,12 +111,12 @@ class Storable(Base):
     internal_id = Column(String(128), nullable=True)
     title = Column(String(128), nullable=True)
 
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
     vault_id = Column(Integer, ForeignKey("Vault.id"), nullable=False)

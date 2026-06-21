@@ -7,6 +7,15 @@ from src.modules.shared._exceptions import (
     EntityAlreadyExistsError,
 )
 
+# Las excepciones de la capa de IA son ahora propiedad del módulo `scribe`.
+# Se reexportan aquí por retrocompatibilidad con los imports existentes.
+from src.modules.scribe.exceptions import (  # noqa: F401
+    AIConnectionError,
+    AIResponseError,
+    AIFallbackExhaustedError,
+    CircuitBreakerOpenError,
+)
+
 
 class AegisValidationError(ValidationError):
     default_code = ErrorCode.VALIDATION_ERROR
@@ -80,53 +89,6 @@ class DocumentNotReadyError(DocumentError):
 
 class DocumentGenerationError(DocumentError):
     default_code = ErrorCode.REPORT_GENERATION_ERROR
-
-
-class AIConnectionError(DocumentError):
-    default_code = ErrorCode.INTERNAL_SERVER_ERROR
-    default_severity = ErrorSeverity.HIGH
-
-    def __init__(self, message: str, model: str | None = None):
-        details = {"model": model} if model else {}
-        super().__init__(
-            message=f"Error de conexión con IA: {message}",
-            details=details,
-            user_message="Error al conectar con el servicio de IA."
-        )
-
-
-class AIResponseError(DocumentError):
-    default_code = ErrorCode.INTERNAL_SERVER_ERROR
-
-    def __init__(self, message: str, attempt: int = 0):
-        super().__init__(
-            message=f"Error en respuesta de IA (intento {attempt}): {message}",
-            details={"attempt": attempt},
-            user_message="La IA generó una respuesta inválida."
-        )
-
-
-class AIFallbackExhaustedError(DocumentError):
-    default_code = ErrorCode.INTERNAL_SERVER_ERROR
-    default_severity = ErrorSeverity.HIGH
-
-    def __init__(self, attempts: int, last_error: str):
-        super().__init__(
-            message=f"Fallo tras {attempts} intentos: {last_error}",
-            details={"attempts": attempts, "last_error": last_error},
-            user_message="No se pudo generar el contenido tras varios intentos."
-        )
-
-
-class CircuitBreakerOpenError(DocumentError):
-    default_code = ErrorCode.INTERNAL_SERVER_ERROR
-
-    def __init__(self, service: str):
-        super().__init__(
-            message=f"Circuit breaker abierto para {service}",
-            details={"service": service},
-            user_message="El servicio está temporalmente no disponible."
-        )
 
 
 class ExporterError(DocumentError):

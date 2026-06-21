@@ -40,7 +40,7 @@ _API_DIR = Path(__file__).resolve().parent.parent
 if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production")
+os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production"
 os.environ.setdefault("JWT_ALGORITHM", "HS256")
 os.environ.setdefault("ACCESS_TOKEN_EXPIRY_MINUTES", "30")
 os.environ.setdefault("REFRESH_TOKEN_EXPIRY_DAYS", "7")
@@ -58,6 +58,10 @@ os.environ.setdefault("SHUTDOWN_TIMEOUT", "30")
 # Redis/Ollama/OpenVAS: valores inertes; los servicios se mockean.
 os.environ.setdefault("REDIS_HOST", "localhost")
 os.environ.setdefault("OLLAMA_HOST", "http://localhost:11434")
+os.environ.setdefault("OPENVAS_HOST", "localhost")
+os.environ.setdefault("OPENVAS_PORT", "9390")
+os.environ.setdefault("OPENVAS_USERNAME", "admin")
+os.environ.setdefault("OPENVAS_PASSWORD", "admin")
 
 from unittest import mock  # noqa: E402
 

@@ -662,9 +662,9 @@ La interfaz de Iris (`/iris`) sigue un layout de **strip horizontal + contenido 
 
 ## Módulo Acheron — Vault
 
-> 🔐 **Acheron** es el sistema de gestión de secretos cifrados de SeQ. La API REST del vault está **operativa**. Las interfaces móvil y web están en desarrollo.
+> 🔐 **Acheron** es el sistema de gestión de secretos cifrados de SeQ. La API REST y la app **Android** están **operativas**. La interfaz web está en desarrollo.
 
-Acheron permite a cada usuario gestionar un vault cifrado con credenciales (`Account`) y tarjetas de crédito (`CreditCard`), con soporte de **vault de recuperación** (`isRecovery`).
+Acheron permite a cada usuario gestionar un vault cifrado con credenciales (`Account`) y tarjetas de crédito (`CreditCard`). El cifrado de los secretos ocurre **en el cliente**: el servidor solo almacena y sincroniza ciphertext, nunca ve datos en claro.
 
 ### Endpoints
 
@@ -674,18 +674,26 @@ Todos los endpoints requieren autenticación OAuth (`Authorization: Bearer <acce
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET` | `/acheron/vault` | Obtener el vault del usuario |
-| `POST` | `/acheron/vault` | Crear o reemplazar el vault completo (upsert) |
-| `PATCH` | `/acheron/storables` | Actualizar en bulk uno o varios Storables |
-
-> El parámetro de query `?isRecovery=true` permite operar sobre el vault de recuperación en lugar del principal.
+| `GET` | `/acheron/vault` | Obtener el vault del usuario (blob cifrado completo) |
+| `POST` | `/acheron/vault` | Crear o reemplazar el vault completo (upsert) — usado para la creación inicial y la sincronización manual completa |
 
 #### Storables (objetos del vault)
+
+Operaciones granulares por Storable individual, identificado por su `internalId`. Evitan reescribir el vault completo en cada cambio:
 
 | Método | Endpoint | Descripción |
 |---|---|---|
 | `POST` | `/acheron/storables` | Añadir un `Account` o `CreditCard` al vault |
+| `PATCH` | `/acheron/storables` | Actualizar en bulk uno o varios Storables, enviando solo los campos modificados (ya cifrados) |
 | `DELETE` | `/acheron/storables` | Eliminar un Storable por `internalId` |
+
+#### Identificadores de Storable (`internalId`)
+
+Cada `Account`/`CreditCard` recibe un `internalId` generado **en el cliente** a partir de un **hash SHA-256 (truncado a 16 caracteres hex)** del contenido cifrado del propio Storable, en lugar de un contador secuencial (`ACC0`, `ACC1`, ...). Esto hace que el ID sea:
+
+- **Determinista**: el mismo contenido produce siempre el mismo ID.
+- **Libre de colisiones entre dispositivos**: si dos dispositivos crean el mismo Storable estando offline, ambos generan idénticamente el mismo hash al sincronizar, en vez de colisionar con un `409 Conflict` por reutilizar el mismo número de secuencia.
+- **Vault.add()** (`AcheronCore`) calcula el hash automáticamente al insertar un Storable nuevo; los IDs secuenciales antiguos siguen siendo válidos y coexisten con los nuevos (no requiere migración).
 
 #### Ejemplo: añadir una cuenta
 
@@ -699,8 +707,7 @@ Content-Type: application/json
   "title": "GitHub",
   "username": "usuario",
   "domain": "github.com",
-  "password": "secreto",
-  "isRecovery": false
+  "password": "secreto"
 }
 ```
 
@@ -709,9 +716,8 @@ Content-Type: application/json
 {
   "message": "Storable created",
   "storableId": 7,
-  "internalId": "ACC-001",
+  "internalId": "a3f7d9e2c1b4f8a0",
   "vaultId": 1,
-  "isRecovery": false,
   "kind": "account"
 }
 ```
@@ -730,19 +736,45 @@ Content-Type: application/json
   "cardNumber": "4111111111111111",
   "expirationDate": "12/27",
   "postalCode": "26360",
-  "cvv": "123",
-  "isRecovery": false
+  "cvv": "123"
 }
 ```
+
+#### Ejemplo: actualizar solo la contraseña de una cuenta
+
+```http
+PATCH /acheron/storables
+Authorization: Bearer <token>
+Content-Type: application/json
+
+[
+  {
+    "internalId": "a3f7d9e2c1b4f8a0",
+    "changes": { "password": "<password-cifrada>" }
+  }
+]
+```
+
+Solo el campo modificado se cifra, se envía y se actualiza en la fila del Storable — el resto del vault no se toca.
+
+### AcheronMobile — App Android
+
+App nativa en **Kotlin + Jetpack Compose**, con el motor de cifrado en **AcheronCore** (Java, módulo Gradle independiente reutilizado tal cual).
+
+- **Sesión**: login OAuth con persistencia de tokens en `EncryptedSharedPreferences` (AES-256-GCM/SIV vía Android Keystore), refresco automático de access token ante `401` (`TokenAuthenticator`), y **logout** completo (limpia tokens, bloquea el vault y reinicia la pila de navegación a `LOGIN`).
+- **Vault**: al arrancar, la app comprueba si el usuario ya tiene un vault remoto para decidir entre la pantalla de **creación** (define clave maestra, con medidor de fortaleza) o **desbloqueo** (descifra el blob cacheado localmente con la clave maestra). El cifrado del vault usa **Argon2id** como KDF, con *fallback* automático a PBKDF2 si la librería nativa de Argon2 no está disponible en el dispositivo.
+- **Gestión de Storables**: listado con filtro por tipo y estado de sincronización, alta de `Account`/`CreditCard` vía FAB, edición, borrado con confirmación, vista de detalle con campos sensibles ocultos por defecto (revelar a demanda) y copia al portapapeles por campo.
+- **Sincronización granular**: añadir, editar y borrar un Storable individual usan los endpoints granulares (`POST`/`PATCH`/`DELETE /storables`) en vez de reescribir el vault completo en cada cambio; `POST /vault` queda reservado a la creación inicial del vault y a la sincronización manual completa.
+- **Identidad visual**: tema oscuro propio ("Acheron") con tipografía Syne (títulos) + Sora (cuerpo) + JetBrains Mono (campos de secretos), paleta dorado/púrpura, fondo animado tipo "río" en las pantallas de autenticación, e iconografía/splash screen personalizados.
 
 ### Componentes
 
 | Componente | Tecnología | Estado |
 |---|---|---|
 | `AcheronAPI` | Python / Flask (endpoints y lógica de vault) | ✅ Operativo |
-| `AcheronMobile` | Android / Kotlin + Jetpack Compose | 🔨 En desarrollo |
+| `AcheronMobile` | Android / Kotlin + Jetpack Compose | ✅ Operativo |
+| `AcheronCore` | Java (cifrado, modelo de dominio, generación de IDs) | ✅ Operativo (módulo Gradle compartido) |
 | `AcheronWeb` | Web (interfaz de escritorio) | 🔨 En desarrollo |
-| `AcheronCore` | Java (lógica de cifrado y modelo de dominio) | 🔨 En desarrollo |
 
 ---
 
@@ -788,9 +820,27 @@ docker compose --profile dev up -d
 docker compose --profile container up -d
 ```
 
-### Configuración de Ollama
+### Configuración de IA (módulo `scribe`)
 
-Para IA en Sentinel y Aegis, se requiere Ollama con un modelo compatible (por defecto `llama3.2`):
+La generación con IA está centralizada en el módulo `scribe`, que llama al modelo
+mediante una **estrategia** inyectable. Hay dos estrategias disponibles:
+
+- **`ollama`** — modelo local (por defecto `llama3.2`), ideal para máquinas con GPU.
+- **`openai`** — API de OpenAI (por defecto `gpt-4o-mini`), pensada para desplegar
+  en un VPS sin GPU.
+
+La estrategia se elige en `API/SecOpsConfig.json`, con la posibilidad de usar una
+distinta por módulo:
+
+```json
+"ai": {
+  "defaultStrategy": "ollama",
+  "strategies": { "ollama": {}, "openai": {} },
+  "modules": { "sentinel": "ollama", "aegis": "openai" }
+}
+```
+
+Para la estrategia Ollama se requiere un modelo compatible:
 
 ```bash
 # Desde el contenedor Ollama
@@ -803,8 +853,14 @@ ollama pull llama3.2
 Las variables de entorno para la API se configuran en `API/.env`:
 
 ```
+# Estrategia Ollama (local)
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=llama3.2
+
+# Estrategia OpenAI (requerida solo si algún módulo usa "openai")
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL=        # opcional (proxies / Azure / endpoints compatibles)
 ```
 
 > **Nota**: OpenVAS puede tardar ~15 minutos en iniciar la primera vez (descarga de plugins NVT). Verifica el estado en `http://localhost:9392`.
@@ -862,8 +918,9 @@ SeQ/
 | Obtención de vulnerabilidades recientes | INCIBE-CERT + API pública CIRCL/NVD |
 | Análisis anti-phishing | Iris (reglas atómicas con registro por decorador) |
 | Frontend web | Vue 3 (Vite + Pinia + Vue Router) |
-| App móvil | Android / Kotlin + Jetpack Compose |
-| Lógica de vault | AcheronCore (Java) |
+| App móvil | Android / Kotlin + Jetpack Compose, Retrofit + OkHttp |
+| Lógica de vault | AcheronCore (Java) — cifrado AES, KDF Argon2id (fallback PBKDF2), IDs de Storable por hash SHA-256 |
+| Sesión móvil | Tokens OAuth en `EncryptedSharedPreferences` (Android Keystore, AES-256-GCM/SIV) |
 | Rate limiting | Flask-Limiter |
 | Cola de tareas | SeQueue (threads + SimpleWorker) |
 | Infraestructura | Docker + Docker Compose |
@@ -882,6 +939,19 @@ cd API && python run.py
 ```
 
 ---
+
+---
+
+## Cambios recientes (2026-06-21)
+
+**Rama `feature/acheron/mobile-app` — App Android de Acheron completa**
+
+- ✅ **AcheronMobile**: app Android nativa (Kotlin + Jetpack Compose) con login OAuth, creación/desbloqueo de vault, listado y CRUD de `Account`/`CreditCard`, y logout completo en toda la app
+- ✅ **AcheronCore integrado**: el módulo Java de cifrado se incorpora como dependencia Gradle (`:AcheronCore`) consumida directamente por la app móvil
+- ✅ **Sincronización granular**: alta, edición y borrado de un Storable individual usan los endpoints `POST`/`PATCH`/`DELETE /storables` en vez de reescribir el vault completo en cada cambio; `POST /vault` queda reservado a la creación inicial y a la sincronización manual
+- ✅ **IDs de Storable por hash**: nuevo esquema de `internalId` basado en SHA-256 (16 hex chars) del contenido cifrado, determinista y libre de colisiones entre dispositivos offline (sustituye los contadores secuenciales `ACC0`/`CDC0`, que se mantienen como legado compatible)
+- ✅ **Persistencia de sesión**: tokens OAuth en `EncryptedSharedPreferences` (Android Keystore) con refresco automático ante `401`
+- ✅ **Identidad de marca**: tema visual propio de Acheron (tipografía Syne/Sora/JetBrains Mono, paleta dorado/púrpura, splash e iconografía personalizados)
 
 ---
 

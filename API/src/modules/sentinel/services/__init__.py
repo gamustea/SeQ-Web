@@ -33,11 +33,16 @@ from .csv_logger import (
 
 from .scheduling import Scheduler
 
+from .history import HistoryStatsService
+
+from .traceroute import TracerouteService
+
 __all__ = [
     NmapPrintingStrategy,
     NiktoPrintingStrategy,
     OpenVASPrintingStrategy,
     PDFCreator,
+    HistoryStatsService,
     NiktoResultProcessor,
     NmapResultProcessor,
     OpenVASResultProcessor,
@@ -53,5 +58,6 @@ __all__ = [
     NmapScanLogger,
     NiktoScanLogger,
     OpenVASScanLogger,
-    Scheduler
+    Scheduler,
+    TracerouteService,
 ]

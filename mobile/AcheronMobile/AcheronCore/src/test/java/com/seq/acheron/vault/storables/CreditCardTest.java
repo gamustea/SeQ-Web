@@ -1,9 +1,12 @@
 package com.seq.acheron.vault.storables;
 
+import com.seq.acheron.vault.User;
+import com.seq.acheron.vault.Vault;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
@@ -16,10 +19,17 @@ public class CreditCardTest {
     private static class TestVaultStrategy extends VaultEncryptingStrategy {
 
         TestVaultStrategy() throws GeneralSecurityException {
-            super("AES/GCM/NoPadding", true, generateSalt()); // generate vaultKey
+            super("test-master-password", "AES/GCM/NoPadding", generateSalt(), true);
             byte[] dk = new byte[32];
             SecureRandom.getInstanceStrong().nextBytes(dk);
             this.derivedKey = new SecretKeySpec(dk, "AES");
+        }
+
+        @Override
+        protected SecretKey deriveKey(String masterPassword, String saltBase64) throws GeneralSecurityException {
+            byte[] dk = new byte[32];
+            SecureRandom.getInstanceStrong().nextBytes(dk);
+            return new SecretKeySpec(dk, "AES");
         }
 
         @Override
@@ -32,13 +42,13 @@ public class CreditCardTest {
 
     @BeforeEach
     void setUp() {
-        card = new CreditCard("A Card","Juan Pérez", "1234567812345678", "12/29", "123", "28001", false);
+        card = new CreditCard("CDC0", "A Card", "Juan P\u00e9rez", "1234567812345678", "12/29", "123", "28001", false);
     }
 
     @Test
     void encryptThenDecrypt_restoresOriginalFields() throws Exception {
         CreditCard card = new CreditCard(
-                "A Card",
+                "CDC0", "A Card",
                 "John Doe",
                 "4111111111111111",
                 "12/29",
@@ -78,22 +88,20 @@ public class CreditCardTest {
 
     @Test
     void idsHaveCdcPrefixAndIncrementPerInstance() throws Exception {
-        VaultObject.setObjectCounter(0);
+        Vault vault = new Vault(new TestVaultStrategy(), new User("u1", "a", "b", "c", "d"), false);
 
-        CreditCard c1 = new CreditCard("A Card","N1", "4111111111111111", "01/30", "111", "28001", false);
-        CreditCard c2 = new CreditCard("A Card","N2", "4222222222222222", "02/31", "222", "28002", false);
+        CreditCard c1 = new CreditCard("Card1", "N1", "4111111111111111", "01/30", "111", "28001", false);
+        CreditCard c2 = new CreditCard("Card2", "N2", "4222222222222222", "02/31", "222", "28002", false);
+        vault.add(c1).add(c2);
 
         String id1 = c1.getId();
         String id2 = c2.getId();
 
-        assertTrue(id1.startsWith("CDC"), "First card ID must start with CDC");
-        assertTrue(id2.startsWith("CDC"), "Second card ID must start with CDC");
-
-        String n1 = id1.substring("CDC".length());
-        String n2 = id2.substring("CDC".length());
-
-        assertEquals("0", n1, "First card should have sequence 0");
-        assertEquals("1", n2, "Second card should have sequence 1");
+        // IDs nuevos son hash de 16 caracteres hexadecimales
+        assertEquals(16, id1.length(), "Card ID should be 16 hex characters");
+        assertEquals(16, id2.length(), "Card ID should be 16 hex characters");
+        assertTrue(id1.matches("[0-9a-f]{16}"), "Card ID should be hexadecimal");
+        assertTrue(id2.matches("[0-9a-f]{16}"), "Card ID should be hexadecimal");
 
         assertNotEquals(id1, id2, "IDs must be unique");
 
@@ -102,7 +110,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_startsAsFalse_whenConstructedWithPlainText() {
-        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("CDC0", "A Card", "Holder", "4111111111111111", "12/29", "123", "28001", false);
 
         assertFalse(card.isEncrypted(), "CreditCard should not be encrypted initially");
 
@@ -111,7 +119,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_startsAsTrue_whenConstructedWithEncryptedData() {
-        CreditCard card = new CreditCard("A Card",
+        CreditCard card = new CreditCard("CDC0", "A Card",
                 "EncryptedHolder",
                 "EncryptedNumber",
                 "EncryptedDate",
@@ -127,7 +135,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_becomesTrue_afterEncryption() throws Exception {
-        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("CDC0", "A Card", "Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         assertFalse(card.isEncrypted(), "CreditCard should start unencrypted");
@@ -141,7 +149,7 @@ public class CreditCardTest {
 
     @Test
     void isEncryptedFlag_becomesFalse_afterDecryption() throws Exception {
-        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("CDC0", "A Card", "Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         card.encrypt(strategy);
@@ -156,7 +164,7 @@ public class CreditCardTest {
 
     @Test
     void encryptTwice_throwsIllegalStateException() throws Exception {
-        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("CDC0", "A Card", "Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         card.encrypt(strategy);
@@ -173,7 +181,7 @@ public class CreditCardTest {
 
     @Test
     void decryptUnencryptedObject_throwsIllegalStateException() throws Exception {
-        CreditCard card = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard card = new CreditCard("CDC0", "A Card", "Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
@@ -188,7 +196,7 @@ public class CreditCardTest {
 
     @Test
     void copy_preservesIsEncryptedFlag() throws Exception {
-        CreditCard original = new CreditCard("A Card","Holder", "4111111111111111", "12/29", "123", "28001", false);
+        CreditCard original = new CreditCard("CDC0", "A Card", "Holder", "4111111111111111", "12/29", "123", "28001", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         original.encrypt(strategy);
@@ -209,12 +217,10 @@ public class CreditCardTest {
     @Test
     void testtoJson_SensitiveMasking() {
         String json = card.toJson();
-        // Base VaultObject
         assertTrue(json.contains("id"));
         assertTrue(json.contains("createdAt"));
-        // Campos específicos con masking de cardNumber
         assertTrue(json.contains("cardHolderName"));
-        assertTrue(json.contains("****5678")); // Últimos 4 dígitos
+        assertTrue(json.contains("****5678"));
         assertTrue(json.contains("12/29"));
     }
 }

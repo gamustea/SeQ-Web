@@ -665,12 +665,13 @@ class FolderNotFoundError(FolderError):
     default_status_code = 404
     default_severity = ErrorSeverity.LOW
 
-    def __init__(self, folder_id: int):
-        super().__init__(
-            message=f"Carpeta con ID {folder_id} no encontrada",
-            details={"folder_id": folder_id},
-            user_message=f"La carpeta #{folder_id} no existe."
-        )
+    def __init__(self, folder_id: int = None, message: str = None, details: dict = None, **kwargs):
+        if message is None:
+            message = f"Carpeta con ID {folder_id} no encontrada"
+        if details is None:
+            details = {"folder_id": folder_id}
+        kwargs.setdefault("user_message", f"La carpeta #{folder_id} no existe." if folder_id else "Carpeta no encontrada.")
+        super().__init__(message=message, details=details, **kwargs)
 
 
 class FolderNameInvalidError(FolderError):

@@ -44,6 +44,7 @@ public class CreditCard extends VaultObject {
     private String postalCode;
 
 
+
     /**
      * Creates a new credit card.
      *
@@ -93,7 +94,6 @@ public class CreditCard extends VaultObject {
         this.postalCode = postalCode;
     }
 
-
     public CreditCard(
             @NotNull String title,
             @NotNull String cardHolderName,
@@ -137,14 +137,14 @@ public class CreditCard extends VaultObject {
 
 
     @Override
-    public String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
+    String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
         CreditCard oldCreditCard = (CreditCard) this.copy();
+        super.transform(encryptor, encrypt);
 
         try {
             cardHolderName = encrypt
                     ? encryptor.encrypt(cardHolderName)
                     : encryptor.decrypt(cardHolderName);
-
             cardNumber = encrypt
                     ? encryptor.encrypt(cardNumber)
                     : encryptor.decrypt(cardNumber);
@@ -161,7 +161,6 @@ public class CreditCard extends VaultObject {
                     ? encryptor.encrypt(postalCode)
                     : encryptor.decrypt(postalCode);
 
-            isEncrypted = encrypt;
         } catch (GeneralSecurityException e) {
             throw new RuntimeException("Error transforming credit card fields", e);
         }
@@ -192,23 +191,37 @@ public class CreditCard extends VaultObject {
 
     @Override
     public String toJson() {
-        String cardNumber = isEncrypted ?
-                this.cardNumber :
-                "****" + this.cardNumber.substring(this.cardNumber.length() - 4);
+        com.google.gson.JsonObject json = super.toJsonObject();
 
-        String cvv = isEncrypted ?
-                this.cvv :
-                "***";
+        String safeCardNumber = isEncrypted
+                ? this.cardNumber
+                : maskCardNumber(this.cardNumber);
+        String safeCvv = isEncrypted ? this.cvv : "***";
 
-        return "{" +
-                super.toJson() +
-                "\"cardHolderName\": \"" + cardHolderName + "\"" +
-                // Never log full card number or CVV:
-                ", \"cardNumber\": \"" + cardNumber + "\"" +
-                ", \"expirationDate\": \"" + expirationDate + "\"" +
-                ", \"postalCode\": \"" + postalCode + "\"" +
-                ", \"cvv\": \"" + cvv + "\"" +
-                '}';
+        json.addProperty("cardHolderName", cardHolderName);
+        json.addProperty("cardNumber", safeCardNumber);
+        json.addProperty("expirationDate", expirationDate);
+        json.addProperty("postalCode", postalCode);
+        json.addProperty("cvv", safeCvv);
+
+        return json.toString();
+    }
+
+    private static String maskCardNumber(String cardNumber) {
+        if (cardNumber == null || cardNumber.length() < 4) {
+            return "****";
+        }
+        return "****" + cardNumber.substring(cardNumber.length() - 4);
+    }
+
+    String toStorageJson() {
+        com.google.gson.JsonObject json = super.toJsonObject();
+        json.addProperty("cardHolderName", cardHolderName);
+        json.addProperty("cardNumber", cardNumber);
+        json.addProperty("expirationDate", expirationDate);
+        json.addProperty("postalCode", postalCode);
+        json.addProperty("cvv", cvv);
+        return json.toString();
     }
 
     /**

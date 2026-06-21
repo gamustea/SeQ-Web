@@ -1,6 +1,5 @@
 package com.seq.acheron.vault;
 
-import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
@@ -27,15 +26,10 @@ public class VaultTest {
     void setUp() throws GeneralSecurityException {
         // Inicializamos con el objeto User real
         testUser = new User("a", "b", "c", "d", "e");
-        // NOTA: Si el constructor de User requiere parámetros en tu versión final,
-        // ajusta aquí (ej. new User("usuario")) o usa los setters que tengas disponibles.
 
         // Usamos la estrategia AES real con una contraseña de prueba y un salt generado
         String salt = CryptoUtils.generateSalt();
         testStrategy = new Argon2VaultEncryptingStrategy("MiPassSuperSegura123", salt, true);
-
-        // Reseteamos el singleton antes de cada prueba para evitar contaminación de estado
-        VaultFactory.resetInstance();
     }
 
     @Nested
@@ -109,6 +103,56 @@ public class VaultTest {
             // Si está descifrado, no puedo volver a descifrar
             assertThrows(IllegalStateException.class, vault::decryptAll);
         }
+
+        @Test
+        @DisplayName("Los IDs nuevos se generan como hash SHA256 de 16 caracteres")
+        void testHashIdGeneration() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+
+            // Crear un Account sin ID explícito (necesita auto-assignment)
+            Account acc = new Account("TestAccount", "user1", "example.com", "password123", false);
+            vault.add(acc);
+
+            String id = acc.getId();
+            assertNotNull(id, "El ID no debe ser null");
+            assertEquals(16, id.length(), "El ID debe tener 16 caracteres (truncado SHA256)");
+            assertTrue(id.matches("[0-9a-f]{16}"), "El ID debe ser 16 caracteres hexadecimales");
+        }
+
+        @Test
+        @DisplayName("Los hash IDs son únicos para storables distintos")
+        void testHashIdUniqueness() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+
+            // Crear accounts diferentes en el mismo vault
+            Account acc1 = new Account("TestAccount1", "user1", "example.com", "password123", false);
+            Account acc2 = new Account("TestAccount2", "user2", "example.com", "password456", false);
+
+            vault.add(acc1);
+            vault.add(acc2);
+
+            String id1 = acc1.getId();
+            String id2 = acc2.getId();
+
+            assertNotEquals(id1, id2, "Accounts diferentes deben generar hash IDs diferentes");
+        }
+
+        @Test
+        @DisplayName("El hash ID es fijo después de ser asignado")
+        void testHashIdImmutable() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+
+            Account acc = new Account("TestAccount", "user1", "example.com", "password123", false);
+            vault.add(acc);
+            String originalId = acc.getId();
+
+            // Editar el storable (cambiar contraseña)
+            acc.setPassword("newpassword456");
+            String editedId = acc.getId();
+
+            // El ID debe ser el mismo porque no se recalcula automáticamente
+            assertEquals(originalId, editedId, "El ID no cambia automáticamente tras editar el storable en memoria");
+        }
     }
 
     @Nested
@@ -118,8 +162,8 @@ public class VaultTest {
         @Test
         @DisplayName("El VaultFactory genera el mockVault esperado")
         void testFactoryMockVault() throws GeneralSecurityException {
-            VaultFactory factory = VaultFactory.getInstance(testUser);
-            Vault mockVault = factory.mockVault();
+            VaultFactory factory = new VaultFactory(testUser);
+            Vault mockVault = factory.getMockVault();
 
             assertNotNull(mockVault);
             assertFalse(mockVault.isEncrypted(), "El mockVault debe estar descifrado por defecto");
@@ -144,8 +188,8 @@ public class VaultTest {
         @DisplayName("Ciclo completo de vida: Creación -> Cifrado -> toJSON -> fromJSON -> Descifrado")
         void testVaultFullLifecycle() throws GeneralSecurityException {
             // 1. Configuramos el Factory y obtenemos el vault original
-            VaultFactory factory = VaultFactory.getInstance(testUser);
-            Vault originalVault = factory.mockVault();
+            VaultFactory factory = new VaultFactory(testUser);
+            Vault originalVault = factory.getMockVault();
 
             // 2. Modificamos y añadimos nuestros propios valores al mockVault base
             Account customAcc = new Account("CUSTOM_ID", "Account1", "gabriel", "test.com", "SecretPass!1", false);

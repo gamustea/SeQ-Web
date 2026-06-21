@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import request
 from flask_smorest import Blueprint as SmorestBlueprint
 from contextlib import contextmanager
@@ -16,7 +16,6 @@ from src.modules.acheron.exceptions import VaultError, VaultNotFoundError, Stora
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
 from .managers import VaultManager
 from .schemas import (
-    IsRecoveryQuerySchema,
     StorableCreateSchema,
     StorableDeleteSchema,
     BulkOperationSchema,
@@ -39,7 +38,6 @@ def get_vault_manager():
 
 
 @acheron_blp.get("/vault")
-@acheron_blp.arguments(IsRecoveryQuerySchema, location="query", as_kwargs=True)
 @acheron_blp.response(200, description="Vault del usuario en formato JSON")
 @acheron_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
 @acheron_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
@@ -48,11 +46,10 @@ def get_vault_manager():
 @require_attributes(at_least_one=[AttributeType.ACHERON_READ])
 @limiter.limit("120 per hour; 500 per day")
 @handle_exceptions(default_exception=VaultNotFoundError, logger=logger)
-def get_vault(**kwargs):
+def get_vault():
     """Obtener el vault del usuario en formato JSON"""
-    is_recovery = kwargs.get("isRecovery", False)
     with get_vault_manager() as mgr:
-        vault = mgr.get_vault_for_user(is_recovery=is_recovery)
+        vault = mgr.get_vault_for_user()
 
         if not vault:
             raise VaultNotFoundError()
@@ -63,7 +60,6 @@ def get_vault(**kwargs):
 
 
 @acheron_blp.post("/vault")
-@acheron_blp.arguments(IsRecoveryQuerySchema, location="query", as_kwargs=True)
 @acheron_blp.response(201, VaultUpsertResponseSchema, description="Vault created")
 @acheron_blp.alt_response(200, schema=VaultUpsertResponseSchema, description="Vault updated")
 @acheron_blp.alt_response(400, schema=ErrorSchema, description="Invalid body")
@@ -73,11 +69,8 @@ def get_vault(**kwargs):
 @require_attributes(at_least_one=[AttributeType.ACHERON_CREATE])
 @limiter.limit("60 per hour; 300 per day")
 @handle_exceptions(default_exception=VaultError, logger=logger)
-def upsert_vault(**kwargs):
+def upsert_vault():
     """Crear o reemplazar completamente el vault del usuario"""
-    uid = get_current_user().id
-    is_recovery = kwargs.get("isRecovery", False)
-
     if not request.is_json:
         raise ValidationError("Content-Type must be application/json")
 
@@ -86,12 +79,11 @@ def upsert_vault(**kwargs):
         raise ValidationError("Request body must be a JSON object")
 
     with get_vault_manager() as mgr:
-        vault, created = mgr.upsert_vault_from_json(data, is_recovery=is_recovery)
+        vault, created = mgr.upsert_vault_from_json(data)
         logger.info("Vault %s (ID=%s) | user=%s", "creado" if created else "actualizado", vault.id, current_actor())
     result = {
         "message": "Vault created" if created else "Vault updated",
         "vaultId": vault.id,
-        "isRecovery": is_recovery,
     }
     if created:
         return result
@@ -110,7 +102,6 @@ def upsert_vault(**kwargs):
 @handle_exceptions(default_exception=VaultError, logger=logger)
 def patch_vault_storables(data):
     """Actualizar en bulk uno o varios Storables del usuario (array de operaciones)"""
-    uid = get_current_user().id
     with get_vault_manager() as mgr:
         results = mgr.bulk_update_storables(operations=data)
         logger.info("Bulk update: %s operaciones | user=%s", len(data), current_actor())
@@ -133,8 +124,6 @@ def add_vault_storable(data):
     """Anadir un nuevo Account o CreditCard al vault del usuario"""
     kind = data["kind"]
 
-    uid = get_current_user().id
-    is_recovery = data.get("isRecovery", False)
     internal_id = data.get("internalId")
     title = data.get("title")
     created_at = _parse_dt(data.get("createdAt"))
@@ -157,7 +146,7 @@ def add_vault_storable(data):
         }
 
     with get_vault_manager() as mgr:
-        vault = mgr.get_vault_for_user(is_recovery=is_recovery)
+        vault = mgr.get_vault_for_user()
         if not vault:
             raise VaultNotFoundError()
 
@@ -175,7 +164,6 @@ def add_vault_storable(data):
         "storableId": st.id,
         "internalId": st.internal_id,
         "vaultId": st.vault_id,
-        "isRecovery": is_recovery,
         "kind": kind,
     }
 
@@ -195,10 +183,8 @@ def delete_vault_storable(data):
     """Eliminar un Storable del vault por su internalId"""
     internal_id = data["internalId"]
 
-    uid = get_current_user().id
-    is_recovery = data.get("isRecovery", False)
     with get_vault_manager() as mgr:
-        vault = mgr.get_vault_for_user(is_recovery=is_recovery)
+        vault = mgr.get_vault_for_user()
 
         if not vault:
             raise VaultNotFoundError()
@@ -216,20 +202,17 @@ def delete_vault_storable(data):
         "storableId": st.id,
         "internalId": internal_id,
         "vaultId": vault.id,
-        "isRecovery": is_recovery,
     }
-
-
-def _parse_is_recovery() -> bool:
-    val = request.args.get("isRecovery", "false").lower()
-    return val in ("true", "1", "yes")
 
 
 def _parse_dt(value):
     if not value:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
     try:
-        return datetime.fromisoformat(value)
-    except Exception as e:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
         logger.warning("Failed to parse datetime value %r, defaulting to utcnow", value, exc_info=True)
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)

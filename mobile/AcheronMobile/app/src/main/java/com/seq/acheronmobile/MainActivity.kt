@@ -1,175 +1,82 @@
 package com.seq.acheronmobile
 
+import android.graphics.Color
 import android.os.Bundle
-import android.text.Layout
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import com.seq.acheronmobile.ui.theme.AcheronMobileTheme
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.LineHeightStyle
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.lint.kotlin.metadata.Visibility
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.navigation.compose.rememberNavController
+import com.seq.acheronmobile.data.network.NetworkModule
+import com.seq.acheronmobile.data.repository.AuthRepository
+import com.seq.acheronmobile.data.repository.TokenRepository
+import com.seq.acheronmobile.data.repository.VaultRemoteDataSource
+import com.seq.acheronmobile.data.vault.VaultCryptoService
+import com.seq.acheronmobile.di.VaultServiceLocator
+import com.seq.acheronmobile.navigation.AcheronNavGraph
+import com.seq.acheronmobile.ui.login.LoginViewModel
+import com.seq.acheronmobile.ui.theme.AcheronMobileTheme
+import com.seq.acheronmobile.ui.vault.VaultViewModel
 
 class MainActivity : ComponentActivity() {
+
+    private val loginViewModel: LoginViewModel by lazy {
+        val tokenRepo = TokenRepository(applicationContext)
+        val authRepo  = AuthRepository(tokenRepo)
+        ViewModelProvider(this, object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                LoginViewModel(authRepo, tokenRepo) as T
+        })[LoginViewModel::class.java]
+    }
+
+    private val vaultViewModel: VaultViewModel by lazy {
+        ViewModelProvider(this)[VaultViewModel::class.java]
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Instala la pantalla de inicio de marca (rio purpura sobre el abismo)
+        // antes de super.onCreate; sustituye al splash automatico del sistema.
+        installSplashScreen()
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        val tokenRepo = TokenRepository(applicationContext)
+        NetworkModule.initialize(tokenRepo)
+
+        // Init vault services (recreated on process death)
+        VaultServiceLocator.cryptoService = VaultCryptoService()
+        VaultServiceLocator.remoteDataSource = VaultRemoteDataSource()
+        // Restaura el username de la sesion activa: necesario para validar el
+        // checker del vault si se arranca directamente en MASTER_KEY (ver #3).
+        VaultServiceLocator.username = tokenRepo.getUsername() ?: ""
+
+        // La identidad de Acheron es siempre oscura, asi que fijamos iconos de
+        // barra claros (estilo "dark") para que no queden invisibles aunque el
+        // sistema este en modo claro.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
         setContent {
-            AcheronMobileTheme {
-                Scaffold (modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
+            AcheronMobileTheme(dynamicColor = false) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    val navController = rememberNavController()
+                    AcheronNavGraph(
+                        navController  = navController,
+                        loginViewModel = loginViewModel,
+                        vaultViewModel = vaultViewModel
                     )
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    AcheronMobileTheme {
-        Greeting("Android")
-    }
-}
-
-@Composable
-fun LoginScreen() {
-    // Variables de estado para guardar lo que el usuario escribe
-    var usuario by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var passwordVisible by remember { mutableStateOf(false) }
-
-    // Column organiza los elementos verticalmente
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // Título
-        Text(
-            text = "Iniciar Sesión",
-            style = MaterialTheme.typography.headlineLarge,
-            modifier = Modifier.padding(bottom = 32.dp)
-        )
-
-        // Campo de usuario
-        OutlinedTextField(
-            value = usuario,
-            onValueChange = { usuario = it },
-            label = { Text("Usuario") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Next
-            )
-        )
-
-        // Campo de contraseña
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Contraseña") },
-            singleLine = true,
-            visualTransformation = if (passwordVisible)
-                VisualTransformation.None
-            else
-                PasswordVisualTransformation(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 8.dp),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Password,
-                imeAction = ImeAction.Done
-            )
-        )
-
-        // Texto "¿Has olvidado la contraseña?"
-        TextButton(
-            onClick = { /* Acción para recuperar contraseña */ },
-            modifier = Modifier
-                .align(Alignment.End)
-                .padding(bottom = 24.dp)
-        ) {
-            Text("¿Has olvidado la contraseña?")
-        }
-
-        // Botón de iniciar sesión
-        Button(
-            onClick = {
-                // Aquí irá la lógica de autenticación
-                println("Usuario: $usuario")
-                println("Contraseña: $password")
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp),
-            enabled = usuario.isNotEmpty() && password.isNotEmpty()
-        ) {
-            Text("Iniciar Sesión")
-        }
-
-        // Espaciado
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Texto "Crear cuenta"
-        Column (
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = "¿No tienes cuenta? ",
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            TextButton(
-                onClick = { /* Acción para crear cuenta */ },
-                contentPadding = PaddingValues(0.dp)
-            ) {
-                Text("Crear cuenta")
-            }
-        }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun LoginScreenPreview() {
-    MaterialTheme {
-        LoginScreen()
     }
 }

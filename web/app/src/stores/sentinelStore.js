@@ -35,7 +35,7 @@ export const useSentinelStore = defineStore('sentinel', () => {
   const scheduling = reactive({ showForm: false, submitting: false })
 
   /* ════════════════════════════════ MODALES ════════════════════════════ */
-  const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
+  const preview = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false, traceroute: null, tracerouteLoading: false })
   const details = reactive({ show: false, scanId: null, type: '', scan: null, docs: [], docsLoading: false })
 
   /* ════════════════════════════════ VISTA DE CARPETAS ══════════════════ */
@@ -46,6 +46,14 @@ export const useSentinelStore = defineStore('sentinel', () => {
     rename: { show: false, folderId: null, name: '', submitting: false },
   })
   const moveScan = reactive({ show: false, scanId: null, folderId: null, submitting: false })
+
+  /* ════════════════════════════════ ESTADÍSTICAS HISTÓRICAS ════════════ */
+  const history = reactive({
+    hosts: [], loading: false,
+    selected: null,          // { target, scanType }
+    chart: null, chartLoading: false,
+    cache: {},                // `${type}|${target}` -> payload, evita refetch al re-seleccionar
+  })
 
   /* ── HELPERS ── */
   /** @param {'nmap'|'nikto'|'openvas'} type */
@@ -211,6 +219,20 @@ export const useSentinelStore = defineStore('sentinel', () => {
   }
 
   /* ════════════════════════════════ VISTA PREVIA ══════════════════════ */
+
+  // El traceroute se calcula en segundo plano (worker): el endpoint responde
+  // "pending" al instante y aquí se hace polling hasta que esté "done"/"failed".
+  // El token de generación invalida polls en curso al cerrar o cambiar de modal.
+  const TRACE_POLL_INTERVAL_MS = 2000
+  const TRACE_POLL_MAX_ATTEMPTS = 30
+  let tracePollGen = 0
+  let tracePollTimer = null
+
+  function stopTracePoll() {
+    tracePollGen += 1
+    if (tracePollTimer) { clearTimeout(tracePollTimer); tracePollTimer = null }
+  }
+
   /** Abre el modal de vista previa y carga scan + documentos. */
   async function openPreview(scanId, type) {
     preview.scanId = scanId
@@ -219,6 +241,8 @@ export const useSentinelStore = defineStore('sentinel', () => {
     preview.scan = null
     preview.docs = []
     preview.docsLoading = true
+    preview.traceroute = null
+    preview.tracerouteLoading = true
 
     try {
       const [scanRes, docsRes] = await Promise.all([
@@ -235,14 +259,76 @@ export const useSentinelStore = defineStore('sentinel', () => {
       }
     } catch { /* noop */ }
     finally { preview.docsLoading = false }
+
+    // El traceroute se carga aparte: el worker lo calcula en segundo plano y
+    // aquí se hace polling, así que no debe bloquear el resto del modal.
+    loadPreviewTraceroute()
+  }
+
+  /**
+   * Carga el traceroute del escaneo abierto en la vista previa.
+   *
+   * El cálculo es asíncrono (worker): si fuerza, primero dispara el recálculo
+   * con POST /refresh; en ambos casos hace polling del GET hasta que el estado
+   * deje de ser "pending".
+   * @param {boolean} force - Si es true, fuerza el recálculo (ignora la caché).
+   */
+  async function loadPreviewTraceroute(force = false) {
+    const scanId = preview.scanId
+    if (!scanId) return
+
+    stopTracePoll()
+    const gen = tracePollGen
+    if (!force) preview.traceroute = null
+    preview.tracerouteLoading = true
+
+    if (force) {
+      try {
+        const res = await apiFetch(`/sentinel/scan/${scanId}/traceroute/refresh`, { method: 'POST' })
+        if (!res?.ok) toast.show('No se pudo recalcular el traceroute.', 'error')
+      } catch {
+        toast.show('Error al recalcular el traceroute.', 'error')
+      }
+    }
+    pollPreviewTraceroute(scanId, gen, 0)
+  }
+
+  /** Sondea el estado del traceroute hasta que esté listo o se agoten los intentos. */
+  async function pollPreviewTraceroute(scanId, gen, attempt) {
+    if (gen !== tracePollGen || preview.scanId !== scanId) return
+    try {
+      const res = await apiFetch(`/sentinel/scan/${scanId}/traceroute`)
+      if (gen !== tracePollGen || preview.scanId !== scanId) return
+
+      if (res?.ok) {
+        const data = await res.json()
+        if (data.status === 'pending' && attempt < TRACE_POLL_MAX_ATTEMPTS) {
+          tracePollTimer = setTimeout(
+            () => pollPreviewTraceroute(scanId, gen, attempt + 1),
+            TRACE_POLL_INTERVAL_MS,
+          )
+          return
+        }
+        // "done"/"failed" (o se agotaron los intentos): resultado final.
+        preview.traceroute = data
+        preview.tracerouteLoading = false
+      } else {
+        preview.tracerouteLoading = false
+      }
+    } catch {
+      preview.tracerouteLoading = false
+    }
   }
 
   /** Cierra el modal de vista previa. */
   function closePreview() {
+    stopTracePoll()
     preview.show = false
     preview.scanId = null
     preview.scan = null
     preview.docs = []
+    preview.traceroute = null
+    preview.tracerouteLoading = false
   }
 
   /** Refresca los documentos dentro del modal de vista previa. */
@@ -423,9 +509,53 @@ export const useSentinelStore = defineStore('sentinel', () => {
     viewMode.value = mode
     if (mode === 'folders') {
       if (!folders.items.length) loadFolders()
+    } else if (mode === 'history') {
+      if (!history.hosts.length) loadHistoryHosts()
     } else {
       refreshCurrent()
     }
+  }
+
+  /* ════════════════════════════════ ESTADÍSTICAS HISTÓRICAS ════════════ */
+  /** Carga la lista de hosts escaneados por el usuario (para el selector). */
+  async function loadHistoryHosts({ force = false } = {}) {
+    history.loading = true
+    try {
+      const res = await apiFetch('/sentinel/history/hosts')
+      if (!res?.ok) { history.hosts = []; return }
+      const data = await res.json()
+      history.hosts = data.hosts ?? []
+      if (force) history.cache = {}
+    } catch { history.hosts = [] }
+    finally { history.loading = false }
+  }
+
+  /** Carga las estadísticas históricas de un host + herramienta. Usa cache salvo `force`. */
+  async function loadHistoryStats(target, type, { force = false } = {}) {
+    history.selected = { target, scanType: type }
+    const key = `${type}|${target}`
+
+    if (!force && history.cache[key]) {
+      history.chart = history.cache[key]
+      return
+    }
+
+    history.chartLoading = true
+    history.chart = null
+    try {
+      const params = new URLSearchParams({ target, type })
+      const res = await apiFetch(`/sentinel/history/stats?${params}`)
+      if (!res?.ok) {
+        const data = await res?.json().catch(() => ({}))
+        toast.show(data?.error_description || data?.message || 'No se pudieron obtener las estadísticas.', 'error')
+        return
+      }
+      const data = await res.json()
+      history.chart = data
+      history.cache[key] = data
+    } catch {
+      toast.show('No se pudo conectar con la API.', 'error')
+    } finally { history.chartLoading = false }
   }
 
   async function createFolder(name) {
@@ -606,10 +736,11 @@ export const useSentinelStore = defineStore('sentinel', () => {
     launchNmap, launchNikto, launchOpenvas,
     deleteScan, cancelScan,
     loadScheduledScans, createScheduledScan, deactivateScheduledScan, deleteScheduledScan, toggleScheduledForm,
-    openPreview, closePreview, refreshPreviewDocs,
+    openPreview, closePreview, refreshPreviewDocs, loadPreviewTraceroute,
     openDetails, closeDetails, refreshDetailsDocs,
     generatePdf, downloadDocument, deleteDocument,
     setViewMode, loadFolders,
+    history, loadHistoryHosts, loadHistoryStats,
     createFolder, renameFolder, deleteFolder,
     moveScanToFolder, removeScanFromFolder,
     openMoveScan, closeMoveScan,

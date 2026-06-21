@@ -6,32 +6,30 @@ This module provides AI-powered analysis classes for different scan types:
 - NiktoAIWriter: Analyzes Nikto web vulnerability scans
 - OpenVASAIWriter: Analyzes OpenVAS vulnerability scans
 
-Each writer uses Ollama to generate security analysis, recommendations,
-and risk assessments based on scan data.
+Each writer delegates model calling to a scribe ``AIGenerator`` (Ollama or
+OpenAI strategy, chosen per module in SecOpsConfig.json) to produce security
+analysis, recommendations, and risk assessments based on scan data.
 """
 
 import json
 import re
-import time
 
 from typing import Optional
 
 import src.modules.system.config_reading as CR
-from src.modules.shared import AIWriter
-from src.modules.aegis.exceptions import (
-    AIResponseError,
-    AIFallbackExhaustedError,
-)
+from src.modules.scribe import AIInput, AIGenerator, build_generator, WEB_SEARCH_TOOL
+from src.modules.scribe.exceptions import AIResponseError
 
 from ..model import NmapScan, NiktoScan, OpenVASScan
 
 
-class NmapAIWriter(AIWriter):
+class NmapAIWriter:
     """AI writer for Nmap scan security analysis.
 
-    Generates security analysis and recommendations for Nmap network scans
-    using Ollama. Provides objective evaluation of attack surfaces,
-    distinguishing between exposed services and confirmed vulnerabilities.
+    Generates security analysis and recommendations for Nmap network scans.
+    Provides objective evaluation of attack surfaces, distinguishing between
+    exposed services and confirmed vulnerabilities. Model calling is delegated
+    to an injected ``AIGenerator`` (scribe).
 
     The system prompt enforces strict principles:
     - Open port ≠ Vulnerability
@@ -39,24 +37,17 @@ class NmapAIWriter(AIWriter):
     - Never invent CVEs or assume missing authentication
 
     Attributes:
-        model: Ollama model name (from env var or default).
-        _client: Ollama client instance.
-        _prompts: Prompt configuration from SecConfig.json.
+        _generator: scribe AIGenerator used for model calling.
     """
 
-    def __init__(
-        self,
-        host: Optional[str] = None,
-        model: Optional[str] = None
-    ) -> None:
+    def __init__(self, generator: Optional[AIGenerator] = None) -> None:
         """Initialize Nmap AI writer.
 
         Args:
-            host: Ollama host (optional, from env var if not provided).
-            model: Ollama model name (optional, from env var if not provided).
+            generator: Optional scribe AIGenerator. If not provided, one is
+                built for the 'sentinel' module via ``build_generator``.
         """
-        super().__init__()
-        self._prompts = CR.get_prompts_config()
+        self._generator = generator or build_generator("sentinel")
 
     def _classify_network_context(self, target: str) -> dict:
         """Classify target as private LAN or public network deterministically.
@@ -224,67 +215,18 @@ class NmapAIWriter(AIWriter):
 
         prompt = self._build_user_prompt(scan_data, open_ports, network_ctx)
 
-        tools = [{
-            "type": "function",
-            "function": {
-                "name":        "web_search",
-                "description": "Buscar CVEs específicos para versiones exactas de software SOLO si se detectan versiones obsoletas o con vulnerabilidades conocidas documentadas.",
-                "parameters": {
-                    "type":       "object",
-                    "properties": {"query": {"type": "string", "description": "Término de búsqueda CVE específico"}},
-                    "required":   ["query"],
-                },
-            },
-        }]
+        ai_input = AIInput(
+            system_prompt = self._build_system_prompt(),
+            user_prompt   = prompt,
+            tools         = [WEB_SEARCH_TOOL],
+            num_predict   = 2048,
+            temperature   = 0.15,
+            top_p         = 0.8,
+            repeat_penalty = 1.2,
+        )
 
-        raw_response = None
-        for attempt in range(3):
-            try:
-                messages = [
-                    {"role": "system", "content": self._build_system_prompt()},
-                    {"role": "user",   "content": prompt},
-                ]
-                resp = self._client.chat(
-                    model    = self.model,
-                    messages = messages,
-                    tools    = tools,
-                    format   = "json",
-                    options  = {
-                        "num_predict":    2048,
-                        "temperature":    0.15,
-                        "top_p":          0.8,
-                        "repeat_penalty": 1.2,
-                    },
-                )
-
-                if getattr(resp.message, "tool_calls", None):
-                    messages.append({
-                        "role":       "assistant",
-                        "content":    resp.message.content or "",
-                        "tool_calls": resp.message.tool_calls,
-                    })
-                    for tc in resp.message.tool_calls:
-                        query         = tc.function.arguments.get("query", "")
-                        search_result = self._web_search(query)
-                        messages.append({"role": "tool", "content": search_result})
-
-                    resp = self._client.chat(
-                        model    = self.model,
-                        messages = messages,
-                        format   = "json",
-                        options  = {"num_predict": 2048, "temperature": 0.15},
-                    )
-
-                raw_response = resp.message.content.strip()
-                if raw_response:
-                    break
-
-            except Exception as exc:
-                if attempt == 2:
-                    raise AIFallbackExhaustedError(3, str(exc))
-                time.sleep(1.5 ** attempt)
-
-        return self._parse_response(raw_response, network_ctx=network_ctx)
+        result = self._generator.digest(ai_input)
+        return self._parse_response(result.text, network_ctx=network_ctx)
 
     def _parse_response(self, raw: str, attempt: int = 0, network_ctx: Optional[dict] = None) -> dict:
         """Parseo robusto de la respuesta JSON con validación de integridad."""
@@ -339,12 +281,13 @@ class NmapAIWriter(AIWriter):
             raise ValueError(f"No se pudo parsear la respuesta: {raw[:200]}")
 
 
-class NiktoAIWriter(AIWriter):
+class NiktoAIWriter:
     """AI writer for Nikto scan security analysis.
 
-    Generates security analysis for Nikto web vulnerability scans using Ollama.
-    Analyzes aggregated findings grouped by security controls rather than
-    individual incidents, providing calibrated risk assessments.
+    Generates security analysis for Nikto web vulnerability scans. Analyzes
+    aggregated findings grouped by security controls rather than individual
+    incidents, providing calibrated risk assessments. Model calling is
+    delegated to an injected ``AIGenerator`` (scribe).
 
     The system prompt enforces:
     - Controls over counts (one misconfigured control = one issue)
@@ -352,19 +295,12 @@ class NiktoAIWriter(AIWriter):
     - Distinguish between placeholder SSL certs and real invalid certs
 
     Attributes:
-        model: Ollama model name (from env var or default).
-        _client: Ollama client instance.
-        _prompts: Prompt configuration from SecConfig.json.
+        _generator: scribe AIGenerator used for model calling.
     """
 
-    def __init__(
-        self,
-        host: Optional[str] = None,
-        model: Optional[str] = None
-    ) -> None:
+    def __init__(self, generator: Optional[AIGenerator] = None) -> None:
         """Initialize Nikto AI writer."""
-        super().__init__()
-        self._prompts = CR.get_prompts_config()
+        self._generator = generator or build_generator("sentinel")
 
     def _preprocess_incidents(self, incidents: list) -> dict:
         """Preprocess incidents by grouping them into security controls."""
@@ -499,67 +435,18 @@ class NiktoAIWriter(AIWriter):
 
         prompt = self._build_user_prompt(scan_data, processed)
 
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Buscar información sobre configuración segura de certificados SSL o mejores prácticas de headers de seguridad.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                    "required": ["query"],
-                },
-            },
-        }]
+        ai_input = AIInput(
+            system_prompt = self._build_system_prompt(),
+            user_prompt   = prompt,
+            tools         = [WEB_SEARCH_TOOL],
+            num_predict   = 2048,
+            temperature   = 0.1,
+            top_p         = 0.75,
+            repeat_penalty = 1.3,
+        )
 
-        raw_response = None
-        for attempt in range(3):
-            try:
-                messages = [
-                    {"role": "system", "content": self._build_system_prompt()},
-                    {"role": "user", "content": prompt},
-                ]
-                resp = self._client.chat(
-                    model=self.model,
-                    messages=messages,
-                    tools=tools,
-                    format="json",
-                    options={
-                        "num_predict": 2048,
-                        "temperature": 0.1,
-                        "top_p": 0.75,
-                        "repeat_penalty": 1.3,
-                    },
-                )
-
-                if getattr(resp.message, "tool_calls", None):
-                    messages.append({
-                        "role": "assistant",
-                        "content": resp.message.content or "",
-                        "tool_calls": resp.message.tool_calls,
-                    })
-                    for tc in resp.message.tool_calls:
-                        query = tc.function.arguments.get("query", "")
-                        search_result = self._web_search(query)
-                        messages.append({"role": "tool", "content": search_result})
-
-                    resp = self._client.chat(
-                        model=self.model,
-                        messages=messages,
-                        format="json",
-                        options={"num_predict": 2048, "temperature": 0.1},
-                    )
-
-                raw_response = resp.message.content.strip()
-                if raw_response:
-                    break
-
-            except Exception as exc:
-                if attempt == 2:
-                    raise AIFallbackExhaustedError(3, str(exc))
-                time.sleep(1.5 ** attempt)
-
-        return self._parse_response(raw_response)
+        result = self._generator.digest(ai_input)
+        return self._parse_response(result.text)
 
     def _parse_response(self, raw: str, attempt: int = 0) -> dict:
         """Parse the AI response JSON with validation."""
@@ -591,12 +478,13 @@ class NiktoAIWriter(AIWriter):
             raise AIResponseError(f"Respuesta inválida: {raw[:200]}", attempt=attempt)
 
 
-class OpenVASAIWriter(AIWriter):
+class OpenVASAIWriter:
     """AI writer for OpenVAS vulnerability scan analysis.
 
-    Generates security analysis for OpenVAS scans using Ollama.
-    Analyzes aggregated findings grouped by security controls rather than
-    individual vulnerabilities, providing calibrated risk assessments.
+    Generates security analysis for OpenVAS scans. Analyzes aggregated findings
+    grouped by security controls rather than individual vulnerabilities,
+    providing calibrated risk assessments. Model calling is delegated to an
+    injected ``AIGenerator`` (scribe).
 
     The system prompt enforces:
     - Controls over counts (one misconfigured control = one issue)
@@ -604,19 +492,12 @@ class OpenVASAIWriter(AIWriter):
     - Distinguish between confirmed vs potential vulnerabilities
 
     Attributes:
-        model: Ollama model name (from env var or default).
-        _client: Ollama client instance.
-        _prompts: Prompt configuration from SecOpsConfig.json.
+        _generator: scribe AIGenerator used for model calling.
     """
 
-    def __init__(
-        self,
-        host: Optional[str] = None,
-        model: Optional[str] = None
-    ) -> None:
+    def __init__(self, generator: Optional[AIGenerator] = None) -> None:
         """Initialize OpenVAS AI writer."""
-        super().__init__()
-        self._prompts = CR.get_prompts_config()
+        self._generator = generator or build_generator("sentinel")
 
     def _preprocess_vulnerabilities(self, vulnerabilities: list) -> dict:
         """Preprocess vulnerabilities by grouping them into security controls."""
@@ -753,47 +634,18 @@ class OpenVASAIWriter(AIWriter):
 
         prompt = self._build_user_prompt(scan_data, processed)
 
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Buscar información sobre vulnerabilidades específicas y mitigaciones.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                    "required": ["query"],
-                },
-            },
-        }]
+        ai_input = AIInput(
+            system_prompt = self._build_system_prompt(),
+            user_prompt   = prompt,
+            tools         = [WEB_SEARCH_TOOL],
+            num_predict   = 2048,
+            temperature   = 0.1,
+            top_p         = 0.75,
+            repeat_penalty = 1.3,
+        )
 
-        raw_response = None
-        for attempt in range(3):
-            try:
-                messages = [
-                    {"role": "system", "content": self._build_system_prompt()},
-                    {"role": "user", "content": prompt},
-                ]
-                resp = self._client.chat(
-                    model    = self.model,
-                    messages = messages,
-                    tools    = tools,
-                    format   = "json",
-                    options  = {
-                        "num_predict": 2048,
-                        "temperature": 0.1,
-                        "top_p": 0.75,
-                        "repeat_penalty": 1.3,
-                    },
-                )
-                raw_response = resp.message.content.strip()
-                if raw_response:
-                    break
-            except Exception as exc:
-                if attempt == 2:
-                    raise AIFallbackExhaustedError(3, str(exc))
-                time.sleep(1.5 ** attempt)
-
-        return self._parse_response(raw_response)
+        result = self._generator.digest(ai_input)
+        return self._parse_response(result.text)
 
     def _parse_response(self, raw: str, attempt: int = 0) -> dict:
         """Parse the AI response JSON with validation."""

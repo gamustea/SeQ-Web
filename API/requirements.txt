@@ -45,6 +45,7 @@ PyJWT
 dnspython
 python-gvm
 ollama
+openai>=1.0
 requests
 ddgs
 psutil

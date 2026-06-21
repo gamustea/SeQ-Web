@@ -7,14 +7,19 @@ import com.seq.acheron.vault.interfaces.Storable;
 import com.seq.acheron.vault.storables.VaultObject;
 import lombok.Getter;
 
-import java.nio.charset.StandardCharsets;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonParser;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A secure container that stores and manages {@link Storable} objects,
@@ -77,6 +82,13 @@ public class Vault implements JsonSerializable {
     private final List<Storable> storables = new ArrayList<>();
 
     /**
+     * Per-prefix sequential counters for auto-generating stable IDs
+     * within this vault.  Shared by all storable types.  Synchronised
+     * with explicit IDs on {@link #add(Storable)} and {@link #syncPrefixSequence}.
+     */
+    private final Map<String, AtomicInteger> prefixSequences = new ConcurrentHashMap<>();
+
+    /**
      * {@code true} if all items currently hold encrypted (cipher-text) values;
      * {@code false} if they hold plain-text values.
      * <p>
@@ -84,6 +96,8 @@ public class Vault implements JsonSerializable {
      * {@link #decryptAll()} to reflect the state of the underlying data.
      */
     private boolean isEncrypted;
+
+    public static final int VAULT_VERSION = 1;
 
     /**
      * Encrypted verifier derived from the user's username and the master password.
@@ -174,10 +188,50 @@ public class Vault implements JsonSerializable {
     }
 
     /**
+     * Produces the encrypted JSON of a single stored item <b>without</b>
+     * mutating the live, decrypted item.
+     * <p>
+     * The vault must currently be decrypted. The target item is located by its
+     * {@link Storable#getId() id}, {@link Storable#copy() copied}, and only the
+     * copy is encrypted using this vault's {@link VaultEncryptingStrategy}; the
+     * in-memory item is left untouched in plain-text state.
+     * <p>
+     * This enables surgical, per-item updates: the caller can ship just one
+     * item's ciphertext to the server (e.g. to a partial-update endpoint keyed
+     * by the item's id) instead of re-encrypting and re-uploading the whole
+     * vault for every single change.
+     *
+     * @param id the id of the item to export (e.g. {@code "ACC0"}, {@code "CDC1"})
+     * @return the encrypted JSON representation of the matching item
+     * @throws IllegalStateException   if the vault is currently encrypted
+     * @throws NoSuchElementException  if no item matches {@code id}
+     */
+    public String exportEncryptedStorable(String id) {
+        Objects.requireNonNull(id, "id must not be null");
+        if (isEncrypted) {
+            throw new IllegalStateException(
+                    "Vault must be decrypted to export a single storable");
+        }
+
+        Storable target = get(id);
+        if (target == null) {
+            throw new NoSuchElementException("No storable with id " + id);
+        }
+
+        Storable copy = target.copy();
+        copy.encrypt(strategy);
+        return copy.toJson();
+    }
+
+    /**
      * Adds an item to the vault.
      * <p>
-     * No duplicate check is performed. Callers are responsible for ensuring
-     * that IDs remain unique if that is a requirement for their use-case.
+     * If the storable was constructed with auto-ID generation
+     * ({@link VaultObject#needsIdAssignment()}), a fresh ID is assigned
+     * from this vault's per-prefix sequence.  Explicit IDs (e.g. from
+     * {@code fromJson}) automatically advance the sequence to avoid
+     * future collisions.
+     * <p>
      * After insertion, the internal list of items is re-sorted according to
      * the natural ordering of {@link Storable}.
      *
@@ -186,9 +240,47 @@ public class Vault implements JsonSerializable {
      */
     public Vault add(Storable storable) {
         Objects.requireNonNull(storable, "storable must not be null");
+        if (storable instanceof VaultObject vo) {
+            if (vo.needsIdAssignment()) {
+                Storable copy = vo.copy();
+                ((Cypher) copy).encrypt(strategy);
+                String hashId = VaultObject.generateIdFromContent(copy.toJson());
+                vo.assignIdDirect(hashId);
+            } else {
+                syncPrefixSequence(vo.getId());
+            }
+        }
         storables.add(storable);
         storables.sort(null);
         return this;
+    }
+
+    /**
+     * Advance the per-prefix sequence counter past the given ID so that
+     * auto-generated IDs never collide with explicit ones.
+     *
+     * @param id an already-assigned ID such as {@code "ACC3"} or {@code "CDC0"}
+     */
+    void syncPrefixSequence(String id) {
+        String prefix = extractPrefix(id);
+        try {
+            int num = Integer.parseInt(id.substring(prefix.length()));
+            prefixSequences
+                    .computeIfAbsent(prefix, k -> new AtomicInteger(0))
+                    .updateAndGet(cur -> Math.max(cur, num + 1));
+        } catch (NumberFormatException ignored) {
+            // non-standard ID format — leave sequence unchanged
+        }
+    }
+
+    private static String extractPrefix(String id) {
+        StringBuilder letters = new StringBuilder();
+        for (int i = 0; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (Character.isDigit(c)) break;
+            letters.append(c);
+        }
+        return letters.toString();
     }
 
     /**
@@ -276,58 +368,56 @@ public class Vault implements JsonSerializable {
     /**
      * Serialises this vault to a JSON string suitable for persistence.
      * <p>
+     * The vault MUST be encrypted before calling this method; an
+     * {@link IllegalStateException} is thrown otherwise to prevent
+     * accidental export of plain-text secrets.
+     * <p>
      * The JSON includes:
      * <ul>
      *   <li>{@code checker}: the encrypted verifier bound to the master password.</li>
      *   <li>{@code vaultKey}: the exported key material from
      *       {@link VaultEncryptingStrategy#exportVaultKey()}.</li>
      *   <li>One array per {@link Storable#category()}, containing the JSON form
-     *       of each stored item.</li>
+     *       of each stored item (ciphertext).</li>
      * </ul>
      *
      * @return JSON representation of this vault
+     * @throws IllegalStateException     if the vault is not encrypted
      * @throws GeneralSecurityException if exporting the vault key fails
      */
     public String toJson() throws GeneralSecurityException {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{");
-        sb.append("\"checker\": \"").append(checker).append("\", ");
-        sb.append("\"vaultKey\": \"").append(strategy.exportVaultKey()).append("\", ");
-        // strategy.toJson() returns a JSON *object* (not a quoted string),
-        // so it is embedded directly without extra quotes.
-        sb.append("\"algorithm\": ").append(strategy.toJson()).append(", ");
-
-        Map<String, List<Storable>> map = classifyStorables();
-        boolean firstEntry = true;
-
-        for (Map.Entry<String, List<Storable>> entry : map.entrySet()) {
-            if (!firstEntry) {
-                sb.append(", ");
-            }
-            firstEntry = false;
-
-            sb.append("\"").append(entry.getKey()).append("\": [");
-            List<Storable> group = entry.getValue();
-            for (int i = 0; i < group.size(); i++) {
-                sb.append(group.get(i).toJson());
-                if (i < group.size() - 1) {
-                    sb.append(", ");
-                }
-            }
-            sb.append("]");
+        if (!isEncrypted) {
+            throw new IllegalStateException("Vault must be encrypted before serialisation");
         }
 
-        sb.append("}");
-        return sb.toString();
+        JsonObject root = new JsonObject();
+        root.addProperty("version", VAULT_VERSION);
+        root.addProperty("checker", checker);
+        root.addProperty("vaultKey", strategy.exportVaultKey());
+        root.add("algorithm", JsonParser.parseString(strategy.toJson()));
+
+        Map<String, List<Storable>> map = classifyStorables();
+        for (Map.Entry<String, List<Storable>> entry : map.entrySet()) {
+            JsonArray array = new JsonArray();
+            for (Storable storable : entry.getValue()) {
+                array.add(JsonParser.parseString(storable.toJson()));
+            }
+            root.add(entry.getKey(), array);
+        }
+
+        return root.toString();
     }
 
 
     /**
-     * Delegates to {@link #toJson()} and wraps any {@link GeneralSecurityException}
-     * into a {@link RuntimeException}.
+     * Returns a safe debug representation.  Only returns the full JSON
+     * when the vault is encrypted; otherwise shows a summary.
      */
     @Override
     public String toString() {
+        if (!isEncrypted) {
+            return "Vault{storables=" + storables.size() + ", encrypted=false}";
+        }
         try {
             return toJson();
         } catch (GeneralSecurityException e) {
