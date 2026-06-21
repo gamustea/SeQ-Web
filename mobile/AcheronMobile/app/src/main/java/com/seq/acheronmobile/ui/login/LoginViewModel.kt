@@ -82,4 +82,16 @@ class LoginViewModel(
     fun onNavigatedToVault() {
         _uiState.update { it.copy(loginSuccess = false) }
     }
+
+    /**
+     * Cierra la sesión de SeQ: revoca los tokens locales y bloquea la bóveda
+     * en memoria. A diferencia de "bloquear", esto obliga a iniciar sesión de
+     * nuevo (no solo a reintroducir la clave maestra).
+     */
+    fun logout() {
+        tokenRepository.clearTokens()
+        VaultServiceLocator.cryptoService.lock()
+        VaultServiceLocator.username = ""
+        _uiState.value = LoginUiState()
+    }
 }

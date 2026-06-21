@@ -14,19 +14,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,7 +72,8 @@ import com.seq.acheronmobile.ui.theme.WarningCallout
 @Composable
 fun MasterKeyScreen(
     viewModel: MasterKeyViewModel = viewModel(),
-    onVaultUnlocked: () -> Unit
+    onVaultUnlocked: () -> Unit,
+    onLogout: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -91,9 +96,9 @@ fun MasterKeyScreen(
                 exists == null ->
                     ProbeLoadingContent()
                 exists ->
-                    UnlockContent(viewModel, uiState)
+                    UnlockContent(viewModel, uiState, onLogout)
                 else ->
-                    CreateVaultContent(viewModel, uiState)
+                    CreateVaultContent(viewModel, uiState, onLogout)
             }
         }
     }
@@ -161,7 +166,8 @@ private fun ProbeErrorContent(message: String, onRetry: () -> Unit) {
 @Composable
 private fun UnlockContent(
     viewModel: MasterKeyViewModel,
-    uiState: MasterKeyUiState
+    uiState: MasterKeyUiState,
+    onLogout: () -> Unit
 ) {
     val focusManager = LocalFocusManager.current
     var visible by remember { mutableStateOf(false) }
@@ -224,6 +230,7 @@ private fun UnlockContent(
         }
 
         TrustFooter("Tu clave maestra nunca sale de este dispositivo.")
+        LogoutAction(onLogout)
     }
 }
 
@@ -232,7 +239,8 @@ private fun UnlockContent(
 @Composable
 private fun CreateVaultContent(
     viewModel: MasterKeyViewModel,
-    uiState: MasterKeyUiState
+    uiState: MasterKeyUiState,
+    onLogout: () -> Unit
 ) {
     val focusManager = LocalFocusManager.current
     var visible by remember { mutableStateOf(false) }
@@ -326,6 +334,7 @@ private fun CreateVaultContent(
         }
 
         TrustFooter("Cifrado de extremo a extremo. Solo tú tienes la llave.")
+        LogoutAction(onLogout)
     }
 }
 
@@ -342,6 +351,48 @@ private fun ErrorLine(message: String?) {
                 modifier = Modifier.fillMaxWidth()
             )
         }
+    }
+}
+
+@Composable
+private fun LogoutAction(onLogout: () -> Unit) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Cerrar sesión de SeQ") },
+            text = {
+                Text(
+                    "Se cerrará tu sesión por completo. La próxima vez deberás " +
+                        "iniciar sesión de nuevo con tu usuario y contraseña de SeQ."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDialog = false; onLogout() }) {
+                    Text("Cerrar sesión", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    TextButton(onClick = { showDialog = true }) {
+        Icon(
+            Icons.AutoMirrored.Filled.Logout,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(BrandSpace.xs))
+        Text(
+            "¿No eres tú? Cerrar sesión de SeQ",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

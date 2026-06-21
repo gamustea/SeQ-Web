@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CreditCard
@@ -70,11 +71,13 @@ fun VaultListScreen(
     onAddAccount: () -> Unit,
     onAddCard: () -> Unit,
     onStorableClick: (StorableUi) -> Unit,
-    onLock: () -> Unit
+    onLock: () -> Unit,
+    onLogout: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showLockDialog by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(VaultFilter.ALL) }
 
     LaunchedEffect(uiState.errorMessage) {
@@ -102,6 +105,28 @@ fun VaultListScreen(
         )
     }
 
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Cerrar sesión de SeQ") },
+            text = {
+                Text(
+                    "Se cerrará tu sesión por completo. La próxima vez deberás " +
+                        "iniciar sesión de nuevo con tu usuario y contraseña de SeQ."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showLogoutDialog = false; onLogout() }) {
+                    Text("Cerrar sesión", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
     val accounts = uiState.storables.count { it.kind == "account" }
     val cards = uiState.storables.count { it.kind == "creditcard" }
     val visible = when (filter) {
@@ -117,7 +142,8 @@ fun VaultListScreen(
             VaultHeader(
                 syncing = uiState.syncing,
                 onSync = { viewModel.syncToRemote() },
-                onLock = { showLockDialog = true }
+                onLock = { showLockDialog = true },
+                onLogout = { showLogoutDialog = true }
             )
         },
         floatingActionButton = { AddMenu(onAddAccount = onAddAccount, onAddCard = onAddCard) }
@@ -162,7 +188,12 @@ fun VaultListScreen(
 // ── Cabecera ──────────────────────────────────────────────────────────────────
 
 @Composable
-private fun VaultHeader(syncing: Boolean, onSync: () -> Unit, onLock: () -> Unit) {
+private fun VaultHeader(
+    syncing: Boolean,
+    onSync: () -> Unit,
+    onLock: () -> Unit,
+    onLogout: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -190,6 +221,8 @@ private fun VaultHeader(syncing: Boolean, onSync: () -> Unit, onLock: () -> Unit
         HeaderAction(icon = Icons.Filled.Sync, desc = "Sincronizar", loading = syncing, onClick = onSync)
         Spacer(Modifier.width(BrandSpace.sm))
         HeaderAction(icon = Icons.Filled.Lock, desc = "Bloquear", onClick = onLock)
+        Spacer(Modifier.width(BrandSpace.sm))
+        HeaderAction(icon = Icons.AutoMirrored.Filled.Logout, desc = "Cerrar sesión", onClick = onLogout)
     }
 }
 

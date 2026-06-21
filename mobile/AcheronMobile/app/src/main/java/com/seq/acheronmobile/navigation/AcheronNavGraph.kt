@@ -38,6 +38,13 @@ fun AcheronNavGraph(
     else
         Routes.LOGIN
 
+    val onLogout: () -> Unit = {
+        loginViewModel.logout()
+        navController.navigate(Routes.LOGIN) {
+            popUpTo(0) { inclusive = true }
+        }
+    }
+
     NavHost(
         navController    = navController,
         startDestination = startDestination
@@ -61,7 +68,8 @@ fun AcheronNavGraph(
                     navController.navigate(Routes.VAULT_LIST) {
                         popUpTo(Routes.MASTER_KEY) { inclusive = true }
                     }
-                }
+                },
+                onLogout = onLogout
             )
         }
 
@@ -81,7 +89,8 @@ fun AcheronNavGraph(
                     navController.navigate(Routes.MASTER_KEY) {
                         popUpTo(0) { inclusive = true }
                     }
-                }
+                },
+                onLogout = onLogout
             )
         }
 
