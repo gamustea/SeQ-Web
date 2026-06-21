@@ -32,9 +32,13 @@ Usage:
 
 from __future__ import annotations
 
+import logging
+
 from flask import g
 
 from .unit_of_work import get_session, close_all
+
+logger = logging.getLogger(__name__)
 
 
 def get_db_session():
@@ -73,6 +77,13 @@ def shutdown_request_session(exception=None) -> None:
     - Always closes the session and removes the scoped session from the
       registry, preventing session leaks.
 
+    Note:
+        A failed commit is rolled back and logged but **not** re-raised. This
+        hook runs after the response has already been produced, so propagating
+        here cannot change what the client receives; integrity is already
+        protected by the rollback, and re-raising would only surface as an
+        unhandled error in a post-response hook.
+
     Args:
         exception: The exception raised during the request, if any.
                    Supplied automatically by Flask.
@@ -88,8 +99,8 @@ def shutdown_request_session(exception=None) -> None:
             try:
                 session.commit()
             except Exception:
+                logger.error("Commit failed during request teardown", exc_info=True)
                 session.rollback()
-                raise
     finally:
         session.close()
         close_all()

@@ -8,10 +8,13 @@
     }
   },
   "database": {
-    "isolation_level": "READ COMMITTED"
+    "isolation_level": "READ COMMITTED",
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_timeout": 30
   },
   "redis": {
-    "host": "localhost",
+    "host": "127.0.0.1",
     "port": 6379,
     "db": 0,
     "socket_connect_timeout": 2

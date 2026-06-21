@@ -65,6 +65,23 @@ class _ThreadSafeWorker(SimpleWorker):
     def _install_signal_handlers(self):
         pass
 
+    def perform_job(self, job, queue):
+        """Ejecuta el job y limpia la sesión scoped del hilo al terminar.
+
+        Los hilos de worker viven indefinidamente y ``scoped_session`` está
+        keyed por hilo, así que la misma ``Session`` se reutilizaría entre
+        jobs. Sin esta limpieza, un job que deje la transacción en estado
+        abortado (``PendingRollbackError``) u objetos colgando en la
+        identity-map envenenaría el siguiente job del mismo hilo. Este es el
+        único choke-point por el que pasan todos los tipos de job, por lo que
+        ``close_all()`` aquí cubre nmap/nikto/openvas/aegis/iris.
+        """
+        try:
+            return super().perform_job(job, queue)
+        finally:
+            from src.modules.infrastructure.unit_of_work import close_all
+            close_all()
+
 
 def _worker_thread(worker_num: int):
     """Hilo de trabajo independiente que escucha y ejecuta jobs de una o más colas.

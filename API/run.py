@@ -238,7 +238,14 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
     BaseManager.warmup_connection()
 
     _logger.info("Configurando sesión por-request...")
-    from src.modules.infrastructure.session import shutdown_request_session
+    from src.modules.infrastructure.session import (
+        init_request_session,
+        shutdown_request_session,
+    )
+    # Abrir la sesión al inicio de la petición (no de forma perezosa) hace que
+    # un fallo de conexión se detecte pronto, y garantiza que g.db_session
+    # exista para que UnitOfWork/BaseManager la compartan de forma consistente.
+    app.before_request(init_request_session)
     app.teardown_request(shutdown_request_session)
 
     if start_scheduler:

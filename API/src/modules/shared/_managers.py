@@ -51,16 +51,53 @@ class BaseManager:
         """
         Initialize the manager with an optional existing session.
 
+        Session ownership rules (mirrors ``UnitOfWork._try_share_request_session``):
+
+        - An explicitly passed session is never owned (caller manages it).
+        - Inside a Flask request with an active ``g.db_session``, that
+          request-scoped session is reused and **not** owned, so writes flush
+          but defer the commit to ``teardown_request`` — keeping the whole
+          request in one atomic transaction.
+        - In a background thread (no request context), the manager creates and
+          owns its own session and commits its own writes.
+
         Args:
             session: Optional existing SQLAlchemy session. If not provided,
-                        a new session will be created from the factory.
+                        the request-scoped session is reused when available,
+                        otherwise a new session is created from the factory.
         """
         if session is not None:
             self.session = session
             self._owns_session = False
+            return
+
+        shared = self._request_session()
+        if shared is not None:
+            self.session = shared
+            self._owns_session = False
         else:
             self.session = _uow.get_session()
             self._owns_session = True
+
+    @staticmethod
+    def _request_session() -> Optional[Session]:
+        """Return the active Flask request-scoped session, or None.
+
+        Only the HTTP request lifecycle (``before_request`` opens ``g.db_session``,
+        ``teardown_request`` commits/closes it) is safe to share. Background
+        workers run under an application context with no teardown, so they must
+        own their session.
+        """
+        try:
+            from flask import g, has_request_context
+        except ImportError:
+            return None
+        try:
+            if has_request_context() and "db_session" in g:
+                return g.db_session
+        except RuntimeError:
+            return None
+        return None
 
 
     # =========================================================================
@@ -202,8 +239,9 @@ class BaseManager:
         """
         Save a new object to the database.
 
-        Adds the object to the session, commits the transaction, and
-        refreshes the object to get the generated ID.
+        Adds the object to the session, persists it (flush, or commit if this
+        manager owns the session), and refreshes the object to get the
+        generated ID.
 
         Args:
             obj: SQLAlchemy model instance to save.
@@ -212,7 +250,7 @@ class BaseManager:
             The saved model instance with updated attributes.
         """
         self.session.add(obj)
-        self._safe_commit()
+        self._persist()
         self.session.refresh(obj)
         return obj
 
@@ -228,8 +266,7 @@ class BaseManager:
         Returns:
             The updated model instance.
         """
-        self.session.flush()
-        self._safe_commit()
+        self._persist()
         return obj
 
     def _delete(self, obj: Any) -> None:
@@ -246,7 +283,7 @@ class BaseManager:
 
         try:
             self.session.delete(obj)
-            self._safe_commit()
+            self._persist()
 
         except Exception as e:
             self._safe_rollback()
@@ -267,6 +304,26 @@ class BaseManager:
         """
         if self.session is None:
             raise Exception("La sesión de base de datos no está establecida.")
+
+    def _persist(self):
+        """
+        Persist pending changes, deferring the commit when the session is shared.
+
+        - If this manager owns the session (background/tests): commit now.
+        - If the session is the Flask request-scoped one (``_owns_session`` is
+          False): only flush; the commit is performed by ``teardown_request``
+          so the whole request stays in a single atomic transaction and one
+          manager's write does not prematurely commit another repository's
+          pending changes.
+
+        Returns:
+            True on success.
+        """
+        self._check_session()
+        if self._owns_session:
+            return self._safe_commit()
+        self.session.flush()
+        return True
 
     def _safe_commit(self):
         """

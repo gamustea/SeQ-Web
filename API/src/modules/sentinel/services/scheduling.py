@@ -11,6 +11,8 @@ from croniter import croniter
 from sqlalchemy.orm import Session
 
 from src.modules.infrastructure import UnitOfWork
+from src.modules.infrastructure.unit_of_work import close_all
+from src.modules.infrastructure.retry import retry_on_transient
 
 from ..exceptions import InvalidProgramedTaskArgumentError
 from ..repositories import ProgramedScanRepository
@@ -210,6 +212,54 @@ class Scheduler:
     # =========================================================================
 
     @classmethod
+    @retry_on_transient()
+    def _load_and_guard(cls, ps_id: int) -> Optional[dict[str, Any]]:
+        """Phase 1 — load, validate and guard against overlapping runs.
+
+        Returns the launch parameters, or ``None`` when the scan should be
+        skipped (deleted, inactive, or already pending/running). Retried on
+        transient DB errors since a pure read is idempotent.
+        """
+        with UnitOfWork() as uow:
+            ps = ProgramedScanRepository(uow).get_by_id(ps_id)
+            if ps is None:
+                logger.warning("Programed scan %d no longer exists, skipping", ps_id)
+                return None
+            if not ps.is_active:
+                logger.info("Programed scan %d is inactive, skipping", ps_id)
+                return None
+
+            if ScanType(ps.scan_type) not in cls._TASK_MAPPING:
+                raise ValueError(f"Unknown scan type: {ps.scan_type}")
+
+            if cls._has_active_run(uow.session, ps.id):
+                logger.info(
+                    "Programed scan %d already has a pending/running scan, skipping",
+                    ps.id,
+                )
+                return None
+
+            return {
+                "scan_type": ps.scan_type,
+                "user_id": ps.user_id,
+                "arguments": dict(ps.arguments or {}),
+                "schedule_type": ps.schedule_type,
+                "schedule_config": dict(ps.schedule_config or {}),
+            }
+
+    @classmethod
+    @retry_on_transient()
+    def _record_run(cls, ps_id: int, now: datetime, next_run: datetime) -> None:
+        """Phase 3 — record the execution in a *fresh* session so the new
+        next_run_at actually reaches the database (and thus the UI). Idempotent
+        write (last value wins), so safe to retry on transient errors."""
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            if ps is not None:
+                repo.update_run_timestamps(ps, last_run=now, next_run=next_run)
+
+    @classmethod
     def execute(cls, ps_id: int) -> None:
         """Fire a programed scan: launch it and advance its run timestamps.
 
@@ -224,43 +274,21 @@ class Scheduler:
         logger.info("Triggered programed scan %d", ps_id)
         try:
             # Phase 1 — load, validate and guard against overlapping runs.
-            with UnitOfWork() as uow:
-                ps = ProgramedScanRepository(uow).get_by_id(ps_id)
-                if ps is None:
-                    logger.warning("Programed scan %d no longer exists, skipping", ps_id)
-                    return
-                if not ps.is_active:
-                    logger.info("Programed scan %d is inactive, skipping", ps_id)
-                    return
+            params = cls._load_and_guard(ps_id)
+            if params is None:
+                return
 
-                runner = cls._TASK_MAPPING.get(ScanType(ps.scan_type))
-                if runner is None:
-                    raise ValueError(f"Unknown scan type: {ps.scan_type}")
-
-                if cls._has_active_run(uow.session, ps.id):
-                    logger.info(
-                        "Programed scan %d already has a pending/running scan, skipping",
-                        ps.id,
-                    )
-                    return
-
-                user_id = ps.user_id
-                arguments = dict(ps.arguments or {})
-                schedule_type = ps.schedule_type
-                schedule_config = dict(ps.schedule_config or {})
+            runner = cls._TASK_MAPPING[ScanType(params["scan_type"])]
 
             # Phase 2 — launch the scan (manager owns its own session).
-            runner(ps_id, user_id, arguments)
+            runner(ps_id, params["user_id"], params["arguments"])
 
-            # Phase 3 — record the execution in a *fresh* session so the new
-            # next_run_at actually reaches the database (and thus the UI).
+            # Phase 3 — record the execution in a *fresh* session.
             now = datetime.utcnow()
-            next_run = cls.calculate_next_run(schedule_type, schedule_config, last_run=now)
-            with UnitOfWork() as uow:
-                repo = ProgramedScanRepository(uow)
-                ps = repo.get_by_id(ps_id)
-                if ps is not None:
-                    repo.update_run_timestamps(ps, last_run=now, next_run=next_run)
+            next_run = cls.calculate_next_run(
+                params["schedule_type"], params["schedule_config"], last_run=now
+            )
+            cls._record_run(ps_id, now, next_run)
 
             logger.info(
                 "Programed scan %d executed; next run at %s",
@@ -269,6 +297,11 @@ class Scheduler:
 
         except Exception:
             logger.exception("Scheduled scan %d failed", ps_id)
+        finally:
+            # APScheduler corre en un hilo de vida larga y scoped_session está
+            # keyed por hilo: sin esto, la sesión usada en este disparo quedaría
+            # pegada al hilo y un estado abortado envenenaría el siguiente.
+            close_all()
 
     @classmethod
     def calculate_next_run(
