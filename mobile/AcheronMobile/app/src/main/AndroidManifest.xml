@@ -10,7 +10,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AcheronMobile"
+        android:theme="@style/Theme.AcheronMobile.Starting"
         android:usesCleartextTraffic="true">
         <!--
             usesCleartextTraffic="true" solo para desarrollo local (HTTP).
@@ -19,7 +19,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.AcheronMobile">
+            android:theme="@style/Theme.AcheronMobile.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

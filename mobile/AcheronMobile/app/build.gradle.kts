@@ -74,6 +74,9 @@ dependencies {
     // Jetpack Security — EncryptedSharedPreferences
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // SplashScreen API (retrocompatible) — pantalla de inicio de marca
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
     // AcheronCore — vault engine
     implementation(project(":AcheronCore"))
 

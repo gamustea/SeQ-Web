@@ -1,9 +1,12 @@
 package com.seq.acheronmobile
 
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -39,6 +42,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Instala la pantalla de inicio de marca (rio purpura sobre el abismo)
+        // antes de super.onCreate; sustituye al splash automatico del sistema.
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         val tokenRepo = TokenRepository(applicationContext)
         NetworkModule.initialize(tokenRepo)
@@ -50,7 +56,13 @@ class MainActivity : ComponentActivity() {
         // checker del vault si se arranca directamente en MASTER_KEY (ver #3).
         VaultServiceLocator.username = tokenRepo.getUsername() ?: ""
 
-        enableEdgeToEdge()
+        // La identidad de Acheron es siempre oscura, asi que fijamos iconos de
+        // barra claros (estilo "dark") para que no queden invisibles aunque el
+        // sistema este en modo claro.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
         setContent {
             AcheronMobileTheme(dynamicColor = false) {
                 Surface(

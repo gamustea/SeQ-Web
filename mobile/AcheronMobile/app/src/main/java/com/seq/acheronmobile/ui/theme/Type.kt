@@ -32,6 +32,15 @@ val displayFontFamily = FontFamily(
     )
 )
 
+// Monoespaciada para datos sensibles (contrasenas, PAN, CVV, codigos): mejora
+// la legibilidad caracter a caracter y senala visualmente "esto es un secreto".
+val monoFontFamily = FontFamily(
+    Font(
+        googleFont = GoogleFont("JetBrains Mono"),
+        fontProvider = provider,
+    )
+)
+
 // Default Material 3 typography values
 val baseline = Typography()
 
