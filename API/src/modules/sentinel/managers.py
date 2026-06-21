@@ -1098,6 +1098,10 @@ class ProgramedScanManager():
             schedule_type=schedule_type,
             schedule_config=schedule_config
         )
+        next_run = Scheduler.calculate_next_run(
+            schedule_type=schedule_type,
+            schedule_config=schedule_config,
+        )
         with UnitOfWork() as uow:
             repo = ProgramedScanRepository(uow)
             ps = repo.create(
@@ -1105,16 +1109,17 @@ class ProgramedScanManager():
                 scan_type=scan_type,
                 arguments=arguments,
                 schedule_type=schedule_type,
-                schedule_config=schedule_config
-            )
-            next_run = Scheduler.calculate_next_run(
                 schedule_config=schedule_config,
-                schedule_type=schedule_type,
-                last_run=ps.last_run_at # type: ignore
+                next_run_at=next_run,
             )
-            repo.update_next_run(ps, next_run)
 
-        Scheduler.schedule(ps)
+        Scheduler.schedule(
+            ps_id=ps.id,
+            scan_type=ps.scan_type,
+            user_id=ps.user_id,
+            schedule_type=schedule_type,
+            schedule_config=schedule_config,
+        )
         return ps
 
     @classmethod
