@@ -57,10 +57,9 @@ public abstract class VaultEncryptingStrategy {
 
     /**
      * Creates a new encrypting strategy and optionally generates a random
-     * {@link #vaultKey}.
-     * <p>
-     * Subclasses are expected to initialize {@link #derivedKey} in their
-     * constructors, typically by applying a KDF to the master password.
+     * {@link #vaultKey}.  Subclasses MUST set {@link #derivedKey} after
+     * their own fields are initialised; this constructor intentionally
+     * does NOT call {@link #deriveKey}.
      *
      * @param transformation  the cipher transformation, e.g. {@code "AES/GCM/NoPadding"}
      * @param generateVaultKey if {@code true}, a new random {@link #vaultKey}
@@ -70,32 +69,37 @@ public abstract class VaultEncryptingStrategy {
      * @throws GeneralSecurityException if key generation fails
      */
     protected VaultEncryptingStrategy(
+            String masterPassword,
             String transformation,
-            boolean generateVaultKey,
-            String saltBase64
+            String saltBase64,
+            boolean generateVaultKey
     ) throws GeneralSecurityException {
-
-        this.transformation = transformation;
-        this.saltBase64 = saltBase64;
-        if (generateVaultKey) {
-            this.vaultKey = generateKey();
-        }
+        this.saltBase64                     = saltBase64;
+        this.transformation                 = transformation;
+        if (generateVaultKey) this.vaultKey = generateKey();
     }
 
     /**
      * Creates a new encrypting strategy using an existing {@link #vaultKey}.
      * <p>
-     * This constructor is intended for reopening an existing vault where
-     * the vault key has already been unwrapped using the {@link #derivedKey}.
+     * Subclasses MUST set {@link #derivedKey} after their own fields are
+     * initialised.
      *
      * @param transformation the cipher transformation
      * @param vaultKey       an existing vault key to reuse
      */
-    protected VaultEncryptingStrategy(String transformation, SecretKey vaultKey, String saltBase64) {
+    protected VaultEncryptingStrategy(
+            String masterPassword,
+            String transformation,
+            String saltBase64,
+            SecretKey vaultKey
+    ) throws GeneralSecurityException {
+        this.saltBase64     = saltBase64;
         this.transformation = transformation;
-        this.vaultKey = vaultKey;
-        this.saltBase64 = saltBase64;
+        this.vaultKey       = vaultKey;
     }
+
+
 
     /**
      * Exports the current {@link #vaultKey} in encrypted form using
@@ -130,7 +134,8 @@ public abstract class VaultEncryptingStrategy {
      *                                  is malformed
      */
     public SecretKey importVaultKey(String encryptedVaultKeyBase64)
-            throws GeneralSecurityException {
+            throws GeneralSecurityException
+    {
 
         String vaultKeyBase64 = decryptWithKey(encryptedVaultKeyBase64, derivedKey);
         byte[] rawVaultKey = java.util.Base64.getDecoder().decode(vaultKeyBase64);
@@ -286,4 +291,9 @@ public abstract class VaultEncryptingStrategy {
     }
 
     public abstract String toJson();
+
+    protected abstract SecretKey deriveKey(
+            String masterPassword,
+            String saltBase64
+    ) throws GeneralSecurityException;
 }

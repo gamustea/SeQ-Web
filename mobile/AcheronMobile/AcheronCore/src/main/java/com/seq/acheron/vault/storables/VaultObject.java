@@ -1,6 +1,7 @@
 
 package com.seq.acheron.vault.storables;
 
+import com.google.gson.JsonObject;
 import com.seq.acheron.vault.User;
 import com.seq.acheron.vault.interfaces.Cypher;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
@@ -12,11 +13,14 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -34,16 +38,13 @@ import java.util.Set;
 public abstract class VaultObject implements Sharable, Storable, JsonSerializable, Comparable<VaultObject> {
 
     @Getter
-    protected final String id;
-    
+    protected String id;
+
     @Getter @Setter
     protected String title;
 
     @Getter
     protected final Set<User> allowedUsers;
-
-    @Getter @Setter
-    protected static int objectCounter = 0;
 
     @Getter
     protected boolean isEncrypted;
@@ -54,18 +55,73 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
     @Getter @Setter
     protected Date updatedAt;
 
-    public VaultObject(String code, String title, boolean isEncrypted, boolean increaseCounter) {
-        this(code, title, isEncrypted, new Date(), new Date(), increaseCounter);
+    private String pendingPrefix;
+
+    /**
+     * Generates a unique ID from the encrypted JSON content of a storable using SHA256.
+     * <p>
+     * The generated ID is deterministic: the same content always produces the same ID.
+     * This enables collision-free offline synchronization across multiple devices.
+     *
+     * @param encryptedJson the encrypted JSON representation of the storable
+     * @return a 16-character hexadecimal string (128 bits) derived from SHA256
+     * @throws RuntimeException if SHA256 is not available (should never happen on Android)
+     */
+    public static String generateIdFromContent(@NotNull String encryptedJson) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(encryptedJson.getBytes());
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.substring(0, 16);
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException("SHA-256 hash algorithm not available", e);
+        }
     }
 
-    public VaultObject(String code, String title, boolean isEncrypted, Date createdAt, Date updatedAt, boolean increaseCounter) {
-        this.id = increaseCounter ? code + objectCounter : code;
+    public VaultObject(String code, String title, boolean isEncrypted, boolean needsAutoId) {
+        this(code, title, isEncrypted, new Date(), new Date(), needsAutoId);
+    }
+
+    public VaultObject(String code, String title, boolean isEncrypted, Date createdAt, Date updatedAt, boolean needsAutoId) {
+        if (needsAutoId) {
+            this.id = null;
+            this.pendingPrefix = code;
+        } else {
+            this.id = code;
+            this.pendingPrefix = null;
+        }
         this.title = title;
         this.allowedUsers = new HashSet<>();
         this.isEncrypted = isEncrypted;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
-        if (increaseCounter) objectCounter++;
+    }
+
+    public boolean needsIdAssignment() {
+        return pendingPrefix != null;
+    }
+
+    public String getPendingPrefix() {
+        return pendingPrefix;
+    }
+
+    public void assignId(String prefix, int seq) {
+        this.id = prefix + seq;
+        this.pendingPrefix = null;
+    }
+
+    /**
+     * Assigns an ID directly (used for hash-based IDs).
+     *
+     * @param id the complete ID (e.g., a 16-char hash)
+     */
+    public void assignIdDirect(String id) {
+        Objects.requireNonNull(id, "id must not be null");
+        this.id = id;
+        this.pendingPrefix = null;
     }
 
     @Override
@@ -82,6 +138,22 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
             throw new IllegalStateException("Cannot decrypt: object is not encrypted (id=" + id + ")");
         }
         return transform(encryptor, false);
+    }
+
+    String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
+        VaultObject oldVaultObject = (VaultObject) copy();
+
+        try {
+            title = encrypt ?
+                    encryptor.encrypt(title) :
+                    encryptor.decrypt(title);
+
+            isEncrypted = encrypt;
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException("Error transforming account fields", e);
+        }
+
+        return oldVaultObject.toString();
     }
 
     @Override
@@ -143,29 +215,34 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
 
     @Override
     public String toJson() {
+        JsonObject json = toJsonObject();
+        return json.toString();
+    }
+
+    JsonObject toJsonObject() {
+        JsonObject json = new JsonObject();
+        json.addProperty("id", this.id);
+        json.addProperty("title", this.title);
+
         String createdAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME
                 .format(this.createdAt.toInstant().atZone(ZoneId.systemDefault()));
         String updatedAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME
                 .format(this.updatedAt.toInstant().atZone(ZoneId.systemDefault()));
 
+        json.addProperty("createdAt", createdAtISO);
+        json.addProperty("updatedAt", updatedAtISO);
+
         List<String> userIds = allowedUsers.stream()
                 .map(User::getId)
                 .sorted()
                 .toList();
-
-        StringBuilder userList = new StringBuilder("[");
-        for (int i = 0; i < userIds.size(); i++) {
-            userList.append("\"").append(userIds.get(i)).append("\"");
-            if (i < userIds.size() - 1) userList.append(", ");
+        com.google.gson.JsonArray userArray = new com.google.gson.JsonArray();
+        for (String uid : userIds) {
+            userArray.add(uid);
         }
-        userList.append("]");
+        json.add("allowedUsers", userArray);
 
-        return "\"id\": \"" + this.id + "\", "
-                + "\"title\": \"" + this.title + "\", "
-                +"\"createdAt\": \"" + createdAtISO + "\", "
-                + "\"updatedAt\": \"" + updatedAtISO + "\", "
-                + "\"allowedUsers\": " + userList + ", ";
+        return json;
     }
 
-    abstract String transform(VaultEncryptingStrategy encryptor, boolean encrypt);
 }

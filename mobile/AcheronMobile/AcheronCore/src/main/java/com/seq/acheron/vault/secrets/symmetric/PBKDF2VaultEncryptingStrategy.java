@@ -25,16 +25,11 @@ import java.util.Base64;
  */
 public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy {
 
-    /**
-     * PBKDF2 iteration count. This should be tuned according to security
-     * requirements and performance characteristics of the target platform.
-     */
-    private static final int ITERATIONS = 600_000;
+    private static final int DEFAULT_ITERATIONS = 600_000;
+    private static final int DEFAULT_KEY_LENGTH_BITS = 256;
 
-    /**
-     * Desired length of the derived key in bits.
-     */
-    private static final int KEY_LENGTH_BITS = 256;
+    private final int iterations;
+    private final int keyLengthBits;
 
     /**
      * Creates a new PBKDF2-based strategy instance.
@@ -55,73 +50,68 @@ public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy
      */
     public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, boolean generateVaultKey)
             throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", generateVaultKey, saltBase64);
-        char[] passwordChars = masterPassword.toCharArray();
-        try {
-            byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, ITERATIONS, KEY_LENGTH_BITS);
-            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-            SecretKey tmp = factory.generateSecret(spec);
-            this.derivedKey = new SecretKeySpec(tmp.getEncoded(), "AES");
-        } finally {
-            Arrays.fill(passwordChars, '\0');
-        }
+        this(masterPassword, saltBase64, generateVaultKey, DEFAULT_ITERATIONS, DEFAULT_KEY_LENGTH_BITS);
+    }
+
+    public PBKDF2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            boolean generateVaultKey,
+            int iterations,
+            int keyLengthBits
+    ) throws GeneralSecurityException {
+        super(masterPassword, "AES/GCM/NoPadding", saltBase64, generateVaultKey);
+        this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
+        this.keyLengthBits = keyLengthBits > 0 ? keyLengthBits : DEFAULT_KEY_LENGTH_BITS;
+        this.derivedKey = deriveKey(masterPassword, saltBase64);
     }
 
     /**
      * Creates a new PBKDF2-based strategy instance using an existing vault key.
-     * <p>
-     * This constructor is typically used when reopening an existing vault:
-     * the vault key has already been unwrapped (for example by calling
-     * {@link VaultEncryptingStrategy#importVaultKey(String)}) and is passed
-     * in here to be reused.
-     * <p>
-     * The constructor derives {@link #derivedKey} from the master password
-     * and salt using PBKDF2WithHmacSHA256.
-     *
-     * @param masterPassword the user's master password
-     * @param saltBase64     Base64-encoded salt used for PBKDF2
-     * @param vaultKey       an existing vault key to reuse for AES-GCM
-     * @throws GeneralSecurityException if key derivation fails
      */
-    public PBKDF2VaultEncryptingStrategy(String masterPassword, String saltBase64, SecretKey vaultKey)
-            throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", vaultKey, saltBase64);
+    public PBKDF2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            SecretKey vaultKey
+    ) throws GeneralSecurityException {
+        this(masterPassword, saltBase64, vaultKey, DEFAULT_ITERATIONS, DEFAULT_KEY_LENGTH_BITS);
+    }
+
+    public PBKDF2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            SecretKey vaultKey,
+            int iterations,
+            int keyLengthBits
+    ) throws GeneralSecurityException {
+        super(masterPassword, "AES/GCM/NoPadding", saltBase64, vaultKey);
+        this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
+        this.keyLengthBits = keyLengthBits > 0 ? keyLengthBits : DEFAULT_KEY_LENGTH_BITS;
+        this.derivedKey = deriveKey(masterPassword, saltBase64);
+    }
+
+    protected SecretKey deriveKey(
+            String masterPassword,
+            String saltBase64
+    ) throws GeneralSecurityException {
         char[] passwordChars = masterPassword.toCharArray();
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, ITERATIONS, KEY_LENGTH_BITS);
+            KeySpec spec = new PBEKeySpec(passwordChars, saltBytes, iterations, keyLengthBits);
             SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
             SecretKey tmp = factory.generateSecret(spec);
-            this.derivedKey = new SecretKeySpec(tmp.getEncoded(), "AES");
+            return new SecretKeySpec(tmp.getEncoded(), "AES");
         } finally {
             Arrays.fill(passwordChars, '\0');
         }
     }
 
-    /**
-     * Serialises the cryptographic configuration of this strategy to JSON.
-     * <p>
-     * This does NOT include any secret material (no master password, no
-     * derivedKey, no raw vaultKey), only public parameters required to
-     * reconstruct the KDF and cipher configuration.
-     * Example output:
-     * {
-     *   "transformation": "AES/GCM/NoPadding",
-     *   "kdf": "PBKDF2",
-     *   "kdfIterations": 600000,
-     *   "kdfKeyLength": 256,
-     *   "salt": "base64..."
-     * }
-     *
-     * @return a JSON string with non-secret cryptographic parameters
-     */
     public String toJson() {
         return "{"
                 + "\"transformation\": \"" + transformation + "\","
                 + "\"kdf\": \"PBKDF2\","
-                + "\"kdfIterations\": " + ITERATIONS + ","
-                + "\"kdfKeyLength\": " + KEY_LENGTH_BITS + ","
+                + "\"kdfIterations\": " + iterations + ","
+                + "\"kdfKeyLength\": " + keyLengthBits + ","
                 + "\"salt\": \"" + saltBase64 + "\""
                 + "}";
     }

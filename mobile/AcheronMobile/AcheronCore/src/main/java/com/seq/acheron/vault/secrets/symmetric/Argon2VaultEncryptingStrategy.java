@@ -1,11 +1,12 @@
 package com.seq.acheron.vault.secrets.symmetric;
 
-import de.mkammerer.argon2.Argon2Advanced;
-import de.mkammerer.argon2.Argon2Factory;
+import org.bouncycastle.crypto.generators.Argon2BytesGenerator;
+import org.bouncycastle.crypto.params.Argon2Parameters;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.Base64;
 
 /**
@@ -22,9 +23,17 @@ import java.util.Base64;
  */
 public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy {
 
-    private static final int ARGON2_ITERATIONS   = 3;
-    private static final int ARGON2_MEMORY_KIB   = 65536;
-    private static final int ARGON2_PARALLELISM  = 1;
+    private static final int DEFAULT_ITERATIONS   = 3;
+    private static final int DEFAULT_MEMORY_KIB   = 65536;
+    private static final int DEFAULT_PARALLELISM  = 1;
+
+    // Largo de la clave derivada en bytes (AES-256). Coincide con el largo por
+    // defecto que producia de.mkammerer Argon2.rawHash(...).
+    private static final int DERIVED_KEY_LENGTH   = 32;
+
+    private final int iterations;
+    private final int memoryKiB;
+    private final int parallelism;
 
     /**
      * Creates a new strategy instance that:
@@ -40,28 +49,32 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
      * @param generateVaultKey  Whether the constructor builds a random {@link #vaultKey} or not
      * @throws GeneralSecurityException if key generation fails
      */
-    public Argon2VaultEncryptingStrategy(String masterPassword,
-                                         String saltBase64,
-                                         boolean generateVaultKey) throws GeneralSecurityException {
-        super("AES/GCM/NoPadding", generateVaultKey, saltBase64);
-        this.saltBase64 = saltBase64;
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            boolean generateVaultKey
+    ) throws GeneralSecurityException {
+        this(masterPassword, saltBase64, generateVaultKey, DEFAULT_ITERATIONS, DEFAULT_MEMORY_KIB, DEFAULT_PARALLELISM);
+    }
 
-        Argon2Advanced argon2 = Argon2Factory.createAdvanced();
-        char[] passwordChars = masterPassword.toCharArray();
-
-        try {
-            byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            byte[] keyBytes = argon2.rawHash(
-                    ARGON2_ITERATIONS,
-                    ARGON2_MEMORY_KIB,
-                    ARGON2_PARALLELISM,
-                    passwordChars,
-                    saltBytes
-            );
-            derivedKey = new SecretKeySpec(keyBytes, "AES");
-        } finally {
-            argon2.wipeArray(passwordChars);
-        }
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            boolean generateVaultKey,
+            int iterations,
+            int memoryKiB,
+            int parallelism
+    ) throws GeneralSecurityException {
+        super(
+            masterPassword,
+            "AES/GCM/NoPadding",
+            saltBase64,
+            generateVaultKey
+        );
+        this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
+        this.memoryKiB = memoryKiB > 0 ? memoryKiB : DEFAULT_MEMORY_KIB;
+        this.parallelism = parallelism > 0 ? parallelism : DEFAULT_PARALLELISM;
+        this.derivedKey = deriveKey(masterPassword, saltBase64);
     }
 
     /**
@@ -75,28 +88,72 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
      * @param saltBase64     Base64-encoded salt used for Argon2
      * @param vaultKey       an existing vault key to reuse
      */
-    public Argon2VaultEncryptingStrategy(String masterPassword,
-                                         String saltBase64,
-                                         SecretKey vaultKey) {
-        super("AES/GCM/NoPadding", vaultKey, saltBase64);
-        this.saltBase64 = saltBase64;
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            SecretKey vaultKey
+    ) throws GeneralSecurityException {
+        this(masterPassword, saltBase64, vaultKey, DEFAULT_ITERATIONS, DEFAULT_MEMORY_KIB, DEFAULT_PARALLELISM);
+    }
 
-        Argon2Advanced argon2 = Argon2Factory.createAdvanced();
+    public Argon2VaultEncryptingStrategy(
+            String masterPassword,
+            String saltBase64,
+            SecretKey vaultKey,
+            int iterations,
+            int memoryKiB,
+            int parallelism
+    ) throws GeneralSecurityException {
+        super(
+                masterPassword,
+                "AES/GCM/NoPadding",
+                saltBase64,
+                vaultKey
+        );
+        this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
+        this.memoryKiB = memoryKiB > 0 ? memoryKiB : DEFAULT_MEMORY_KIB;
+        this.parallelism = parallelism > 0 ? parallelism : DEFAULT_PARALLELISM;
+        this.derivedKey = deriveKey(masterPassword, saltBase64);
+    }
+
+    public SecretKey deriveKey(
+            String masterPassword,
+            String saltBase64
+    ) throws GeneralSecurityException {
         char[] passwordChars = masterPassword.toCharArray();
+        byte[] passwordBytes = toUtf8Bytes(passwordChars);
 
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
-            byte[] keyBytes = argon2.rawHash(
-                    ARGON2_ITERATIONS,
-                    ARGON2_MEMORY_KIB,
-                    ARGON2_PARALLELISM,
-                    passwordChars,
-                    saltBytes
-            );
-            derivedKey = new SecretKeySpec(keyBytes, "AES");
+
+            // Argon2id v1.3, mismos parametros que producia de.mkammerer, para
+            // mantener compatibilidad e interoperar con otros clientes.
+            Argon2Parameters params = new Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
+                    .withVersion(Argon2Parameters.ARGON2_VERSION_13)
+                    .withIterations(iterations)
+                    .withMemoryAsKB(memoryKiB)
+                    .withParallelism(parallelism)
+                    .withSalt(saltBytes)
+                    .build();
+
+            Argon2BytesGenerator generator = new Argon2BytesGenerator();
+            generator.init(params);
+
+            byte[] keyBytes = new byte[DERIVED_KEY_LENGTH];
+            generator.generateBytes(passwordBytes, keyBytes);
+            return new SecretKeySpec(keyBytes, "AES");
         } finally {
-            argon2.wipeArray(passwordChars);
+            Arrays.fill(passwordChars, '\0');
+            Arrays.fill(passwordBytes, (byte) 0);
         }
+    }
+
+    private static byte[] toUtf8Bytes(char[] chars) {
+        java.nio.ByteBuffer buffer = java.nio.charset.StandardCharsets.UTF_8.encode(
+                java.nio.CharBuffer.wrap(chars));
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.get(bytes);
+        return bytes;
     }
 
     /**
@@ -119,9 +176,9 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
         return "{" +
                     "\"transformation\": \"" + transformation + "\", " +
                     "\"kdf\": \"Argon2\", " +
-                    "\"kdfIterations\": \"" + ARGON2_ITERATIONS + "\", " +
-                    "\"kdfMemoryKiB\": \"" + ARGON2_MEMORY_KIB + "\", " +
-                    "\"kdfParallelism\": \"" + ARGON2_PARALLELISM + "\", " +
+                    "\"kdfIterations\": " + iterations + ", " +
+                    "\"kdfMemoryKiB\": " + memoryKiB + ", " +
+                    "\"kdfParallelism\": " + parallelism + ", " +
                     "\"salt\": \"" + saltBase64 + "\"" +
                 "}";
     }

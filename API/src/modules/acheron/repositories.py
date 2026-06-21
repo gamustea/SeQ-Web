@@ -14,7 +14,7 @@ Usage:
         vault_repo = VaultRepository(uow)
         storable_repo = StorableRepository(uow)
 
-        vault = vault_repo.get_by_user(user_id=1, is_recovery=False)
+        vault = vault_repo.get_by_user(user_id=1)
         storables = storable_repo.get_by_vault(vault.id)
 """
 
@@ -39,7 +39,7 @@ class VaultRepository(BaseRepository[Vault]):
     Example:
     >>> with UnitOfWork() as uow:
     ...     repo = VaultRepository(uow)
-    ...     vault = repo.get_by_user(user_id=1, is_recovery=False)
+    ...     vault = repo.get_by_user(user_id=1)
     """
 
     def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
@@ -49,23 +49,19 @@ class VaultRepository(BaseRepository[Vault]):
     # DOMAIN QUERIES
     # =========================================================================
 
-    def get_by_user(self, user_id: int, is_recovery: bool = False) -> Optional[Vault]:
+    def get_by_user(self, user_id: int) -> Optional[Vault]:
         """
-        Retrieve a vault for a user, optionally filtered by recovery flag.
+        Retrieve the vault for a user.
 
         Args:
             user_id: Primary key of the user.
-            is_recovery: Whether to fetch the recovery vault (default: False).
 
         Returns:
             Vault instance, or None if not found.
         """
         return (
             self._session.query(Vault)
-            .filter(
-                Vault.user_id == user_id,
-                Vault.is_recovery == is_recovery,
-            )
+            .filter(Vault.user_id == user_id)
             .one_or_none()
         )
 

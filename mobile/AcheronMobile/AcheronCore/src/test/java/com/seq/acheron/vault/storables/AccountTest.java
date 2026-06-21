@@ -1,8 +1,11 @@
 package com.seq.acheron.vault.storables;
 
+import com.seq.acheron.vault.User;
+import com.seq.acheron.vault.Vault;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import org.junit.jupiter.api.Test;
 
+import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
@@ -15,10 +18,17 @@ public class AccountTest {
     private static class TestVaultStrategy extends VaultEncryptingStrategy {
 
         TestVaultStrategy() throws GeneralSecurityException {
-            super("AES/GCM/NoPadding", true, generateSalt()); // generate vaultKey
+            super("test-master-password", "AES/GCM/NoPadding", generateSalt(), true);
             byte[] dk = new byte[32];
             SecureRandom.getInstanceStrong().nextBytes(dk);
             this.derivedKey = new SecretKeySpec(dk, "AES");
+        }
+
+        @Override
+        protected SecretKey deriveKey(String masterPassword, String saltBase64) throws GeneralSecurityException {
+            byte[] dk = new byte[32];
+            SecureRandom.getInstanceStrong().nextBytes(dk);
+            return new SecretKeySpec(dk, "AES");
         }
 
         @Override
@@ -29,7 +39,7 @@ public class AccountTest {
 
     @Test
     void encryptThenDecrypt_restoresOriginalFields() throws Exception {
-        Account account = new Account("AnAccount", "user123", "github.com", "SuperSecret!", false);
+        Account account = new Account("ACC0", "AnAccount", "user123", "github.com", "SuperSecret!", false);
 
         TestVaultStrategy strategy = new TestVaultStrategy();
 
@@ -58,22 +68,20 @@ public class AccountTest {
 
     @Test
     void idsHaveAccPrefixAndIncrementPerInstance() throws Exception {
-        VaultObject.setObjectCounter(0);
+        Vault vault = new Vault(new TestVaultStrategy(), new User("u1", "a", "b", "c", "d"), false);
 
-        Account acc1 = new Account("AnAccount","u1", "d1", "p1", false);
-        Account acc2 = new Account("AnAccount","u2", "d2", "p2", false);
+        Account acc1 = new Account("AnAccount1", "u1", "d1", "p1", false);
+        Account acc2 = new Account("AnAccount2", "u2", "d2", "p2", false);
+        vault.add(acc1).add(acc2);
 
         String id1 = acc1.getId();
         String id2 = acc2.getId();
 
-        assertTrue(id1.startsWith("ACC"), "First account ID must start with ACC");
-        assertTrue(id2.startsWith("ACC"), "Second account ID must start with ACC");
-
-        String n1 = id1.substring("ACC".length());
-        String n2 = id2.substring("ACC".length());
-
-        assertEquals("0", n1, "First account should have sequence 0");
-        assertEquals("1", n2, "Second account should have sequence 1");
+        // IDs nuevos son hash de 16 caracteres hexadecimales
+        assertEquals(16, id1.length(), "Account ID should be 16 hex characters");
+        assertEquals(16, id2.length(), "Account ID should be 16 hex characters");
+        assertTrue(id1.matches("[0-9a-f]{16}"), "Account ID should be hexadecimal");
+        assertTrue(id2.matches("[0-9a-f]{16}"), "Account ID should be hexadecimal");
 
         assertNotEquals(id1, id2, "IDs must be unique");
 
@@ -82,7 +90,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_startsAsFalse_whenConstructedWithPlainText() {
-        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
+        Account account = new Account("ACC0", "AnAccount", "user", "domain.com", "pass", false);
 
         assertFalse(account.isEncrypted(), "Account should not be encrypted initially");
 
@@ -91,7 +99,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_startsAsTrue_whenConstructedWithEncryptedData() {
-        Account account = new Account("AnAccount","encryptedUser", "encryptedDomain", "encryptedPass", true);
+        Account account = new Account("ACC0", "AnAccount", "encryptedUser", "encryptedDomain", "encryptedPass", true);
 
         assertTrue(account.isEncrypted(), "Account should be marked as encrypted");
 
@@ -100,7 +108,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_becomesTrue_afterEncryption() throws Exception {
-        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
+        Account account = new Account("ACC0", "AnAccount", "user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         assertFalse(account.isEncrypted(), "Account should start unencrypted");
@@ -114,7 +122,7 @@ public class AccountTest {
 
     @Test
     void isEncryptedFlag_becomesFalse_afterDecryption() throws Exception {
-        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
+        Account account = new Account("ACC0", "AnAccount", "user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         account.encrypt(strategy);
@@ -129,7 +137,7 @@ public class AccountTest {
 
     @Test
     void encryptTwice_throwsIllegalStateException() throws Exception {
-        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
+        Account account = new Account("ACC0", "AnAccount", "user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         account.encrypt(strategy);
@@ -146,7 +154,7 @@ public class AccountTest {
 
     @Test
     void decryptUnencryptedObject_throwsIllegalStateException() throws Exception {
-        Account account = new Account("AnAccount","user", "domain.com", "pass", false);
+        Account account = new Account("ACC0", "AnAccount", "user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
@@ -161,7 +169,7 @@ public class AccountTest {
 
     @Test
     void copy_preservesIsEncryptedFlag() throws Exception {
-        Account original = new Account("AnAccount","user", "domain.com", "pass", false);
+        Account original = new Account("ACC0", "AnAccount", "user", "domain.com", "pass", false);
         TestVaultStrategy strategy = new TestVaultStrategy();
 
         original.encrypt(strategy);
