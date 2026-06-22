@@ -47,6 +47,16 @@ from .queue import QueueRegistry
 _workers = []
 _workers_lock = threading.Lock()
 
+# TTL del registro de cada worker en Redis (clave ``rq:worker:<name>``).
+# RQ lo refresca con cada heartbeat; si el worker muere de forma abrupta
+# (kill -9, contenedor reiniciado con otro hostname) la clave caduca como mucho
+# este tiempo después del último heartbeat y deja de contarse como "vivo". El
+# valor por defecto de RQ (420 s) hacía que los "workers fantasma" inflaran el
+# contador durante ~8 min; con 120 s la ventana baja a ~3 min y el panel
+# "X / max workers" se auto-sanea mucho antes. Es especialmente importante en
+# despliegue por contenedores, donde el PID no es verificable cross-host.
+_WORKER_TTL_SECONDS = 120
+
 
 class _ThreadSafeWorker(SimpleWorker):
     """SimpleWorker que evita usar señales fuera del hilo principal.
@@ -126,7 +136,7 @@ def _worker_thread(worker_num: int):
         conn = RedisConnectionFactory.raw(blocking=True)
         queues = [Queue(name, connection=conn) for name in QueueRegistry.names()]
         worker_name = f"worker-{worker_num}-{uuid.uuid4().hex[:8]}"
-        worker = _ThreadSafeWorker(queues, name=worker_name)
+        worker = _ThreadSafeWorker(queues, name=worker_name, worker_ttl=_WORKER_TTL_SECONDS)
         with _workers_lock:
             _workers.append(worker)
         try:
@@ -239,6 +249,10 @@ def start_worker() -> None:
 
     taskqueue_cfg = CR.get_taskqueue_config()
     max_workers = int(taskqueue_cfg.get("max_workers", 4))
+    # Nota: max_workers se lee solo aquí, al arrancar el proceso worker. Si se
+    # cambia vía PUT /system/tasks/config, el cambio entra en vigor solo cuando
+    # se reinicia este proceso (contenedor docker-compose up, o Ctrl+C + python -m).
+    # El API process hablará de nuevos max_workers, pero este worker no lo sabe.
 
     if max_workers == 1:
         try:

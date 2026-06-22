@@ -129,3 +129,44 @@ def test_register_with_cron_schedule_does_not_run_immediately(app, regular_user)
             schedule_config={"cron": "0 0 * * *"},
         )
         assert ps.next_run_at > datetime.utcnow()
+
+
+def test_sync_from_db_refreshes_stale_next_run_on_restart(app, regular_user):
+    """Al reiniciar la app después de la hora X, _sync_from_db reprograma el job
+    y reescribe next_run_at con el próximo disparo real (futuro), en lugar de
+    dejar el valor pasado/obsoleto que mostraba la UI."""
+    ps_id, _ = _register(app, regular_user.id)
+
+    # Simula una BD con next_run_at ya vencido (la app estuvo caída más allá de X).
+    stale = datetime.utcnow() - timedelta(hours=1)
+    with app.app_context():
+        with UnitOfWork() as uow:
+            repo = ProgramedScanRepository(uow)
+            ps = repo.get_by_id(ps_id)
+            ps.next_run_at = stale
+            repo.update(ps)
+
+    with app.app_context():
+        Scheduler.stop()  # parte de un estado limpio (singleton de clase)
+        try:
+            Scheduler.start()  # arranca el scheduler real y llama a _sync_from_db
+            with UnitOfWork() as uow:
+                refreshed = ProgramedScanRepository(uow).get_by_id(ps_id)
+                next_run = refreshed.next_run_at
+            # Se reanuda desde ahora: la próxima ejecución es futura, no la pasada.
+            assert next_run > datetime.utcnow()
+            # Coincide (±60 s) con el next_run_time autoritativo de APScheduler.
+            expected = datetime.utcnow() + timedelta(minutes=5)
+            assert abs((next_run - expected).total_seconds()) < 60
+        finally:
+            Scheduler.stop()
+
+
+def test_build_trigger_uses_utc(app):
+    """Los triggers deben fijar UTC explícito; por defecto APScheduler usaría la
+    zona local del servidor y el cron dispararía a una hora distinta de la que
+    calcula croniter/la BD (UTC)."""
+    interval = Scheduler._build_trigger("interval", {"every": 5, "unit": "minutes"})
+    cron = Scheduler._build_trigger("cron", {"cron": "0 2 * * *"})
+    assert str(interval.timezone) == "UTC"
+    assert str(cron.timezone) == "UTC"

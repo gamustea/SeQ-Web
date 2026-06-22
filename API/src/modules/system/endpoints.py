@@ -158,7 +158,12 @@ def taskqueue_tasks(query_args):
         tasks = tq.get_pending(category=category)
     elif status == "running":
         tasks = tq.get_running(category=category)
+    elif status == "history":
+        # "history" no es un estado de tarea sino el conjunto de tareas
+        # terminadas (completed/failed/cancelled). Devolver el historial entero.
+        tasks = tq.get_history(category=category)
     elif status is not None:
+        # Filtro fino por un estado concreto dentro del historial.
         history = tq.get_history(category=category)
         tasks = [t for t in history if t.get("status") == status]
     else:
@@ -217,7 +222,13 @@ def taskqueue_cancel_task(task_id):
 @require_oauth_token
 @require_role(minimum_role=Role.ADMIN)
 def taskqueue_update_config(json_data):
-    """Modifica el numero maximo de workers de la cola via config."""
+    """Modifica el numero maximo de workers de la cola via config.
+
+    NOTA: esto solo afecta a **nuevos** procesos worker. El worker actual sigue
+    usando el valor que leyó al arrancar. Para aplicar el cambio hay que
+    reiniciar el proceso worker (p. ej. el contenedor `seq-worker` en Docker,
+    o `python -m src.modules.system.taskqueue.worker` en desarrollo).
+    """
     max_workers = json_data.get("max_workers")
     if not isinstance(max_workers, int) or max_workers < 1:
         raise ValidationError("max_workers must be a positive integer")

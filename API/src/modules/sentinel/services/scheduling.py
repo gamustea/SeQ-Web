@@ -1,7 +1,7 @@
 
 import logging
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler as _BgScheduler
@@ -113,12 +113,17 @@ class Scheduler:
 
     @classmethod
     def _build_trigger(cls, schedule_type: str, schedule_config: dict):
+        # timezone=UTC explícito: los triggers de APScheduler, por defecto, fijan
+        # la zona LOCAL del servidor al construirse. Sin esto, un cron "0 2 * * *"
+        # dispararía a las 02:00 locales mientras que calculate_next_run/croniter y
+        # las columnas DateTime trabajan en UTC naive → la UI mostraría una hora
+        # distinta a la real. Forzando UTC todo queda coherente.
         if schedule_type == "interval":
             every = int(schedule_config["every"])
             unit = schedule_config["unit"]
-            return IntervalTrigger(**{unit: every})
+            return IntervalTrigger(**{unit: every}, timezone=timezone.utc)
         elif schedule_type == "cron":
-            return CronTrigger.from_crontab(schedule_config["cron"])
+            return CronTrigger.from_crontab(schedule_config["cron"], timezone=timezone.utc)
         else:
             raise ValueError(f"Unknown schedule_type: {schedule_type}")
 
@@ -130,7 +135,9 @@ class Scheduler:
     def start(cls) -> None:
         if cls._scheduler is not None:
             return
-        cls._scheduler = _BgScheduler()
+        # timezone=UTC para alinear los tiempos internos de APScheduler (incluido
+        # job.next_run_time) con las columnas DateTime naive-UTC de la BD.
+        cls._scheduler = _BgScheduler(timezone=timezone.utc)
         cls._scheduler.start()
         logger.info("Scheduler started")
         cls._sync_from_db()
@@ -174,6 +181,20 @@ class Scheduler:
             job.remove()
             logger.info("Unscheduled scan %d", ps_id)
 
+    @classmethod
+    def _job_next_run(cls, ps_id: int) -> Optional[datetime]:
+        """APScheduler's authoritative next fire time for a job, as naive UTC.
+
+        Returned right after ``add_job`` (no race), unlike reading it from inside
+        ``execute``. ``None`` if the job is missing or paused.
+        """
+        if cls._scheduler is None:
+            return None
+        job = cls._scheduler.get_job(cls._build_job_id(ps_id))
+        if job is None or job.next_run_time is None:
+            return None
+        return job.next_run_time.astimezone(timezone.utc).replace(tzinfo=None)
+
     # =========================================================================
     # INTERNALS
     # =========================================================================
@@ -183,7 +204,8 @@ class Scheduler:
         if cls._scheduler is None:
             return
         with UnitOfWork() as uow:
-            active = ProgramedScanRepository(uow).get_all_active()
+            repo = ProgramedScanRepository(uow)
+            active = repo.get_all_active()
             for ps in active:
                 cls.schedule(
                     ps_id=ps.id,
@@ -192,6 +214,15 @@ class Scheduler:
                     schedule_type=ps.schedule_type,
                     schedule_config=ps.schedule_config,
                 )
+                # Tras (re)programar, APScheduler ya conoce el próximo disparo real.
+                # Persistirlo deja la UI coherente tras un reinicio en lugar de
+                # mostrar un next_run_at pasado/obsoleto. Las ejecuciones perdidas
+                # durante la caída NO se recuperan: el horario se reanuda desde
+                # ahora (decisión de diseño, sin catch-up). El commit del UoW al
+                # salir persiste el cambio.
+                next_run = cls._job_next_run(ps.id)
+                if next_run is not None:
+                    ps.next_run_at = next_run
             logger.info("Synced %d active scans from database", len(active))
 
     @staticmethod
