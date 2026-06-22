@@ -23,7 +23,31 @@ data class StorableCreateRequest(
     @SerialName("cardNumber") val cardNumber: String? = null,
     @SerialName("expirationDate") val expirationDate: String? = null,
     @SerialName("postalCode") val postalCode: String? = null,
-    val cvv: String? = null
+    val cvv: String? = null,
+    // SecureNote
+    val content: String? = null,
+    // Identity
+    val fullName: String? = null,
+    val email: String? = null,
+    val phone: String? = null,
+    val address: String? = null,
+    val city: String? = null,
+    val country: String? = null,
+    val documentId: String? = null,
+    // BankAccount
+    val bankName: String? = null,
+    val holder: String? = null,
+    val iban: String? = null,
+    val swiftBic: String? = null,
+    val accountNumber: String? = null,
+    // WifiNetwork (password reused from above)
+    val ssid: String? = null,
+    val securityType: String? = null,
+    // SoftwareLicense
+    val product: String? = null,
+    val licenseKey: String? = null,
+    val licensedTo: String? = null,
+    val version: String? = null
 )
 
 @Serializable

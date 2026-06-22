@@ -110,24 +110,14 @@ class VaultViewModel : ViewModel() {
         }
     }
 
-    suspend fun addAccount(title: String, username: String, domain: String, password: String): Boolean {
+    /**
+     * Alta genérica de un storable de cualquier [kind] a partir de un mapa
+     * `campo -> valor` (los nombres de campo provienen del [StorableTypeSpec]).
+     */
+    suspend fun addStorable(kind: String, title: String, fields: Map<String, String>): Boolean {
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         return try {
-            val request = crypto.addAccount(title, username, domain, password)
-            pushStorableResult(remote.addStorable(request))
-        } catch (e: Exception) {
-            _uiState.update {
-                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
-            }
-            false
-        }
-    }
-
-    suspend fun addCreditCard(title: String, holder: String, number: String,
-                      expiry: String, cvv: String, postal: String): Boolean {
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-        return try {
-            val request = crypto.addCreditCard(title, holder, number, expiry, cvv, postal)
+            val request = crypto.addStorable(kind, title, fields)
             pushStorableResult(remote.addStorable(request))
         } catch (e: Exception) {
             _uiState.update {
@@ -155,24 +145,14 @@ class VaultViewModel : ViewModel() {
         }
     }
 
-    suspend fun updateAccount(id: String, title: String?, username: String?, domain: String?, password: String?): Boolean {
+    /**
+     * Actualización genérica de un storable: [fields] contiene `campo -> valor`
+     * para los campos a cambiar (valor `null` = sin cambios).
+     */
+    suspend fun updateStorable(id: String, title: String?, fields: Map<String, String?>): Boolean {
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         return try {
-            val changes = crypto.updateAccount(id, title, username, domain, password)
-            pushStorableUpdate(id, changes)
-        } catch (e: Exception) {
-            _uiState.update {
-                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
-            }
-            false
-        }
-    }
-
-    suspend fun updateCreditCard(id: String, title: String?, holder: String?, number: String?,
-                         expiry: String?, cvv: String?, postal: String?): Boolean {
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-        return try {
-            val changes = crypto.updateCreditCard(id, title, holder, number, expiry, cvv, postal)
+            val changes = crypto.updateStorable(id, title, fields)
             pushStorableUpdate(id, changes)
         } catch (e: Exception) {
             _uiState.update {
