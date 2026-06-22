@@ -18,7 +18,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // URL base de la API — cámbiala por la de tu servidor
-        buildConfigField("String", "SEQ_BASE_URL", "\"http://172.26.64.192:5000/\"")
+        buildConfigField("String", "SEQ_BASE_URL", "\"http://192.168.1.131:5000/\"")
     }
 
     buildTypes {
