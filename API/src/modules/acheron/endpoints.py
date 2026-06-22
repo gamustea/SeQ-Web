@@ -121,7 +121,7 @@ def patch_vault_storables(data):
 @limiter.limit("60 per hour; 300 per day")
 @handle_exceptions(default_exception=VaultError, logger=logger)
 def add_vault_storable(data):
-    """Anadir un nuevo Account o CreditCard al vault del usuario"""
+    """Anadir un nuevo Storable (de cualquier kind soportado) al vault del usuario"""
     kind = data["kind"]
 
     internal_id = data.get("internalId")
@@ -129,14 +129,13 @@ def add_vault_storable(data):
     created_at = _parse_dt(data.get("createdAt"))
     updated_at = _parse_dt(data.get("updatedAt"))
 
-    payload = {}
     if kind == "account":
         payload = {
             "username": data.get("username", ""),
             "domain": data.get("domain", ""),
             "password": data.get("password", ""),
         }
-    else:
+    elif kind == "creditcard":
         payload = {
             "cardholder_name": data.get("cardHolderName", ""),
             "card_number": data.get("cardNumber", ""),
@@ -144,6 +143,43 @@ def add_vault_storable(data):
             "postal_code": data.get("postalCode", ""),
             "cvv": data.get("cvv", ""),
         }
+    elif kind == "securenote":
+        payload = {
+            "content": data.get("content", ""),
+        }
+    elif kind == "identity":
+        payload = {
+            "full_name": data.get("fullName", ""),
+            "email": data.get("email", ""),
+            "phone": data.get("phone", ""),
+            "address": data.get("address", ""),
+            "city": data.get("city", ""),
+            "country": data.get("country", ""),
+            "document_id": data.get("documentId", ""),
+        }
+    elif kind == "bankaccount":
+        payload = {
+            "bank_name": data.get("bankName", ""),
+            "holder": data.get("holder", ""),
+            "iban": data.get("iban", ""),
+            "swift_bic": data.get("swiftBic", ""),
+            "account_number": data.get("accountNumber", ""),
+        }
+    elif kind == "wifi":
+        payload = {
+            "ssid": data.get("ssid", ""),
+            "password": data.get("password", ""),
+            "security_type": data.get("securityType", ""),
+        }
+    elif kind == "license":
+        payload = {
+            "product": data.get("product", ""),
+            "license_key": data.get("licenseKey", ""),
+            "licensed_to": data.get("licensedTo", ""),
+            "version": data.get("version", ""),
+        }
+    else:
+        payload = {}
 
     with get_vault_manager() as mgr:
         vault = mgr.get_vault_for_user()

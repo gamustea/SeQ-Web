@@ -8,9 +8,14 @@ from typing import Literal
 
 from .model import (
     Account,
+    BankAccount,
     CreditCard,
+    Identity,
+    SecureNote,
+    SoftwareLicense,
     Storable,
-    Vault
+    Vault,
+    WifiNetwork,
 )
 
 from src.modules.users import User
@@ -24,7 +29,15 @@ from .repositories import (
 
 logger = logging.getLogger(__name__)
 
-StorableKind = Literal["account", "creditcard"]
+StorableKind = Literal[
+    "account",
+    "creditcard",
+    "securenote",
+    "identity",
+    "bankaccount",
+    "wifi",
+    "license",
+]
 
 
 class VaultManager:
@@ -144,6 +157,71 @@ class VaultManager:
                         "cvv": card.get("cvv", ""),
                     })
 
+                securenotes_data = []
+                for note in data.get("securenotes", []) or []:
+                    securenotes_data.append({
+                        "internal_id": note.get("id"),
+                        "title": note.get("title"),
+                        "created_at": self._parse_dt(note.get("createdAt")),
+                        "updated_at": self._parse_dt(note.get("updatedAt")),
+                        "content": note.get("content", ""),
+                    })
+
+                identities_data = []
+                for ident in data.get("identities", []) or []:
+                    identities_data.append({
+                        "internal_id": ident.get("id"),
+                        "title": ident.get("title"),
+                        "created_at": self._parse_dt(ident.get("createdAt")),
+                        "updated_at": self._parse_dt(ident.get("updatedAt")),
+                        "full_name": ident.get("fullName", ""),
+                        "email": ident.get("email", ""),
+                        "phone": ident.get("phone", ""),
+                        "address": ident.get("address", ""),
+                        "city": ident.get("city", ""),
+                        "country": ident.get("country", ""),
+                        "document_id": ident.get("documentId", ""),
+                    })
+
+                bankaccounts_data = []
+                for bank in data.get("bankaccounts", []) or []:
+                    bankaccounts_data.append({
+                        "internal_id": bank.get("id"),
+                        "title": bank.get("title"),
+                        "created_at": self._parse_dt(bank.get("createdAt")),
+                        "updated_at": self._parse_dt(bank.get("updatedAt")),
+                        "bank_name": bank.get("bankName", ""),
+                        "holder": bank.get("holder", ""),
+                        "iban": bank.get("iban", ""),
+                        "swift_bic": bank.get("swiftBic", ""),
+                        "account_number": bank.get("accountNumber", ""),
+                    })
+
+                wifinetworks_data = []
+                for wifi in data.get("wifinetworks", []) or []:
+                    wifinetworks_data.append({
+                        "internal_id": wifi.get("id"),
+                        "title": wifi.get("title"),
+                        "created_at": self._parse_dt(wifi.get("createdAt")),
+                        "updated_at": self._parse_dt(wifi.get("updatedAt")),
+                        "ssid": wifi.get("ssid", ""),
+                        "password": wifi.get("password", ""),
+                        "security_type": wifi.get("securityType", ""),
+                    })
+
+                licenses_data = []
+                for lic in data.get("licenses", []) or []:
+                    licenses_data.append({
+                        "internal_id": lic.get("id"),
+                        "title": lic.get("title"),
+                        "created_at": self._parse_dt(lic.get("createdAt")),
+                        "updated_at": self._parse_dt(lic.get("updatedAt")),
+                        "product": lic.get("product", ""),
+                        "license_key": lic.get("licenseKey", ""),
+                        "licensed_to": lic.get("licensedTo", ""),
+                        "version": lic.get("version", ""),
+                    })
+
                 vault = vault_repo.get_by_id(vault_id)
                 if not vault:
                     raise ValueError(f"Vault {vault_id} no encontrado tras creación")
@@ -153,6 +231,21 @@ class VaultManager:
 
                 for cc_data in creditcards_data:
                     uow.session.add(CreditCard(vault=vault, **cc_data))
+
+                for note_data in securenotes_data:
+                    uow.session.add(SecureNote(vault=vault, **note_data))
+
+                for ident_data in identities_data:
+                    uow.session.add(Identity(vault=vault, **ident_data))
+
+                for bank_data in bankaccounts_data:
+                    uow.session.add(BankAccount(vault=vault, **bank_data))
+
+                for wifi_data in wifinetworks_data:
+                    uow.session.add(WifiNetwork(vault=vault, **wifi_data))
+
+                for lic_data in licenses_data:
+                    uow.session.add(SoftwareLicense(vault=vault, **lic_data))
 
             logger.info(
                 f"Vault {vault.id} {'creado' if created else 'actualizado'} "
@@ -198,6 +291,11 @@ class VaultManager:
 
         accounts_json: List[Dict[str, Any]] = []
         cards_json: List[Dict[str, Any]] = []
+        notes_json: List[Dict[str, Any]] = []
+        identities_json: List[Dict[str, Any]] = []
+        banks_json: List[Dict[str, Any]] = []
+        wifis_json: List[Dict[str, Any]] = []
+        licenses_json: List[Dict[str, Any]] = []
 
         for st in vault.storables:
             base = {
@@ -224,6 +322,46 @@ class VaultManager:
                     "postalCode": st.postal_code,
                     "cvv": st.cvv,
                 })
+            elif isinstance(st, SecureNote):
+                notes_json.append({
+                    **base,
+                    "content": st.content,
+                })
+            elif isinstance(st, Identity):
+                identities_json.append({
+                    **base,
+                    "fullName": st.full_name,
+                    "email": st.email,
+                    "phone": st.phone,
+                    "address": st.address,
+                    "city": st.city,
+                    "country": st.country,
+                    "documentId": st.document_id,
+                })
+            elif isinstance(st, BankAccount):
+                banks_json.append({
+                    **base,
+                    "bankName": st.bank_name,
+                    "holder": st.holder,
+                    "iban": st.iban,
+                    "swiftBic": st.swift_bic,
+                    "accountNumber": st.account_number,
+                })
+            elif isinstance(st, WifiNetwork):
+                wifis_json.append({
+                    **base,
+                    "ssid": st.ssid,
+                    "password": st.password,
+                    "securityType": st.security_type,
+                })
+            elif isinstance(st, SoftwareLicense):
+                licenses_json.append({
+                    **base,
+                    "product": st.product,
+                    "licenseKey": st.license_key,
+                    "licensedTo": st.licensed_to,
+                    "version": st.version,
+                })
 
         return {
             "checker": vault.checker,
@@ -231,6 +369,11 @@ class VaultManager:
             "algorithm": algorithm,
             "accounts": accounts_json,
             "creditcards": cards_json,
+            "securenotes": notes_json,
+            "identities": identities_json,
+            "bankaccounts": banks_json,
+            "wifinetworks": wifis_json,
+            "licenses": licenses_json,
         }
 
     def export_vault_to_json_string(self, vault_id: int) -> str:
@@ -323,6 +466,66 @@ class VaultManager:
                 postal_code=payload.get("postal_code", ""),
                 cvv=payload.get("cvv", ""),
             )
+        elif kind == "securenote":
+            st = SecureNote(
+                vault=vault,
+                internal_id=internal_id,
+                title=title,
+                created_at=created_at,
+                updated_at=updated_at,
+                content=payload.get("content", ""),
+            )
+        elif kind == "identity":
+            st = Identity(
+                vault=vault,
+                internal_id=internal_id,
+                title=title,
+                created_at=created_at,
+                updated_at=updated_at,
+                full_name=payload.get("full_name", ""),
+                email=payload.get("email", ""),
+                phone=payload.get("phone", ""),
+                address=payload.get("address", ""),
+                city=payload.get("city", ""),
+                country=payload.get("country", ""),
+                document_id=payload.get("document_id", ""),
+            )
+        elif kind == "bankaccount":
+            st = BankAccount(
+                vault=vault,
+                internal_id=internal_id,
+                title=title,
+                created_at=created_at,
+                updated_at=updated_at,
+                bank_name=payload.get("bank_name", ""),
+                holder=payload.get("holder", ""),
+                iban=payload.get("iban", ""),
+                swift_bic=payload.get("swift_bic", ""),
+                account_number=payload.get("account_number", ""),
+            )
+        elif kind == "wifi":
+            st = WifiNetwork(
+                vault=vault,
+                internal_id=internal_id,
+                title=title,
+                created_at=created_at,
+                updated_at=updated_at,
+                ssid=payload.get("ssid", ""),
+                password=payload.get("password", ""),
+                security_type=payload.get("security_type", ""),
+            )
+        elif kind == "license":
+            st = SoftwareLicense(
+                vault=vault,
+                internal_id=internal_id,
+                title=title,
+                created_at=created_at,
+                updated_at=updated_at,
+                product=payload.get("product", ""),
+                license_key=payload.get("license_key", ""),
+                licensed_to=payload.get("licensed_to", ""),
+                version=payload.get("version", ""),
+            )
         else:
             raise ValueError(f"Tipo de storable no soportado: {kind}")
 
@@ -353,6 +556,25 @@ class VaultManager:
         expiration_date: Optional[str] = None,
         postal_code: Optional[str] = None,
         cvv: Optional[str] = None,
+        content: Optional[str] = None,
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        address: Optional[str] = None,
+        city: Optional[str] = None,
+        country: Optional[str] = None,
+        document_id: Optional[str] = None,
+        bank_name: Optional[str] = None,
+        holder: Optional[str] = None,
+        iban: Optional[str] = None,
+        swift_bic: Optional[str] = None,
+        account_number: Optional[str] = None,
+        ssid: Optional[str] = None,
+        security_type: Optional[str] = None,
+        product: Optional[str] = None,
+        license_key: Optional[str] = None,
+        licensed_to: Optional[str] = None,
+        version: Optional[str] = None,
     ) -> Storable:
         with UnitOfWork() as uow:
             repo = StorableRepository(uow)
@@ -397,6 +619,76 @@ class VaultManager:
                         st.cvv = cvv
                         changed = True
 
+                if isinstance(st, SecureNote):
+                    if content is not None:
+                        st.content = content
+                        changed = True
+
+                if isinstance(st, Identity):
+                    if full_name is not None:
+                        st.full_name = full_name
+                        changed = True
+                    if email is not None:
+                        st.email = email
+                        changed = True
+                    if phone is not None:
+                        st.phone = phone
+                        changed = True
+                    if address is not None:
+                        st.address = address
+                        changed = True
+                    if city is not None:
+                        st.city = city
+                        changed = True
+                    if country is not None:
+                        st.country = country
+                        changed = True
+                    if document_id is not None:
+                        st.document_id = document_id
+                        changed = True
+
+                if isinstance(st, BankAccount):
+                    if bank_name is not None:
+                        st.bank_name = bank_name
+                        changed = True
+                    if holder is not None:
+                        st.holder = holder
+                        changed = True
+                    if iban is not None:
+                        st.iban = iban
+                        changed = True
+                    if swift_bic is not None:
+                        st.swift_bic = swift_bic
+                        changed = True
+                    if account_number is not None:
+                        st.account_number = account_number
+                        changed = True
+
+                if isinstance(st, WifiNetwork):
+                    if ssid is not None:
+                        st.ssid = ssid
+                        changed = True
+                    if password is not None:
+                        st.password = password
+                        changed = True
+                    if security_type is not None:
+                        st.security_type = security_type
+                        changed = True
+
+                if isinstance(st, SoftwareLicense):
+                    if product is not None:
+                        st.product = product
+                        changed = True
+                    if license_key is not None:
+                        st.license_key = license_key
+                        changed = True
+                    if licensed_to is not None:
+                        st.licensed_to = licensed_to
+                        changed = True
+                    if version is not None:
+                        st.version = version
+                        changed = True
+
                 if changed:
                     st.updated_at = datetime.utcnow()
                     repo.update(st)
@@ -433,6 +725,25 @@ class VaultManager:
             "expirationDate": "expiration_date",
             "postalCode": "postal_code",
             "cvv": "cvv",
+            "content": "content",
+            "fullName": "full_name",
+            "email": "email",
+            "phone": "phone",
+            "address": "address",
+            "city": "city",
+            "country": "country",
+            "documentId": "document_id",
+            "bankName": "bank_name",
+            "holder": "holder",
+            "iban": "iban",
+            "swiftBic": "swift_bic",
+            "accountNumber": "account_number",
+            "ssid": "ssid",
+            "securityType": "security_type",
+            "product": "product",
+            "licenseKey": "license_key",
+            "licensedTo": "licensed_to",
+            "version": "version",
         }
 
         for op in operations:
