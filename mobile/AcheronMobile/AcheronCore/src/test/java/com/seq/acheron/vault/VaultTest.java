@@ -167,7 +167,7 @@ public class VaultTest {
 
             assertNotNull(mockVault);
             assertFalse(mockVault.isEncrypted(), "El mockVault debe estar descifrado por defecto");
-            assertEquals(5, mockVault.getStorables().size(), "El mockVault inicializa 5 storables de demo");
+            assertEquals(10, mockVault.getStorables().size(), "El mockVault inicializa 10 storables de demo (cuentas, tarjetas, nota, identidad, banco, wifi y licencia)");
         }
 
         @Test

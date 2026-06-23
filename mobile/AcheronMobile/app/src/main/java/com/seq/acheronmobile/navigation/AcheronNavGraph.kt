@@ -22,8 +22,7 @@ object Routes {
     const val MASTER_KEY = "master_key"
     const val VAULT_LIST = "vault_list"
     const val STORABLE_DETAIL = "storable_detail/{id}"
-    const val STORABLE_ADD_ACCOUNT = "storable_add_account"
-    const val STORABLE_ADD_CARD = "storable_add_card"
+    const val STORABLE_ADD = "storable_add/{kind}"
     const val STORABLE_EDIT = "storable_edit/{id}"
 }
 
@@ -76,11 +75,8 @@ fun AcheronNavGraph(
         composable(Routes.VAULT_LIST) {
             VaultListScreen(
                 viewModel = vaultViewModel,
-                onAddAccount = {
-                    navController.navigate(Routes.STORABLE_ADD_ACCOUNT)
-                },
-                onAddCard = {
-                    navController.navigate(Routes.STORABLE_ADD_CARD)
+                onAdd = { kind ->
+                    navController.navigate("storable_add/$kind")
                 },
                 onStorableClick = { storable ->
                     navController.navigate("storable_detail/${storable.id}")
@@ -110,19 +106,14 @@ fun AcheronNavGraph(
             }
         }
 
-        composable(Routes.STORABLE_ADD_ACCOUNT) {
+        composable(
+            route = Routes.STORABLE_ADD,
+            arguments = listOf(navArgument("kind") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val kind = backStackEntry.arguments?.getString("kind") ?: "account"
             StorableFormScreen(
                 vaultViewModel = vaultViewModel,
-                defaultKind = "account",
-                onSaved = { navController.popBackStack() },
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        composable(Routes.STORABLE_ADD_CARD) {
-            StorableFormScreen(
-                vaultViewModel = vaultViewModel,
-                defaultKind = "creditcard",
+                defaultKind = kind,
                 onSaved = { navController.popBackStack() },
                 onBack = { navController.popBackStack() }
             )

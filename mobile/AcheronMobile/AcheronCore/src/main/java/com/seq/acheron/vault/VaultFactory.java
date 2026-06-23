@@ -13,7 +13,12 @@ import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.util.Pair;
 import com.seq.acheron.vault.storables.Account;
+import com.seq.acheron.vault.storables.BankAccount;
 import com.seq.acheron.vault.storables.CreditCard;
+import com.seq.acheron.vault.storables.Identity;
+import com.seq.acheron.vault.storables.SecureNote;
+import com.seq.acheron.vault.storables.SoftwareLicense;
+import com.seq.acheron.vault.storables.WifiNetwork;
 import org.jetbrains.annotations.NotNull;
 
 import javax.crypto.AEADBadTagException;
@@ -135,6 +140,56 @@ public record VaultFactory(User user) {
                 false
         ));
 
+        // Secure note (demo data only)
+        vault.add(new SecureNote(
+                "Recovery codes",
+                "8F3K-2L9P-77QX\n1A2B-3C4D-5E6F",
+                false
+        ));
+
+        // Identity (demo data only)
+        vault.add(new Identity(
+                "Personal ID",
+                "Gabriel Musteata",
+                "gabriel@example.com",
+                "+34 600 000 000",
+                "Calle Falsa 123",
+                "Madrid",
+                "España",
+                "12345678Z",
+                false
+        ));
+
+        // Bank account (demo data only)
+        vault.add(new BankAccount(
+                "Main Bank",
+                "Banco Ejemplo",
+                "GABRIEL MUSTEATA",
+                "ES9121000418450200051332",
+                "CAIXESBBXXX",
+                "0200051332",
+                false
+        ));
+
+        // Wi-Fi network (demo data only)
+        vault.add(new WifiNetwork(
+                "Home Wi-Fi",
+                "ACHERON_5G",
+                "sup3r-s3cret-wifi",
+                "WPA3",
+                false
+        ));
+
+        // Software license (demo data only)
+        vault.add(new SoftwareLicense(
+                "IntelliJ IDEA",
+                "IntelliJ IDEA Ultimate",
+                "AB12C-DE34F-GH56I-JK78L",
+                "Gabriel Musteata",
+                "2026.1",
+                false
+        ));
+
         return vault;
     }
 
@@ -150,6 +205,11 @@ public record VaultFactory(User user) {
      *   <li>{@code "algorithm"} — object with at least a {@code "kdf"} and {@code "salt"} field</li>
      *   <li>{@code "accounts"} — optional array of Account objects</li>
      *   <li>{@code "creditcards"} — optional array of CreditCard objects</li>
+     *   <li>{@code "securenotes"} — optional array of SecureNote objects</li>
+     *   <li>{@code "identities"} — optional array of Identity objects</li>
+     *   <li>{@code "bankaccounts"} — optional array of BankAccount objects</li>
+     *   <li>{@code "wifinetworks"} — optional array of WifiNetwork objects</li>
+     *   <li>{@code "licenses"} — optional array of SoftwareLicense objects</li>
      * </ul>
      *
      * @param json           JSON string previously produced by {@link Vault#toJson()}
@@ -221,6 +281,36 @@ public record VaultFactory(User user) {
             JsonArray creditCards = root.getAsJsonArray("creditcards");
             for (JsonElement element : creditCards) {
                 vault.add(CreditCard.fromJson(element.getAsJsonObject()));
+            }
+        }
+
+        if (root.has("securenotes")) {
+            for (JsonElement element : root.getAsJsonArray("securenotes")) {
+                vault.add(SecureNote.fromJson(element.getAsJsonObject()));
+            }
+        }
+
+        if (root.has("identities")) {
+            for (JsonElement element : root.getAsJsonArray("identities")) {
+                vault.add(Identity.fromJson(element.getAsJsonObject()));
+            }
+        }
+
+        if (root.has("bankaccounts")) {
+            for (JsonElement element : root.getAsJsonArray("bankaccounts")) {
+                vault.add(BankAccount.fromJson(element.getAsJsonObject()));
+            }
+        }
+
+        if (root.has("wifinetworks")) {
+            for (JsonElement element : root.getAsJsonArray("wifinetworks")) {
+                vault.add(WifiNetwork.fromJson(element.getAsJsonObject()));
+            }
+        }
+
+        if (root.has("licenses")) {
+            for (JsonElement element : root.getAsJsonArray("licenses")) {
+                vault.add(SoftwareLicense.fromJson(element.getAsJsonObject()));
             }
         }
 
