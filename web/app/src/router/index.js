@@ -47,6 +47,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/acheron',
+    name: 'Acheron',
+    component: () => import('@/views/AcheronView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/config',
     name: 'Config',
     component: () => import('@/views/ConfigView.vue'),
