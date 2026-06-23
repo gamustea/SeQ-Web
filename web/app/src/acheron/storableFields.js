@@ -1,26 +1,28 @@
 /**
- * Registro data-driven de los campos sensibles de cada tipo de storable.
+ * Vista que necesita la capa cripto: qué campos sensibles tiene cada categoría
+ * y las correspondencias categoría↔kind. Se DERIVA del registro único
+ * `storableTypes.js` para que no pueda divergir de la UI ni del móvil.
  *
- * Es la versión JS, en un único sitio, de los métodos `transform()` de cada
- * storable de AcheronCore (Account, CreditCard, ...). Las claves son las
- * categorías tal y como aparecen en el vault JSON que devuelve `GET /vault`.
- *
- * Cada campo listado va cifrado individualmente como Base64(IV‖ct).
- * Además, `title` SIEMPRE va cifrado (lo añade `vault.js`).
- * Los metadatos `id`, `createdAt`, `updatedAt`, `allowedUsers` van en claro.
- *
- * Análogo al registro `StorableTypes.kt` del móvil: para añadir un tipo nuevo
- * basta con añadir aquí su categoría y sus campos sensibles.
+ * Cada campo aquí listado se cifra individualmente como Base64(IV‖ct). Además,
+ * `title` SIEMPRE va cifrado (lo añade `vault.js`). Los metadatos `id`,
+ * `createdAt`, `updatedAt`, `allowedUsers` van en claro.
  */
-export const STORABLE_FIELDS = {
-  accounts: ['username', 'domain', 'password'],
-  creditcards: ['cardHolderName', 'cardNumber', 'expirationDate', 'postalCode', 'cvv'],
-  securenotes: ['content'],
-  identities: ['fullName', 'email', 'phone', 'address', 'city', 'country', 'documentId'],
-  bankaccounts: ['bankName', 'holder', 'iban', 'swiftBic', 'accountNumber'],
-  wifinetworks: ['ssid', 'password', 'securityType'],
-  licenses: ['product', 'licenseKey', 'licensedTo', 'version'],
-}
+import { STORABLE_TYPES } from './storableTypes.js'
 
-/** Las categorías de storables presentes en un vault JSON. */
-export const STORABLE_CATEGORIES = Object.keys(STORABLE_FIELDS)
+/** category → array de claves de campos sensibles. */
+export const STORABLE_FIELDS = Object.fromEntries(
+  STORABLE_TYPES.map((t) => [t.category, t.fields.map((f) => f.key)]),
+)
+
+/** Las categorías de storables presentes en un vault JSON, en orden. */
+export const STORABLE_CATEGORIES = STORABLE_TYPES.map((t) => t.category)
+
+/** category (plural, vault JSON) → kind (singular, API `POST /storables`). */
+export const KIND_BY_CATEGORY = Object.fromEntries(
+  STORABLE_TYPES.map((t) => [t.category, t.kind]),
+)
+
+/** kind → category. */
+export const CATEGORY_BY_KIND = Object.fromEntries(
+  STORABLE_TYPES.map((t) => [t.kind, t.category]),
+)

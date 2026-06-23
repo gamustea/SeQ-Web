@@ -16,8 +16,9 @@ import {
   validateChecker,
   aesGcmEncrypt,
   aesGcmDecrypt,
+  sha256Hex,
 } from './crypto.js'
-import { STORABLE_FIELDS, STORABLE_CATEGORIES } from './storableFields.js'
+import { STORABLE_FIELDS, STORABLE_CATEGORIES, KIND_BY_CATEGORY } from './storableFields.js'
 
 /** Se lanza cuando el master password no valida contra el checker del vault. */
 export class WrongPasswordError extends Error {
@@ -91,6 +92,84 @@ export class OpenVault {
     }
     return out
   }
+
+  /**
+   * Prepara el alta de un storable nuevo. Espejo de
+   * `VaultCryptoService.addStorable`: cifra los campos y el título, genera el
+   * `internalId` a partir del contenido cifrado y devuelve el cuerpo listo para
+   * `POST /acheron/storables` más el item en claro para el estado local.
+   *
+   * @param {string} category  p.ej. "accounts"
+   * @param {string} title
+   * @param {Record<string,string>} plainFields  campos sensibles en claro
+   * @returns {Promise<{ payload: object, item: object }>}
+   */
+  async createStorable(category, title, plainFields) {
+    const now = new Date().toISOString()
+    const plainItem = { title, createdAt: now, updatedAt: now, ...plainFields }
+    const encrypted = await this.encryptStorable(category, plainItem)
+    const internalId = await generateInternalId(category, encrypted)
+
+    const payload = {
+      kind: KIND_BY_CATEGORY[category],
+      internalId,
+      title: encrypted.title,
+      createdAt: now,
+      updatedAt: now,
+    }
+    for (const field of STORABLE_FIELDS[category]) {
+      payload[field] = encrypted[field]
+    }
+
+    const item = { id: internalId, allowedUsers: [], ...plainItem }
+    return { payload, item }
+  }
+
+  /**
+   * Prepara la edición de un storable. Espejo de
+   * `VaultCryptoService.updateStorable`: cifra SOLO los campos realmente
+   * modificados (incluido el título) y devuelve el mapa de cambios para
+   * `PATCH /acheron/storables` más el item en claro actualizado.
+   *
+   * `newFields` solo debe contener los campos a considerar; comparar con el
+   * valor actual evita reenviar lo que no cambió.
+   *
+   * @param {string} category
+   * @param {object} item       item en claro actual
+   * @param {string} newTitle
+   * @param {Record<string,string>} newFields
+   * @returns {Promise<{ changes: object, item: object }>}
+   */
+  async buildUpdateChanges(category, item, newTitle, newFields) {
+    const changes = {}
+    const updated = { ...item }
+
+    if (newTitle != null && newTitle !== item.title) {
+      changes.title = await aesGcmEncrypt(this.vaultKey, newTitle)
+      updated.title = newTitle
+    }
+    for (const [field, value] of Object.entries(newFields)) {
+      if (value != null && value !== item[field]) {
+        changes[field] = await aesGcmEncrypt(this.vaultKey, value)
+        updated[field] = value
+      }
+    }
+    if (Object.keys(changes).length > 0) {
+      updated.updatedAt = new Date().toISOString()
+    }
+    return { changes, item: updated }
+  }
+}
+
+/**
+ * Genera un `internalId` de 16 hex a partir del SHA-256 del contenido cifrado,
+ * igual que `VaultObject.generateIdFromContent`. El IV aleatorio de AES-GCM
+ * hace que el id sea único por alta.
+ */
+async function generateInternalId(category, encrypted) {
+  const parts = ['title', ...STORABLE_FIELDS[category]].map((f) => encrypted[f] ?? '')
+  const hex = await sha256Hex(parts.join('|'))
+  return hex.slice(0, 16)
 }
 
 /**
