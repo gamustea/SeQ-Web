@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -102,6 +104,29 @@ class VaultCryptoService {
             json
         } catch (e: GeneralSecurityException) {
             throw RuntimeException("Failed to export vault", e)
+        }
+    }
+
+    /**
+     * Rota la contraseña maestra del vault abierto y devuelve SOLO los metadatos
+     * cripto a refrescar (`checker`, `vaultKey`, `algorithm`), listos para
+     * `PATCH /acheron/vault`.
+     *
+     * Gracias al cifrado por sobre, la `vaultKey` que cifra los storables no
+     * cambia: solo se re-deriva la clave desde la nueva contraseña y se recalcula
+     * el `checker`, así que no se envían storables.
+     *
+     * @throws com.seq.acheron.exceptions.WrongPasswordException si [oldPassword] no es la contraseña actual
+     * @throws IllegalStateException si el vault no está abierto
+     */
+    fun changeMasterPassword(oldPassword: String, newPassword: String): JsonObject {
+        val v = vault ?: throw IllegalStateException("Vault not open")
+        v.changePassword(oldPassword, newPassword)
+        val root = Json.parseToJsonElement(exportEncryptedJson()).jsonObject
+        return buildJsonObject {
+            put("checker", root["checker"]!!)
+            put("vaultKey", root["vaultKey"]!!)
+            put("algorithm", root["algorithm"]!!)
         }
     }
 

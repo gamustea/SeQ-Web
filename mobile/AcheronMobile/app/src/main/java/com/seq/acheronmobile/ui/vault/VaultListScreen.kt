@@ -31,12 +31,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -47,6 +49,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +66,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.seq.acheronmobile.data.vault.StorableUi
 import com.seq.acheronmobile.ui.theme.AcheronMark
 import com.seq.acheronmobile.ui.theme.BrandSpace
+import kotlinx.coroutines.launch
 
 @Composable
 fun VaultListScreen(
@@ -73,8 +78,10 @@ fun VaultListScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var showLockDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var showChangePasswordDialog by remember { mutableStateOf(false) }
     // null = "Todos"; en otro caso, el kind seleccionado.
     var filterKind by remember { mutableStateOf<String?>(null) }
 
@@ -99,6 +106,19 @@ fun VaultListScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showLockDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    if (showChangePasswordDialog) {
+        ChangePasswordDialog(
+            busy = uiState.syncing,
+            onDismiss = { showChangePasswordDialog = false },
+            onConfirm = { current, next ->
+                scope.launch {
+                    val ok = viewModel.changeMasterPassword(current, next)
+                    if (ok) showChangePasswordDialog = false
+                }
             }
         )
     }
@@ -137,6 +157,7 @@ fun VaultListScreen(
             VaultHeader(
                 syncing = uiState.syncing,
                 onSync = { viewModel.syncToRemote() },
+                onChangePassword = { showChangePasswordDialog = true },
                 onLock = { showLockDialog = true },
                 onLogout = { showLogoutDialog = true }
             )
@@ -188,6 +209,7 @@ fun VaultListScreen(
 private fun VaultHeader(
     syncing: Boolean,
     onSync: () -> Unit,
+    onChangePassword: () -> Unit,
     onLock: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -217,6 +239,8 @@ private fun VaultHeader(
         }
         HeaderAction(icon = Icons.Filled.Sync, desc = "Sincronizar", loading = syncing, onClick = onSync)
         Spacer(Modifier.width(BrandSpace.sm))
+        HeaderAction(icon = Icons.Filled.Password, desc = "Cambiar contraseña", onClick = onChangePassword)
+        Spacer(Modifier.width(BrandSpace.sm))
         HeaderAction(icon = Icons.Filled.Lock, desc = "Bloquear", onClick = onLock)
         Spacer(Modifier.width(BrandSpace.sm))
         HeaderAction(icon = Icons.AutoMirrored.Filled.Logout, desc = "Cerrar sesión", onClick = onLogout)
@@ -243,6 +267,88 @@ private fun HeaderAction(
         } else {
             Icon(icon, contentDescription = desc, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
         }
+    }
+}
+
+// ── Cambio de contraseña maestra ────────────────────────────────────────────────
+
+@Composable
+private fun ChangePasswordDialog(
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (current: String, next: String) -> Unit
+) {
+    var current by remember { mutableStateOf("") }
+    var next by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        icon = { Icon(Icons.Filled.Password, null, tint = MaterialTheme.colorScheme.primary) },
+        title = { Text("Cambiar contraseña maestra") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(BrandSpace.sm)) {
+                Text(
+                    "La nueva contraseña se aplica en este dispositivo: se vuelve a " +
+                        "cifrar la clave de la bóveda. Tus elementos no cambian.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = current, onValueChange = { current = it },
+                    label = { Text("Contraseña actual") },
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = next, onValueChange = { next = it },
+                    label = { Text("Nueva contraseña") },
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = confirm, onValueChange = { confirm = it },
+                    label = { Text("Repite la nueva contraseña") },
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                localError?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy,
+                onClick = {
+                    val err = validateNewPassword(current, next, confirm)
+                    if (err != null) {
+                        localError = err
+                        return@TextButton
+                    }
+                    localError = null
+                    onConfirm(current, next)
+                }
+            ) { Text("Cambiar") }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+private fun validateNewPassword(current: String, next: String, confirm: String): String? {
+    val minLength = 8
+    return when {
+        current.isEmpty() -> "Introduce tu contraseña actual."
+        next.length < minLength -> "La nueva contraseña debe tener al menos $minLength caracteres."
+        next != confirm -> "Las contraseñas nuevas no coinciden."
+        next == current -> "La nueva contraseña debe ser distinta de la actual."
+        else -> null
     }
 }
 
