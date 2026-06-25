@@ -85,6 +85,35 @@ async function run() {
     }
     check('master password incorrecto rechazado', threw)
 
+    // 5) changePassword sobre el vault real de Java (cubre Argon2 y PBKDF2):
+    //    rota la contraseña, reabre con la nueva y descifra lo mismo.
+    const newPassword = c.masterPassword + '-rotada'
+    const meta = await vault.changePassword(c.masterPassword, newPassword, c.username)
+    check('changePassword rota el salt', meta.algorithm.salt !== c.vault.algorithm.salt)
+
+    const rotated = { ...c.vault, checker: meta.checker, vaultKey: meta.vaultKey, algorithm: meta.algorithm }
+
+    let oldRejected = false
+    try {
+      await openVault(rotated, c.masterPassword, c.username)
+    } catch (e) {
+      oldRejected = e instanceof WrongPasswordError
+    }
+    check('tras rotar, la contraseña antigua se rechaza', oldRejected)
+
+    const rotatedVault = await openVault(rotated, newPassword, c.username)
+    for (const [id, expected] of Object.entries(c.expected)) {
+      for (const category of STORABLE_CATEGORIES) {
+        const item = (rotated[category] || []).find((it) => it.id === id)
+        if (!item) continue
+        const got = await rotatedVault.decryptStorable(category, item)
+        for (const [field, value] of Object.entries(expected)) {
+          check(`rotado ${id}.${field} intacto`, got[field] === value,
+            `esperado ${JSON.stringify(value)}, obtenido ${JSON.stringify(got[field])}`)
+        }
+      }
+    }
+
     console.log('')
   }
 

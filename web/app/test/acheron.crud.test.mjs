@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
-import { openVault } from '../src/acheron/vault.js'
+import { openVault, WrongPasswordError } from '../src/acheron/vault.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const vectorsPath = resolve(here, '../../../tests/acheron-vectors.json')
@@ -69,6 +69,34 @@ async function run() {
     username: current.username, domain: current.domain, password: current.password,
   })
   check('sin cambios → changes vacío', Object.keys(noop.changes).length === 0)
+
+  // ── Cambio de contraseña maestra ─────────────────────────────────────
+  console.log('\nchangePassword')
+  const newPassword = c.masterPassword + '-rotada-9'
+  const before = await vault.decryptStorable('accounts', c.vault.accounts[0])
+
+  const meta = await vault.changePassword(c.masterPassword, newPassword, c.username)
+  check('devuelve checker/vaultKey/algorithm', !!meta.checker && !!meta.vaultKey && !!meta.algorithm)
+  check('rota el salt', meta.algorithm.salt !== c.vault.algorithm.salt)
+  check('no muta el vault original', vault.raw.checker === c.vault.checker)
+
+  // El vault persistido reusa los storables (vaultKey sin cambiar) + nuevos metadatos.
+  const rotated = { ...c.vault, checker: meta.checker, vaultKey: meta.vaultKey, algorithm: meta.algorithm }
+
+  // La contraseña antigua ya no abre el vault rotado.
+  let oldRejected = false
+  try {
+    await openVault(rotated, c.masterPassword, c.username)
+  } catch (e) {
+    oldRejected = e instanceof WrongPasswordError
+  }
+  check('la contraseña antigua es rechazada', oldRejected)
+
+  // La nueva contraseña abre el vault y los storables se descifran intactos.
+  const reopened = await openVault(rotated, newPassword, c.username)
+  const after = await reopened.decryptStorable('accounts', rotated.accounts[0])
+  check('nueva contraseña: title intacto', after.title === before.title)
+  check('nueva contraseña: password intacto', after.password === before.password)
 
   console.log(`\nResultado: ${passed} OK, ${failed} fallidos`)
   if (failed > 0) process.exit(1)

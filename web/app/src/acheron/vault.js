@@ -17,6 +17,7 @@ import {
   aesGcmEncrypt,
   aesGcmDecrypt,
   sha256Hex,
+  generateSaltB64,
 } from './crypto.js'
 import { STORABLE_FIELDS, STORABLE_CATEGORIES, KIND_BY_CATEGORY } from './storableFields.js'
 
@@ -158,6 +159,44 @@ export class OpenVault {
       updated.updatedAt = new Date().toISOString()
     }
     return { changes, item: updated }
+  }
+
+  /**
+   * Rota la contraseña maestra del vault. Espejo de `Vault.changePassword`.
+   *
+   * Gracias al cifrado por sobre, la `vaultKey` (que cifra los storables) NO
+   * cambia: solo se re-deriva la clave de cifrado de clave desde la nueva
+   * contraseña (con un salt nuevo), se re-envuelve la misma `vaultKey` y se
+   * recalcula el `checker`. El ciphertext de los storables queda intacto.
+   *
+   * Verifica primero la contraseña actual contra el `checker`. NO muta el
+   * estado en memoria (el llamante bloquea y re-desbloquea tras persistir):
+   * solo calcula y devuelve los metadatos a persistir vía
+   * `PATCH /acheron/vault` (sin storables).
+   *
+   * @param {string} oldPassword  contraseña maestra actual
+   * @param {string} newPassword  nueva contraseña maestra
+   * @param {string} username     validator del checker (username del usuario)
+   * @returns {Promise<{ checker: string, vaultKey: string, algorithm: object }>}
+   * @throws {WrongPasswordError} si la contraseña actual es incorrecta
+   */
+  async changePassword(oldPassword, newPassword, username) {
+    const oldDerived = await deriveKey(oldPassword, this.raw.algorithm)
+    if (!(await validateChecker(oldDerived, this.raw.checker, username))) {
+      throw new WrongPasswordError()
+    }
+
+    // Desenvuelve los bytes crudos de la vaultKey con la clave vieja (la
+    // CryptoKey en memoria es no-extraíble, por eso se re-desenvuelve del raw).
+    const rawVaultKeyB64 = await aesGcmDecrypt(oldDerived, this.raw.vaultKey)
+
+    const newAlgorithm = { ...this.raw.algorithm, salt: generateSaltB64() }
+    const newDerived = await deriveKey(newPassword, newAlgorithm)
+
+    const checker = await aesGcmEncrypt(newDerived, await sha256Hex(username))
+    const vaultKey = await aesGcmEncrypt(newDerived, rawVaultKeyB64)
+
+    return { checker, vaultKey, algorithm: newAlgorithm }
   }
 }
 

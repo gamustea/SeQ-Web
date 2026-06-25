@@ -63,6 +63,10 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Añadir
             </button>
+            <button class="lock-btn" @click="openChangePassword">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+              Contraseña
+            </button>
             <button class="lock-btn" @click="lock">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               Bloquear
@@ -141,6 +145,14 @@
       @save="onSave"
       @close="modal.open = false"
     />
+
+    <ChangePasswordModal
+      :open="pwdModal.open"
+      :saving="pwdModal.saving"
+      :server-error="pwdModal.error"
+      @save="onChangePassword"
+      @close="pwdModal.open = false"
+    />
   </div>
 </template>
 
@@ -149,6 +161,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'v
 import Topbar from '@/components/shared/Topbar.vue'
 import StarBackground from '@/components/shared/StarBackground.vue'
 import StorableFormModal from '@/components/acheron/StorableFormModal.vue'
+import ChangePasswordModal from '@/components/acheron/ChangePasswordModal.vue'
 import { useApi } from '@/composables/useApi'
 import { useAuthStore } from '@/stores/authStore'
 import { openVault, WrongPasswordError } from '@/acheron/vault.js'
@@ -173,6 +186,7 @@ let algorithm = null
 const modal = reactive({ open: false, mode: 'add', category: null, item: null })
 const saving = ref(false)
 const modalError = ref('')
+const pwdModal = reactive({ open: false, saving: false, error: '' })
 const notice = reactive({ text: '', error: false })
 let noticeTimer = null
 
@@ -254,6 +268,41 @@ function lock() {
   unlocked.value = false
   modal.open = false
   nextTick(() => passwordInput.value?.focus())
+}
+
+/* ── cambio de contraseña maestra ── */
+function openChangePassword() {
+  pwdModal.error = ''
+  pwdModal.open = true
+}
+
+async function onChangePassword({ current, next }) {
+  if (!vault) return
+  pwdModal.saving = true
+  pwdModal.error = ''
+  try {
+    const payload = await vault.changePassword(current, next, auth.username())
+    const res = await apiFetch('/acheron/vault', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+    if (res && res.ok) {
+      pwdModal.open = false
+      lock()
+      flash('Contraseña maestra actualizada. Desbloquea con la nueva.')
+    } else {
+      pwdModal.error = await errMessage(res, 'No se pudo cambiar la contraseña.')
+    }
+  } catch (e) {
+    if (e instanceof WrongPasswordError) {
+      pwdModal.error = 'Contraseña actual incorrecta.'
+    } else {
+      console.error('[Acheron] error al cambiar la contraseña:', e)
+      pwdModal.error = 'Error al cifrar o enviar los datos.'
+    }
+  } finally {
+    pwdModal.saving = false
+  }
 }
 
 /* ── alta / edición ── */

@@ -63,6 +63,17 @@ export function randomBytes(n) {
   return globalThis.crypto.getRandomValues(new Uint8Array(n))
 }
 
+/**
+ * Genera un salt aleatorio en Base64. Espejo de `CryptoUtils.generateSalt`
+ * (16 bytes = 128 bits por defecto).
+ *
+ * @param {number} length  longitud en bytes (mínimo 16 recomendado)
+ * @returns {string} salt Base64
+ */
+export function generateSaltB64(length = 16) {
+  return b64encode(randomBytes(length))
+}
+
 /* ── derivación de clave (KDF) ───────────────────────────────────────── */
 
 /**
