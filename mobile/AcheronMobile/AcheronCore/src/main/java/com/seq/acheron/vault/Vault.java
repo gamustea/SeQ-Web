@@ -1,5 +1,7 @@
 package com.seq.acheron.vault;
 
+import com.seq.acheron.exceptions.WrongPasswordException;
+import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.vault.interfaces.Cypher;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
@@ -110,8 +112,11 @@ public class Vault implements JsonSerializable {
      * used by {@link com.seq.acheron.vault.VaultFactory} to validate that the
      * master password supplied when loading a vault is correct, without ever
      * storing the password itself.
+     * <p>
+     * Mutable: it is recomputed by {@link #changePassword(String, String)} when
+     * the master password is rotated.
      */
-    private final String checker;
+    private String checker;
 
     /**
      * The logical owner of this vault. It is used when deriving the
@@ -169,9 +174,9 @@ public class Vault implements JsonSerializable {
 
 
 
-    /* ═══════════════════════════════════════
-     *               METHODS
-     * ═══════════════════════════════════════ */
+    /* ────────────────────────────────────
+     *              CRUD
+     * ──────────────────────────────────── */
 
     /**
      * Retrieves a stored item by its unique identifier.
@@ -185,6 +190,129 @@ public class Vault implements JsonSerializable {
                 .filter(s -> id.equals(s.getId()))
                 .findFirst()
                 .orElse(null);
+    }
+
+    /**
+     * Adds an item to the vault.
+     * <p>
+     * If the storable was constructed with auto-ID generation
+     * ({@link VaultObject#needsIdAssignment()}), a fresh ID is assigned
+     * from this vault's per-prefix sequence.  Explicit IDs (e.g. from
+     * {@code fromJson}) automatically advance the sequence to avoid
+     * future collisions.
+     * <p>
+     * After insertion, the internal list of items is re-sorted according to
+     * the natural ordering of {@link Storable}.
+     *
+     * @param storable the item to add; must not be {@code null}
+     * @return this vault instance, for fluent usage
+     */
+    public Vault add(Storable storable) {
+        Objects.requireNonNull(storable, "storable must not be null");
+        if (storable instanceof VaultObject vo) {
+            if (vo.needsIdAssignment()) {
+                // copy()/toJson() require a non-null id; assign a placeholder so the
+                // hash can be computed, then overwrite it with the real content hash.
+                vo.assignIdDirect("");
+                Storable copy = vo.copy();
+                ((Cypher) copy).encrypt(strategy);
+                String hashId = VaultObject.generateIdFromContent(copy.toJson());
+                vo.assignIdDirect(hashId);
+            } else {
+                syncPrefixSequence(vo.getId());
+            }
+        }
+        storables.add(storable);
+        storables.sort(null);
+        return this;
+    }
+
+    /**
+     * Removes an item from the vault using {@link Object#equals(Object)} for comparison.
+     * If the item is not present, this method has no effect.
+     *
+     * @param storable the item to remove; ignored if {@code null} or not contained
+     * @return this vault instance, for fluent usage
+     */
+    public Vault remove(Storable storable) {
+        if (storable != null) {
+            storables.remove(storable);
+        }
+        return this;
+    }
+
+
+    /* ────────────────────────────────────
+     *        ENCRYPTION LIFECYCLE
+     * ──────────────────────────────────── */
+
+    /**
+     * Encrypts all items currently stored in the vault by delegating to
+     * {@link Cypher#encrypt(VaultEncryptingStrategy)} for each item.
+     * Sets {@link #isEncrypted} to {@code true} on success.
+     *
+     * @return this vault instance, for fluent usage
+     * @throws IllegalStateException if the vault is already encrypted
+     */
+    public Vault encryptAll() {
+        return toggleEncrypt(true);
+    }
+
+    /**
+     * Decrypts all items currently stored in the vault by delegating to
+     * {@link Cypher#decrypt(VaultEncryptingStrategy)} for each item.
+     * Sets {@link #isEncrypted} to {@code false} on success.
+     *
+     * @return this vault instance, for fluent usage
+     * @throws IllegalStateException if the vault is not currently encrypted
+     */
+    public Vault decryptAll() {
+        return toggleEncrypt(false);
+    }
+
+    /**
+     * Rotates the master password protecting this vault.
+     * <p>
+     * Thanks to envelope encryption, only the key-encryption material changes:
+     * the random {@link VaultEncryptingStrategy#getVaultKey() vaultKey} that
+     * actually encrypts every item is preserved, so the stored ciphertext of
+     * the items is untouched. The operation:
+     * <ol>
+     *   <li>requires the vault to be <b>decrypted</b> (so it is genuinely
+     *       unlocked and the current derived key is available);</li>
+     *   <li>verifies that {@code oldPassword} is the current master password;</li>
+     *   <li>re-derives the key from {@code newPassword} using a freshly
+     *       generated salt, re-wrapping the same {@code vaultKey};</li>
+     *   <li>recomputes the {@link #checker} bound to the new derived key.</li>
+     * </ol>
+     * After this returns, call {@link #encryptAll()} and {@link #toJson()} to
+     * obtain a persistable representation bound to the new password.
+     *
+     * @param oldPassword the current master password
+     * @param newPassword the new master password
+     * @return this vault instance, for fluent usage
+     * @throws IllegalStateException    if the vault is currently encrypted
+     * @throws WrongPasswordException   if {@code oldPassword} is not the current
+     *                                  master password
+     * @throws GeneralSecurityException if key derivation or checker computation fails
+     */
+    public Vault changePassword(String oldPassword, String newPassword)
+            throws GeneralSecurityException, WrongPasswordException {
+        Objects.requireNonNull(oldPassword, "oldPassword must not be null");
+        Objects.requireNonNull(newPassword, "newPassword must not be null");
+
+        if (isEncrypted) {
+            throw new IllegalStateException(
+                    "Vault must be decrypted to change the master password");
+        }
+        if (!strategy.matchesPassword(oldPassword)) {
+            throw new WrongPasswordException("Wrong current master password");
+        }
+
+        String newSalt = CryptoUtils.generateSalt();
+        strategy.changePassword(newPassword, newSalt);
+        this.checker = strategy.getChecker(user.getUsername());
+        return this;
     }
 
     /**
@@ -223,147 +351,10 @@ public class Vault implements JsonSerializable {
         return copy.toJson();
     }
 
-    /**
-     * Adds an item to the vault.
-     * <p>
-     * If the storable was constructed with auto-ID generation
-     * ({@link VaultObject#needsIdAssignment()}), a fresh ID is assigned
-     * from this vault's per-prefix sequence.  Explicit IDs (e.g. from
-     * {@code fromJson}) automatically advance the sequence to avoid
-     * future collisions.
-     * <p>
-     * After insertion, the internal list of items is re-sorted according to
-     * the natural ordering of {@link Storable}.
-     *
-     * @param storable the item to add; must not be {@code null}
-     * @return this vault instance, for fluent usage
-     */
-    public Vault add(Storable storable) {
-        Objects.requireNonNull(storable, "storable must not be null");
-        if (storable instanceof VaultObject vo) {
-            if (vo.needsIdAssignment()) {
-                Storable copy = vo.copy();
-                ((Cypher) copy).encrypt(strategy);
-                String hashId = VaultObject.generateIdFromContent(copy.toJson());
-                vo.assignIdDirect(hashId);
-            } else {
-                syncPrefixSequence(vo.getId());
-            }
-        }
-        storables.add(storable);
-        storables.sort(null);
-        return this;
-    }
 
-    /**
-     * Advance the per-prefix sequence counter past the given ID so that
-     * auto-generated IDs never collide with explicit ones.
-     *
-     * @param id an already-assigned ID such as {@code "ACC3"} or {@code "CDC0"}
-     */
-    void syncPrefixSequence(String id) {
-        String prefix = extractPrefix(id);
-        try {
-            int num = Integer.parseInt(id.substring(prefix.length()));
-            prefixSequences
-                    .computeIfAbsent(prefix, k -> new AtomicInteger(0))
-                    .updateAndGet(cur -> Math.max(cur, num + 1));
-        } catch (NumberFormatException ignored) {
-            // non-standard ID format — leave sequence unchanged
-        }
-    }
-
-    private static String extractPrefix(String id) {
-        StringBuilder letters = new StringBuilder();
-        for (int i = 0; i < id.length(); i++) {
-            char c = id.charAt(i);
-            if (Character.isDigit(c)) break;
-            letters.append(c);
-        }
-        return letters.toString();
-    }
-
-    /**
-     * Removes an item from the vault using {@link Object#equals(Object)} for comparison.
-     * If the item is not present, this method has no effect.
-     *
-     * @param storable the item to remove; ignored if {@code null} or not contained
-     * @return this vault instance, for fluent usage
-     */
-    public Vault remove(Storable storable) {
-        if (storable != null) {
-            storables.remove(storable);
-        }
-        return this;
-    }
-
-    /**
-     * Encrypts all items currently stored in the vault by delegating to
-     * {@link Cypher#encrypt(VaultEncryptingStrategy)} for each item.
-     * Sets {@link #isEncrypted} to {@code true} on success.
-     *
-     * @return this vault instance, for fluent usage
-     * @throws IllegalStateException if the vault is already encrypted
-     */
-    public Vault encryptAll() {
-        return toggleEncrypt(true);
-    }
-
-    /**
-     * Decrypts all items currently stored in the vault by delegating to
-     * {@link Cypher#decrypt(VaultEncryptingStrategy)} for each item.
-     * Sets {@link #isEncrypted} to {@code false} on success.
-     *
-     * @return this vault instance, for fluent usage
-     * @throws IllegalStateException if the vault is not currently encrypted
-     */
-    public Vault decryptAll() {
-        return toggleEncrypt(false);
-    }
-
-    /**
-     * Internal helper that applies the encrypt or decrypt operation to every
-     * stored item and updates {@link #isEncrypted}.
-     *
-     * @param encrypt {@code true} to encrypt all items; {@code false} to decrypt
-     * @return this vault instance
-     * @throws IllegalStateException if the operation conflicts with the current
-     *                               {@link #isEncrypted} state
-     */
-    private Vault toggleEncrypt(boolean encrypt) {
-        if (encrypt && isEncrypted) {
-            throw new IllegalStateException("Vault is already encrypted.");
-        }
-        if (!encrypt && !isEncrypted) {
-            throw new IllegalStateException("Vault is already decrypted.");
-        }
-
-        for (Cypher storable : storables) {
-            if (encrypt) {
-                storable.encrypt(strategy);
-            } else {
-                storable.decrypt(strategy);
-            }
-        }
-        isEncrypted = encrypt;
-        return this;
-    }
-
-    /**
-     * Classifies all stored items by their {@link Storable#category()}.
-     * <p>
-     * The returned map uses a {@link TreeMap} to ensure stable, alphabetical
-     * ordering of categories in the JSON representation.
-     */
-    private Map<String, List<Storable>> classifyStorables() {
-        Map<String, List<Storable>> map = new TreeMap<>();
-        for (Storable storable : storables) {
-            String key = storable.category();
-            map.computeIfAbsent(key, k -> new ArrayList<>())
-                    .add(storable);
-        }
-        return map;
-    }
+    /* ────────────────────────────────────
+     *           SERIALIZATION
+     * ──────────────────────────────────── */
 
     /**
      * Serialises this vault to a JSON string suitable for persistence.
@@ -409,6 +400,10 @@ public class Vault implements JsonSerializable {
     }
 
 
+    /* ────────────────────────────────────
+     *         OBJECT OVERRIDES
+     * ──────────────────────────────────── */
+
     /**
      * Returns a safe debug representation.  Only returns the full JSON
      * when the vault is encrypted; otherwise shows a summary.
@@ -448,5 +443,82 @@ public class Vault implements JsonSerializable {
     @Override
     public int hashCode() {
         return Objects.hash(strategy, user, checker, storables, isEncrypted);
+    }
+
+
+    /* ────────────────────────────────────
+     *         INTERNAL HELPERS
+     * ──────────────────────────────────── */
+
+    /**
+     * Applies the encrypt or decrypt operation to every stored item and
+     * updates {@link #isEncrypted}.
+     *
+     * @param encrypt {@code true} to encrypt all items; {@code false} to decrypt
+     * @return this vault instance
+     * @throws IllegalStateException if the operation conflicts with the current
+     *                               {@link #isEncrypted} state
+     */
+    private Vault toggleEncrypt(boolean encrypt) {
+        if (encrypt && isEncrypted) {
+            throw new IllegalStateException("Vault is already encrypted.");
+        }
+        if (!encrypt && !isEncrypted) {
+            throw new IllegalStateException("Vault is already decrypted.");
+        }
+
+        for (Cypher storable : storables) {
+            if (encrypt) {
+                storable.encrypt(strategy);
+            } else {
+                storable.decrypt(strategy);
+            }
+        }
+        isEncrypted = encrypt;
+        return this;
+    }
+
+    /**
+     * Classifies all stored items by their {@link Storable#category()}.
+     * <p>
+     * The returned map uses a {@link TreeMap} to ensure stable, alphabetical
+     * ordering of categories in the JSON representation.
+     */
+    private Map<String, List<Storable>> classifyStorables() {
+        Map<String, List<Storable>> map = new TreeMap<>();
+        for (Storable storable : storables) {
+            String key = storable.category();
+            map.computeIfAbsent(key, k -> new ArrayList<>())
+                    .add(storable);
+        }
+        return map;
+    }
+
+    /**
+     * Advance the per-prefix sequence counter past the given ID so that
+     * auto-generated IDs never collide with explicit ones.
+     *
+     * @param id an already-assigned ID such as {@code "ACC3"} or {@code "CDC0"}
+     */
+    protected void syncPrefixSequence(String id) {
+        String prefix = extractPrefix(id);
+        try {
+            int num = Integer.parseInt(id.substring(prefix.length()));
+            prefixSequences
+                    .computeIfAbsent(prefix, k -> new AtomicInteger(0))
+                    .updateAndGet(cur -> Math.max(cur, num + 1));
+        } catch (NumberFormatException ignored) {
+            // non-standard ID format — leave sequence unchanged
+        }
+    }
+
+    private static String extractPrefix(String id) {
+        StringBuilder letters = new StringBuilder();
+        for (int i = 0; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (Character.isDigit(c)) break;
+            letters.append(c);
+        }
+        return letters.toString();
     }
 }

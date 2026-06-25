@@ -208,6 +208,52 @@ class VaultViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Rota la contraseña maestra: re-cifra la clave de la bóveda con la nueva
+     * contraseña (los storables no se tocan) y refresca los metadatos en el
+     * servidor vía `PATCH /vault`. Tras intentarlo, bloquea la bóveda para que
+     * el usuario la vuelva a abrir con la contraseña correspondiente (la nueva
+     * si tuvo éxito; la antigua si falló la persistencia).
+     *
+     * @return `true` si el cambio se aplicó y persistió correctamente.
+     */
+    suspend fun changeMasterPassword(oldPassword: String, newPassword: String): Boolean {
+        _uiState.update { it.copy(syncing = true, errorMessage = null) }
+
+        val metadata = try {
+            crypto.changeMasterPassword(oldPassword, newPassword)
+        } catch (_: com.seq.acheron.exceptions.WrongPasswordException) {
+            // Se lanza antes de mutar el vault: el usuario puede reintentar.
+            _uiState.update { it.copy(syncing = false, errorMessage = "Contraseña actual incorrecta") }
+            return false
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(syncing = false, errorMessage = e.localizedMessage ?: "Error al cambiar la contraseña")
+            }
+            return false
+        }
+
+        return when (val result = remote.changeVaultPassword(metadata)) {
+            is VaultRemoteDataSource.Result.Success -> {
+                _uiState.update { it.copy(syncing = false) }
+                crypto.lock() // re-desbloqueo con la nueva contraseña
+                true
+            }
+            is VaultRemoteDataSource.Result.Error -> {
+                // El vault en memoria ya está rekeyado pero el server no: bloquea
+                // para descartar el estado divergente.
+                _uiState.update { it.copy(syncing = false, errorMessage = result.message) }
+                crypto.lock()
+                false
+            }
+            is VaultRemoteDataSource.Result.NetworkError -> {
+                _uiState.update { it.copy(syncing = false, errorMessage = "Sin conexión") }
+                crypto.lock()
+                false
+            }
+        }
+    }
+
     fun lockVault() {
         crypto.lock()
     }

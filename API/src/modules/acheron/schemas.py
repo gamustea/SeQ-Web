@@ -71,6 +71,17 @@ class BulkOperationSchema(Schema):
     changes = fields.Dict(keys=fields.String(), required=True)
 
 
+class VaultPasswordChangeSchema(Schema):
+    """Metadatos a refrescar tras un cambio de contraseña maestra.
+
+    El cambio de contraseña es, criptográficamente, solo metadatos: la vaultKey
+    (que cifra los storables) no cambia, así que NO se envían storables.
+    """
+    checker = fields.String(required=True)
+    vaultKey = fields.String(required=True)
+    algorithm = fields.Dict(required=True)
+
+
 class VaultUpsertResponseSchema(Schema):
     message = fields.String()
     vaultId = fields.Integer()

@@ -228,8 +228,13 @@
           <span class="card-go" aria-hidden="true">→</span>
         </router-link>
 
-        <div class="card card-acheron card-disabled" style="animation-delay: 0.49s">
+        <router-link
+          to="/acheron" class="card card-acheron" style="animation-delay: 0.49s"
+          @mousemove="tiltCard" @mouseleave="resetCard"
+        >
           <div class="card-bg"></div>
+          <div class="card-edge"></div>
+          <div class="card-sheen"></div>
           <div class="card-accent"></div>
           <div class="card-icon">
             <img :src="acheronIcon" alt="Acheron" class="card-icon-img" />
@@ -238,14 +243,12 @@
             <h2 class="card-title">Acheron</h2>
             <p class="card-desc">Bóveda cifrada de credenciales y tarjetas para tu organización.</p>
             <div class="card-meta">
-              <span class="card-status status-later">Pendiente</span>
+              <span class="card-status status-active"><span class="status-dot"></span>Operativo</span>
+              <span class="card-info">Cifrado en el navegador</span>
             </div>
           </div>
-          <div class="card-wip">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            <span>Próximamente</span>
-          </div>
-        </div>
+          <span class="card-go" aria-hidden="true">→</span>
+        </router-link>
       </section>
     </main>
 
@@ -278,7 +281,7 @@ const reduceMotion =
   typeof window !== 'undefined' &&
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
-const activeModules = 3
+const activeModules = 4
 
 const profileName = computed(() => {
   const fn = profileStore.profile.first_name

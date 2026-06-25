@@ -12,23 +12,71 @@
         <div class="config-nav-column">
           <aside class="config-nav">
             <nav>
-              <a v-for="s in navSections" :key="s.id"
-                :class="['nav-link', { active: activeSection === s.id }]"
-                href="#" @click.prevent="scrollTo(s.id)">
-                <span class="nav-icon" v-html="s.icon"></span>
-                <span class="nav-label">{{ s.label }}</span>
-              </a>
+              <template v-for="g in navGroups" :key="g.label">
+                <span class="nav-group-label">{{ g.label }}</span>
+                <a v-for="s in g.items" :key="s.id"
+                  :class="['nav-link', { active: activeSection === s.id }]"
+                  href="#" @click.prevent="scrollTo(s.id)">
+                  <span class="nav-icon" v-html="s.icon"></span>
+                  <span class="nav-label">{{ s.label }}</span>
+                </a>
+              </template>
             </nav>
           </aside>
         </div>
 
         <form class="config-form" @submit.prevent="handleSave">
           <section id="section-general" class="section">
-            <div class="section-head"><h2>General</h2><p class="section-desc">Directorios del sistema</p></div>
+            <div class="section-head section-head--row">
+              <div><h2>General</h2><p class="section-desc">Directorios del sistema</p></div>
+              <span class="version-chip" title="Versión de la aplicación">v{{ store.configFlat['appVersion'] }}</span>
+            </div>
             <div class="section-body">
               <div class="cfg-grid">
                 <div class="form-group"><label>Temp</label><input v-model="store.configFlat['general.directories.tempdir']" type="text" class="inp" /></div>
                 <div class="form-group"><label>Logs</label><input v-model="store.configFlat['general.directories.logdir']" type="text" class="inp" /></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="section-security" class="section">
+            <div class="section-head"><h2>Seguridad</h2><p class="section-desc">Hashing de contraseñas (Argon2id)</p></div>
+            <div class="section-body">
+              <p class="field-hint">Parámetros de coste de Argon2id. Subirlos endurece los hashes pero ralentiza el inicio de sesión. Solo afectan a contraseñas creadas o cambiadas tras guardar.</p>
+              <div class="cfg-grid">
+                <div class="form-group"><label>Iteraciones (time cost)</label><input v-model.number="store.configFlat['security.argon2.time_cost']" type="number" min="1" max="20" class="inp" /></div>
+                <div class="form-group"><label>Memoria (KiB)</label><input v-model.number="store.configFlat['security.argon2.memory_cost']" type="number" min="8192" step="1024" class="inp" /><span class="field-hint">65536 KiB = 64 MiB por hash</span></div>
+                <div class="form-group"><label>Paralelismo (hilos)</label><input v-model.number="store.configFlat['security.argon2.parallelism']" type="number" min="1" max="16" class="inp" /></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="section-database" class="section">
+            <div class="section-head"><h2>Base de datos</h2><p class="section-desc">Conexión PostgreSQL y pool de conexiones</p></div>
+            <div class="section-body">
+              <p class="field-hint">Las credenciales viven en el archivo <code>.env</code>. Estos ajustes requieren reiniciar la API para aplicarse.</p>
+              <div class="cfg-grid">
+                <div class="form-group"><label>Nivel de aislamiento</label>
+                  <select v-model="store.configFlat['database.isolation_level']" class="inp sel">
+                    <option v-for="lvl in isolationLevels" :key="lvl" :value="lvl">{{ lvl }}</option>
+                  </select>
+                </div>
+                <div class="form-group"><label>Tamaño del pool</label><input v-model.number="store.configFlat['database.pool_size']" type="number" min="1" max="100" class="inp" /></div>
+                <div class="form-group"><label>Conexiones extra (overflow)</label><input v-model.number="store.configFlat['database.max_overflow']" type="number" min="0" max="100" class="inp" /></div>
+                <div class="form-group"><label>Timeout del pool (s)</label><input v-model.number="store.configFlat['database.pool_timeout']" type="number" min="1" max="300" class="inp" /></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="section-redis" class="section">
+            <div class="section-head"><h2>Redis</h2><p class="section-desc">Backend de la cola de tareas</p></div>
+            <div class="section-body">
+              <p class="field-hint">La contraseña se toma de <code>REDIS_PASSWORD</code> en <code>.env</code>. En contenedores, las variables <code>REDIS_HOST</code> / <code>REDIS_PORT</code> / <code>REDIS_DB</code> tienen prioridad sobre estos valores.</p>
+              <div class="cfg-grid">
+                <div class="form-group"><label>Host</label><input v-model="store.configFlat['redis.host']" type="text" class="inp mono" /></div>
+                <div class="form-group"><label>Puerto</label><input v-model.number="store.configFlat['redis.port']" type="number" min="1" max="65535" class="inp" /></div>
+                <div class="form-group"><label>Base de datos (db)</label><input v-model.number="store.configFlat['redis.db']" type="number" min="0" max="15" class="inp" /></div>
+                <div class="form-group"><label>Timeout de conexión (s)</label><input v-model.number="store.configFlat['redis.socket_connect_timeout']" type="number" min="1" max="60" class="inp" /></div>
               </div>
             </div>
           </section>
@@ -44,6 +92,42 @@
             </div>
           </section>
 
+          <section id="section-ai" class="section">
+            <div class="section-head"><h2>IA</h2><p class="section-desc">Estrategia de los modelos de lenguaje por módulo</p></div>
+            <div class="section-body">
+              <p class="field-hint">Elige qué proveedor genera el contenido de cada módulo. Las credenciales y los modelos se configuran en <code>.env</code> (<code>OLLAMA_*</code>, <code>OPENAI_*</code>).</p>
+              <div class="cfg-grid">
+                <div class="form-group"><label>Estrategia por defecto</label>
+                  <select v-model="store.configFlat['ai.defaultStrategy']" class="inp sel">
+                    <option v-for="s in aiStrategies" :key="s.value" :value="s.value">{{ s.label }}</option>
+                  </select>
+                </div>
+                <div class="form-group"><label>Sentinel</label>
+                  <select v-model="store.configFlat['ai.modules.sentinel']" class="inp sel">
+                    <option v-for="s in aiStrategies" :key="s.value" :value="s.value">{{ s.label }}</option>
+                  </select>
+                </div>
+                <div class="form-group"><label>Aegis</label>
+                  <select v-model="store.configFlat['ai.modules.aegis']" class="inp sel">
+                    <option v-for="s in aiStrategies" :key="s.value" :value="s.value">{{ s.label }}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="section-iris" class="section">
+            <div class="section-head"><h2>Iris</h2><p class="section-desc">Umbrales de análisis de cabeceras de correo</p></div>
+            <div class="section-body">
+              <p class="field-hint">Puntuación de autenticidad de un correo. Por encima del umbral legítimo se considera fiable; por debajo del sospechoso, una amenaza. El umbral sospechoso puede ser negativo.</p>
+              <div class="cfg-grid">
+                <div class="form-group"><label>Umbral legítimo</label><input v-model.number="store.configFlat['iris.legitimate_threshold']" type="number" class="inp" /></div>
+                <div class="form-group"><label>Umbral sospechoso</label><input v-model.number="store.configFlat['iris.suspicious_threshold']" type="number" class="inp" /></div>
+                <div class="form-group"><label>Cabeceras mínimas</label><input v-model.number="store.configFlat['iris.min_headers']" type="number" min="0" max="50" class="inp" /></div>
+              </div>
+            </div>
+          </section>
+
           <section id="section-sentinel" class="section">
             <div class="section-head"><h2>Sentinel</h2><p class="section-desc">Escáner de red, análisis web y vulnerabilidades</p></div>
             <div class="section-body">
@@ -51,13 +135,25 @@
               <div class="cfg-grid">
                 <div class="form-group"><label>Directorio de salida (PDFs)</label><input v-model="store.configFlat['sentinel.directories.output']" type="text" class="inp" /></div>
                 <div class="form-group"><label>Directorio CSV</label><input v-model="store.configFlat['sentinel.directories.csv']" type="text" class="inp" /></div>
+                <div class="form-group"><label>Directorio de recursos</label><input v-model="store.configFlat['sentinel.directories.resources']" type="text" class="inp" /></div>
               </div>
               <div class="cfg-row"><label class="toggle-row"><input v-model="store.configFlat['sentinel.areLocalIpsAllowed']" type="checkbox" class="toggle" /><span>Permitir IPs locales</span></label></div>
+              <div class="cfg-grid">
+                <div class="form-group"><label>Carpeta por defecto</label><input v-model="store.configFlat['sentinel.folders.defaultFolderName']" type="text" class="inp" /><span class="field-hint">Nombre de la carpeta virtual para escaneos sin agrupar</span></div>
+                <div class="form-group"><label>Escaneos en estadísticas</label><input v-model.number="store.configFlat['sentinel.history.maxScans']" type="number" min="1" max="100" class="inp" /><span class="field-hint">Escaneos recientes que se promedian en el histórico</span></div>
+              </div>
               <h3 class="subsection-title">Verificación de accesibilidad del host</h3>
               <div class="cfg-grid">
                 <div class="form-group"><label class="toggle-row"><input v-model="store.configFlat['sentinel.hostReachabilityCheck.enabled']" type="checkbox" class="toggle" /><span>Habilitado</span></label></div>
                 <div class="form-group"><label>Timeout (s)</label><input v-model.number="store.configFlat['sentinel.hostReachabilityCheck.timeout']" type="number" step="0.5" min="0.5" class="inp" /></div>
                 <div class="form-group"><label>Puerto</label><input v-model.number="store.configFlat['sentinel.hostReachabilityCheck.port']" type="number" min="1" max="65535" class="inp" /></div>
+              </div>
+              <h3 class="subsection-title">Traceroute</h3>
+              <div class="cfg-grid">
+                <div class="form-group"><label>Validez de caché (h)</label><input v-model.number="store.configFlat['sentinel.traceroute.cacheHours']" type="number" min="1" max="720" class="inp" /></div>
+                <div class="form-group"><label>Saltos máximos</label><input v-model.number="store.configFlat['sentinel.traceroute.maxHops']" type="number" min="1" max="64" class="inp" /></div>
+                <div class="form-group"><label>Timeout (s)</label><input v-model.number="store.configFlat['sentinel.traceroute.timeout']" type="number" min="1" max="600" class="inp" /></div>
+                <div class="form-group"><label>Reintento si falla (min)</label><input v-model.number="store.configFlat['sentinel.traceroute.retryFailedMinutes']" type="number" min="1" max="1440" class="inp" /></div>
               </div>
             </div>
             <div class="scanner-grid">
@@ -121,11 +217,39 @@ import ScannerCard from '@/components/config/ScannerCard.vue'
 
 const store = useConfigStore()
 
-const navSections = [
-  { id: 'general',  label: 'General',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
-  { id: 'taskqueue',  label: 'TaskQueue',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>' },
-  { id: 'sentinel', label: 'Sentinel', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' },
-  { id: 'aegis',    label: 'Aegis',    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>' },
+const ICON = {
+  general:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  security:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  database:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+  redis:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
+  taskqueue: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>',
+  ai:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="6" height="6" rx="1"/><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/></svg>',
+  iris:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>',
+  sentinel:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  aegis:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+}
+
+const navGroups = [
+  { label: 'Plataforma', items: [
+    { id: 'general',   label: 'General',       icon: ICON.general },
+    { id: 'security',  label: 'Seguridad',     icon: ICON.security },
+    { id: 'database',  label: 'Base de datos', icon: ICON.database },
+    { id: 'redis',     label: 'Redis',         icon: ICON.redis },
+    { id: 'taskqueue', label: 'TaskQueue',     icon: ICON.taskqueue },
+  ]},
+  { label: 'Módulos', items: [
+    { id: 'ai',       label: 'IA',       icon: ICON.ai },
+    { id: 'iris',     label: 'Iris',     icon: ICON.iris },
+    { id: 'sentinel', label: 'Sentinel', icon: ICON.sentinel },
+    { id: 'aegis',    label: 'Aegis',    icon: ICON.aegis },
+  ]},
+]
+const navSections = navGroups.flatMap((g) => g.items)
+
+const isolationLevels = ['READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE']
+const aiStrategies = [
+  { value: 'ollama', label: 'Ollama (local)' },
+  { value: 'openai', label: 'OpenAI' },
 ]
 
 const activeSection = ref('general')
@@ -158,11 +282,15 @@ function handleSave() { store.saveConfig() }
 .nav-icon { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; }
 .nav-icon svg { width: 100%; height: 100%; }
 .nav-label { white-space: nowrap; }
+.nav-group-label { font-family: var(--font-mono); font-size: 0.6rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); padding: 0 0.6rem; margin: 0.7rem 0 0.25rem; }
+.nav-group-label:first-child { margin-top: 0; }
 .config-form { flex: 1; min-width: 0; }
 .section { margin-bottom: 2rem; }
 .section-head { margin-bottom: 0.85rem; padding-bottom: 0.55rem; border-bottom: 1px solid var(--border); }
+.section-head--row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.85rem; }
 .section-head h2 { font-size: 1.1rem; font-weight: 700; color: var(--text); margin: 0; font-family: var(--font-display); }
 .section-desc { font-size: 0.78rem; color: var(--text-muted); margin: 0.15rem 0 0; }
+.version-chip { flex-shrink: 0; font-family: var(--font-mono); font-size: 0.68rem; font-weight: 600; color: var(--accent-bright); background: var(--accent-dim); border: 1px solid var(--border-solid); border-radius: 999px; padding: 0.2rem 0.6rem; }
 .section-body { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem 1.25rem; display: flex; flex-direction: column; gap: 0.85rem; }
 .subsection-title { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); margin: 0.2rem 0 0.3rem; }
 .cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem; }
@@ -172,6 +300,8 @@ function handleSave() { store.saveConfig() }
 .form-group label { font-size: 0.72rem; font-weight: 600; color: var(--text-dim); }
 .inp { background: var(--bg); border: 1px solid var(--border-solid); border-radius: 6px; padding: 0.45rem 0.6rem; color: var(--text); font-size: 0.82rem; outline: none; transition: border-color 0.2s; }
 .inp:focus { border-color: var(--accent); }
+.sel { cursor: pointer; appearance: none; -webkit-appearance: none; padding-right: 1.8rem; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2382829a' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.55rem center; background-size: 0.85rem; }
+.sel option { background: var(--surface-2); color: var(--text); }
 .txta { background: var(--bg); border: 1px solid var(--border-solid); border-radius: 6px; padding: 0.5rem 0.6rem; color: var(--text); font-size: 0.78rem; outline: none; resize: vertical; width: 100%; min-height: 70px; box-sizing: border-box; transition: border-color 0.2s; }
 .txta:focus { border-color: var(--accent); }
 .mono { font-family: var(--font-mono); }

@@ -41,6 +41,11 @@ interface SeqApiService {
         @Body body: JsonObject
     ): Response<VaultUpsertResponse>
 
+    @PATCH("acheron/vault")
+    suspend fun changeVaultPassword(
+        @Body body: JsonObject
+    ): Response<VaultUpsertResponse>
+
     // ── Acheron Storables ──────────────────────────────────────────────
 
     @POST("acheron/storables")

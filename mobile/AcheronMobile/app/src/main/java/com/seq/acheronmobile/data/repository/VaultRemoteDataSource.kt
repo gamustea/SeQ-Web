@@ -51,6 +51,21 @@ class VaultRemoteDataSource(
         }
     }
 
+    suspend fun changeVaultPassword(metadata: JsonObject): Result<VaultUpsertResponse> {
+        return try {
+            val response = api.changeVaultPassword(metadata)
+            if (response.isSuccessful) {
+                Result.Success(response.body()!!)
+            } else {
+                Result.Error(response.code(), errorMessage(response))
+            }
+        } catch (_: java.io.IOException) {
+            Result.NetworkError
+        } catch (e: Exception) {
+            Result.Error(0, e.localizedMessage ?: "Unknown error")
+        }
+    }
+
     suspend fun addStorable(request: StorableCreateRequest): Result<StorableResponse> {
         return try {
             val response = api.addStorable(request)

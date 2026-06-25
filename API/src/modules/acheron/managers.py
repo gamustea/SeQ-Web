@@ -272,6 +272,42 @@ class VaultManager:
             is_recovery
         )
 
+    def update_vault_metadata(self, data: Dict[str, Any]) -> Optional[Vault]:
+        """Refresca SOLO los metadatos cripto del vault tras un cambio de
+        contraseña maestra: ``checker``, ``vault_key`` y los parámetros de
+        ``algorithm``.
+
+        A diferencia de :meth:`upsert_vault_from_json`, **no toca los storables**:
+        como la ``vaultKey`` que los cifra no cambia, su ciphertext permanece
+        válido y no debe borrarse/recrearse.
+
+        Devuelve el vault actualizado, o ``None`` si el usuario no tiene vault.
+        """
+        algorithm = data.get("algorithm", {}) or {}
+
+        with UnitOfWork() as uow:
+            vault_repo = VaultRepository(uow)
+            vault = vault_repo.get_by_user(self.active_user.id)
+            if vault is None:
+                return None
+
+            self._ensure_vault_ownership(vault)
+
+            vault.checker = data["checker"]
+            vault.vault_key = data["vaultKey"]
+            vault.transformation = algorithm.get("transformation", "")
+            vault.kdf = algorithm.get("kdf", "")
+            vault.kdf_iterations = int(algorithm.get("kdfIterations", 0))
+            vault.kdf_memory = int(algorithm.get("kdfMemoryKiB", 0))
+            vault.kdf_parallelism = int(algorithm.get("kdfParallelism", 1))
+            vault.salt = algorithm.get("salt", "")
+
+        logger.info(
+            f"Metadatos del vault {vault.id} refrescados (cambio de contraseña) "
+            f"para user {self.active_user.id}"
+        )
+        return vault
+
     def export_vault_to_json(self, vault_id: int) -> Dict[str, Any]:
         session = get_db_session()
         repo = VaultRepository(session=session)

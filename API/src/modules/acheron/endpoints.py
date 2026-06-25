@@ -20,6 +20,7 @@ from .schemas import (
     StorableDeleteSchema,
     BulkOperationSchema,
     VaultUpsertResponseSchema,
+    VaultPasswordChangeSchema,
     StorableResponseSchema,
     BulkUpdateResponseSchema,
 )
@@ -88,6 +89,34 @@ def upsert_vault():
     if created:
         return result
     return result, 200
+
+
+@acheron_blp.patch("/vault")
+@acheron_blp.arguments(VaultPasswordChangeSchema)
+@acheron_blp.response(200, VaultUpsertResponseSchema, description="Vault metadata updated")
+@acheron_blp.alt_response(400, schema=ErrorSchema, description="Invalid body")
+@acheron_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@acheron_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@acheron_blp.alt_response(404, schema=ErrorSchema, description="Vault not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ACHERON_UPDATE])
+@limiter.limit("60 per hour; 300 per day")
+@handle_exceptions(default_exception=VaultError, logger=logger)
+def change_vault_metadata(data):
+    """Refrescar los metadatos cripto del vault tras un cambio de contraseña maestra.
+
+    Actualiza unicamente checker, vaultKey y algorithm; los storables (cifrados con
+    la misma vaultKey) permanecen intactos.
+    """
+    with get_vault_manager() as mgr:
+        vault = mgr.update_vault_metadata(data)
+        if not vault:
+            raise VaultNotFoundError()
+        logger.info("Metadatos del vault %s refrescados | user=%s", vault.id, current_actor())
+    return {
+        "message": "Vault metadata updated",
+        "vaultId": vault.id,
+    }
 
 
 @acheron_blp.patch("/storables")
