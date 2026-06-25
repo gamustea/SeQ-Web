@@ -1,5 +1,7 @@
 package com.seq.acheron.vault;
 
+import com.seq.acheron.exceptions.WrongPasswordException;
+import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.vault.interfaces.Cypher;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
@@ -110,8 +112,11 @@ public class Vault implements JsonSerializable {
      * used by {@link com.seq.acheron.vault.VaultFactory} to validate that the
      * master password supplied when loading a vault is correct, without ever
      * storing the password itself.
+     * <p>
+     * Mutable: it is recomputed by {@link #changePassword(String, String)} when
+     * the master password is rotated.
      */
-    private final String checker;
+    private String checker;
 
     /**
      * The logical owner of this vault. It is used when deriving the
@@ -319,6 +324,51 @@ public class Vault implements JsonSerializable {
      */
     public Vault decryptAll() {
         return toggleEncrypt(false);
+    }
+
+    /**
+     * Rotates the master password protecting this vault.
+     * <p>
+     * Thanks to envelope encryption, only the key-encryption material changes:
+     * the random {@link VaultEncryptingStrategy#getVaultKey() vaultKey} that
+     * actually encrypts every item is preserved, so the stored ciphertext of
+     * the items is untouched. The operation:
+     * <ol>
+     *   <li>requires the vault to be <b>decrypted</b> (so it is genuinely
+     *       unlocked and the current derived key is available);</li>
+     *   <li>verifies that {@code oldPassword} is the current master password;</li>
+     *   <li>re-derives the key from {@code newPassword} using a freshly
+     *       generated salt, re-wrapping the same {@code vaultKey};</li>
+     *   <li>recomputes the {@link #checker} bound to the new derived key.</li>
+     * </ol>
+     * After this returns, call {@link #encryptAll()} and {@link #toJson()} to
+     * obtain a persistable representation bound to the new password.
+     *
+     * @param oldPassword the current master password
+     * @param newPassword the new master password
+     * @return this vault instance, for fluent usage
+     * @throws IllegalStateException    if the vault is currently encrypted
+     * @throws WrongPasswordException   if {@code oldPassword} is not the current
+     *                                  master password
+     * @throws GeneralSecurityException if key derivation or checker computation fails
+     */
+    public Vault changePassword(String oldPassword, String newPassword)
+            throws GeneralSecurityException, WrongPasswordException {
+        Objects.requireNonNull(oldPassword, "oldPassword must not be null");
+        Objects.requireNonNull(newPassword, "newPassword must not be null");
+
+        if (isEncrypted) {
+            throw new IllegalStateException(
+                    "Vault must be decrypted to change the master password");
+        }
+        if (!strategy.matchesPassword(oldPassword)) {
+            throw new WrongPasswordException("Wrong current master password");
+        }
+
+        String newSalt = CryptoUtils.generateSalt();
+        strategy.changePassword(newPassword, newSalt);
+        this.checker = strategy.getChecker(user.getUsername());
+        return this;
     }
 
     /**
