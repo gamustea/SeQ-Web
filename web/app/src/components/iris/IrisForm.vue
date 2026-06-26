@@ -43,15 +43,27 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 const emit = defineEmits(['submit'])
 const props = defineProps({
   submitting: { type: Boolean, default: false },
+  // Relleno automático al arrastrar un .eml: { headers, title, token }
+  prefill: { type: Object, default: null },
 })
 
-const headers = ref('')
-const title = ref('')
+const headers = ref(props.prefill?.headers ?? '')
+const title = ref(props.prefill?.title ?? '')
+
+// Cuando llega un nuevo .eml (token distinto), reemplaza el contenido del formulario.
+watch(
+  () => props.prefill?.token,
+  () => {
+    if (!props.prefill) return
+    headers.value = props.prefill.headers ?? ''
+    title.value = props.prefill.title ?? ''
+  },
+)
 
 function handleSubmit() {
   if (headers.value.length < 10 || props.submitting) return
