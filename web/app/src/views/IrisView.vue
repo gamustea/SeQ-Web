@@ -269,8 +269,13 @@ function handleSort(mode) {
   border: 1px solid color-mix(in srgb, var(--intake-color) 22%, transparent);
   border-radius: 18px;
   background: color-mix(in srgb, var(--surface) 78%, transparent);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), inset 0 0 60px color-mix(in srgb, var(--intake-color) 5%, transparent);
-  transition: border-color 0.25s, box-shadow 0.25s;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.5),
+    inset 0 0 60px color-mix(in srgb, var(--intake-color) 5%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--intake-color) 14%, transparent),
+    0 0 26px color-mix(in srgb, var(--intake-color) 22%, transparent);
+  transition: border-color 0.3s, box-shadow 0.3s;
+  animation: intake-glow 2.6s ease-in-out infinite;
 }
 
 /* Marcas de esquina del visor */
@@ -279,7 +284,8 @@ function handleSort(mode) {
   width: 22px;
   height: 22px;
   border: 2px solid var(--intake-color);
-  transition: border-color 0.25s;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--intake-color) 65%, transparent));
+  transition: border-color 0.3s;
 }
 .tick--tl { top: 12px; left: 12px; border-right: 0; border-bottom: 0; border-top-left-radius: 6px; }
 .tick--tr { top: 12px; right: 12px; border-left: 0; border-bottom: 0; border-top-right-radius: 6px; }
@@ -355,26 +361,52 @@ function handleSort(mode) {
 }
 
 /* Entrada/salida del overlay */
-.intake-fade-enter-active,
+.intake-fade-enter-active {
+  transition: opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), backdrop-filter 0.45s ease;
+}
 .intake-fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.3s ease;
 }
 .intake-fade-enter-from,
 .intake-fade-leave-to {
   opacity: 0;
 }
-.intake-fade-enter-active .intake-frame {
-  animation: intake-pop 0.24s ease;
+.intake-fade-enter-from .intake-frame {
+  opacity: 0;
+  transform: scale(0.9) translateY(10px);
+  filter: blur(6px);
+}
+.intake-frame {
+  transition:
+    border-color 0.3s,
+    box-shadow 0.3s,
+    transform 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.5s ease;
 }
 
-@keyframes intake-pop {
-  from { transform: scale(0.96); opacity: 0; }
-  to   { transform: scale(1); opacity: 1; }
+/* Animación de brillo pulsante en el borde del visor */
+@keyframes intake-glow {
+  0%, 100% {
+    box-shadow:
+      0 24px 70px rgba(0, 0, 0, 0.5),
+      inset 0 0 60px color-mix(in srgb, var(--intake-color) 5%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--intake-color) 14%, transparent),
+      0 0 22px color-mix(in srgb, var(--intake-color) 18%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 24px 70px rgba(0, 0, 0, 0.5),
+      inset 0 0 60px color-mix(in srgb, var(--intake-color) 8%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--intake-color) 26%, transparent),
+      0 0 38px color-mix(in srgb, var(--intake-color) 34%, transparent);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .scanline { animation: none; top: 48%; opacity: 0.9; }
-  .intake-fade-enter-active .intake-frame { animation: none; }
+  .intake-frame { animation: none; transition: border-color 0.2s, box-shadow 0.2s; }
+  .intake-fade-enter-from .intake-frame { transform: none; filter: none; }
 }
 
 @media (max-width: 540px) {
