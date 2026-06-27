@@ -1,7 +1,7 @@
 <!-- prettier-ignore -->
 <div align="center">
 
-<img src="./web/app/public/resources/images/SecOps-Logo-BlueDark.png" alt="SeQ" height="110" />
+<img src="./API/resources/images/seq/SeQ-BgN.png" alt="SeQ" height="110" />
 
 # SeQ — Security Operations Platform
 
