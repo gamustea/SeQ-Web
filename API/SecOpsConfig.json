@@ -147,10 +147,7 @@
   },
   "appVersion": "3.0.0",
   "database": {
-    "isolation_level": "READ COMMITTED",
-    "max_overflow": 20,
-    "pool_size": 10,
-    "pool_timeout": 30
+    "isolation_level": "READ COMMITTED"
   },
   "general": {
     "directories": {
@@ -164,13 +161,13 @@
     }
   },
   "iris": {
-    "legitimate_threshold": 30,
+    "legitimate_threshold": 0,
     "min_headers": 2,
-    "suspicious_threshold": -10
+    "suspicious_threshold": -15
   },
   "redis": {
     "db": 0,
-    "host": "127.0.0.1",
+    "host": "localhost",
     "port": 6379,
     "socket_connect_timeout": 2
   },
