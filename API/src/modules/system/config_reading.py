@@ -250,52 +250,66 @@ def verify_directory(directory: DirectoryType) -> Path:
 
     return dir_path
 
-@_lazy_load
-def get_directory_of(directory_type) -> str:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
+_DIRECTORY_ENV_MAPPING = {
+    "tempdir": "TEMP_DIR",
+    "logdir": "LOG_DIR",
+    "output": "OUTPUT_DIR",
+    "stack": "OUTPUT_DIR",
+    "sentinel.csv": "CSV_SENTINEL_DIR",
+}
 
-    dir_key = directory_type.value if hasattr(directory_type, 'value') else directory_type
 
-    env_mapping = {
-        "tempdir": "TEMP_DIR",
-        "logdir": "LOG_DIR",
-        "output": "OUTPUT_DIR",
-        "stack": "OUTPUT_DIR",
-        "sentinel.csv": "CSV_SENTINEL_DIR",
-    }
+def _normalize_dir_key(directory_type) -> str:
+    """Acepta un ``DirectoryType`` (enum) o un string y devuelve la clave plana."""
+    return directory_type.value if hasattr(directory_type, "value") else directory_type
 
-    env_var = env_mapping.get(dir_key)
+
+def _env_override_for(dir_key: str) -> Optional[str]:
+    """Devuelve el valor de la variable de entorno que sobreescribe ``dir_key``, si existe."""
+    env_var = _DIRECTORY_ENV_MAPPING.get(dir_key)
     if env_var:
-        env_value = os.getenv(env_var)
-        if env_value:
-            return env_value
+        return os.getenv(env_var) or None
+    return None
 
+
+def _lookup_raw_path(cfg: dict, dir_key: str) -> str:
+    """Resuelve la ruta cruda en la config: rama anidada ``module.subkey`` o plana ``general``."""
     if "." in dir_key:
-        parts = dir_key.split(".")
-        module_key = parts[0]
-        if module_key not in _configs:
+        module_key, sub_key = dir_key.split(".")
+        if module_key not in cfg:
             raise ValueError(f"Módulo '{module_key}' no encontrado en la configuración.")
-        module_config = _configs[module_key]
+        module_config = cfg[module_key]
         if "directories" not in module_config:
             raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
         directories = module_config["directories"]
-        sub_key = parts[1]
         if sub_key not in directories:
             raise ValueError(f"Directorio '{sub_key}' no encontrado en la configuración.")
-        raw_path = directories[sub_key]
-    else:
-        if dir_key not in _configs.get("general", {}).get("directories", {}):
-            raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
-        raw_path = _configs["general"]["directories"][dir_key]
+        return directories[sub_key]
 
+    if dir_key not in cfg.get("general", {}).get("directories", {}):
+        raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
+    return cfg["general"]["directories"][dir_key]
+
+
+def _to_absolute(raw_path: str) -> str:
+    """Convierte una ruta relativa en absoluta respecto al raíz de la app."""
     path = Path(raw_path)
-
     if not path.is_absolute():
         app_root = Path(__file__).resolve().parent.parent.parent
         path = app_root / path
-
     return str(path)
+
+
+@_lazy_load
+def get_directory_of(directory_type) -> str:
+    dir_key = _normalize_dir_key(directory_type)
+
+    override = _env_override_for(dir_key)
+    if override:
+        return override
+
+    raw_path = _lookup_raw_path(_require_configs(), dir_key)
+    return _to_absolute(raw_path)
 
 
 # =============================================================================
