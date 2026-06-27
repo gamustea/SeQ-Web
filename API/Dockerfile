@@ -24,6 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY run.py .
 COPY SecOpsConfig.json .
+COPY alembic.ini .
+COPY alembic/ ./alembic/
 
 RUN mkdir -p /app/data/sentinel/output /app/data/aegis/output /app/data/aegis/stack /app/temp /app/logs
 
