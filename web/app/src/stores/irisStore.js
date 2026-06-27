@@ -66,8 +66,30 @@ export const useIrisStore = defineStore('iris', () => {
       const data = await res.json()
       analyses.value = data.analyses ?? []
       totalCount.value = data.total ?? 0
+      page.value = pg
     } finally {
       loading.value = false
+    }
+  }
+
+  const loadingMore = ref(false)
+
+  const hasMore = computed(() => analyses.value.length < totalCount.value)
+
+  async function fetchMoreResults() {
+    if (loadingMore.value || analyses.value.length >= totalCount.value) return
+    loadingMore.value = true
+    const nextPage = page.value + 1
+    try {
+      const params = new URLSearchParams({ page: nextPage, per_page: perPage.value })
+      const res = await apiFetch(`/iris/results?${params}`)
+      if (!res?.ok) return
+      const data = await res.json()
+      analyses.value = [...analyses.value, ...(data.analyses ?? [])]
+      totalCount.value = data.total ?? totalCount.value
+      page.value = nextPage
+    } finally {
+      loadingMore.value = false
     }
   }
 
@@ -310,10 +332,10 @@ export const useIrisStore = defineStore('iris', () => {
   }
 
   return {
-    analyses, loading, submitting, totalCount, page, perPage,
+    analyses, loading, submitting, totalCount, page, perPage, loadingMore, hasMore,
     currentId, currentReport, currentStatus, currentPath, pathCache,
     documents, documentsLoading,
-    submitAnalysis, fetchResults, getReport, getStatus, pathFor,
+    submitAnalysis, fetchResults, fetchMoreResults, getReport, getStatus, pathFor,
     cancelAnalysis, deleteAnalysis, selectAnalysis, goToPage,
     startPolling, stopPolling,
     generateDocument, fetchDocuments, getDocumentStatus, downloadDocument, deleteDocument,

@@ -1,6 +1,7 @@
 <template>
   <div class="history-strip" ref="stripRef">
-    <div class="strip-scroll">
+    <button v-if="canScrollLeft" type="button" class="strip-arrow strip-arrow--left" @click="scrollLeft" tabindex="-1" aria-label="Anteriores">&lsaquo;</button>
+    <div class="strip-scroll" ref="scrollRef" @scroll="onStripScroll" @wheel="onStripWheel" @keydown.left="scrollLeft" @keydown.right.prevent="scrollRight" tabindex="0">
       <!-- New analysis button -->
       <button
         type="button"
@@ -69,8 +70,20 @@
         </div>
       </div>
 
+      <!-- Load more -->
+      <button v-if="hasMore && !loadingMore && items.length" type="button" class="strip-item strip-item--load-more" @click="emit('load-more')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="more-chevron"><polyline points="9 18 15 12 9 6"/></svg>
+        <span>Cargar m&aacute;s</span>
+      </button>
+      <div v-else-if="loadingMore" class="strip-item strip-item--loading" aria-disabled="true">
+        <span class="spinner-sm"></span>
+        <span>Cargando…</span>
+      </div>
+
       <div class="strip-fade"></div>
     </div>
+
+    <button v-if="canScrollRight" type="button" class="strip-arrow strip-arrow--right" @click="scrollRight" tabindex="-1" aria-label="Siguientes">&rsaquo;</button>
 
     <!-- Hover card (outside scroll to avoid overflow clip) -->
     <Transition name="card">
@@ -117,21 +130,72 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
   activeId: { type: [Number, null], default: null },
   sort: { type: String, default: 'date-desc' },
+  hasMore: { type: Boolean, default: false },
+  loadingMore: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'sort', 'delete'])
+const emit = defineEmits(['select', 'sort', 'delete', 'load-more'])
 
 const sortOpen = ref(false)
 const hoverId = ref(null)
 const confirmDeleteId = ref(null)
 const stripRef = ref(null)
+const scrollRef = ref(null)
 const cardLeft = ref(0)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+
+function scrollLeft() {
+  scrollRef.value?.scrollBy({ left: -300, behavior: 'smooth' })
+}
+function scrollRight() {
+  scrollRef.value?.scrollBy({ left: 300, behavior: 'smooth' })
+}
+
+function onStripScroll() {
+  const el = scrollRef.value
+  if (!el) return
+  canScrollLeft.value = el.scrollLeft > 8
+  canScrollRight.value = el.scrollLeft < el.scrollWidth - el.clientWidth - 8
+}
+
+function onStripWheel(e) {
+  if (e.deltaX !== 0) return
+  const el = scrollRef.value
+  if (!el) return
+  if (el.scrollWidth <= el.clientWidth) return
+  const atLeft = el.scrollLeft <= 0
+  const atRight = el.scrollLeft >= el.scrollWidth - el.clientWidth - 1
+  if ((e.deltaY < 0 && atLeft) || (e.deltaY > 0 && atRight)) return
+  e.preventDefault()
+  el.scrollBy({ left: e.deltaY, behavior: 'auto' })
+}
+
+watch(() => props.activeId, () => {
+  if (props.activeId == null) return
+  nextTick(() => {
+    const el = scrollRef.value
+    if (!el) return
+    const activeEl = el.querySelector('.strip-item.active')
+    if (!activeEl) return
+    const crect = el.getBoundingClientRect()
+    const arect = activeEl.getBoundingClientRect()
+    const margin = 20
+    if (arect.left < crect.left + margin || arect.right > crect.right - margin) {
+      activeEl.scrollIntoView({ inline: 'center', behavior: 'smooth', block: 'nearest' })
+    }
+  })
+})
+
+watch(() => props.items.length, () => requestAnimationFrame(onStripScroll))
+
+onMounted(() => requestAnimationFrame(onStripScroll))
 
 const hoverItem = computed(() => {
   if (hoverId.value == null) return null
@@ -567,4 +631,74 @@ function verdictClass(v) {
   background: var(--accent-dim);
   color: var(--accent-bright);
 }
+
+/* ── Scroll arrows ─────────────────────────────────────── */
+.strip-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0;
+}
+.strip-arrow--left { left: 4px; }
+.strip-arrow--right { right: 48px; }
+.strip-arrow:hover {
+  background: var(--surface-2);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Load-more button ──────────────────────────────────── */
+.strip-item--load-more {
+  border-style: dashed;
+  gap: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+.strip-item--load-more:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.more-chevron {
+  width: 14px;
+  height: 14px;
+}
+
+.strip-item--loading {
+  gap: 0.35rem;
+  pointer-events: none;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* small spinner re-usable in this component scope */
+.spinner-sm {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: hstrip-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes hstrip-spin {
+  to { transform: rotate(360deg); }
+}
+
+.strip-scroll:focus { outline: none; }
 </style>

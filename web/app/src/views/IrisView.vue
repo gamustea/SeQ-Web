@@ -41,9 +41,12 @@
         :items="sortedAnalyses"
         :active-id="store.currentId"
         :sort="sortMode"
+        :has-more="store.hasMore"
+        :loading-more="store.loadingMore"
         @select="store.selectAnalysis"
         @sort="handleSort"
         @delete="handleDelete"
+        @load-more="handleLoadMore"
       />
 
       <main class="iris-main">
@@ -223,6 +226,10 @@ async function handleCancel() {
 
 async function handleDelete(id) {
   await store.deleteAnalysis(id)
+}
+
+function handleLoadMore() {
+  store.fetchMoreResults()
 }
 
 function handleSort(mode) {
