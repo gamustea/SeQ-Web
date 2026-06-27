@@ -604,8 +604,6 @@ class IrisManager(TaskTrackingMixin):
         gate(body_links_fail, "Suspicious", "suspicious body links")
         gate(body_content_fail, "Suspicious", "phishing phrasing or hidden text in body")
         gate(received_chain_fail, "Suspicious", "Received chain anomaly")
-        gate(path_tls_downgrade, "Suspicious", "Received chain shows a TLS downgrade")
-        gate(path_long_chain, "Suspicious", "Received chain is unusually long")
 
         # Combinations that escalate to Phishing.
         gate(auth_fail and (spoof_any or alarming_strong), "Phishing",
@@ -614,6 +612,10 @@ class IrisManager(TaskTrackingMixin):
              "dangerous attachment combined with authentication failure or spoofing")
         gate(body_links_fail and (auth_fail or spoof_any), "Phishing",
              "suspicious body links combined with authentication failure or spoofing")
+        gate(path_tls_downgrade and auth_fail, "Suspicious",
+             "TLS downgrade in Received chain combined with authentication failure")
+        gate(path_long_chain and auth_fail, "Suspicious",
+             "Unusually long Received chain combined with authentication failure")
 
         final = _VERDICT_ORDER[ceiling]
         if triggered and final != base_verdict:
