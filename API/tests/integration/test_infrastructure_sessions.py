@@ -7,10 +7,12 @@ engine wired up by ``conftest`` (shared by both ``unit_of_work`` and
 
 - A poisoned thread-scoped session is recovered after the job-boundary
   ``close_all()`` — the core background-resilience guarantee.
-- ``UnitOfWork`` rolls back and re-raises on commit failure, and recreates a
-  usable session when a rollback itself fails.
-- ``BaseManager`` shares the request session (deferring commit to teardown) in
-  a request context, but owns and commits its own session in the background.
+- ``UnitOfWork`` rolls back and re-raises on commit failure, and re-raises on a
+  failed rollback (recovery is the job boundary's ``close_all()``, since the
+  UoW no longer owns the session).
+- ``UnitOfWork`` is a no-op on exit inside a request (teardown commits, the
+  session stays alive for lazy loading) and commits/rolls back its own block in
+  a background context.
 """
 
 from __future__ import annotations
@@ -24,7 +26,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.modules.infrastructure import unit_of_work
 from src.modules.infrastructure.unit_of_work import UnitOfWork, close_all, get_session
 from src.modules.infrastructure.session import get_db_session
-from src.modules.shared import BaseManager
 
 pytestmark = pytest.mark.integration
 
@@ -77,47 +78,56 @@ def test_commit_failure_rolls_back_and_reraises(_initialized_db):
         close_all()
 
 
-def test_rollback_failure_recreates_usable_session(_initialized_db):
+def test_rollback_failure_reraises_and_boundary_recovers(_initialized_db):
+    """A failed rollback re-raises as RuntimeError. UnitOfWork no longer owns
+    the session, so it does not recreate one — recovery is the job boundary's
+    ``close_all()``, which hands the next job a fresh, usable session."""
     uow = UnitOfWork()
     try:
         with mock.patch.object(uow.session, "rollback", side_effect=Exception("rollback boom")):
             with pytest.raises(RuntimeError):
                 uow.rollback()
 
-        # After a failed rollback the UoW must still expose a usable session.
-        assert uow.session is not None
-        assert uow.session.execute(sa.text("SELECT 1")).scalar() == 1
+        # The job-boundary cleanup recovers the thread-local session.
+        close_all()
+        assert get_session().execute(sa.text("SELECT 1")).scalar() == 1
     finally:
         close_all()
 
 
-# ---------------------------------------------------------------------------
-# BaseManager ownership / commit-deferral semantics
-# ---------------------------------------------------------------------------
+def test_unitofwork_manages_transaction_in_background(_initialized_db):
+    """Outside a request, the UoW block owns commit/rollback (the boundary
+    workers and the scheduler rely on)."""
+    uow = UnitOfWork()
+    try:
+        assert uow._manage is True
 
-def test_basemanager_shares_request_session_and_defers_commit(app):
+        with mock.patch.object(uow.session, "commit") as commit:
+            with uow:
+                pass
+            commit.assert_called_once()
+
+        with mock.patch.object(uow.session, "rollback") as rollback:
+            with pytest.raises(ValueError):
+                with uow:
+                    raise ValueError("boom")
+            rollback.assert_called_once()
+    finally:
+        close_all()
+
+
+def test_unitofwork_defers_to_teardown_in_request(app):
+    """Inside a request, the UoW shares the request session and is a no-op on
+    exit: commit/rollback is deferred to ``teardown_request`` and the session
+    stays alive (lazy loading) for the rest of the request."""
     with app.test_request_context():
         session = get_db_session()  # mirrors init_request_session
-        manager = BaseManager()
+        with mock.patch.object(session, "commit") as commit:
+            with UnitOfWork() as uow:
+                assert uow.session is session
+                assert uow._manage is False
+            # Exiting the block is a no-op in a request — teardown commits later.
+            commit.assert_not_called()
 
-        assert manager._owns_session is False
-        assert manager.session is session
-
-        with mock.patch.object(session, "commit") as commit, \
-             mock.patch.object(session, "flush") as flush:
-            manager._persist()
-            commit.assert_not_called()  # commit deferred to teardown
-            flush.assert_called_once()
-
-
-def test_basemanager_owns_and_commits_in_background(app):
-    # Application context but no request context → background semantics.
-    with app.app_context():
-        manager = BaseManager()
-        try:
-            assert manager._owns_session is True
-            with mock.patch.object(manager.session, "commit") as commit:
-                manager._persist()
-                commit.assert_called_once()
-        finally:
-            manager.close_session()
+        # Session is still usable after the block — not closed by the UoW.
+        assert session.execute(sa.text("SELECT 1")).scalar() == 1

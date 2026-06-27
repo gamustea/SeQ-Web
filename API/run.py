@@ -30,7 +30,8 @@ from flask_smorest          import Api as FlaskSmorestApi
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
-from src.modules.shared     import BaseManager, Base, limiter
+from src.modules.shared     import Base, limiter
+from src.modules.infrastructure import unit_of_work
 from src.modules.shared._exceptions import (
     MissingParameterError,
     MissingJsonBodyError,
@@ -135,7 +136,7 @@ def _run_shutdown_cleanup() -> None:
 
     _logger.info("[Shutdown] Cerrando sesiones de base de datos...")
     try:
-        BaseManager.close_all_sessions()
+        unit_of_work.close_all()
     except Exception as e:
         _logger.error(f"Error cerrando sesiones de BD: {e}")
 
@@ -233,9 +234,9 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
         _init_db()
 
     _logger.info("Inicializando base de datos...")
-    engine = BaseManager._initialize_engine()
+    engine = unit_of_work.initialize()
     Base.metadata.create_all(engine)
-    BaseManager.warmup_connection()
+    unit_of_work.warmup()
 
     _logger.info("Configurando sesión por-request...")
     from src.modules.infrastructure.session import (
@@ -244,7 +245,7 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
     )
     # Abrir la sesión al inicio de la petición (no de forma perezosa) hace que
     # un fallo de conexión se detecte pronto, y garantiza que g.db_session
-    # exista para que UnitOfWork/BaseManager la compartan de forma consistente.
+    # exista para que UnitOfWork la comparta de forma consistente.
     app.before_request(init_request_session)
     app.teardown_request(shutdown_request_session)
 
