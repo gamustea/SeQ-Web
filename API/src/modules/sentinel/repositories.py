@@ -86,8 +86,9 @@ class ScanRepository(BaseRepository[Scan]):
     # EAGER-LOADED QUERIES (background-thread use only)
     # ─────────────────────────────────────────────────────────────────────────
     # These methods eagerly load relationships via joinedload so that objects
-    # survive UnitOfWork.close() in background threads where lazy loading
-    # is unavailable. Foreground (request-context) code should use
+    # remain usable after the per-job session is reset at the job boundary
+    # (job_context / Scheduler.execute call close_all()), where lazy loading is
+    # no longer available. Foreground (request-context) code should use
     # get_by_id_and_type() instead — lazy loading works with request-scoped
     # sessions.
     # =========================================================================
@@ -276,8 +277,9 @@ class ScanRepository(BaseRepository[Scan]):
             for target, scan_type, count, last_scanned in rows
         ]
 
-    # Eager-loading options per subtype so the returned scans survive
-    # UnitOfWork.close() in background threads (report generation).
+    # Eager-loading options per subtype so the returned scans remain usable
+    # after the per-job session is reset at the job boundary (report
+    # generation runs in a background worker).
     _HISTORY_OPTIONS = {
         ScanType.NMAP: (
             NmapScan,
