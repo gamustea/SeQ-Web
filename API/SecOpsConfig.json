@@ -139,10 +139,10 @@
     }
   },
   "ai": {
-    "defaultStrategy": "ollama",
+    "defaultStrategy": "openai",
     "modules": {
-      "aegis": "ollama",
-      "sentinel": "ollama"
+      "aegis": "openai",
+      "sentinel": "openai"
     }
   },
   "appVersion": "3.2",
