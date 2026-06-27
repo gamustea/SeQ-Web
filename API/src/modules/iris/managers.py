@@ -31,6 +31,7 @@ from .model import IrisAnalysis, IrisRuleResult
 from .repositories import IrisAnalysisRepository, IrisRuleResultRepository
 from .rules import iris_rules, RuleResult
 from .services import parse_raw_headers, parse_raw_message
+from .services.received_parser import build_path
 
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,21 @@ class IrisManager(TaskTrackingMixin):
             "user": username,
             "rules": rules_data,
             "recommendations": recommendations,
+        }
+
+    def get_analysis_path(self, analysis_id: int, user_id: int) -> Dict[str, Any]:
+        """Return the parsed Received-chain path for an analysis.
+
+        The path is derived on demand from ``raw_headers`` — no extra
+        column is needed. Returns ``available: false`` for headers-only
+        submissions (no full ``.eml`` means no Received chain to
+        inspect).
+        """
+        analysis = self.assert_analysis_ownership(analysis_id, user_id)
+        context = parse_raw_message(analysis.raw_headers or "")
+        return {
+            "analysisId": analysis.id,
+            **build_path(context.received_headers),
         }
 
     def cancel_analysis(self, analysis_id: int, user_id: int) -> bool:
@@ -566,6 +582,14 @@ class IrisManager(TaskTrackingMixin):
         body_links_fail = verdict_is("Body Links", "fail")
         body_content_fail = verdict_is("Body Content", "fail")
         received_chain_fail = verdict_is("Received Chain", "fail")
+        path_anomaly = res("Received Path Anomaly")
+        path_anomaly_fail = path_anomaly is not None and path_anomaly.verdict == "fail"
+        path_signals = (
+            (path_anomaly.details.get("unique_signals") or [])
+            if path_anomaly is not None else []
+        )
+        path_tls_downgrade = path_anomaly_fail and "tls_downgrade" in path_signals
+        path_long_chain = path_anomaly_fail and "long_chain" in path_signals
         auth_fail = spf_fail or dmarc_fail or align_fail
 
         # Single high-confidence indicators.
@@ -580,6 +604,8 @@ class IrisManager(TaskTrackingMixin):
         gate(body_links_fail, "Suspicious", "suspicious body links")
         gate(body_content_fail, "Suspicious", "phishing phrasing or hidden text in body")
         gate(received_chain_fail, "Suspicious", "Received chain anomaly")
+        gate(path_tls_downgrade, "Suspicious", "Received chain shows a TLS downgrade")
+        gate(path_long_chain, "Suspicious", "Received chain is unusually long")
 
         # Combinations that escalate to Phishing.
         gate(auth_fail and (spoof_any or alarming_strong), "Phishing",

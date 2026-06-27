@@ -111,3 +111,46 @@ class AnalysisCancelResponseSchema(Schema):
     message = fields.String()
     analysisId = fields.Integer()
     status = fields.String()
+
+
+class ReceivedHopSchema(Schema):
+    """Single hop inside a Received-chain path.
+
+    Ordered oldest -> newest when returned by the API.
+    """
+    hop = fields.Integer()
+    index = fields.Integer()
+    fromAddress = fields.String(attribute="from", allow_none=True)
+    fromIp = fields.String(allow_none=True)
+    by = fields.String(allow_none=True)
+    withProtocol = fields.String(attribute="with", allow_none=True)
+    protocol = fields.String(allow_none=True)
+    id = fields.String(allow_none=True)
+    forAddress = fields.String(attribute="for", allow_none=True)
+    tls = fields.Boolean()
+    timestamp = fields.String(allow_none=True)
+    flags = fields.List(fields.String())
+    raw = fields.String()
+
+
+class ReceivedTransitionSchema(Schema):
+    """Edge between two consecutive hops (oldest -> newest direction)."""
+    from_ = fields.Integer(attribute="from")
+    to = fields.Integer()
+    delayMs = fields.Integer(allow_none=True)
+    suspicious = fields.Boolean()
+    reasons = fields.List(fields.String())
+
+
+class ReceivedPathResponseSchema(Schema):
+    """Response for ``GET /iris/results/<id>/path``.
+
+    ``hops`` and ``transitions`` are empty when no Received chain is
+    available (e.g. headers-only submissions).
+    """
+    analysisId = fields.Integer()
+    available = fields.Boolean()
+    hopsCount = fields.Integer()
+    hops = fields.List(fields.Nested(ReceivedHopSchema))
+    transitions = fields.List(fields.Nested(ReceivedTransitionSchema))
+    reason = fields.String(load_default=None)
