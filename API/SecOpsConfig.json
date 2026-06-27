@@ -145,7 +145,7 @@
       "sentinel": "ollama"
     }
   },
-  "appVersion": "3.0.0",
+  "appVersion": "3.2",
   "database": {
     "isolation_level": "READ COMMITTED"
   },

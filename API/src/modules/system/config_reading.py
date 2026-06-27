@@ -578,7 +578,17 @@ def get_iris_min_headers() -> int:
 
 
 # =============================================================================
-# CONFIGURACIÓN DE BASE DE DATOS (no secretos)
+# VERSI�N DE LA APLICACI�N
+# =============================================================================
+
+@_lazy_load
+def get_app_version() -> str:
+    """Versi�n de la aplicaci�n desde SecOpsConfig.json."""
+    return str(_require_configs().get("appVersion", "0.0.0"))
+
+
+# =============================================================================
+# CONFIGURACI�N DE BASE DE DATOS (no secretos)
 # =============================================================================
 
 @_lazy_load

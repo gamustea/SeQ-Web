@@ -7,6 +7,13 @@ class HelloResponseSchema(Schema):
     version = fields.String()
 
 
+class SystemInfoSchema(Schema):
+    name = fields.String()
+    version = fields.String()
+    environment = fields.String()
+    pythonVersion = fields.String()
+
+
 class CpuInfoSchema(Schema):
     percent = fields.Float()
 
