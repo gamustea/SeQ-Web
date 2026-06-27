@@ -90,7 +90,7 @@
               <span class="rule-category" v-if="rule.category">{{ rule.category }}</span>
             </div>
             <div class="rule-right">
-              <span class="rule-score" :class="scoreClass(rule.score)">{{ sign(rule.score) }}{{ rule.score }}</span>
+              <span class="rule-score" :class="scoreClass(rule.score, rule.verdict)">{{ sign(rule.score) }}{{ rule.score }}</span>
               <span class="rule-verdict" :class="`verdict-chip--${rule.verdict}`">{{ rule.verdict }}</span>
               <svg class="rule-chevron" :class="{ rotated: expandedRule === i }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
@@ -200,9 +200,10 @@ function sign(s) {
   return ''
 }
 
-function scoreClass(s) {
+function scoreClass(s, v) {
   if (s > 0) return 'score--pos'
   if (s < 0) return 'score--neg'
+  if (v === 'pass') return 'score--pos'
   return 'score--neutral'
 }
 
