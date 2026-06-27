@@ -62,6 +62,22 @@ _VERDICT_LABELS = {
 }
 
 
+def _esc(value: Any) -> str:
+    """Escape text for safe interpolation into a reportlab Paragraph.
+
+    Paragraph interprets a small XML-like markup, so any user/analysis
+    controlled text (rule names, domains, recommendations...) must be
+    escaped before being embedded — otherwise a stray ``&``/``<``/``>``
+    breaks parsing or, worse, lets arbitrary mini-markup through.
+    """
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 class IrisReportTheme:
     """PDF report theme configuration for Iris reports.
 
@@ -110,6 +126,21 @@ class IrisReportTheme:
             "IrisMono", parent=base_styles["Normal"],
             fontSize=7.5, leading=10, textColor=black,
             fontName="Courier",
+        )
+
+        # Table-cell styles: wrap (and, if a single word is too wide,
+        # break it) instead of overflowing past the column's fixed width.
+        self.cell_left = ParagraphStyle(
+            "IrisCellLeft", parent=base_styles["Normal"],
+            fontSize=8, leading=10, textColor=black,
+            alignment=TA_LEFT, wordWrap="CJK",
+        )
+        self.cell_center = ParagraphStyle(
+            "IrisCellCenter", parent=self.cell_left, alignment=TA_CENTER,
+        )
+        self.cell_header = ParagraphStyle(
+            "IrisCellHeader", parent=self.cell_left,
+            textColor=white, alignment=TA_CENTER, fontName="Helvetica-Bold",
         )
 
         self.kv_table_style = TableStyle([
@@ -239,9 +270,9 @@ class IrisPDFCreator:
         title_style = ParagraphStyle(
             "IrisCoverTitle", parent=theme.styles["Heading1"],
             fontSize=28, leading=32, textColor=white,
-            alignment=TA_CENTER, fontName="Helvetica-Bold",
+            alignment=TA_CENTER, fontName="Helvetica-Bold", wordWrap="CJK",
         )
-        title = self.report.get("title") or "Análisis de Correo Electrónico"
+        title = _esc(self.report.get("title") or "Análisis de Correo Electrónico")
         title_table = Table([[Paragraph(title, title_style)]], colWidths=[6 * inch])
         title_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), main),
@@ -334,15 +365,20 @@ class IrisPDFCreator:
         white = colors.HexColor(theme.palette["white"])
         dark = colors.HexColor(theme.palette["dark"])
 
-        rule_data = [["Regla", "Categoría", "Puntuación", "Veredicto"]]
+        rule_data = [[
+            Paragraph("Regla", theme.cell_header),
+            Paragraph("Categoría", theme.cell_header),
+            Paragraph("Puntuación", theme.cell_header),
+            Paragraph("Veredicto", theme.cell_header),
+        ]]
         for r in rules:
             score = r.get("score", 0)
             sign = "+" if score > 0 else ""
             rule_data.append([
-                str(r.get("ruleName", "")),
-                str(r.get("category") or "-"),
-                f"{sign}{score}",
-                str(r.get("verdict", "")),
+                Paragraph(_esc(r.get("ruleName", "")), theme.cell_left),
+                Paragraph(_esc(r.get("category") or "-"), theme.cell_left),
+                Paragraph(f"{sign}{score}", theme.cell_center),
+                Paragraph(_esc(r.get("verdict", "")), theme.cell_center),
             ])
 
         rule_table = Table(
@@ -352,16 +388,10 @@ class IrisPDFCreator:
         )
         rule_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), main),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("TOPPADDING", (0, 0), (-1, 0), 7),
             ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
             ("BACKGROUND", (0, 1), (-1, -1), white),
-            ("TEXTCOLOR", (0, 1), (-1, -1), dark),
-            ("ALIGN", (2, 1), (-1, -1), "CENTER"),
-            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
             ("TOPPADDING", (0, 1), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, white]),
@@ -377,7 +407,7 @@ class IrisPDFCreator:
             elements.append(Paragraph("Detalle de hallazgos", theme.subtitle))
             elements.append(Spacer(1, 0.08 * inch))
             for r in flagged:
-                text = f"<b>{r.get('ruleName')}:</b> {r.get('recommendation')}"
+                text = f"<b>{_esc(r.get('ruleName'))}:</b> {_esc(r.get('recommendation'))}"
                 elements.append(Paragraph(text, theme.body))
             elements.append(Spacer(1, 0.15 * inch))
 
@@ -389,7 +419,7 @@ class IrisPDFCreator:
         elements.extend(theme.section_header("Recomendaciones", "ACCIONES SUGERIDAS"))
         elements.append(Spacer(1, 0.1 * inch))
         for rec in recommendations:
-            elements.append(Paragraph(f"• {rec}", theme.body))
+            elements.append(Paragraph(f"• {_esc(rec)}", theme.body))
         elements.append(Spacer(1, 0.15 * inch))
 
     def append_path(self, elements: list, theme: IrisReportTheme) -> None:
@@ -408,30 +438,31 @@ class IrisPDFCreator:
         white = colors.HexColor(theme.palette["white"])
         dark = colors.HexColor(theme.palette["dark"])
 
-        hop_data = [["#", "Desde", "IP", "TLS", "Fecha"]]
+        hop_data = [[
+            Paragraph("#", theme.cell_header),
+            Paragraph("Desde", theme.cell_header),
+            Paragraph("IP", theme.cell_header),
+            Paragraph("TLS", theme.cell_header),
+            Paragraph("Fecha", theme.cell_header),
+        ]]
         for hop in hops:
             hop_data.append([
-                str(hop.get("hop", "")),
-                str(hop.get("from") or "-")[:40],
-                str(hop.get("fromIp") or "-"),
-                "Sí" if hop.get("tls") else "No",
-                str(hop.get("timestamp") or "-"),
+                Paragraph(_esc(hop.get("hop", "")), theme.cell_center),
+                Paragraph(_esc(hop.get("from") or "-"), theme.cell_left),
+                Paragraph(_esc(hop.get("fromIp") or "-"), theme.cell_left),
+                Paragraph("Sí" if hop.get("tls") else "No", theme.cell_center),
+                Paragraph(_esc(hop.get("timestamp") or "-"), theme.cell_left),
             ])
 
         hop_table = Table(
             hop_data,
-            colWidths=[0.4 * inch, 2.4 * inch, 1.3 * inch, 0.5 * inch, 1.4 * inch],
+            colWidths=[0.4 * inch, 2.2 * inch, 1.3 * inch, 0.5 * inch, 1.6 * inch],
             repeatRows=1,
         )
         hop_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), main),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("ALIGN", (0, 0), (0, -1), "CENTER"),
-            ("ALIGN", (3, 0), (3, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("BACKGROUND", (0, 1), (-1, -1), white),
-            ("TEXTCOLOR", (0, 1), (-1, -1), dark),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, white]),
             ("GRID", (0, 0), (-1, -1), 0.4, light),
         ]))
@@ -444,9 +475,9 @@ class IrisPDFCreator:
             elements.append(Paragraph("Transiciones sospechosas detectadas", theme.subtitle))
             elements.append(Spacer(1, 0.05 * inch))
             for t in suspicious:
-                reasons = ", ".join(t.get("reasons") or [])
+                reasons = _esc(", ".join(t.get("reasons") or []))
                 elements.append(Paragraph(
-                    f"Salto {t.get('from')} → {t.get('to')}: {reasons}", theme.body
+                    f"Salto {_esc(t.get('from'))} → {_esc(t.get('to'))}: {reasons}", theme.body
                 ))
 
     def append_raw_headers(self, elements: list, theme: IrisReportTheme) -> None:
