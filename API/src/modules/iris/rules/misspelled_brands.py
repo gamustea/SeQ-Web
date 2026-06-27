@@ -9,7 +9,7 @@ companies.
 
 import re
 
-from .registry import iris_rules, RuleResult
+from .registry import iris_rules, RuleResult, extract_display_name
 from ..services.header_decode import decode_mime_words
 
 HOMOGLYPH_MAP = str.maketrans({
@@ -40,15 +40,6 @@ CANONICAL_BRANDS = {
     "wordpress", "shopify", "wix", "godaddy",
     "cloudflare", "digitalocean", "aws", "azure", "gcp",
 }
-
-
-def _extract_display_name(from_header: str) -> str:
-    if "<" in from_header:
-        return from_header.split("<")[0].strip().strip('"').strip("'")
-    name_part = from_header.strip()
-    if "@" not in name_part:
-        return name_part
-    return ""
 
 
 def _normalize_homoglyphs(text: str) -> str:
@@ -113,7 +104,7 @@ def _levenshtein(a: str, b: str) -> int:
 def check_misspelled_brands(headers: dict) -> RuleResult:
     subject = decode_mime_words(headers.get("subject", ""))
     from_addr = decode_mime_words(headers.get("from", ""))
-    display_name = _extract_display_name(from_addr)
+    display_name = extract_display_name(from_addr)
 
     combined = subject + " " + display_name
 

@@ -9,7 +9,7 @@ outlook.com) or an obviously unrelated domain.
 
 import re
 
-from .registry import iris_rules, RuleResult
+from .registry import iris_rules, RuleResult, extract_display_name
 
 BRAND_TRUSTED_DOMAINS: dict[tuple[str, ...], list[str]] = {
     ("microsoft", "windows", "office 365", "microsoft 365", "outlook", "azure", "msn"): [
@@ -97,15 +97,6 @@ def _extract_email(from_header: str) -> str:
     return match.group(0) if match else ""
 
 
-def _extract_display_name(from_header: str) -> str:
-    if "<" in from_header:
-        return from_header.split("<")[0].strip().strip('"').strip("'")
-    name_part = from_header.strip()
-    if "@" not in name_part:
-        return name_part
-    return ""
-
-
 def _domain_matches_trusted(domain: str, trusted_domains: list[str]) -> bool:
     domain = domain.lower()
     for trusted in trusted_domains:
@@ -118,7 +109,7 @@ def _domain_matches_trusted(domain: str, trusted_domains: list[str]) -> bool:
                      description="Detecta si el nombre del remitente suplanta a una marca conocida pero el dominio del correo no pertenece a ella")
 def check_display_name_spoof(headers: dict) -> RuleResult:
     from_addr = headers.get("from", "")
-    display_name = _extract_display_name(from_addr)
+    display_name = extract_display_name(from_addr)
     email = _extract_email(from_addr)
 
     if not email:
