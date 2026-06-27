@@ -10,7 +10,7 @@ from . import (
     compromised_legitimate_domain, bare_url_bec_pattern, generic_greeting,
     reply_to_path_mismatch, image_only_email,
     received_chain_temporal_inconsistency, in_reply_to_self_reference,
-    body_external_image_tracking,
+    body_external_image_tracking, received_path_anomaly,
 )
 
 __all__ = ["iris_rules", "RuleResult"]
