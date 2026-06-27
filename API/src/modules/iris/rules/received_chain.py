@@ -13,28 +13,9 @@ import re
 from email.utils import parsedate_to_datetime
 
 from .registry import iris_rules, RuleResult
+from ..services.received_parser import _is_private_ip, _hop_timestamp
 
 _IP_RE = re.compile(r"\[?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]?")
-_PRIVATE_PREFIXES = (
-    "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
-    "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
-    "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-    "192.168.", "127.",
-)
-
-
-def _is_private_ip(ip: str) -> bool:
-    return ip.startswith(_PRIVATE_PREFIXES) or ip == "0.0.0.0"
-
-
-def _hop_timestamp(received_line: str):
-    _, _, ts = received_line.rpartition(";")
-    if not ts.strip():
-        return None
-    try:
-        return parsedate_to_datetime(ts.strip())
-    except (TypeError, ValueError, IndexError):
-        return None
 
 
 @iris_rules.register(

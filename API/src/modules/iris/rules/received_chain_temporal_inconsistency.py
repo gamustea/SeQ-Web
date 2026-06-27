@@ -17,23 +17,8 @@ only compares the top Received against the ``Date:`` header; this one
 inspects the *internal consistency* of the chain itself.
 """
 
-import re
-from datetime import timedelta
-from email.utils import parsedate_to_datetime
-
 from .registry import iris_rules, RuleResult
-
-_TIMESTAMP_RE = re.compile(r";\s*(.*?)\s*$")
-
-
-def _hop_timestamp(received_line: str):
-    _, _, ts = received_line.rpartition(";")
-    if not ts.strip():
-        return None
-    try:
-        return parsedate_to_datetime(ts.strip())
-    except (TypeError, ValueError, IndexError):
-        return None
+from ..services.received_parser import _hop_timestamp
 
 
 @iris_rules.register(
