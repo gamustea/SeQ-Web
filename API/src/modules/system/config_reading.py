@@ -101,9 +101,15 @@ def reload() -> None:
     _configs_path = None
 
 
-def is_loaded() -> bool:
-    """Indica si la configuración ya ha sido cargada."""
-    return _configs is not None
+def _require_configs() -> dict:
+    """Devuelve la configuración cargada o lanza si aún no lo está.
+
+    Centraliza el guard ``_configs is None`` que comparten los getters, de modo
+    que cada uno se reduzca a una sola línea de lectura.
+    """
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+    return _configs
 
 
 # =============================================================================
@@ -298,41 +304,26 @@ def get_directory_of(directory_type) -> str:
 
 @_lazy_load
 def get_aegis_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.get("aegis", {})
+    return _require_configs().get("aegis", {})
 
 @_lazy_load
 def get_aegis_tips_amount() -> int:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("aegis", {})
+    cfg = _require_configs().get("aegis", {})
     return int(cfg.get("tipsAmount", 7))
 
 @_lazy_load
 def get_aegis_vulnerabilities_antiquity() -> int:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("aegis", {})
+    cfg = _require_configs().get("aegis", {})
     return int(cfg.get("vulnerabilitiesAntiquity", 5))
 
 @_lazy_load
 def get_aegis_brands() -> list[dict]:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("aegis", {})
+    cfg = _require_configs().get("aegis", {})
     return list(cfg.get("brands", []))
 
 @_lazy_load
 def get_aegis_prompts() -> dict:
-    if _configs is None:
-        raise IllegalStateError(f"_configs encontrado como None")
-
-    aegis = _configs.get("aegis", {})
+    aegis = _require_configs().get("aegis", {})
     return aegis.get("prompts", {})
 
 
@@ -343,10 +334,7 @@ def get_aegis_prompts() -> dict:
 @_lazy_load
 def get_ai_config() -> dict:
     """Devuelve el bloque 'ai' de SecOpsConfig.json (puede estar vacío)."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.get("ai", {})
+    return _require_configs().get("ai", {})
 
 
 @_lazy_load
@@ -375,17 +363,11 @@ def get_ai_strategy_for(module: str | None = None) -> str:
 
 @_lazy_load
 def get_sentinel_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.get("sentinel", {})
+    return _require_configs().get("sentinel", {})
 
 @_lazy_load
 def get_prompts_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
 
     return {
         "nmap": sentinel.get("nmap", {}).get("prompts", {}),
@@ -401,10 +383,7 @@ def get_tool_prompts(tool: str) -> dict:
 @_lazy_load
 def get_tool_color_palette(tool) -> dict:
     from src.modules.sentinel.services.reports import SentinelTool
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
 
     tool_key = tool
     if tool_key not in sentinel:
@@ -415,10 +394,7 @@ def get_tool_color_palette(tool) -> dict:
 
 @_lazy_load
 def are_local_ips_allowed() -> bool:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como None")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
     are_allowed = sentinel.get("areLocalIpsAllowed", None)
 
     if are_allowed is None:
