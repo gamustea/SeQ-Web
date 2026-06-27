@@ -531,7 +531,116 @@ class IrisManager(TaskTrackingMixin):
         return "Phishing"
 
     @staticmethod
-    def _apply_verdict_gates(base_verdict: str,
+    def _extract_verdict_signals(named_results: Dict[str, RuleResult]) -> Dict[str, Any]:
+        """Reduce the per-rule results to the named booleans the gates need.
+
+        Centralises all the ``named_results.get(...)`` lookups so
+        :meth:`_evaluate_gates` can stay a pure boolean-combination function.
+        """
+        def res(name: str) -> Optional[RuleResult]:
+            return named_results.get(name)
+
+        def verdict_is(name: str, *verdicts: str) -> bool:
+            r = res(name)
+            return r is not None and r.verdict in verdicts
+
+        spf_fail = verdict_is("SPF", "fail", "hardfail")
+        dmarc_fail = verdict_is("DMARC", "fail")
+        align_fail = verdict_is("Domain Alignment", "fail")
+
+        spoof = res("Display Name Spoofing")
+        spoof_any = spoof is not None and spoof.verdict == "spoof"
+        spoof_free = spoof_any and bool(spoof.details.get("is_free_provider"))
+
+        cloaked_link = res("Body Links")
+        cloaked_link_any = (
+            cloaked_link is not None and cloaked_link.verdict == "fail"
+            and "cloaked_link" in (cloaked_link.details.get("types") or [])
+        )
+
+        path_anomaly = res("Received Path Anomaly")
+        path_anomaly_fail = path_anomaly is not None and path_anomaly.verdict == "fail"
+        path_signals = (
+            (path_anomaly.details.get("unique_signals") or [])
+            if path_anomaly is not None else []
+        )
+
+        return {
+            "spf_fail": spf_fail,
+            "dmarc_fail": dmarc_fail,
+            "align_fail": align_fail,
+            "lookalike": verdict_is("Lookalike Sender Domain", "fail"),
+            "attach": verdict_is("Suspicious Attachments", "fail"),
+            "replyfree": verdict_is("Reply-To Free Provider", "fail"),
+            "spoof_any": spoof_any,
+            "spoof_free": spoof_free,
+            "alarming_strong": verdict_is("Alarming Keywords", "alarming_high", "alarming_medium"),
+            "cloaked_link_any": cloaked_link_any,
+            "body_links_fail": verdict_is("Body Links", "fail"),
+            "body_content_fail": verdict_is("Body Content", "fail"),
+            "received_chain_fail": verdict_is("Received Chain", "fail"),
+            "path_tls_downgrade": path_anomaly_fail and "tls_downgrade" in path_signals,
+            "path_long_chain": path_anomaly_fail and "long_chain" in path_signals,
+            "auth_fail": spf_fail or dmarc_fail or align_fail,
+        }
+
+    @staticmethod
+    def _evaluate_gates(base_verdict: str, signals: Dict[str, Any]) -> tuple[str, list[str]]:
+        """Apply the high-confidence gates to ``signals`` and return the result.
+
+        Pure function: given the extracted signals, raises ``base_verdict`` to
+        a worse category whenever a gate fires, never improves it.
+
+        Returns:
+            Tuple of (final verdict, list of human-readable triggered reasons).
+        """
+        ceiling = _VERDICT_SEVERITY[base_verdict]
+        triggered: list[str] = []
+
+        def gate(condition: bool, level: str, reason: str) -> None:
+            nonlocal ceiling
+            if condition:
+                triggered.append(reason)
+                ceiling = max(ceiling, _VERDICT_SEVERITY[level])
+
+        spf_fail = signals["spf_fail"]
+        dmarc_fail = signals["dmarc_fail"]
+        align_fail = signals["align_fail"]
+        spoof_any = signals["spoof_any"]
+        alarming_strong = signals["alarming_strong"]
+        attach = signals["attach"]
+        body_links_fail = signals["body_links_fail"]
+        auth_fail = signals["auth_fail"]
+
+        # Single high-confidence indicators.
+        gate(signals["lookalike"], "Phishing", "lookalike sender domain")
+        gate(signals["spoof_free"], "Phishing", "brand impersonation from free provider")
+        gate(signals["cloaked_link_any"], "Phishing", "cloaked body link (visible domain differs from href)")
+        gate(spoof_any, "Suspicious", "display-name brand spoofing")
+        gate(align_fail, "Suspicious", "SPF/DKIM not aligned with From")
+        gate(attach, "Suspicious", "dangerous attachment")
+        gate(spf_fail or dmarc_fail, "Suspicious", "SPF/DMARC failure")
+        gate(signals["replyfree"], "Suspicious", "reply target is free webmail")
+        gate(body_links_fail, "Suspicious", "suspicious body links")
+        gate(signals["body_content_fail"], "Suspicious", "phishing phrasing or hidden text in body")
+        gate(signals["received_chain_fail"], "Suspicious", "Received chain anomaly")
+
+        # Combinations that escalate to Phishing.
+        gate(auth_fail and (spoof_any or alarming_strong), "Phishing",
+             "authentication failure combined with impersonation/urgency")
+        gate(attach and (auth_fail or spoof_any), "Phishing",
+             "dangerous attachment combined with authentication failure or spoofing")
+        gate(body_links_fail and (auth_fail or spoof_any), "Phishing",
+             "suspicious body links combined with authentication failure or spoofing")
+        gate(signals["path_tls_downgrade"] and auth_fail, "Suspicious",
+             "TLS downgrade in Received chain combined with authentication failure")
+        gate(signals["path_long_chain"] and auth_fail, "Suspicious",
+             "Unusually long Received chain combined with authentication failure")
+
+        return _VERDICT_ORDER[ceiling], triggered
+
+    @classmethod
+    def _apply_verdict_gates(cls, base_verdict: str,
                              named_results: Dict[str, RuleResult]) -> str:
         """Override the additive verdict when high-confidence signals fire.
 
@@ -548,76 +657,9 @@ class IrisManager(TaskTrackingMixin):
         Returns:
             The final verdict after applying all gates.
         """
-        ceiling = _VERDICT_SEVERITY[base_verdict]
-        triggered: list[str] = []
+        signals = cls._extract_verdict_signals(named_results)
+        final, triggered = cls._evaluate_gates(base_verdict, signals)
 
-        def gate(condition: bool, level: str, reason: str) -> None:
-            nonlocal ceiling
-            if condition:
-                triggered.append(reason)
-                ceiling = max(ceiling, _VERDICT_SEVERITY[level])
-
-        def res(name: str) -> Optional[RuleResult]:
-            return named_results.get(name)
-
-        def verdict_is(name: str, *verdicts: str) -> bool:
-            r = res(name)
-            return r is not None and r.verdict in verdicts
-
-        spf_fail = verdict_is("SPF", "fail", "hardfail")
-        dmarc_fail = verdict_is("DMARC", "fail")
-        align_fail = verdict_is("Domain Alignment", "fail")
-        lookalike = verdict_is("Lookalike Sender Domain", "fail")
-        attach = verdict_is("Suspicious Attachments", "fail")
-        replyfree = verdict_is("Reply-To Free Provider", "fail")
-        spoof = res("Display Name Spoofing")
-        spoof_any = spoof is not None and spoof.verdict == "spoof"
-        spoof_free = spoof_any and bool(spoof.details.get("is_free_provider"))
-        alarming_strong = verdict_is("Alarming Keywords", "alarming_high", "alarming_medium")
-        cloaked_link = res("Body Links")
-        cloaked_link_any = (
-            cloaked_link is not None and cloaked_link.verdict == "fail"
-            and "cloaked_link" in (cloaked_link.details.get("types") or [])
-        )
-        body_links_fail = verdict_is("Body Links", "fail")
-        body_content_fail = verdict_is("Body Content", "fail")
-        received_chain_fail = verdict_is("Received Chain", "fail")
-        path_anomaly = res("Received Path Anomaly")
-        path_anomaly_fail = path_anomaly is not None and path_anomaly.verdict == "fail"
-        path_signals = (
-            (path_anomaly.details.get("unique_signals") or [])
-            if path_anomaly is not None else []
-        )
-        path_tls_downgrade = path_anomaly_fail and "tls_downgrade" in path_signals
-        path_long_chain = path_anomaly_fail and "long_chain" in path_signals
-        auth_fail = spf_fail or dmarc_fail or align_fail
-
-        # Single high-confidence indicators.
-        gate(lookalike, "Phishing", "lookalike sender domain")
-        gate(spoof_free, "Phishing", "brand impersonation from free provider")
-        gate(cloaked_link_any, "Phishing", "cloaked body link (visible domain differs from href)")
-        gate(spoof_any, "Suspicious", "display-name brand spoofing")
-        gate(align_fail, "Suspicious", "SPF/DKIM not aligned with From")
-        gate(attach, "Suspicious", "dangerous attachment")
-        gate(spf_fail or dmarc_fail, "Suspicious", "SPF/DMARC failure")
-        gate(replyfree, "Suspicious", "reply target is free webmail")
-        gate(body_links_fail, "Suspicious", "suspicious body links")
-        gate(body_content_fail, "Suspicious", "phishing phrasing or hidden text in body")
-        gate(received_chain_fail, "Suspicious", "Received chain anomaly")
-
-        # Combinations that escalate to Phishing.
-        gate(auth_fail and (spoof_any or alarming_strong), "Phishing",
-             "authentication failure combined with impersonation/urgency")
-        gate(attach and (auth_fail or spoof_any), "Phishing",
-             "dangerous attachment combined with authentication failure or spoofing")
-        gate(body_links_fail and (auth_fail or spoof_any), "Phishing",
-             "suspicious body links combined with authentication failure or spoofing")
-        gate(path_tls_downgrade and auth_fail, "Suspicious",
-             "TLS downgrade in Received chain combined with authentication failure")
-        gate(path_long_chain and auth_fail, "Suspicious",
-             "Unusually long Received chain combined with authentication failure")
-
-        final = _VERDICT_ORDER[ceiling]
         if triggered and final != base_verdict:
             logger.info("Verdict gated %s -> %s (%s)", base_verdict, final, "; ".join(triggered))
         return final
