@@ -1,108 +1,141 @@
 <!-- prettier-ignore -->
 <div align="center">
 
-<img src="./web/resources/images/images/seq/SeQ-BgN.png" alt="SeQ" height="120" />
+<img src="./web/app/public/resources/images/SecOps-Logo-BlueDark.png" alt="SeQ" height="110" />
 
 # SeQ — Security Operations Platform
 
-Plataforma modular de operaciones de seguridad: escaneo de vulnerabilidades, análisis anti-phishing, vault de secretos cifrado y concienciación potenciada por IA local.
-
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
-[![Flask 3.0](https://img.shields.io/badge/Flask-3.0-000?style=flat-square)](https://flask.palletsprojects.com)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
+[![Flask 3.0](https://img.shields.io/badge/Flask-3.0-000?style=flat-square&logo=flask)](https://flask.palletsprojects.com)
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883?style=flat-square&logo=vuedotjs&logoColor=white)](https://vuejs.org)
-[![Kotlin](https://img.shields.io/badge/Android-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15432-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org)
-[![Ollama](https://img.shields.io/badge/Ollama-llama3.2-ff7000?style=flat-square)](https://ollama.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![Ollama](https://img.shields.io/badge/Ollama-llama3.2-ff7000?style=flat-square&logo=ollama)](https://ollama.com)
+[![Android](https://img.shields.io/badge/Android-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com)
-[![API v3.2](https://img.shields.io/badge/API-3.2-2496ED?style=flat-square)](#)
 
-[Visión general](#visión-general) · [Arquitectura](#arquitectura) · [Módulos](#módulos) · [Quick start](#quick-start) · [Autenticación](#autenticación) · [API](#referencia-de-la-api) · [Docker](#docker) · [Stack](#stack-tecnológico)
-
-</div>
+[Overview](#overview) · [Features](#features) · [Architecture](#architecture) · [Modules](#modules) · [Quick start](#quick-start) · [API reference](#api-reference) · [TaskQueue](#taskqueue-rq--redis) · [Docker](#docker) · [Stack](#technology-stack) · [Configuration](#configuration)
 
 ---
 
-## Visión general
+</div>
 
-**SeQ** es una plataforma monolítica de operaciones de seguridad compuesta por cuatro módulos y dos interfaces (web y móvil) que conviven en un solo repositorio. La API REST (Flask) orquesta escaneos y análisis asíncronos sobre colas **RQ + Redis**, mientras que la IA local (Ollama) genera informes, píldoras de concienciación y veredictos contextualizados.
+## Overview
+
+**SeQ** is a modular security operations platform that combines vulnerability scanning, anti-phishing email analysis, encrypted credential management, and AI-powered security awareness training into a single server — with web and mobile interfaces.
+
+The REST API (Flask) orchestrates asynchronous scans and analysis over **RQ + Redis** queues, while local AI (Ollama) generates reports, awareness pills, and contextual verdicts. All modules share an OAuth 2.0 authentication layer with fine-grained attribute-based access control.
 
 > [!IMPORTANT]
-> La API asume un entorno **Linux**. Las herramientas de escaneo (Nmap, Nikto y OpenVAS/Greenbone) son nativas de Linux. En Windows, ejecuta el entrypoint dentro de WSL (`wsl` → `cd API && python run.py`) o usa `docker compose`.
+> The API assumes a **Linux** environment. Scan tools (Nmap, Nikto, OpenVAS/Greenbone) are Linux-native. On Windows, use WSL (`wsl` → `cd API && python run.py`) or `docker compose`.
 
-### Características
+## Features
 
-- **Escaneo de vulnerabilidades** con Nmap, Nikto y OpenVAS, programables vía APScheduler.
-- **Informes PDF con IA** (principio *Controls, Not Counts*) generados por Ollama de forma asíncrona.
-- **Análisis anti-phishing** de cabeceras de correo mediante 8 reglas atómicas puntuables.
-- **Gestión de secretos cifrados** en cliente (AcheronCore, Java) con sync granular vía API y app Android.
-- **Concienciación en ciberseguridad** (Aegis) con píldoras en Markdown + alertas de INCIBE-CERT / CIRCL / NVD.
-- **Cola de tareas persistente** (RQ): trabajos que sobreviven a reinicios de la API, workers en procesos aislados, cancelación cooperativa.
-- **OAuth 2.0 + JWT** con `jti`, refresh tokens, revocación global y hash Argon2id de contraseñas.
+- **Vulnerability scanning** — Nmap (port/OS detection), Nikto (web vulns), and OpenVAS/GVM (full NVT scans), with scheduled execution via APScheduler.
+- **AI-powered PDF reports** — Scan results enriched by local LLM (Ollama) with "Controls, Not Counts" risk assessment.
+- **Anti-phishing analysis** — 37 atomic rules evaluate email headers (SPF, DKIM, DMARC, content heuristics, domain impersonation) and produce a calibrated verdict.
+- **Encrypted credential vault** — AES-256-GCM client-side encryption via AcheronCore (Java), with sync API and Android companion app.
+- **Security awareness training** — AI generates 73-topic awareness pills with current CVE alerts from INCIBE-CERT / CIRCL / NVD.
+- **Persistent task queue** — Background jobs survive API restarts (Redis-backed RQ), run in isolated OS processes, and support cooperative cancellation.
+- **OAuth 2.0 + JWT** — Refresh tokens, global revocation, Argon2id password hashing, role-based access with ABAC attributes.
+- **Database migrations** — Schema changes are versioned, reversible, and applied automatically on startup via Alembic.
 
-## Arquitectura
+## Architecture
 
 ```
                 ┌─────────────────────────────────────────────────────────┐
                 │                    SeQ API (Flask)                      │
                 │  system · oauth · users · sentinel · acheron · iris ·   │
-                │                     aegis · pages                       │
-                │                                                         │
-   Web SPA ───► │  APScheduler ──► TaskQueue (RQ + Redis) ──► RQ Workers  │ ──► Nmap / Nikto / OpenVAS
-  (Vue 3)       │                       ▲                                 │ ──► Ollama (llama3.2) / OpenAI
-                │                       │                                 │ ──► INCIBE-CERT · CIRCL · NVD
-  Android  ───► │                       │                                 │
-  (Kotlin)      │                  PostgreSQL (15432)                     │
-                └─────────────────────────────────────────────────────────┘
+                │                     aegis · scribe · pages              │
+                │  ┌──────────────────────────────────────────────────┐   │
+                │  │  APScheduler ──► TaskQueue (RQ + Redis)          │   │
+   Web SPA ────► │  │               ┌────────────────────────────┤    │   │
+  (Vue 3)        │  │               │ RQ Workers (isolated procs)  │    │──►  Nmap / Nikto / OpenVAS
+                 │  │               │   sentinel.scan              │    │──►  Ollama / OpenAI
+  Android  ────► │  │               │   sentinel.report            │    │──►  INCIBE-CERT · CIRCL · NVD
+  (Kotlin)       │  │               │   aegis.generate             │    │
+                 │  │               │   iris.analyze               │    │
+                 │  │               └────────────────────────────┘    │   │
+                 │  └──────────────────────────────────────────────────┘   │
+                 │  PostgreSQL (15432)  ·  Alembic migrations              │
+                 └─────────────────────────────────────────────────────────┘
 ```
 
 ```
 SeQ/
-├── API/        # Backend Flask (punto de entrada a la API REST)
-├── web/        # SPA Vue 3 (Vite + Pinia)
-├── mobile/     # AcheronMobile (Android/Kotlin) + AcheronCore (Java)
-├── tests/      # Suite de pruebas
+├── API/        # Flask backend (run.py → create_app())
+│   ├── alembic/                 # Schema migrations (versioned)
+│   ├── src/modules/
+│   │   ├── system/              # Config, logging, task queue admin
+│   │   ├── users/               # OAuth 2.0 + JWT, user CRUD, ABAC
+│   │   ├── sentinel/            # Scan orchestration (Nmap/Nikto/OpenVAS)
+│   │   ├── iris/                # Email header analysis (37 rules)
+│   │   ├── aegis/               # Awareness pills + CVE alerts
+│   │   ├── acheron/             # Encrypted credential vault
+│   │   ├── scribe/              # AI generation abstraction layer
+│   │   ├── infrastructure/      # ORM plumbing (UnitOfWork, repos)
+│   │   ├── shared/              # Base models, exceptions, schemas
+│   │   └── pages/               # Legacy static pages
+│   └── tests/
+├── web/
+│   ├── app/    # Vue 3 SPA (Vite + Pinia + Vue Router)
+│   └── legacy/ # Legacy static HTML
+├── mobile/
+│   └── AcheronMobile/  # Android (Kotlin + Jetpack Compose)
+│       └── AcheronCore/        # Java crypto engine
 └── docker-compose.yml
 ```
 
-## Módulos
+## Modules
 
-| Módulo | Descripción | Estado |
+| Module | Description | Status |
 |---|---|---|
-| **Sentinel** | API REST de escaneo (Nmap/Nikto/OpenVAS), resultados, informes PDF con IA y escaneos programados. | Operativo |
-| **Iris** | Análisis de cabeceras de correo para detección de phishing mediante reglas puntuables. | Operativo |
-| **Acheron** | Vault de secretos cifrados (`Account`, `CreditCard`) con sync granular y app Android. | Operativo |
-| **Aegis** | Píldoras de concienciación + alertas de vulnerabilidades recientes, generadas por IA local. | Operativo |
-| **SeQ Web** | SPA Vue 3 (Vite + Pinia + Vue Router) con dashboard Hub central. | Operativo |
-| **AcheronMobile** | App Android/Kotlin + Jetpack Compose con motor de cifrado AcheronCore (Java). | Operativo |
+| **Sentinel** | Nmap, Nikto, and OpenVAS scans with PDF reports, scheduled execution, AI enrichment, and traceroute tracing. | Operational |
+| **Iris** | Phishing detection via 37 atomic email header analysis rules with subtractive risk scoring. | Operational |
+| **Acheron** | Client-encrypted credential vault with granular sync, export/import, and Android app. | Operational |
+| **Aegis** | AI-generated security awareness pills across 73 topics with real-time CVE alerts from 19 tracked brands. | Operational |
+| **Scribe** | Abstraction layer for AI generation — pluggable strategies (Ollama, OpenAI) per module. | Operational |
+| **SeQ Web** | Vue 3 SPA with hub dashboard, scan management, analysis viewer, vault client, and admin panel. | Operational |
+| **AcheronMobile** | Android app with Jetpack Compose UI, Material 3 design, and Java crypto core for offline vault operations. | Operational |
 
 ## Quick start
 
 > [!NOTE]
-> Necesitas PostgreSQL, Redis, Docker y Python 3.10+ (o WSL). Para IA: **Ollama** con `llama3.2`. Para escaneos: Nmap, Nikto y OpenVAS/GVM.
+> Requires: Python 3.10+, Docker, PostgreSQL, Redis, Ollama (for AI features), and scan tools (Nmap, Nikto, OpenVAS).
 
 ```bash
-# 1. Clonar
+# 1. Clone
 git clone https://github.com/gamustea/SeQ.git
 cd SeQ
 
-# 2. Levantar infraestructura (PostgreSQL 15432, Redis, Ollama, OpenVAS)
+# 2. Start infrastructure (PostgreSQL 15432, Redis, Ollama, OpenVAS)
 docker compose --profile dev up -d
 
-# 3. Configurar API/.env (CREATE_DATABASE=True la primera vez) e instalar dependencias
+# 3. Configure the API
 cd API
+cat > .env <<EOF
+JWT_SECRET_KEY=your-secret-key
+JWT_ALGORITHM=HS256
+POSTGRES_USER=SecOps
+POSTGRES_PASSWORD=<from .env root>
+POSTGRES_HOST=localhost
+POSTGRES_PORT=15432
+POSTGRES_DB=SeQ
+CREATE_DATABASE=True
+EOF
+
 pip install -r requirements.txt
 python run.py          # → http://0.0.0.0:5000
 
-# 4. (otro terminal) Lanzar un worker RQ para las tareas asíncronas
+# 4. Start a background worker for async tasks
 python -m src.modules.system.taskqueue.worker
 ```
 
 > [!TIP]
-> `_init_db()` (con `CREATE_DATABASE=True`) es **destructivo**: recrea la BD e inserta el usuario `root` y los Topics. Apágalo tras el primer arranque.
+> After first boot, set `CREATE_DATABASE=False` to avoid dropping your data on the next restart. The schema is kept up-to-date automatically via Alembic migrations.
 
-## Autenticación
+### Authentication
 
-OAuth 2.0 con `grant_type: password` y refresh tokens (JWT firmados con PyJWT). **Las claves JSON usan camelCase** (`grantType`, `refresh_token`).
+SeQ uses OAuth 2.0 with `grant_type: password` and refresh tokens (JWT signed with PyJWT). JSON keys use **camelCase**.
 
 ```http
 POST /oauth/token
@@ -111,33 +144,34 @@ Content-Type: application/json
 { "grantType": "password", "username": "root", "password": "admin" }
 ```
 
+**Response:**
 ```json
 { "access_token": "<jwt>", "token_type": "Bearer", "expires_in": 1800, "refresh_token": "<token>" }
 ```
 
 > [!WARNING]
-> Todos los endpoints protegidos requieren `Authorization: Bearer <access_token>`. `POST /oauth/revoke-all` revoca todos los tokens del usuario.
+> All protected endpoints require `Authorization: Bearer <access_token>`. `POST /oauth/revoke-all` invalidates all tokens for the authenticated user.
 
-## Referencia de la API
+## API Reference
 
-### Sentinel — escaneos
+### Sentinel — vulnerability scanning
 
-| Método | Endpoint | Descripción |
+| Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/sentinel/nmap` | Escaneo de puertos (soporta rangos CIDR) |
-| `POST` | `/sentinel/nikto` | Escaneo web de configuración/vulnerabilidades |
-| `POST` | `/sentinel/openvas` | Escaneo NVT completo (un host por escaneo) |
-| `GET` | `/sentinel/results` | Lista de escaneos (filtrable y paginado) |
-| `GET` | `/sentinel/results/<id>` | Detalle de un escaneo |
-| `GET` | `/sentinel/scan-status?id=` | Estado (`pending`/`running`/`done`/`cancelled`) |
-| `POST` | `/sentinel/scans/<id>/cancel` | Cancela un escaneo en curso |
-| `DELETE` | `/sentinel/<id>` | Elimina un escaneo |
-| `POST` | `/sentinel/generate-pdf` | Genera PDF (`{ "id": <scanId>, "aiReport": true }`) |
-| `GET` | `/sentinel/document/<id>/download` | Descarga del PDF |
-| `POST` | `/sentinel/scheduled-scans` | Crea escaneo programado (cron/intervalo) |
-| `GET/DELETE` | `/sentinel/folders[/<id>]` | Organiza escaneos en carpetas |
+| `POST` | `/sentinel/nmap` | Port scan (supports CIDR ranges) |
+| `POST` | `/sentinel/nikto` | Web configuration / vulnerability scan |
+| `POST` | `/sentinel/openvas` | Full NVT scan (single host per scan) |
+| `GET` | `/sentinel/results` | List scans (filterable, paginated) |
+| `GET` | `/sentinel/results/<id>` | Scan detail |
+| `GET` | `/sentinel/scan-status?id=` | Status: pending / running / done / cancelled |
+| `POST` | `/sentinel/scans/<id>/cancel` | Cancel a running scan |
+| `DELETE` | `/sentinel/<id>` | Delete a scan |
+| `POST` | `/sentinel/generate-pdf` | Generate PDF report (`{ "id": <scanId>, "aiReport": true }`) |
+| `GET` | `/sentinel/document/<id>/download` | Download PDF |
+| `POST` | `/sentinel/scheduled-scans` | Create scheduled scan (cron/interval) |
+| `GET/DELETE` | `/sentinel/folders[/<id>]` | Organize scans in folders |
 
-**Ejemplo — escaneo Nmap:**
+**Nmap scan example:**
 
 ```http
 POST /sentinel/nmap
@@ -147,6 +181,8 @@ Content-Type: application/json
 { "target": "192.168.1.0/24", "ports": "80,443,22,8080" }
 ```
 
+**Response:**
+
 ```json
 {
   "message": "Escaneo(s) Nmap iniciado(s) correctamente",
@@ -155,96 +191,155 @@ Content-Type: application/json
 }
 ```
 
-### Iris — anti-phishing
+### Iris — anti-phishing analysis
 
-| Método | Endpoint | Permiso | Descripción |
+| Method | Endpoint | Permission | Description |
 |---|---|---|---|
-| `POST` | `/iris/analyze` | `IRIS_CREATE` | Envía cabeceras (opcional: `title`) |
-| `GET` | `/iris/status?id=` | `IRIS_READ` | Estado y progreso del análisis |
-| `GET` | `/iris/results/<id>` | `IRIS_READ` | Informe con reglas, scores y veredicto |
-| `POST` | `/iris/analyze/<id>/cancel` | `IRIS_UPDATE` | Cancela un análisis en curso |
-| `DELETE` | `/iris/results/<id>` | `IRIS_DELETE` | Elimina un análisis |
+| `POST` | `/iris/analyze` | `IRIS_CREATE` | Submit email headers (optional: `title`) |
+| `GET` | `/iris/status?id=` | `IRIS_READ` | Analysis progress and status |
+| `GET` | `/iris/results/<id>` | `IRIS_READ` | Full report with per-rule scores |
+| `POST` | `/iris/analyze/<id>/cancel` | `IRIS_UPDATE` | Cancel a running analysis |
+| `DELETE` | `/iris/results/<id>` | `IRIS_DELETE` | Delete an analysis |
 
-Iris aplica **8 reglas atómicas** (SPF, DKIM, DMARC, Reply-To, Return-Path, Message-ID, Content-Type, From) y devuelve un veredicto: `Legitimate` / `Suspicious` / `Phishing`. Umbrales en `SecOpsConfig.json` (`iris.legitimate_threshold`, `iris.suspicious_threshold`, `iris.min_headers`).
+Iris applies 37 rules across authentication (SPF, DKIM, DMARC), header anomalies, content heuristics, reply-chain attacks, and domain spoofing. Verdicts: `Legitimate` / `Suspicious` / `Phishing`. Thresholds configured in `SecOpsConfig.json`.
 
-### Aegis — concienciación y alertas
+### Aegis — awareness and alerts
 
-| Método | Endpoint | Descripción |
+| Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/aegis/generate` | Genera una píldora ({ `topicId`, `tweaks`: {…} }) |
-| `GET` | `/aegis/status?id=` | Estado de la píldora |
-| `GET` | `/aegis/download_as_md?id=` | Exporta la píldora + alertas como Markdown |
-| `GET` | `/aegis/download_as_html?id=` | Exporta como HTML |
-| `GET` | `/aegis/download_as_pdf?id=` | Exporta como PDF |
-| `GET` | `/aegis/topics` | Lista de topics disponibles |
-| `GET/DELETE` | `/aegis/documents[/<id>]` | Lista / detalle / borrado |
+| `POST` | `/aegis/generate` | Generate an awareness pill (`{ topicId, twecks: {...} }`) |
+| `GET` | `/aegis/status?id=` | Generation status |
+| `GET` | `/aegis/download_as_md?id=` | Export as Markdown |
+| `GET` | `/aegis/download_as_html?id=` | Export as HTML |
+| `GET` | `/aegis/download_as_pdf?id=` | Export as PDF |
+| `GET` | `/aegis/topics` | List available topics |
+| `GET/DELETE` | `/aegis/documents[/<id>]` | List / detail / delete |
 
-Aegis combina la píldora generada por Ollama con un resumen de vulnerabilidades recientes (INCIBE-CERT + API pública CIRCL/NVD), todo guardado como `AegisDocument` propio del usuario.
+Aegis combines AI-generated awareness content with current CVE alerts from INCIBE-CERT and CIRCL/NVD, tracking 19 major technology brands.
 
-### Acheron — vault de secretos
+### Acheron — credential vault
 
-| Método | Endpoint | Descripción |
+| Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/acheron/vault` | Obtiene el vault (blob cifrado) |
-| `POST` | `/acheron/vault` | Crea o reemplaza el vault completo |
-| `POST` | `/acheron/storables` | Añade un `Account` o `CreditCard` |
-| `PATCH` | `/acheron/storables` | Actualiza solo campos modificados (bulk) |
-| `DELETE` | `/acheron/storables` | Elimina un Storable por `internalId` |
+| `GET` | `/acheron/vault` | Retrieve vault (encrypted blob) |
+| `POST` | `/acheron/vault` | Create or replace entire vault |
+| `POST` | `/acheron/storables` | Add an `Account` or `CreditCard` |
+| `PATCH` | `/acheron/storables` | Bulk update only modified fields |
+| `DELETE` | `/acheron/storables` | Delete a Storable by `internalId` |
 
 > [!NOTE]
-> El cifrado ocurre **en el cliente** (AcheronCore, Java). El servidor solo almacena ciphertext. Cada Storable recibe un `internalId` = **SHA-256 truncado a 16 hex** del contenido cifrado, determinista y libre de colisiones entre dispositivos offline.
+> Encryption happens **client-side** (AcheronCore, Java). The server stores only ciphertext. Internal IDs are deterministic SHA-256 hex hashes of encrypted content — collision-free across offline devices.
 
-**Ejemplo — añadir una cuenta:**
+### Users and system
 
-```http
-POST /acheron/storables
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{ "kind": "account", "title": "GitHub", "username": "usuario", "domain": "github.com", "password": "secreto" }
-```
-
-### Usuarios y sistema
-
-| Método | Endpoint | Descripción |
+| Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/users/sign-up` | Registro (username, password, email, alias) |
-| `PUT` | `/users/change-password` | Cambio de contraseña (invalida todos los tokens) |
-| `GET` | `/system/tasks` | (admin) Lista de tareas de la cola RQ |
-| `POST` | `/system/tasks/<id>/cancel` | (admin) Cancela una tarea en cola |
+| `POST` | `/users/sign-up` | Registration (username, password, email, alias) |
+| `PUT` | `/users/change-password` | Password change (invalidates all tokens) |
+| `GET` | `/system/tasks` | (admin) List tasks in the RQ queue |
+| `POST` | `/system/tasks/<id>/cancel` | (admin) Cancel a queued task |
 
 ## TaskQueue (RQ + Redis)
 
-Sustituye al SeQueue legacy. Los trabajos persisten en Redis y **sobreviven a reinicios de la API**. Los workers son **procesos OS independientes** (no hilos), aislados de la API.
+Background jobs persist in Redis and survive API restarts. Workers are **isolated OS processes** (not threads).
 
-- `TaskQueue.get_instance().submit(func, name=, category=, external_id=, args=, timeout=)`.
-- Categorías: `sentinel.scan`, `sentinel.report`, `aegis.generate`, `iris.analyze`.
-- External IDs: `scan:<id>`, `sentinel-doc:<id>`, `aegis-doc:<id>`, `iris-analysis:<id>`.
-- Cancelación: clave Redis `taskqueue:cancel:<job_id>` verificada cooperativamente por el worker vía `_Task.wait(cancel_check=…)`.
-- Cada módulo expone funciones standalone en `services/rq_tasks.py` (reconstruyen manager/tarea dentro del worker y reportan progreso en `job.meta["progress"]`).
+```python
+from src.modules.system.taskqueue import TaskQueue
+queue = TaskQueue.get_instance()
+queue.submit(func, name="Scan 192.168.1.1", category="sentinel.scan", external_id="scan:42", args=[...])
+```
+
+**Categories and entry points:**
+
+| Category | Module | Entry function |
+|---|---|---|
+| `sentinel.scan` | Sentinel | `services/rq_tasks.execute_nmap_scan` |
+| `sentinel.report` | Sentinel | `services/rq_tasks.execute_report_generation` |
+| `aegis.generate` | Aegis | `services/rq_tasks.execute_aegis_generation` |
+| `iris.analyze` | Iris | `services/rq_tasks.execute_iris_analysis` |
+
+- **Progress reporting**: workers update `job.meta["progress"]` via `_Task(progress_callback=...)`.
+- **Cooperative cancellation**: set Redis key `taskqueue:cancel:{job_id}`; workers check via `_Task.wait(cancel_check=...)`.
+- **External IDs** follow the pattern `scan:<id>`, `sentinel-doc:<id>`, `aegis-doc:<id>`, `iris-analysis:<id>`.
 
 > [!WARNING]
-> Los workers RQ deben estar corriendo para que las tareas asíncronas se ejecuten: `python -m src.modules.system.taskqueue.worker`. Escuchan en colas específicas por categoría + `default`.
+> Workers must be running for async tasks: `python -m src.modules.system.taskqueue.worker`. They listen on category-specific queues + `default`.
+
+## Database Migrations
+
+SeQ uses **Alembic** for schema versioning — replacing the previous `Base.metadata.create_all()` approach that could only create new tables.
+
+### How it works
+
+- Every schema change is written as a script in `API/alembic/versions/`.
+- The `alembic_version` table records which revision is applied.
+- On every startup (`run.py → _run_migrations()`), `alembic upgrade head` runs automatically — a no-op if already up to date.
+- The destructive `_init_db()` (for fresh deployments) applies migrations instead of using `create_all`.
+
+### Daily workflow
+
+```bash
+# After changing a model (e.g. adding a column)
+cd API
+alembic revision --autogenerate -m "add column to User"
+
+# Review the generated script, then apply
+alembic upgrade head
+```
+
+```bash
+# Check status
+alembic current   # Current revision
+alembic history   # Full migration history
+
+# Rollback one step
+alembic downgrade -1
+```
+
+> [!IMPORTANT]
+> The initial deployment on a new host requires `CREATE_DATABASE=True` to seed the root user and topics. On subsequent deploys, `alembic upgrade head` runs automatically and is non-destructive.
 
 ## Docker
 
-Dos perfiles en `docker-compose.yml`:
+### Profiles
 
-| Perfil | Contenido | Uso |
+| Profile | Services | Use case |
 |---|---|---|
-| `dev` | PostgreSQL, Redis, Ollama, OpenVAS | Desarrollo local con la API en Python |
-| `container` | Infraestructura + API + worker + web | Despliegue completo |
+| `dev` | PostgreSQL (15432), Redis, Ollama, OpenVAS | Local development with API on bare metal |
+| `container` | Infrastructure + API, worker, web | Full deployment |
 
 ```bash
-docker compose --profile dev up -d        # solo infraestructura
-docker compose --profile container up -d  # despliegue completo
+# Infrastructure only (develop locally)
+docker compose --profile dev up -d
+
+# Full deployment
+docker compose --profile container up -d
+
+# With GPU support for Ollama
+docker compose -f docker-compose.yml -f docker-compose.gpu-nvidia.yml --profile container up -d
 ```
 
-GPU: añade `-f docker-compose.gpu-nvidia.yml` (o `.gpu-intel.yml` / `.gpu-amd.yml`).
+### GPU support
 
-### IA configurable (módulo `scribe`)
+SeQ ships overlay files for GPU-accelerated local AI:
 
-La generación con IA usa una **estrategia inyectable** elegida en `API/SecOpsConfig.json`:
+- `docker-compose.gpu-nvidia.yml`
+- `docker-compose.gpu-intel.yml`
+- `docker-compose.gpu-amd.yml`
+
+### Ports
+
+| Service | Port | Note |
+|---|---|---|
+| API | 5000 | `0.0.0.0:5000` |
+| PostgreSQL | 15432 | Container maps 5432 → 15432 |
+| Redis | 6379 | Required for TaskQueue |
+| OpenVAS | 9390 / 9392 | ~15 min first start (NVT feed initialization) |
+| Ollama | 11434 | Local LLM |
+
+### AI configuration (scribe module)
+
+AI generation uses an injectable strategy chosen in `API/SecOpsConfig.json`:
 
 ```json
 "ai": {
@@ -254,68 +349,59 @@ La generación con IA usa una **estrategia inyectable** elegida en `API/SecOpsCo
 }
 ```
 
-- **`ollama`** — modelo local (`llama3.2` por defecto), ideal para máquinas con GPU.
-- **`openai`** — API de OpenAI (`gpt-4o-mini`), pensada para VPS sin GPU.
+| Strategy | Model | Use case |
+|---|---|---|
+| `ollama` | `llama3.2` (default) | Local, GPU-friendly, no API cost |
+| `openai` | `gpt-4o-mini` | Cloud, for VPS without GPU |
 
-```bash
-ollama pull llama3.2   # o, en el contenedor: docker exec -it OllamaSeQ ollama pull llama3.2
-```
-
-Variables de entorno (en `API/.env`):
+Environment variables (in `API/.env`):
 
 ```
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=llama3.2
-OPENAI_API_KEY=sk-...        # solo si algún módulo usa "openai"
+OPENAI_API_KEY=sk-...        # only needed if a module uses "openai"
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-## Puertos
+## Technology stack
 
-| Servicio | Puerto | Nota |
-|---|---|---|
-| API | 5000 | `0.0.0.0:5000` |
-| PostgreSQL | 15432 | Contenedor mapea 5432→15432 |
-| Redis | 6379 | Requerido por la TaskQueue |
-| OpenVAS | 9390/9392 | ~15 min primer arranque (feed NVT) |
-| Ollama | 11434 | |
-
-## Stack tecnológico
-
-| Capa | Tecnología |
+| Layer | Technology |
 |---|---|
 | Backend | Python 3, Flask 3.0, SQLAlchemy 2.0, Flask-Smorest |
-| Base de datos | PostgreSQL (psycopg2) |
-| Cola de tareas | RQ + Redis |
-| Autenticación | OAuth 2.0 + JWT (PyJWT con claim `jti`) |
-| Hash de contraseñas | Argon2id (argon2-cffi) |
-| Escaneo | Nmap + python-nmap, Nikto, OpenVAS/GVM (vía python-gvm) |
-| Informes PDF | ReportLab + Pillow |
-| IA | Ollama (local) / OpenAI (estrategia `scribe`) |
-| Vulnerabilidades recientes | INCIBE-CERT + CIRCL/NVD |
+| Schema management | Alembic (versioned migrations) |
+| Database | PostgreSQL 16 (via psycopg2) |
+| Task queue | RQ + Redis 7 |
+| Authentication | OAuth 2.0 + JWT (PyJWT, claim `jti`) |
+| Password hashing | Argon2id (argon2-cffi) |
+| Scanning | Nmap + python-nmap, Nikto, OpenVAS/GVM (python-gvm) |
+| PDF reports | ReportLab + Pillow |
+| AI / LLM | Ollama (local) / OpenAI (swappable via `scribe`) |
+| Vulnerability feeds | INCIBE-CERT, CIRCL / NVD |
 | Frontend web | Vue 3 (Vite + Pinia + Vue Router) |
-| Móvil | Android / Kotlin + Jetpack Compose, Retrofit + OkHttp |
-| Vault | AcheronCore (Java): AES + Argon2id (fallback PBKDF2), IDs SHA-256 |
-| Sesión móvil | `EncryptedSharedPreferences` (Android Keystore, AES-256-GCM/SIV) |
-| Infraestructura | Docker + Docker Compose, APScheduler |
+| Mobile | Android / Kotlin + Jetpack Compose, Retrofit + OkHttp |
+| Vault crypto | AcheronCore (Java): AES-256-GCM + Argon2id (fallback PBKDF2) |
+| Mobile session | EncryptedSharedPreferences (Android Keystore, AES-256-GCM/SIV) |
+| Scheduling | APScheduler (cron / interval triggers) |
+| Containerization | Docker + Docker Compose |
 
-## Configuración
+## Configuration
 
-El sistema de configuración (`API/src/modules/system/config_reading.py`, importado como `CR`) carga en orden:
+SeQ uses a layered configuration system (`API/src/modules/system/config_reading.py`):
 
-1. `API/SecOpsConfig.json` — JSON (DB fallback, prompts de IA, directorios, taskqueue, `appVersion`).
-2. `API/.env` — variables que **sobreescriben** el JSON. Obligatorias para OAuth (JWT_SECRET_KEY, JWT_ALGORITHM…) y la BD.
-3. `.env` raíz — solo para docker-compose (Postgres, Redis, OpenVAS). No para la API.
+1. **`API/SecOpsConfig.json`** — base configuration (prompts, directories, task queue defaults)
+2. **`API/.env`** — environment variables that **override** JSON values (required for JWT secret, DB credentials, API keys)
+3. **Root `.env`** — docker-compose only (Postgres, Redis, OpenVAS credentials — not for the API)
 
-Todas las claves se cargan perezosamente vía `@_lazy_load`. Los cambios en `SecOpsConfig.json` requieren reinicio salvo que se apliquen vía `PUT /system`.
+All values are lazily loaded via `@_lazy_load`. Changes to `SecOpsConfig.json` require an app restart unless applied via `PUT /system`.
 
-## Notas importantes
+> [!TIP]
+> Use `python -c "from src.modules.system import config_reading as CR; print(CR.get_db_credentials())"` to verify your configuration.
 
-- `.env` contiene credenciales — **no commitear**. `API/.env` está en `.gitignore`.
-- `API/src/data/` y `docs/` están en `.gitignore` (outputs de escaneos y docs generados).
-- `_init_db()` con `CREATE_DATABASE=True` es **destructivo**: recrea la BD e inserta `root` y los Topics.
-- OpenVAS solo acepta **un host** por escaneo (no rangos CIDR) y tarda ~15 min la primera vez.
-- PostgreSQL usa el puerto **15432** en desarrollo local (no el estándar 5432).
-- `sentinel/services/tasks.py` define su propio `TaskStatus`, **distinto** de `taskqueue.TaskStatus`.
-- Los tokens JWT incluyen el claim `jti` — obligatorio en nueva emisión.
-- La versión de la API (**3.2**) se declara como `appVersion` en `SecOpsConfig.json` (leída por `CR.get_app_version()`).
+## Notes
+
+- `.env` files contain credentials — **never commit them**. `API/.env` is in `.gitignore`.
+- `API/src/data/` and `docs/` are gitignored (scan outputs, generated PDFs).
+- OpenVAS accepts **one host per scan** (no CIDR ranges) and takes ~15 min for initial NVT feed setup.
+- PostgreSQL uses port **15432** locally (not standard 5432).
+- `sentinel/services/tasks.py` defines its own `TaskStatus` enum — distinct from `taskqueue.TaskStatus`.
+- API version is declared as `appVersion` in `SecOpsConfig.json` (read by `CR.get_app_version()`).
