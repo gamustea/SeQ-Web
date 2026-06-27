@@ -438,10 +438,7 @@ def get_sentinel_csv_dir() -> str:
 @_lazy_load
 def get_sentinel_default_folder_name() -> str:
     """Devuelve el nombre mostrado para la carpeta virtual de escaneos sueltos."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
     return sentinel.get("folders", {}).get("defaultFolderName", "Sin carpeta")
 
 
@@ -492,10 +489,7 @@ def get_sentinel_traceroute_retry_failed_minutes() -> float:
 @_lazy_load
 def get_full_config() -> dict:
     """Devuelve toda la configuración."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.copy()
+    return _require_configs().copy()
 
 def save_full_config(new_config: dict) -> dict:
     """Guarda la configuración completa."""
@@ -521,10 +515,7 @@ def get_redis_config() -> dict:
     REDIS_PASSWORD. Las env vars REDIS_HOST/PORT/DB sobreescriben la config si
     están presentes (útil en contenedores).
     """
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("redis", {})
+    cfg = _require_configs().get("redis", {})
     host    = os.getenv("REDIS_HOST", str(cfg.get("host", "localhost")))
     port    = int(os.getenv("REDIS_PORT", str(cfg.get("port", 6379))))
     db      = int(os.getenv("REDIS_DB",   str(cfg.get("db", 0))))
