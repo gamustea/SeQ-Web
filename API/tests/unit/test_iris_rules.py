@@ -14,6 +14,7 @@ from src.modules.iris.rules.url_in_subject import check_url_in_subject
 from src.modules.iris.rules.domain_alignment import check_domain_alignment
 from src.modules.iris.rules.lookalike_domain import check_lookalike_domain
 from src.modules.iris.rules.reply_to_free_provider import check_reply_to_free_provider
+from src.modules.iris.rules.reply_to import check_reply_to
 from src.modules.iris.rules.msgid_domain import check_msgid_domain
 from src.modules.iris.rules.list_unsubscribe import check_list_unsubscribe
 from src.modules.iris.rules.alarming_keywords import check_alarming_keywords
@@ -179,6 +180,29 @@ def test_reply_to_free_provider_ignores_free_sender():
         "reply-to": "jane.alt@gmail.com",
     })
     assert result.verdict == "pass"
+
+
+# --------------------------------------------------------------------- Reply-To check
+
+def test_reply_to_check_flags_unrelated_domain():
+    result = check_reply_to({
+        "from": "Attacker <ceo@company.com>",
+        "reply-to": "attacker@evil-domain.com",
+    })
+    assert result.verdict == "fail"
+    assert result.score < 0
+
+
+def test_reply_to_check_allows_same_organisation_subdomain():
+    # ESP/bulk-mail pattern: From and Reply-To use different subdomains of
+    # the same organisational domain (e.g. UNIR newsletters via SendGrid-style
+    # infra) — this is legitimate and must not be flagged.
+    result = check_reply_to({
+        "from": "UNIR <unir@comunicaciones.unir.net>",
+        "reply-to": "reply-ABC123.510008@info.unir.net",
+    })
+    assert result.verdict == "pass"
+    assert result.score >= 0
 
 
 # ----------------------------------------------------------------- Message-ID domain
