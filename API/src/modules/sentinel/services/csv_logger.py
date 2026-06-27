@@ -4,6 +4,7 @@ Módulo para registrar escaneos de seguridad en archivos CSV.
 Implementa patrón Strategy + Factory con SOLID.
 """
 
+import threading
 from abc import ABC, abstractmethod
 from typing import Protocol, runtime_checkable
 from pathlib import Path
@@ -35,6 +36,9 @@ class BaseScanLogger(ABC):
     _base_dir: Path | None = None
     _date_format: str = "%Y-%m-%d"
     _csv_name: str = ""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
 
     @property
     @abstractmethod
@@ -69,11 +73,9 @@ class BaseScanLogger(ABC):
                 f.write(",".join(self.columns) + "\n")
 
     def log(self, data: dict) -> None:
-        import threading
-        lock = threading.Lock()
         file_path = self._get_file_path()
         self._ensure_header(file_path)
-        with lock:
+        with self._lock:
             try:
                 with open(file_path, "a", newline="", encoding="utf-8") as f:
                     values = [str(data.get(col, "")) for col in self.columns]
