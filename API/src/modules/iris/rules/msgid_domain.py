@@ -10,24 +10,7 @@ legitimate ESPs generate Message-IDs on their own infrastructure.
 
 import re
 
-from .registry import iris_rules, RuleResult, extract_domain
-
-_MULTI_LEVEL_TLDS = {
-    "co.uk", "org.uk", "gov.uk", "ac.uk", "co.jp", "com.mx", "com.br",
-    "com.ar", "com.au", "com.es", "co.in", "co.nz", "com.tr", "com.co",
-}
-
-
-def _registrable(domain: str | None) -> str | None:
-    if not domain:
-        return None
-    labels = domain.strip(".").lower().split(".")
-    if len(labels) < 2:
-        return domain.lower()
-    last_two = ".".join(labels[-2:])
-    if last_two in _MULTI_LEVEL_TLDS and len(labels) >= 3:
-        return ".".join(labels[-3:])
-    return last_two
+from .registry import iris_rules, RuleResult, extract_domain, registrable_domain
 
 
 @iris_rules.register(name="Message-ID Domain", category="header_analysis",
@@ -41,10 +24,10 @@ def check_msgid_domain(headers: dict) -> RuleResult:
         - ``neutral`` (score 0) when either domain is absent/unparseable.
     """
     message_id = headers.get("message-id", "")
-    from_domain = _registrable(extract_domain(headers.get("from", "")))
+    from_domain = registrable_domain(extract_domain(headers.get("from", "")))
 
     match = re.search(r"@([\w.-]+)", message_id)
-    msgid_domain = _registrable(match.group(1)) if match else None
+    msgid_domain = registrable_domain(match.group(1)) if match else None
 
     if not msgid_domain or not from_domain:
         return RuleResult(score=0, verdict="neutral", details={"message_id": message_id}, recommendation=None)

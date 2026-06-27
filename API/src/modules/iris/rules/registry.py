@@ -19,6 +19,45 @@ def extract_domain(email: str) -> str | None:
     return match.group(1).lower() if match else None
 
 
+# Public-suffix second levels we need to keep two labels of (very small,
+# pragmatic list — a full PSL is overkill for a header heuristic).
+_MULTI_LEVEL_TLDS = {
+    "co.uk", "org.uk", "gov.uk", "ac.uk", "co.jp", "com.mx", "com.br",
+    "com.ar", "com.au", "com.es", "co.in", "co.nz", "com.tr", "com.co",
+}
+
+
+def registrable_domain(domain: str | None) -> str | None:
+    """Reduce a hostname to its registrable domain (best-effort, no PSL).
+
+    ``mail.corp.paypal.com`` -> ``paypal.com``; ``a.b.example.co.uk`` ->
+    ``example.co.uk``.  Good enough to compare organisational alignment.
+    """
+    if not domain:
+        return None
+    labels = domain.strip(".").lower().split(".")
+    if len(labels) < 2:
+        return domain.lower()
+    last_two = ".".join(labels[-2:])
+    if last_two in _MULTI_LEVEL_TLDS and len(labels) >= 3:
+        return ".".join(labels[-3:])
+    return last_two
+
+
+def extract_display_name(from_header: str) -> str:
+    """Extract the display-name portion of a ``From`` header.
+
+    ``"ACME" <ops@acme.com>`` -> ``ACME``; a bare ``Marketing Team`` with no
+    address -> ``Marketing Team``; a bare address -> ``""``.
+    """
+    if "<" in from_header:
+        return from_header.split("<")[0].strip().strip('"').strip("'")
+    name_part = from_header.strip()
+    if "@" not in name_part:
+        return name_part
+    return ""
+
+
 @dataclass
 class RuleResult:
     """Result produced by a single analysis rule.

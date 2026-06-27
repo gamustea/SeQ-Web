@@ -5,8 +5,7 @@ Phishing campaigns often set Reply-To to an attacker-controlled address
 so that replies go to the attacker even if the From address is legitimate.
 """
 
-from .domain_alignment import _registrable
-from .registry import iris_rules, RuleResult
+from .registry import iris_rules, RuleResult, registrable_domain
 
 
 @iris_rules.register(name="Reply-To check", category="header_analysis",
@@ -47,7 +46,7 @@ def check_reply_to(headers: dict) -> RuleResult:
     from_domain = from_addr.split("@")[-1].rstrip(">").strip() if "@" in from_addr else from_addr
     reply_domain = reply_to.split("@")[-1].rstrip(">").strip() if "@" in reply_to else reply_to
 
-    if _registrable(from_domain) != _registrable(reply_domain):
+    if registrable_domain(from_domain) != registrable_domain(reply_domain):
         return RuleResult(
             score=-10, verdict="fail",
             details={

@@ -13,13 +13,8 @@ authentication rules — yet they are textbook phishing.
 
 import re
 
-from .registry import iris_rules, RuleResult, extract_domain
+from .registry import iris_rules, RuleResult, extract_domain, _MULTI_LEVEL_TLDS
 from .misspelled_brands import CANONICAL_BRANDS, _normalize_homoglyphs, _levenshtein
-
-_MULTI_LEVEL_TLDS = {
-    "co.uk", "org.uk", "gov.uk", "ac.uk", "co.jp", "com.mx", "com.br",
-    "com.ar", "com.au", "com.es", "co.in", "co.nz", "com.tr", "com.co",
-}
 
 
 def _registrable_label(domain: str) -> str:
