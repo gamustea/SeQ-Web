@@ -163,16 +163,6 @@ class ReportTheme:
             fontName="Helvetica-Bold",
         )
 
-        self.pill = ParagraphStyle(
-            "Pill",
-            parent=base_styles["Normal"],
-            fontSize=7,
-            leading=9,
-            textColor=white,
-            alignment=TA_CENTER,
-            fontName="Helvetica-Bold",
-        )
-
         self.footer = ParagraphStyle(
             "Footer",
             parent=base_styles["Normal"],

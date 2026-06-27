@@ -1,12 +1,10 @@
 import logging
 import sys
-import uuid
 
 import psutil
 
 from flask_smorest import Blueprint as SmorestBlueprint
 from flask import request
-from marshmallow import ValidationError as MarshmallowValidationError
 
 from src.modules.users.services.permissions import Role
 from src.modules.shared._endpoints import limiter, current_actor
