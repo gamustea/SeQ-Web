@@ -49,13 +49,17 @@ class RuleRegistry:
     _rules: List[Dict] = []
 
     def register(self, name: str, category: str = "general",
-                 description: str = ""):
+                 description: str = "", needs_context: bool = False):
         """Decorator that registers a function as an analysis rule.
 
         Args:
             name: Human-readable rule name (e.g. "SPF", "DKIM").
             category: Grouping category (e.g. "authentication", "header_analysis").
             description: Detailed explanation of what the rule checks.
+            needs_context: If True, the rule receives a
+                ``services.message_parser.MessageContext`` (headers + body
+                + links + attachments) instead of the plain ``headers``
+                dict. Used by rules that inspect the full message body.
 
         Returns:
             A decorator that appends the function to the internal rule list.
@@ -66,6 +70,7 @@ class RuleRegistry:
                 "name": name,
                 "category": category,
                 "description": description,
+                "needs_context": needs_context,
             })
             return func
         return decorator

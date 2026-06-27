@@ -10,6 +10,7 @@ to trick users into clicking before reading the email body.
 import re
 
 from .registry import iris_rules, RuleResult
+from ..services.header_decode import decode_mime_words
 
 
 def _contains_url(text: str) -> list[str]:
@@ -27,7 +28,7 @@ def _contains_url(text: str) -> list[str]:
 @iris_rules.register(name="URL in Subject", category="content_analysis",
                      description="Detecta si el asunto del correo contiene URLs (común en phishing)")
 def check_url_in_subject(headers: dict) -> RuleResult:
-    subject = headers.get("subject", "")
+    subject = decode_mime_words(headers.get("subject", ""))
 
     if not subject:
         return RuleResult(
@@ -48,7 +49,7 @@ def check_url_in_subject(headers: dict) -> RuleResult:
     count = len(urls_found)
 
     return RuleResult(
-        score=-6 * min(count, 3),
+        score=-5 * min(count, 2),
         verdict="fail",
         details={
             "subject": subject,

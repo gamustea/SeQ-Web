@@ -67,14 +67,15 @@ CANCELLABLE_STATES = frozenset({"pending", "running"})
 @limiter.limit("20 per hour; 100 per day")
 @handle_exceptions(default_exception=IrisExecutionError, logger=logger)
 def analyze_headers(data):
-    """Enviar cabeceras de correo para un analisis anti-phishing"""
-    raw_headers = data["headers"]
+    """Enviar cabeceras (o un mensaje .eml completo) para un analisis anti-phishing"""
+    raw_headers = data.get("headers")
+    raw_message = data.get("message")
     title = data.get("title")
     user = get_current_user()
 
     manager = IrisManager()
     try:
-        analysis_id = manager.analyze(raw_headers, user.id, title=title)
+        analysis_id = manager.analyze(raw_headers, user.id, title=title, raw_message=raw_message)
     except IrisInvalidInputError as e:
         return {
             "error": e.__class__.__name__,

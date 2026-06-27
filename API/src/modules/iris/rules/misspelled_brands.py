@@ -10,6 +10,7 @@ companies.
 import re
 
 from .registry import iris_rules, RuleResult
+from ..services.header_decode import decode_mime_words
 
 HOMOGLYPH_MAP = str.maketrans({
     "0": "o", "1": "l", "2": "z", "3": "e", "4": "a", "5": "s",
@@ -110,8 +111,8 @@ def _levenshtein(a: str, b: str) -> int:
 @iris_rules.register(name="Misspelled Brand Names", category="content_analysis",
                      description="Detecta homóglifos y errores tipográficos de marcas conocidas en el asunto y nombre del remitente")
 def check_misspelled_brands(headers: dict) -> RuleResult:
-    subject = headers.get("subject", "")
-    from_addr = headers.get("from", "")
+    subject = decode_mime_words(headers.get("subject", ""))
+    from_addr = decode_mime_words(headers.get("from", ""))
     display_name = _extract_display_name(from_addr)
 
     combined = subject + " " + display_name

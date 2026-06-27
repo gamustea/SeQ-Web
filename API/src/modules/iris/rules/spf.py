@@ -14,11 +14,14 @@ def check_spf(headers: dict) -> RuleResult:
     """Evaluate the SPF result from ``Authentication-Results`` or ``Received-SPF`` headers.
 
     Returns:
-        - ``pass`` (score +15) when SPF passes.
+        - ``pass`` (score +5) when SPF passes.  A passing result only proves
+          the sending server is authorised — it is weak positive evidence,
+          not proof of legitimacy, so the bonus is intentionally small.
         - ``fail``/``hardfail`` (score -20) when SPF clearly fails.
         - ``softfail``/``neutral`` (score -5) for non-strict results.
         - ``error`` (score -3) for DNS lookup errors.
-        - ``neutral`` (score 0) when no SPF information is present.
+        - ``missing`` (score -3) when no SPF information is present — absence
+          of authentication is itself mildly suspicious.
     """
     auth_results = headers.get("authentication-results", "")
     received_spf = headers.get("received-spf", "")
@@ -47,7 +50,7 @@ def check_spf(headers: dict) -> RuleResult:
 
     if spf_status == "pass":
         return RuleResult(
-            score=15, verdict="pass",
+            score=5, verdict="pass",
             details={"spf": "pass", "source": auth_results or received_spf},
             recommendation=None,
         )
@@ -74,7 +77,7 @@ def check_spf(headers: dict) -> RuleResult:
         )
 
     return RuleResult(
-        score=0, verdict="neutral",
+        score=-3, verdict="missing",
         details={"spf": "no SPF information found"},
         recommendation="No se encontraron cabeceras SPF. Sin autenticación SPF, el correo puede ser falsificado fácilmente.",
     )

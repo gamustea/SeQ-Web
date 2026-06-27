@@ -5,13 +5,28 @@ Fields use camelCase for JSON keys as per the project convention.
 
 from __future__ import annotations
 
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, ValidationError, fields, validate, validates_schema
 
 
 class AnalyzeRequestSchema(Schema):
-    """Request body for ``POST /iris/analyze``."""
+    """Request body for ``POST /iris/analyze``.
+
+    Accepts either ``headers`` (a headers-only block, original behaviour)
+    or ``message`` (a full raw ``.eml`` message — Fase 2). At least one of
+    the two is required; if both are present, ``message`` takes priority
+    since it is a superset of the header information.
+    """
     title = fields.String(load_default=None, validate=validate.Length(max=120))
-    headers = fields.String(required=True, validate=validate.Length(min=10))
+    headers = fields.String(load_default=None, validate=validate.Length(min=10))
+    message = fields.String(load_default=None, validate=validate.Length(min=10))
+
+    @validates_schema
+    def validate_has_input(self, data, **kwargs):
+        if not data.get("headers") and not data.get("message"):
+            raise ValidationError(
+                "Debe proporcionar 'headers' (cabeceras) o 'message' (mensaje completo .eml).",
+                field_name="headers",
+            )
 
 
 class AnalysisIdQuerySchema(Schema):

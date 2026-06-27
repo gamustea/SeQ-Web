@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 import src.modules.system.config_reading as CR
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
-from src.modules.system.taskqueue import ITaskQueue, TaskQueue, Task, TaskTrackingMixin, job_context
+from src.modules.system.taskqueue import ITaskQueue, TaskQueue, TaskTrackingMixin, job_context
 
 from .exceptions import (
     IrisAnalysisNotFoundError,
@@ -30,12 +30,17 @@ from .exceptions import (
 from .model import IrisAnalysis, IrisRuleResult
 from .repositories import IrisAnalysisRepository, IrisRuleResultRepository
 from .rules import iris_rules, RuleResult
-from .services import parse_raw_headers
+from .services import parse_raw_headers, parse_raw_message
 
 
 logger = logging.getLogger(__name__)
 
 _CANCELLABLE_STATES = frozenset({"pending", "running"})
+
+# Verdict severity ordering, worst last. Gating can only push a verdict
+# toward a *worse* category, never improve it.
+_VERDICT_ORDER = ["Legitimate", "Suspicious", "Phishing"]
+_VERDICT_SEVERITY = {v: i for i, v in enumerate(_VERDICT_ORDER)}
 
 
 class IrisManager(TaskTrackingMixin):
@@ -59,18 +64,24 @@ class IrisManager(TaskTrackingMixin):
     # PUBLIC API
     # =========================================================================
 
-    def analyze(self, raw_headers: str, user_id: int, title: str | None = None) -> int:
-        """Submit raw email headers for background analysis.
+    def analyze(self, raw_headers: str | None, user_id: int, title: str | None = None,
+                raw_message: str | None = None) -> int:
+        """Submit raw email headers (or a full message) for background analysis.
 
         Creates an IrisAnalysis record in ``pending`` state and enqueues
         a TaskQueue task (category ``"iris.analyze"``) that runs every
         registered rule, aggregates scores, and persists the results.
 
         Args:
-            raw_headers: Full email header block as plain text.
+            raw_headers: Headers-only block as plain text (legacy input).
             user_id:     Primary key of the requesting user.
             title:       Optional user-defined label for quick
                          identification in history.
+            raw_message: Full raw ``.eml`` message as plain text (Fase 2).
+                         Takes priority over ``raw_headers`` when both are
+                         given, since it's a superset of the header data.
+                         Rules that need body/links/attachments only see
+                         them when this is provided.
 
         Returns:
             The new IrisAnalysis primary key (``analysis_id``).  The
@@ -78,17 +89,24 @@ class IrisManager(TaskTrackingMixin):
             full report.
 
         Raises:
-            IrisInvalidInputError: If the headers contain fewer than
-                the minimum required header lines (configurable via
-                ``iris.min_headers`` in SecOpsConfig.json).
+            IrisInvalidInputError: If neither input is given, or the
+                content contains fewer than the minimum required header
+                lines (configurable via ``iris.min_headers`` in
+                SecOpsConfig.json).
         """
-        self._validate_headers_pre(raw_headers)
-        analysis_id = self._create_analysis_record(raw_headers, user_id, title=title)
+        raw_input = raw_message or raw_headers
+        if not raw_input:
+            raise IrisInvalidInputError(
+                "Debe proporcionar cabeceras de correo o un mensaje completo."
+            )
+
+        self._validate_headers_pre(raw_input)
+        analysis_id = self._create_analysis_record(raw_input, user_id, title=title)
         logger.info(f"Iris analysis {analysis_id} created for user {user_id}")
 
         self._tq.submit(
             func=IrisManager.execute_iris_analysis,
-            args=(analysis_id, raw_headers),
+            args=(analysis_id, raw_input),
             name=f"IrisAnalysis-{analysis_id}",
             category=self.TASK_CATEGORY,
             external_id=self.external_id_for(analysis_id),
@@ -358,17 +376,23 @@ class IrisManager(TaskTrackingMixin):
             )
 
     @staticmethod
-    def execute_iris_analysis(analysis_id: int, raw_headers: str) -> None:
+    def execute_iris_analysis(analysis_id: int, raw_input: str) -> None:
         """Entry point submitted to the TaskQueue for background analysis."""
-        IrisManager()._run_analysis(analysis_id, raw_headers)
+        IrisManager()._run_analysis(analysis_id, raw_input)
 
-    def _run_analysis(self, analysis_id: int, raw_headers: str) -> None:
+    def _run_analysis(self, analysis_id: int, raw_input: str) -> None:
         """Background task: execute all rules and persist results.
 
         This is the function submitted to the TaskQueue.  It:
         1. Marks the analysis as ``running``.
-        2. Parses the raw header text.
-        3. Iterates over every registered rule, collects RuleResults.
+        2. Parses the raw text into both a flat headers dict (legacy
+           rules) and a full ``MessageContext`` (body/links/attachments
+           — Fase 2 rules). ``raw_input`` may be a headers-only block or
+           a full ``.eml`` message; the context degrades gracefully to
+           empty body/links/attachments in the former case.
+        3. Iterates over every registered rule, dispatching ``headers``
+           or ``context`` depending on each rule's ``needs_context`` flag,
+           and collects RuleResults.
         4. Updates the TaskQueue task progress after each rule.
         5. Computes the total score and verdict.
         6. Persists the final state (``finished`` + score + verdict).
@@ -392,12 +416,14 @@ class IrisManager(TaskTrackingMixin):
                 self._fail_analysis(analysis_id)
                 return
 
-            headers = parse_raw_headers(raw_headers)
+            headers = parse_raw_headers(raw_input)
             self._validate_headers_parsed(headers)
+            context = parse_raw_message(raw_input)
 
             rules_defs = iris_rules.get_rules()
             total_rules = len(rules_defs)
             results: List[RuleResult] = []
+            named_results: Dict[str, RuleResult] = {}
 
             for idx, rule_def in enumerate(rules_defs):
                 if job.cancelled():
@@ -405,7 +431,8 @@ class IrisManager(TaskTrackingMixin):
                     return
 
                 try:
-                    result = rule_def["func"](headers)
+                    rule_input = context if rule_def.get("needs_context") else headers
+                    result = rule_def["func"](rule_input)
                 except Exception as e:
                     logger.error(f"Rule '{rule_def['name']}' failed for analysis {analysis_id}: {e}", exc_info=True)
                     result = RuleResult(
@@ -416,6 +443,7 @@ class IrisManager(TaskTrackingMixin):
 
                 self._persist_rule_result(analysis_id, rule_def, result, idx)
                 results.append(result)
+                named_results[rule_def["name"]] = result
 
                 progress = int(((idx + 1) / total_rules) * 100)
                 sq_task = self.find_task(analysis_id)
@@ -423,7 +451,8 @@ class IrisManager(TaskTrackingMixin):
                     job.progress(progress)
 
             total_score = sum(r.score for r in results)
-            verdict = self._determine_verdict(total_score)
+            base_verdict = self._determine_verdict(total_score)
+            verdict = self._apply_verdict_gates(base_verdict, named_results)
 
             try:
                 with UnitOfWork() as uow:
@@ -470,8 +499,11 @@ class IrisManager(TaskTrackingMixin):
         """Map a numeric total score to a textual verdict.
 
         Thresholds come from ``SecOpsConfig.json``:
-            - ``iris.legitimate_threshold`` (default 30)
-            - ``iris.suspicious_threshold``  (default -10)
+            - ``iris.legitimate_threshold`` (default 0)
+            - ``iris.suspicious_threshold``  (default -15)
+
+        This is only the additive baseline — high-confidence findings can
+        still override it via :meth:`_apply_verdict_gates`.
         """
         legitimate = CR.get_iris_legitimate_threshold()
         suspicious = CR.get_iris_suspicious_threshold()
@@ -481,6 +513,86 @@ class IrisManager(TaskTrackingMixin):
         if total_score >= suspicious:
             return "Suspicious"
         return "Phishing"
+
+    @staticmethod
+    def _apply_verdict_gates(base_verdict: str,
+                             named_results: Dict[str, RuleResult]) -> str:
+        """Override the additive verdict when high-confidence signals fire.
+
+        The additive sum can be dominated by many small positive checks (and,
+        historically, by a large authentication bonus), letting a few strong
+        phishing indicators get "bought back" into a Legitimate verdict.  This
+        gate enforces a *minimum severity* for those indicators: a verdict can
+        only be pushed toward a worse category, never improved.
+
+        Args:
+            base_verdict: The verdict derived purely from the total score.
+            named_results: Map of rule name -> its RuleResult.
+
+        Returns:
+            The final verdict after applying all gates.
+        """
+        ceiling = _VERDICT_SEVERITY[base_verdict]
+        triggered: list[str] = []
+
+        def gate(condition: bool, level: str, reason: str) -> None:
+            nonlocal ceiling
+            if condition:
+                triggered.append(reason)
+                ceiling = max(ceiling, _VERDICT_SEVERITY[level])
+
+        def res(name: str) -> Optional[RuleResult]:
+            return named_results.get(name)
+
+        def verdict_is(name: str, *verdicts: str) -> bool:
+            r = res(name)
+            return r is not None and r.verdict in verdicts
+
+        spf_fail = verdict_is("SPF", "fail", "hardfail")
+        dmarc_fail = verdict_is("DMARC", "fail")
+        align_fail = verdict_is("Domain Alignment", "fail")
+        lookalike = verdict_is("Lookalike Sender Domain", "fail")
+        attach = verdict_is("Suspicious Attachments", "fail")
+        replyfree = verdict_is("Reply-To Free Provider", "fail")
+        spoof = res("Display Name Spoofing")
+        spoof_any = spoof is not None and spoof.verdict == "spoof"
+        spoof_free = spoof_any and bool(spoof.details.get("is_free_provider"))
+        alarming_strong = verdict_is("Alarming Keywords", "alarming_high", "alarming_medium")
+        cloaked_link = res("Body Links")
+        cloaked_link_any = (
+            cloaked_link is not None and cloaked_link.verdict == "fail"
+            and "cloaked_link" in (cloaked_link.details.get("types") or [])
+        )
+        body_links_fail = verdict_is("Body Links", "fail")
+        body_content_fail = verdict_is("Body Content", "fail")
+        received_chain_fail = verdict_is("Received Chain", "fail")
+        auth_fail = spf_fail or dmarc_fail or align_fail
+
+        # Single high-confidence indicators.
+        gate(lookalike, "Phishing", "lookalike sender domain")
+        gate(spoof_free, "Phishing", "brand impersonation from free provider")
+        gate(cloaked_link_any, "Phishing", "cloaked body link (visible domain differs from href)")
+        gate(spoof_any, "Suspicious", "display-name brand spoofing")
+        gate(align_fail, "Suspicious", "SPF/DKIM not aligned with From")
+        gate(attach, "Suspicious", "dangerous attachment")
+        gate(spf_fail or dmarc_fail, "Suspicious", "SPF/DMARC failure")
+        gate(replyfree, "Suspicious", "reply target is free webmail")
+        gate(body_links_fail, "Suspicious", "suspicious body links")
+        gate(body_content_fail, "Suspicious", "phishing phrasing or hidden text in body")
+        gate(received_chain_fail, "Suspicious", "Received chain anomaly")
+
+        # Combinations that escalate to Phishing.
+        gate(auth_fail and (spoof_any or alarming_strong), "Phishing",
+             "authentication failure combined with impersonation/urgency")
+        gate(attach and (auth_fail or spoof_any), "Phishing",
+             "dangerous attachment combined with authentication failure or spoofing")
+        gate(body_links_fail and (auth_fail or spoof_any), "Phishing",
+             "suspicious body links combined with authentication failure or spoofing")
+
+        final = _VERDICT_ORDER[ceiling]
+        if triggered and final != base_verdict:
+            logger.info("Verdict gated %s -> %s (%s)", base_verdict, final, "; ".join(triggered))
+        return final
 
     def _fail_analysis(self, analysis_id: int) -> None:
         """Mark an analysis as ``failed`` with a finished timestamp."""
