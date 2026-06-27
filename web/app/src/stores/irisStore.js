@@ -220,7 +220,7 @@ export const useIrisStore = defineStore('iris', () => {
 
   return {
     analyses, loading, submitting, totalCount, page, perPage,
-    currentId, currentReport, currentStatus, currentPath,
+    currentId, currentReport, currentStatus, currentPath, pathCache,
     submitAnalysis, fetchResults, getReport, getStatus, pathFor,
     cancelAnalysis, deleteAnalysis, selectAnalysis, goToPage,
     startPolling, stopPolling,
