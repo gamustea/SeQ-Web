@@ -17,6 +17,8 @@ export const useIrisStore = defineStore('iris', () => {
   const currentId = ref(null)
   const currentReport = reactive({ loading: false, data: null })
   const currentStatus = reactive({ polling: false, status: null, progress: null })
+  const pathCache = reactive(new Map())
+  const currentPath = reactive({ loading: false, data: null })
 
   let pollTimer = null
 
@@ -82,6 +84,9 @@ export const useIrisStore = defineStore('iris', () => {
       const data = await res.json()
       currentReport.data = data
       stopPolling()
+      if (data?.status === 'finished') {
+        pathFor(id)
+      }
       return data
     } finally {
       currentReport.loading = false
@@ -93,6 +98,30 @@ export const useIrisStore = defineStore('iris', () => {
     const res = await apiFetch(`/iris/status?${params}`)
     if (!res?.ok) return null
     return await res.json()
+  }
+
+  async function pathFor(id) {
+    if (!id) return null
+    if (pathCache.has(id)) {
+      currentPath.loading = false
+      currentPath.data = pathCache.get(id)
+      return currentPath.data
+    }
+    currentPath.loading = true
+    currentPath.data = null
+    try {
+      const res = await apiFetch(`/iris/results/${id}/path`)
+      if (!res?.ok) {
+        currentPath.loading = false
+        return null
+      }
+      const data = await res.json()
+      pathCache.set(id, data)
+      currentPath.data = data
+      return data
+    } finally {
+      currentPath.loading = false
+    }
   }
 
   function startPolling(id) {
@@ -149,9 +178,11 @@ export const useIrisStore = defineStore('iris', () => {
       return false
     }
     toast.show('An\u00e1lisis eliminado.', 'success')
+    pathCache.delete(id)
     if (currentId.value === id) {
       currentId.value = null
       currentReport.data = null
+      currentPath.data = null
     }
     await fetchResults()
     return true
@@ -161,6 +192,7 @@ export const useIrisStore = defineStore('iris', () => {
     if (currentId.value === id) return
     stopPolling()
     currentReport.data = null
+    currentPath.data = null
     if (id === null) {
       currentId.value = null
       currentStatus.status = null
@@ -173,9 +205,11 @@ export const useIrisStore = defineStore('iris', () => {
       startPolling(id)
     } else if (found && found.status === 'finished') {
       getReport(id)
+      pathFor(id)
     } else {
       currentId.value = id
       getReport(id)
+      pathFor(id)
     }
   }
 
@@ -186,8 +220,8 @@ export const useIrisStore = defineStore('iris', () => {
 
   return {
     analyses, loading, submitting, totalCount, page, perPage,
-    currentId, currentReport, currentStatus,
-    submitAnalysis, fetchResults, getReport, getStatus,
+    currentId, currentReport, currentStatus, currentPath,
+    submitAnalysis, fetchResults, getReport, getStatus, pathFor,
     cancelAnalysis, deleteAnalysis, selectAnalysis, goToPage,
     startPolling, stopPolling,
   }

@@ -123,6 +123,23 @@
         </ul>
       </div>
 
+      <!-- Email path (Received chain) -->
+      <div v-if="pathVisible" class="rv-path">
+        <h3 class="section-title">Recorrido del correo</h3>
+        <div v-if="pathLoading" class="rv-path-loading">
+          <div class="spinner spinner--sm"></div>
+          <span>Cargando recorrido…</span>
+        </div>
+        <IrisEmailPath
+          v-else-if="pathData && pathData.available"
+          :hops="pathData.hops"
+          :transitions="pathData.transitions"
+        />
+        <p v-else class="rv-path-empty">
+          {{ pathData?.reason || 'Recorrido no disponible para este análisis.' }}
+        </p>
+      </div>
+
       <!-- Raw headers (collapsible) -->
       <div class="rv-raw">
         <button type="button" class="raw-toggle" @click="rawOpen = !rawOpen">
@@ -141,8 +158,11 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useUtils } from '@/composables/useUtils'
+import { useIrisStore } from '@/stores/irisStore'
+import IrisEmailPath from '@/components/iris/IrisEmailPath.vue'
 
 const { formatDate } = useUtils()
+const irisStore = useIrisStore()
 
 const props = defineProps({
   reportId: { type: [Number, null], default: null },
@@ -187,6 +207,24 @@ const statusLabel = computed(() => {
   if (v === 'suspicious') return 'Posible amenaza'
   if (v === 'phishing') return 'Phishing detectado'
   return ''
+})
+
+const pathData = computed(() => {
+  if (!props.reportId) return null
+  const cached = irisStore.pathCache.get(props.reportId)
+  if (cached) return cached
+  return irisStore.currentPath?.data?.analysisId === props.reportId
+    ? irisStore.currentPath.data
+    : null
+})
+const pathLoading = computed(() => {
+  if (!props.reportId) return false
+  return irisStore.currentPath?.loading && irisStore.currentPath?.data?.analysisId !== props.reportId
+})
+const pathVisible = computed(() => {
+  return props.status === 'finished' && !!props.reportId && (
+    pathData.value || pathLoading.value
+  )
 })
 </script>
 
@@ -797,5 +835,38 @@ const statusLabel = computed(() => {
   max-height: 0;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* Email path */
+.rv-path {
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-path-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.spinner--sm {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+.rv-path-empty {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-family: var(--font-mono);
+  text-align: center;
 }
 </style>
