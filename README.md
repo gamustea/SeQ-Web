@@ -1,7 +1,7 @@
 <!-- prettier-ignore -->
 <div align="center">
 
-<img src="./web/app/public/resources/images/SecOps-Logo-BlueDark.png" alt="SeQ" height="110" />
+<img src="./API/resources/images/seq/SeQ-BgN.png" alt="SeQ" height="110" />
 
 # SeQ — Security Operations Platform
 
@@ -48,16 +48,16 @@ The REST API (Flask) orchestrates asynchronous scans and analysis over **RQ + Re
                 │                     aegis · scribe · pages              │
                 │  ┌──────────────────────────────────────────────────┐   │
                 │  │  APScheduler ──► TaskQueue (RQ + Redis)          │   │
-   Web SPA ────► │  │               ┌────────────────────────────┤    │   │
-  (Vue 3)        │  │               │ RQ Workers (isolated procs)  │    │──►  Nmap / Nikto / OpenVAS
-                 │  │               │   sentinel.scan              │    │──►  Ollama / OpenAI
-  Android  ────► │  │               │   sentinel.report            │    │──►  INCIBE-CERT · CIRCL · NVD
-  (Kotlin)       │  │               │   aegis.generate             │    │
-                 │  │               │   iris.analyze               │    │
-                 │  │               └────────────────────────────┘    │   │
-                 │  └──────────────────────────────────────────────────┘   │
-                 │  PostgreSQL (15432)  ·  Alembic migrations              │
-                 └─────────────────────────────────────────────────────────┘
+   Web SPA ────►│  │               ┌────────────────────────────┤     │   │
+  (Vue 3)       │  │               │ RQ Workers (isolated procs)│     │──►  Nmap / Nikto / OpenVAS
+                │  │               │   sentinel.scan            │     │──►  Ollama / OpenAI
+  Android  ────►│  │               │   sentinel.report          │     │──►  INCIBE-CERT · CIRCL · NVD
+  (Kotlin)      │  │               │   aegis.generate           │     │
+                │  │               │   iris.analyze             │     │
+                │  │               └────────────────────────────┘     │   │
+                │  └──────────────────────────────────────────────────┘   │
+                │  PostgreSQL (15432)  ·  Alembic migrations              │
+                └─────────────────────────────────────────────────────────┘
 ```
 
 ```
