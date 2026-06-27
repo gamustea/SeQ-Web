@@ -161,6 +161,9 @@
     }
   },
   "iris": {
+    "directories": {
+      "output": "data/iris/output"
+    },
     "legitimate_threshold": 0,
     "min_headers": 2,
     "suspicious_threshold": -15

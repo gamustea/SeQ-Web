@@ -150,16 +150,29 @@
           <pre v-if="rawOpen" class="raw-block">{{ reportData.rawHeaders }}</pre>
         </Transition>
       </div>
+
+      <!-- Informes PDF -->
+      <IrisDocumentsPanel
+        :documents="irisStore.documents"
+        :loading="irisStore.documentsLoading"
+        :generating="generatingDocument"
+        :can-generate="reportData.status === 'finished'"
+        @refresh="refreshDocuments"
+        @generate="handleGenerateDocument"
+        @download="handleDownloadDocument"
+        @delete="handleDeleteDocument"
+      />
     </div>
 
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useUtils } from '@/composables/useUtils'
 import { useIrisStore } from '@/stores/irisStore'
 import IrisEmailPath from '@/components/iris/IrisEmailPath.vue'
+import IrisDocumentsPanel from '@/components/iris/IrisDocumentsPanel.vue'
 
 const { formatDate } = useUtils()
 const irisStore = useIrisStore()
@@ -226,6 +239,43 @@ const pathVisible = computed(() => {
     pathData.value || pathLoading.value
   )
 })
+
+/* ── Informes PDF ── */
+const generatingDocument = ref(false)
+
+function refreshDocuments() {
+  if (props.reportId) irisStore.fetchDocuments(props.reportId)
+}
+
+async function handleGenerateDocument() {
+  if (!props.reportId) return
+  generatingDocument.value = true
+  try {
+    await irisStore.generateDocument(props.reportId)
+  } finally {
+    generatingDocument.value = false
+  }
+}
+
+async function handleDownloadDocument(documentId) {
+  await irisStore.downloadDocument(documentId)
+}
+
+async function handleDeleteDocument(documentId) {
+  await irisStore.deleteDocument(documentId, props.reportId)
+}
+
+watch(
+  () => [props.reportId, props.reportData?.status],
+  ([id, status]) => {
+    if (id && status === 'finished') {
+      irisStore.fetchDocuments(id)
+    } else {
+      irisStore.documents = []
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>

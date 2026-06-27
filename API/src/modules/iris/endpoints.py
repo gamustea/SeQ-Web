@@ -13,7 +13,9 @@ Provides:
 from __future__ import annotations
 
 import logging
+import os
 
+from flask import send_file
 from flask_smorest import Blueprint as SmorestBlueprint
 
 from src.modules.users import (
@@ -24,8 +26,9 @@ from src.modules.users import (
 )
 from src.modules.shared import handle_exceptions, limiter
 from src.modules.shared.schemas import ErrorSchema
+from src.modules.aegis.exceptions import DocumentError, DocumentNotFoundError, DocumentNotReadyError
 
-from .managers import IrisManager
+from .managers import IrisManager, IrisReportManager
 from .exceptions import (
     IrisAnalysisNotFoundError,
     IrisAnalysisNotReadyError,
@@ -44,6 +47,12 @@ from .schemas import (
     AnalysisCancelResponseSchema,
     ReceivedPathResponseSchema,
     ResultsQuerySchema,
+    GenerateDocumentResponseSchema,
+    DocumentStatusQuerySchema,
+    IrisDocumentStatusResponseSchema,
+    IrisDocumentListResponseSchema,
+    AnalysisDocumentsResponseSchema,
+    IrisDocumentDeleteResponseSchema,
 )
 
 
@@ -244,3 +253,181 @@ def delete_analysis(analysis_id: int):
         "message": "Analisis eliminado correctamente",
         "analysisId": analysis_id,
     }
+
+
+def _download_url_for(doc) -> str | None:
+    if doc.status == "done" and doc.filename:
+        return f"/iris/document/{doc.id}/download"
+    return None
+
+
+@iris_blp.post("/results/<int:analysis_id>/document")
+@iris_blp.response(202, GenerateDocumentResponseSchema, description="PDF generation started")
+@iris_blp.alt_response(400, schema=ErrorSchema, description="Analysis not finished")
+@iris_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@iris_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@iris_blp.alt_response(404, schema=ErrorSchema, description="Analysis not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.IRIS_CREATE])
+@limiter.limit("30 per hour; 100 per day")
+@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=logger)
+def generate_document(analysis_id: int):
+    """Solicitar generacion asincrona de un informe PDF de un analisis"""
+    user = get_current_user()
+
+    doc_mgr = IrisReportManager()
+    doc_id = doc_mgr.generate_report(analysis_id, user.id)
+
+    logger.info(f"Generacion de PDF solicitada para analisis {analysis_id} (documento {doc_id}) por usuario {user.username}")
+    return {
+        "message": "Generacion de informe iniciada",
+        "documentId": doc_id,
+        "analysisId": analysis_id,
+        "status": "running",
+        "downloadUrl": None,
+    }
+
+
+@iris_blp.get("/document-status")
+@iris_blp.arguments(DocumentStatusQuerySchema, location="query")
+@iris_blp.response(200, IrisDocumentStatusResponseSchema, description="Document status")
+@iris_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@iris_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@iris_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.IRIS_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=DocumentError, logger=logger)
+def get_document_status(args):
+    """Consultar estado de generacion de un documento"""
+    user = get_current_user()
+    document_id = args.get("documentId")
+    analysis_id = args.get("analysisId")
+
+    doc_mgr = IrisReportManager()
+    doc = doc_mgr.get_document_by_id(document_id) if document_id else (
+        doc_mgr.get_latest_document_by_analysis_id(analysis_id) if analysis_id else None
+    )
+
+    if not doc:
+        raise DocumentNotFoundError(document_id or analysis_id)
+
+    if doc.user_id != user.id:
+        raise DocumentNotFoundError(document_id or analysis_id)
+
+    return {
+        "documentId": doc.id,
+        "analysisId": doc.analysis_id,
+        "status": doc.status,
+        "verdict": doc.verdict,
+        "createdAt": doc.created_at,
+        "generatedAt": doc.generated_at,
+        "downloadUrl": _download_url_for(doc),
+    }
+
+
+@iris_blp.get("/documents")
+@iris_blp.response(200, IrisDocumentListResponseSchema, description="All documents")
+@iris_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@iris_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.IRIS_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=DocumentError, logger=logger)
+def get_all_documents():
+    """Obtener todos los documentos del usuario"""
+    user = get_current_user()
+
+    doc_mgr = IrisReportManager()
+    documents = doc_mgr.get_documents_for_user(user.id)
+
+    docs_list = [{
+        "documentId": doc.id,
+        "analysisId": doc.analysis_id,
+        "status": doc.status,
+        "verdict": doc.verdict,
+        "createdAt": doc.created_at,
+        "generatedAt": doc.generated_at,
+        "downloadUrl": _download_url_for(doc),
+    } for doc in documents]
+
+    return {"documents": docs_list, "total": len(docs_list)}
+
+
+@iris_blp.get("/results/<int:analysis_id>/documents")
+@iris_blp.response(200, AnalysisDocumentsResponseSchema, description="Analysis documents")
+@iris_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@iris_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@iris_blp.alt_response(404, schema=ErrorSchema, description="Analysis not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.IRIS_READ])
+@limiter.limit("300 per hour; 2000 per day")
+@handle_exceptions(default_exception=IrisAnalysisNotFoundError, logger=logger)
+def get_documents_by_analysis(analysis_id: int):
+    """Obtener todos los documentos de un analisis concreto"""
+    user = get_current_user()
+    IrisManager.assert_analysis_ownership(analysis_id, user.id)
+
+    doc_mgr = IrisReportManager()
+    documents = doc_mgr.get_documents_by_analysis_id(analysis_id)
+
+    docs_list = [{
+        "documentId": doc.id,
+        "analysisId": doc.analysis_id,
+        "status": doc.status,
+        "verdict": doc.verdict,
+        "createdAt": doc.created_at,
+        "generatedAt": doc.generated_at,
+        "downloadUrl": _download_url_for(doc),
+    } for doc in documents]
+
+    return {"analysisId": analysis_id, "documents": docs_list, "total": len(docs_list)}
+
+
+@iris_blp.get("/document/<int:document_id>/download")
+@iris_blp.response(200, description="PDF file download")
+@iris_blp.alt_response(400, schema=ErrorSchema, description="Document not ready")
+@iris_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@iris_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@iris_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.IRIS_READ])
+@handle_exceptions(default_exception=DocumentError, logger=logger)
+def download_document(document_id: int):
+    """Descargar un documento PDF generado"""
+    user = get_current_user()
+
+    doc_mgr = IrisReportManager()
+    doc = doc_mgr.assert_document_ownership(document_id, user.id)
+
+    if doc.status != "done" or not doc.filename or not os.path.exists(doc.filename):
+        raise DocumentNotReadyError(document_id, doc.status)
+
+    logger.info(f"Serving Iris document {document_id}: {doc.filename}")
+    return send_file(
+        doc.filename,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"iris_analysis_{doc.analysis_id}.pdf",
+    )
+
+
+@iris_blp.delete("/document/<int:document_id>")
+@iris_blp.response(200, IrisDocumentDeleteResponseSchema, description="Document deleted")
+@iris_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@iris_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@iris_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.IRIS_DELETE])
+@limiter.limit("60 per hour; 200 per day")
+@handle_exceptions(default_exception=DocumentError, logger=logger)
+def delete_document(document_id: int):
+    """Eliminar un documento"""
+    user = get_current_user()
+
+    doc_mgr = IrisReportManager()
+    doc_mgr.assert_document_ownership(document_id, user.id)
+    doc_mgr.delete_document(document_id)
+
+    logger.info(f"Documento {document_id} eliminado por usuario {user.username}")
+    return {"message": "Documento eliminado correctamente", "documentId": document_id}

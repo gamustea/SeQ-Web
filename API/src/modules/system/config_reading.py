@@ -42,6 +42,8 @@ class DirectoryType(Enum):
     CSV_SENTINEL       = "sentinel.csv"
     RESOURCES_SENTINEL = "sentinel.resources"
 
+    OUTPUT_IRIS        = "iris.output"
+
 
 # =============================================================================
 # CLASES ÚTILES

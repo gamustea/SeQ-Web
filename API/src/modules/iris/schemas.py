@@ -154,3 +154,71 @@ class ReceivedPathResponseSchema(Schema):
     hops = fields.List(fields.Nested(ReceivedHopSchema))
     transitions = fields.List(fields.Nested(ReceivedTransitionSchema))
     reason = fields.String(load_default=None)
+
+
+class GenerateDocumentResponseSchema(Schema):
+    """Response returned immediately after queuing PDF generation."""
+    message = fields.String()
+    documentId = fields.Integer()
+    analysisId = fields.Integer()
+    status = fields.String()
+    downloadUrl = fields.String(load_default=None)
+
+
+class DocumentStatusQuerySchema(Schema):
+    """Query parameters for ``GET /iris/document-status``.
+
+    Accepts either ``documentId`` (specific document) or ``analysisId``
+    (latest document for that analysis) — at least one is required.
+    """
+    documentId = fields.Integer(load_default=None)
+    analysisId = fields.Integer(load_default=None)
+
+    @validates_schema
+    def validate_has_id(self, data, **kwargs):
+        if not data.get("documentId") and not data.get("analysisId"):
+            raise ValidationError(
+                "Debe proporcionar 'documentId' o 'analysisId'.",
+                field_name="documentId",
+            )
+
+
+class IrisDocumentStatusResponseSchema(Schema):
+    """Current generation status of a single IrisDocument."""
+    documentId = fields.Integer()
+    analysisId = fields.Integer()
+    status = fields.String()
+    verdict = fields.String(allow_none=True)
+    createdAt = fields.DateTime(format="iso", allow_none=True)
+    generatedAt = fields.DateTime(format="iso", allow_none=True)
+    downloadUrl = fields.String(allow_none=True)
+
+
+class IrisDocumentItemSchema(Schema):
+    """Summary of a single IrisDocument shown in a listing."""
+    documentId = fields.Integer()
+    analysisId = fields.Integer()
+    status = fields.String()
+    verdict = fields.String(allow_none=True)
+    createdAt = fields.DateTime(format="iso", allow_none=True)
+    generatedAt = fields.DateTime(format="iso", allow_none=True)
+    downloadUrl = fields.String(allow_none=True)
+
+
+class IrisDocumentListResponseSchema(Schema):
+    """All IrisDocuments belonging to the current user."""
+    documents = fields.List(fields.Nested(IrisDocumentItemSchema))
+    total = fields.Integer()
+
+
+class AnalysisDocumentsResponseSchema(Schema):
+    """All IrisDocuments generated for a specific analysis."""
+    analysisId = fields.Integer()
+    documents = fields.List(fields.Nested(IrisDocumentItemSchema))
+    total = fields.Integer()
+
+
+class IrisDocumentDeleteResponseSchema(Schema):
+    """Confirmation after deleting an IrisDocument."""
+    message = fields.String()
+    documentId = fields.Integer()

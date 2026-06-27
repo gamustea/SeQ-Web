@@ -14,7 +14,7 @@ from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, SmallIntege
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from src.modules.shared import Base
+from src.modules.shared import Base, Document
 
 
 class IrisAnalysis(Base):
@@ -58,6 +58,10 @@ class IrisAnalysis(Base):
         order_by="IrisRuleResult.position",
         cascade="all, delete-orphan",
     )
+    documents = relationship(
+        "IrisDocument", back_populates="analysis",
+        cascade="all, delete-orphan",
+    )
 
 
 class IrisRuleResult(Base):
@@ -93,3 +97,39 @@ class IrisRuleResult(Base):
     position = Column(SmallInteger, nullable=False, default=0)
 
     analysis = relationship("IrisAnalysis", back_populates="rule_results")
+
+
+class IrisDocument(Document):
+    """PDF report generated from a finished Iris analysis.
+
+    Inherits from Document (shared model) and adds analysis-specific
+    fields. Stores the generated PDF path and a snapshot of the verdict
+    so listings can filter/display without joining IrisAnalysis.
+
+    Inherits from Document:
+        id, document_type, filename, format, status,
+        created_at, generated_at, user_id, user
+
+    Attributes:
+        id: Primary key (foreign key to Document.id).
+        analysis_id: Foreign key to IrisAnalysis.id (cascade delete).
+        verdict: Snapshot of the analysis verdict at generation time.
+        analysis: Relationship to the source IrisAnalysis.
+    """
+    __tablename__ = "IrisDocument"
+
+    id = Column(Integer, ForeignKey("Document.id"), primary_key=True)
+    analysis_id = Column(Integer, ForeignKey("IrisAnalysis.id", ondelete="CASCADE"), nullable=False)
+    verdict = Column(String(20), nullable=True)
+
+    analysis = relationship("IrisAnalysis", back_populates="documents")
+
+    __mapper_args__ = {
+        "polymorphic_identity": "iris",
+    }
+
+    def __repr__(self) -> str:
+        return (
+            f"<IrisDocument(id={self.id}, analysis_id={self.analysis_id}, "
+            f"status='{self.status}')>"
+        )

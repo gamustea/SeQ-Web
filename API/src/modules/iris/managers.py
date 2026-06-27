@@ -11,11 +11,13 @@ Coordinates the analysis lifecycle:
 
 from __future__ import annotations
 
+import os
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import src.modules.system.config_reading as CR
+from src.modules.aegis.exceptions import DocumentNotFoundError
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
 from src.modules.system.taskqueue import ITaskQueue, TaskQueue, TaskTrackingMixin, job_context
@@ -27,11 +29,12 @@ from .exceptions import (
     IrisInvalidInputError,
     IrisInvalidStateError,
 )
-from .model import IrisAnalysis, IrisRuleResult
-from .repositories import IrisAnalysisRepository, IrisRuleResultRepository
+from .model import IrisAnalysis, IrisDocument, IrisRuleResult
+from .repositories import IrisAnalysisRepository, IrisReportRepository, IrisRuleResultRepository
 from .rules import iris_rules, RuleResult
 from .services import parse_raw_headers, parse_raw_message
 from .services.received_parser import build_path
+from .services.reports import IrisPDFCreator
 
 
 logger = logging.getLogger(__name__)
@@ -694,3 +697,160 @@ class IrisManager(TaskTrackingMixin):
         except Exception as e:
             logger.warning(f"Error checking cancellation for analysis {analysis_id}", exc_info=True)
         return False # type: ignore
+
+
+class IrisReportManager:
+    """Manager for IrisDocument lifecycle and async PDF report generation.
+
+    Mirrors ``SentinelReportManager``: creates an ``IrisDocument`` row in
+    ``running`` state, submits a TaskQueue job (category ``"iris.report"``)
+    that renders the PDF via :class:`IrisPDFCreator`, and exposes the
+    CRUD/ownership operations the endpoints need.
+    """
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
+
+    @staticmethod
+    def _create_document(analysis: IrisAnalysis) -> int:
+        """Create an IrisDocument for a finished analysis and return its ID."""
+        with UnitOfWork() as uow:
+            document = IrisDocument(
+                analysis_id=analysis.id,
+                document_type="iris",
+                filename="",
+                format="pdf",
+                status="running",
+                user_id=analysis.user_id,
+                verdict=analysis.verdict,
+                is_ai_generated=0,
+            )
+            IrisReportRepository(uow).save(document)
+        return document.id  # type: ignore
+
+    def get_document_by_id(self, document_id: int) -> Optional[IrisDocument]:
+        """Retrieve an IrisDocument by its primary key."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_by_id(document_id)
+
+    def get_latest_document_by_analysis_id(self, analysis_id: int) -> Optional[IrisDocument]:
+        """Retrieve the most recently created document for an analysis."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_latest_document(analysis_id)
+
+    def get_documents_for_user(self, user_id: int) -> List[IrisDocument]:
+        """Retrieve all documents belonging to a user."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_documents_by_user(user_id)
+
+    def get_documents_by_analysis_id(self, analysis_id: int) -> List[IrisDocument]:
+        """Retrieve all documents generated for a specific analysis."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_documents_by_analysis(analysis_id)
+
+    def delete_document(self, document_id: int) -> bool:
+        """Delete a document and its associated file on disk.
+
+        Raises:
+            DocumentNotFoundError: If the document was not found.
+        """
+        with UnitOfWork() as uow:
+            doc_repo = IrisReportRepository(uow)
+            doc = doc_repo.get_by_id(document_id)
+            if not doc:
+                raise DocumentNotFoundError(document_id)
+
+            if doc.filename and os.path.exists(doc.filename):  # type: ignore
+                try:
+                    os.remove(doc.filename)  # type: ignore
+                except (OSError, IOError) as e:
+                    logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}", exc_info=True)
+
+            doc_repo.delete(doc)
+        return True
+
+    def assert_document_ownership(self, document_id: int, user_id: int) -> IrisDocument:
+        """Verify document ownership and return the document.
+
+        Raises:
+            DocumentNotFoundError: If document not found or not owned by
+                user (same error for both cases to prevent ID enumeration).
+        """
+        session = get_db_session()
+        doc = IrisReportRepository(session=session).get_by_id(document_id)
+        if not doc or doc.user_id != user_id:  # type: ignore
+            raise DocumentNotFoundError(document_id)
+        return doc
+
+    def generate_report(self, analysis_id: int, user_id: int) -> int:
+        """Create an IrisDocument and start async PDF generation.
+
+        Args:
+            analysis_id: Primary key of the finished analysis.
+            user_id:     Owner of the analysis (ownership is verified here).
+
+        Returns:
+            Primary key of the created IrisDocument.
+
+        Raises:
+            IrisAnalysisNotFoundError: If the analysis does not exist or
+                is not owned by ``user_id``.
+            IrisAnalysisNotReadyError: If the analysis is not ``finished``.
+        """
+        analysis = IrisManager.assert_analysis_ownership(analysis_id, user_id)
+        if analysis.status != "finished":
+            raise IrisAnalysisNotReadyError(analysis_id, analysis.status)
+
+        doc_id = self._create_document(analysis)
+
+        self._tq.submit(
+            func=IrisReportManager.execute_report_generation,
+            args=(doc_id, analysis_id),
+            name=f"PDFGeneration-Analysis-{analysis_id}",
+            category="iris.report",
+            external_id=f"iris-doc:{doc_id}",
+        )
+        return doc_id  # type: ignore
+
+    @staticmethod
+    def execute_report_generation(doc_id: int, analysis_id: int) -> None:
+        """Entry point submitted to the TaskQueue for background PDF generation."""
+        IrisReportManager()._generate_pdf_async(doc_id, analysis_id)
+
+    def _generate_pdf_async(self, document_id: int, analysis_id: int) -> None:
+        """Generate the PDF in a background thread and update document status."""
+        try:
+            report = IrisManager().get_analysis_results(analysis_id)
+
+            session = get_db_session()
+            analysis = IrisAnalysisRepository(session=session).get_by_id(analysis_id)
+            path = None
+            if analysis is not None:
+                context = parse_raw_message(analysis.raw_headers or "")
+                path = {"analysisId": analysis_id, **build_path(context.received_headers)}
+
+            pdf_creator = IrisPDFCreator(report=report, path=path)
+            pdf_path = pdf_creator.print_pdf()
+
+            with UnitOfWork() as uow:
+                doc = IrisReportRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.filename = pdf_path  # type: ignore
+                    doc.status = "done"  # type: ignore
+                    doc.generated_at = datetime.utcnow()  # type: ignore
+
+            logger.info(f"PDF generado exitosamente para documento {document_id}")
+
+        except Exception as e:
+            logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
+            self._update_document_status(document_id, "error")
+
+    def _update_document_status(self, document_id: int, status: str) -> None:
+        """Update document status in database."""
+        try:
+            with UnitOfWork() as uow:
+                doc = IrisReportRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.status = status  # type: ignore
+        except Exception:
+            logger.exception(f"Error updating document status for document {document_id}")

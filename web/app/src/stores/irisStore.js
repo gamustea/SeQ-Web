@@ -20,6 +20,10 @@ export const useIrisStore = defineStore('iris', () => {
   const pathCache = reactive(new Map())
   const currentPath = reactive({ loading: false, data: null })
 
+  const documents = ref([])
+  const documentsLoading = ref(false)
+  const documentPollTimers = reactive(new Map())
+
   let pollTimer = null
 
   // Fase 2: si hay un mensaje completo (.eml arrastrado) se envía en
@@ -218,11 +222,100 @@ export const useIrisStore = defineStore('iris', () => {
     fetchResults()
   }
 
+  /* ════════════════════════════════ DOCUMENTOS (PDF) ════════════════════ */
+
+  /** Pone en cola la generación del informe PDF de un análisis finalizado. */
+  async function generateDocument(analysisId) {
+    const res = await apiFetch(`/iris/results/${analysisId}/document`, { method: 'POST' })
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => ({}))
+      toast.show(data.error_description || data.message || 'No se pudo generar el informe.', 'error')
+      return null
+    }
+    const data = await res.json()
+    toast.show('Generación de informe iniciada.', 'success')
+    await fetchDocuments(analysisId)
+    pollDocumentStatus(data.documentId, analysisId)
+    return data.documentId
+  }
+
+  /** Lista los documentos de un análisis concreto (terminados o no). */
+  async function fetchDocuments(analysisId) {
+    documentsLoading.value = true
+    try {
+      const res = await apiFetch(`/iris/results/${analysisId}/documents`)
+      if (!res?.ok) { documents.value = []; return }
+      const data = await res.json()
+      documents.value = data.documents ?? []
+    } finally {
+      documentsLoading.value = false
+    }
+  }
+
+  /** Consulta puntual de estado de un documento. */
+  async function getDocumentStatus(documentId) {
+    const res = await apiFetch(`/iris/document-status?documentId=${documentId}`)
+    if (!res?.ok) return null
+    return await res.json()
+  }
+
+  /** Sondea el estado de un documento en generación hasta que termine. */
+  function pollDocumentStatus(documentId, analysisId) {
+    if (documentPollTimers.has(documentId)) return
+    const timer = setInterval(async () => {
+      const st = await getDocumentStatus(documentId)
+      if (!st) return
+      if (st.status === 'done' || st.status === 'error') {
+        clearInterval(documentPollTimers.get(documentId))
+        documentPollTimers.delete(documentId)
+        await fetchDocuments(analysisId)
+      }
+    }, 2000)
+    documentPollTimers.set(documentId, timer)
+  }
+
+  /** Descarga un documento PDF por ID. */
+  async function downloadDocument(documentId) {
+    try {
+      const res = await apiFetch(`/iris/document/${documentId}/download`)
+      if (!res?.ok) { toast.show('No se pudo descargar el informe.', 'error'); return false }
+      const blob = await res.blob()
+      const cd = res.headers.get('Content-Disposition') ?? ''
+      const name = cd.match(/filename="?([^";\n]+)"?/i)?.[1] ?? `iris_analysis_${documentId}.pdf`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 1000)
+      toast.show('Informe descargado.', 'success')
+      return true
+    } catch (e) {
+      toast.show('Error al descargar: ' + e.message, 'error')
+      return false
+    }
+  }
+
+  /** Elimina un documento generado. */
+  async function deleteDocument(documentId, analysisId) {
+    const res = await apiFetch(`/iris/document/${documentId}`, { method: 'DELETE' })
+    if (!res?.ok) {
+      toast.show('No se pudo eliminar el informe.', 'error')
+      return false
+    }
+    toast.show('Informe eliminado.', 'success')
+    if (analysisId) await fetchDocuments(analysisId)
+    return true
+  }
+
   return {
     analyses, loading, submitting, totalCount, page, perPage,
     currentId, currentReport, currentStatus, currentPath, pathCache,
+    documents, documentsLoading,
     submitAnalysis, fetchResults, getReport, getStatus, pathFor,
     cancelAnalysis, deleteAnalysis, selectAnalysis, goToPage,
     startPolling, stopPolling,
+    generateDocument, fetchDocuments, getDocumentStatus, downloadDocument, deleteDocument,
   }
 })
