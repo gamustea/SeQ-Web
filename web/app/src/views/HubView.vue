@@ -153,7 +153,7 @@
               </svg>
             </div>
             <div class="stat-body">
-              <span class="stat-value">v3.0</span>
+              <span class="stat-value">v{{ appVersion }}</span>
               <span class="stat-label">Build</span>
             </div>
           </div>
@@ -222,7 +222,7 @@
             <p class="card-desc">Análisis de cabeceras de correo para detectar phishing mediante reglas de verificación.</p>
             <div class="card-meta">
               <span class="card-status status-active"><span class="status-dot"></span>Operativo</span>
-              <span class="card-info">5 reglas de análisis</span>
+              <span class="card-info">SPF, DKIM y DMARC</span>
             </div>
           </div>
           <span class="card-go" aria-hidden="true">→</span>
@@ -276,6 +276,8 @@ const profileStore = useProfileStore()
 
 const profileOpen = ref(false)
 const dropRef = ref(null)
+
+const appVersion = ref('…')
 
 const reduceMotion =
   typeof window !== 'undefined' &&
@@ -357,6 +359,11 @@ onMounted(() => {
   profileStore.loadProfile()
   tick()
   clockTimer = setInterval(tick, 1000)
+
+  fetch('/system/say-hello')
+    .then(r => r.json())
+    .then(d => { if (d.version) appVersion.value = d.version })
+    .catch(() => {})
 
   if (!reduceMotion) {
     glitchTimer = setInterval(() => {

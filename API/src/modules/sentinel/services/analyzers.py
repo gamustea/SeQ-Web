@@ -23,6 +23,24 @@ from src.modules.scribe.exceptions import AIResponseError
 from ..model import NmapScan, NiktoScan, OpenVASScan
 
 
+def _extract_json_with_regex(raw: str) -> Optional[dict]:
+    """Best-effort JSON recovery from a model response that failed ``json.loads``.
+
+    Tries a couple of regex patterns (a top-level ``{...}`` object and a fenced
+    ```` ```json ```` block) and returns the first one that parses, or ``None``
+    if none do. Shared by the AI writers' ``_parse_response`` fallback branches.
+    """
+    for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
+        match = re.search(pattern, raw, re.MULTILINE)
+        if match:
+            try:
+                json_str = match.group(1) if match.groups() else match.group()
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
 class NmapAIWriter:
     """AI writer for Nmap scan security analysis.
 
@@ -264,14 +282,9 @@ class NmapAIWriter:
         except json.JSONDecodeError:
             pass
 
-        for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
-            match = re.search(pattern, raw, re.MULTILINE)
-            if match:
-                try:
-                    json_str = match.group(1) if match.groups() else match.group()
-                    return json.loads(json_str)
-                except json.JSONDecodeError:
-                    continue
+        recovered = _extract_json_with_regex(raw)
+        if recovered is not None:
+            return recovered
 
         cleaned = re.sub(r'^[^{]*', '', raw)
         cleaned = re.sub(r'[^}]*$', '', cleaned)
@@ -467,14 +480,9 @@ class NiktoAIWriter:
 
             return result
         except json.JSONDecodeError:
-            for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
-                match = re.search(pattern, raw, re.MULTILINE)
-                if match:
-                    try:
-                        json_str = match.group(1) if match.groups() else match.group()
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        continue
+            recovered = _extract_json_with_regex(raw)
+            if recovered is not None:
+                return recovered
             raise AIResponseError(f"Respuesta inválida: {raw[:200]}", attempt=attempt)
 
 
@@ -666,12 +674,7 @@ class OpenVASAIWriter:
 
             return result
         except json.JSONDecodeError:
-            for pattern in [r'\{[\s\S]*?\}(?=\s*$)', r'```(?:json)?\s*([\s\S]*?)\s*```']:
-                match = re.search(pattern, raw, re.MULTILINE)
-                if match:
-                    try:
-                        json_str = match.group(1) if match.groups() else match.group()
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        continue
+            recovered = _extract_json_with_regex(raw)
+            if recovered is not None:
+                return recovered
             raise AIResponseError(f"Respuesta inválida: {raw[:200]}", attempt=attempt)

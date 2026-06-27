@@ -11,7 +11,7 @@ from typing import List, Tuple
 
 from src.modules.infrastructure import BaseRepository, UnitOfWork
 
-from .model import IrisAnalysis, IrisRuleResult
+from .model import IrisAnalysis, IrisRuleResult, IrisDocument
 
 
 class IrisAnalysisRepository(BaseRepository[IrisAnalysis]):
@@ -78,3 +78,37 @@ class IrisRuleResultRepository(BaseRepository[IrisRuleResult]):
         self._session.query(IrisRuleResult).filter(
             IrisRuleResult.analysis_id == analysis_id
         ).delete()
+
+
+class IrisReportRepository(BaseRepository[IrisDocument]):
+    """Data-access layer for IrisDocument records (generated PDF reports)."""
+
+    def __init__(self, uow: UnitOfWork | None = None, session=None) -> None:
+        super().__init__(IrisDocument, uow=uow, session=session)
+
+    def get_latest_document(self, analysis_id: int) -> IrisDocument | None:
+        """Return the most recently created document for an analysis."""
+        return (
+            self._session.query(IrisDocument)
+            .filter(IrisDocument.analysis_id == analysis_id)
+            .order_by(IrisDocument.created_at.desc())
+            .first()
+        )
+
+    def get_documents_by_user(self, user_id: int) -> List[IrisDocument]:
+        """Return all documents belonging to a user, newest first."""
+        return (
+            self._session.query(IrisDocument)
+            .filter(IrisDocument.user_id == user_id)
+            .order_by(IrisDocument.created_at.desc())
+            .all()
+        )
+
+    def get_documents_by_analysis(self, analysis_id: int) -> List[IrisDocument]:
+        """Return all documents generated for a specific analysis, newest first."""
+        return (
+            self._session.query(IrisDocument)
+            .filter(IrisDocument.analysis_id == analysis_id)
+            .order_by(IrisDocument.created_at.desc())
+            .all()
+        )

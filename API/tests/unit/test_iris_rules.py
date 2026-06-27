@@ -18,6 +18,8 @@ from src.modules.iris.rules.reply_to import check_reply_to
 from src.modules.iris.rules.msgid_domain import check_msgid_domain
 from src.modules.iris.rules.list_unsubscribe import check_list_unsubscribe
 from src.modules.iris.rules.alarming_keywords import check_alarming_keywords
+from src.modules.iris.rules.misspelled_brands import check_misspelled_brands
+from src.modules.iris.rules.content_type_check import check_content_type
 from src.modules.iris.rules.registry import RuleResult
 from src.modules.iris.managers import IrisManager
 
@@ -44,11 +46,12 @@ def test_spf_softfail_is_mildly_negative():
     assert -10 < result.score < 0
 
 
-def test_spf_missing_is_mildly_penalised():
-    # Absence of authentication is itself mildly suspicious (no longer neutral 0).
+def test_spf_missing_is_neutral():
+    # Under the subtractive model, *absence* of SPF data (e.g. a partial
+    # header paste) is not evidence of risk — only an SPF fail is. Neutral.
     result = check_spf({})
     assert result.verdict == "missing"
-    assert -5 <= result.score < 0
+    assert result.score == 0
 
 
 def test_spf_pass_bonus_is_small():
@@ -223,6 +226,42 @@ def test_msgid_domain_match_passes():
     assert result.verdict == "pass"
 
 
+def test_msgid_domain_known_esp_not_penalised():
+    # Legit ESP (Amazon SES) stamps its own Message-ID domain — not spoofing.
+    result = check_msgid_domain({
+        "from": "duolingo <hello@duolingo.com>",
+        "message-id": "<0100019f@email.amazonses.com>",
+    })
+    assert result.verdict == "pass"
+    assert result.score == 0
+
+
+# ------------------------------------------------------------- Misspelled brands
+
+def test_misspelled_brand_homoglyph_is_flagged():
+    # Real evasion technique: digit/symbol substitution.
+    result = check_misspelled_brands({"subject": "Your PayPa1 account", "from": "x@y.com"})
+    assert result.verdict == "fail"
+
+
+def test_misspelled_brand_ignores_common_word_aviso():
+    # "Aviso" (Spanish for "notice") must NOT be flagged as a typo of "visa".
+    result = check_misspelled_brands({
+        "subject": "Aviso: Nueva calificación publicada en el TFG",
+        "from": '"Campus Virtual UNIR" <notificaciones@unir.net>',
+    })
+    assert result.verdict == "pass"
+    assert result.score == 0
+
+
+# -------------------------------------------------------------- Content-Type check
+
+def test_content_type_plain_text_not_penalised():
+    # Plain-text-only is common in legit transactional mail — no penalty.
+    result = check_content_type({"content-type": "text/plain; charset=UTF-8"})
+    assert result.score == 0
+
+
 # ----------------------------------------------------------------- List-Unsubscribe
 
 def test_list_unsubscribe_is_legitimacy_signal():
@@ -278,3 +317,53 @@ def test_gating_never_improves_verdict():
     # A clean result set must not upgrade a Phishing baseline.
     named = {"SPF": _rr("pass"), "DKIM": _rr("pass"), "DMARC": _rr("pass")}
     assert IrisManager._apply_verdict_gates("Phishing", named) == "Phishing"
+
+
+def test_gating_forces_phishing_on_bec_from_free_provider():
+    # Clean-auth BEC (gmail sender, bank-change request) passes SPF/DKIM/DMARC
+    # trivially; the BEC + free-provider gate must override to Phishing.
+    named = {
+        "BEC Wire Transfer Pattern": _rr("fail", from_domain="gmail.com", reply_domain=None),
+        "SPF": _rr("pass"), "DKIM": _rr("pass"), "DMARC": _rr("pass"),
+    }
+    assert IrisManager._apply_verdict_gates("Legitimate", named) == "Phishing"
+
+
+def test_gating_caps_at_suspicious_on_corporate_bec():
+    # A BEC from a corporate (non-free) sender is at least Suspicious.
+    named = {"BEC Wire Transfer Pattern": _rr("fail", from_domain="acme.com", reply_domain="acme.com")}
+    assert IrisManager._apply_verdict_gates("Legitimate", named) == "Suspicious"
+
+
+def test_gating_forces_phishing_on_link_brand_impersonation():
+    # A fully-authenticated message whose body link impersonates a brand via
+    # subdomain trick (github.com.evil.com) must be gated to Phishing.
+    named = {
+        "Body Links": _rr("fail", types=["brand_impersonation"]),
+        "SPF": _rr("pass"), "DKIM": _rr("pass"), "DMARC": _rr("pass"),
+    }
+    assert IrisManager._apply_verdict_gates("Legitimate", named) == "Phishing"
+
+
+# ----------------------------------------------------- Subtractive scoring model
+
+def test_aggregate_score_clamps_positive_credits():
+    # Passing rules (positive scores) contribute nothing; only penalties count.
+    results = [
+        RuleResult(score=5, verdict="pass", details={}),
+        RuleResult(score=3, verdict="pass", details={}),
+        RuleResult(score=-15, verdict="fail", details={}),
+        RuleResult(score=-5, verdict="fail", details={}),
+    ]
+    # 100 + min(0,5) + min(0,3) + (-15) + (-5) == 80
+    assert IrisManager._aggregate_score(results) == 80
+
+
+def test_aggregate_score_clean_message_stays_at_ceiling():
+    results = [RuleResult(score=5, verdict="pass", details={}) for _ in range(10)]
+    assert IrisManager._aggregate_score(results) == 100
+
+
+def test_aggregate_score_floored_at_zero():
+    results = [RuleResult(score=-80, verdict="fail", details={}) for _ in range(3)]
+    assert IrisManager._aggregate_score(results) == 0

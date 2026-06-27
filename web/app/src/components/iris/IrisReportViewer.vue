@@ -90,7 +90,7 @@
               <span class="rule-category" v-if="rule.category">{{ rule.category }}</span>
             </div>
             <div class="rule-right">
-              <span class="rule-score" :class="scoreClass(rule.score)">{{ sign(rule.score) }}{{ rule.score }}</span>
+              <span class="rule-score" :class="scoreClass(rule.score, rule.verdict)">{{ sign(rule.score) }}{{ rule.score }}</span>
               <span class="rule-verdict" :class="`verdict-chip--${rule.verdict}`">{{ rule.verdict }}</span>
               <svg class="rule-chevron" :class="{ rotated: expandedRule === i }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
@@ -123,6 +123,23 @@
         </ul>
       </div>
 
+      <!-- Email path (Received chain) -->
+      <div v-if="pathVisible" class="rv-path">
+        <h3 class="section-title">Recorrido del correo</h3>
+        <div v-if="pathLoading" class="rv-path-loading">
+          <div class="spinner spinner--sm"></div>
+          <span>Cargando recorrido…</span>
+        </div>
+        <IrisEmailPath
+          v-else-if="pathData && pathData.available"
+          :hops="pathData.hops"
+          :transitions="pathData.transitions"
+        />
+        <p v-else class="rv-path-empty">
+          {{ pathData?.reason || 'Recorrido no disponible para este análisis.' }}
+        </p>
+      </div>
+
       <!-- Raw headers (collapsible) -->
       <div class="rv-raw">
         <button type="button" class="raw-toggle" @click="rawOpen = !rawOpen">
@@ -133,16 +150,32 @@
           <pre v-if="rawOpen" class="raw-block">{{ reportData.rawHeaders }}</pre>
         </Transition>
       </div>
+
+      <!-- Informes PDF -->
+      <IrisDocumentsPanel
+        :documents="irisStore.documents"
+        :loading="irisStore.documentsLoading"
+        :generating="generatingDocument"
+        :can-generate="reportData.status === 'finished'"
+        @refresh="refreshDocuments"
+        @generate="handleGenerateDocument"
+        @download="handleDownloadDocument"
+        @delete="handleDeleteDocument"
+      />
     </div>
 
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useUtils } from '@/composables/useUtils'
+import { useIrisStore } from '@/stores/irisStore'
+import IrisEmailPath from '@/components/iris/IrisEmailPath.vue'
+import IrisDocumentsPanel from '@/components/iris/IrisDocumentsPanel.vue'
 
 const { formatDate } = useUtils()
+const irisStore = useIrisStore()
 
 const props = defineProps({
   reportId: { type: [Number, null], default: null },
@@ -167,9 +200,10 @@ function sign(s) {
   return ''
 }
 
-function scoreClass(s) {
+function scoreClass(s, v) {
   if (s > 0) return 'score--pos'
   if (s < 0) return 'score--neg'
+  if (v === 'pass') return 'score--pos'
   return 'score--neutral'
 }
 
@@ -188,6 +222,61 @@ const statusLabel = computed(() => {
   if (v === 'phishing') return 'Phishing detectado'
   return ''
 })
+
+const pathData = computed(() => {
+  if (!props.reportId) return null
+  const cached = irisStore.pathCache.get(props.reportId)
+  if (cached) return cached
+  return irisStore.currentPath?.data?.analysisId === props.reportId
+    ? irisStore.currentPath.data
+    : null
+})
+const pathLoading = computed(() => {
+  if (!props.reportId) return false
+  return irisStore.currentPath?.loading && irisStore.currentPath?.data?.analysisId !== props.reportId
+})
+const pathVisible = computed(() => {
+  return props.status === 'finished' && !!props.reportId && (
+    pathData.value || pathLoading.value
+  )
+})
+
+/* ── Informes PDF ── */
+const generatingDocument = ref(false)
+
+function refreshDocuments() {
+  if (props.reportId) irisStore.fetchDocuments(props.reportId)
+}
+
+async function handleGenerateDocument() {
+  if (!props.reportId) return
+  generatingDocument.value = true
+  try {
+    await irisStore.generateDocument(props.reportId)
+  } finally {
+    generatingDocument.value = false
+  }
+}
+
+async function handleDownloadDocument(documentId) {
+  await irisStore.downloadDocument(documentId)
+}
+
+async function handleDeleteDocument(documentId) {
+  await irisStore.deleteDocument(documentId, props.reportId)
+}
+
+watch(
+  () => [props.reportId, props.reportData?.status],
+  ([id, status]) => {
+    if (id && status === 'finished') {
+      irisStore.fetchDocuments(id)
+    } else {
+      irisStore.documents = []
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>
@@ -359,10 +448,7 @@ const statusLabel = computed(() => {
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--text);
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .report-date {
@@ -797,5 +883,38 @@ const statusLabel = computed(() => {
   max-height: 0;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* Email path */
+.rv-path {
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-path-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.spinner--sm {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+.rv-path-empty {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-family: var(--font-mono);
+  text-align: center;
 }
 </style>

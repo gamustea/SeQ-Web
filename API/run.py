@@ -207,7 +207,7 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
 
     _logger.info("Inicializando documentación OpenAPI...")
     app.config["API_TITLE"]             = "SeQ API"
-    app.config["API_VERSION"]           = "3.2"
+    app.config["API_VERSION"]           = CR.get_app_version()
     app.config["OPENAPI_VERSION"]       = "3.0.3"
     app.config["OPENAPI_URL_PREFIX"]    = "/api-docs"
     app.config["OPENAPI_SWAGGER_UI_PATH"] = "/swagger"

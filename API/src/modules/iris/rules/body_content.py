@@ -37,15 +37,7 @@ _HIDDEN_TAG_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# Well-known, ubiquitous ESP/email-template patterns that legitimately hide
-# markup: preview/preheader text (shown only in the inbox list), responsive
-# show/hide breakpoints, and tracking-pixel/icon spacer wrappers. None of
-# these are scanner-evasion techniques, so they must not trip the rule.
-_BENIGN_HIDDEN_CLASS_RE = re.compile(
-    r'class\s*=\s*"[^"]*\b(preheader|preview-text|mobile-only|mobile-hidden|'
-    r"desktop-only|lg-hidden|sm-hidden|hidden-mobile|hidden-desktop|icon|spacer|tracking)\b",
-    re.IGNORECASE,
-)
+_HIDDEN_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=", re.IGNORECASE)
 
 
 def _strip_html(html: str) -> str:
@@ -64,21 +56,27 @@ def _strip_style_blocks(html: str) -> str:
 
 
 def _has_evasive_hidden_text(body_html: str) -> bool:
-    """Detect inline-hidden tags that hide *real, unlabelled text*.
+    """Detect inline-hidden tags that hide *malicious* content.
 
-    Email templates routinely hide markup on purpose: preheader/preview
-    text, responsive show/hide breakpoints, and zero-size tracking pixels
-    or icon spacers. Those are recognisable by their class name or by
-    containing no real text (just an ``<img>``), so they're skipped. What's
-    left — an inline ``display:none``/``font-size:0`` wrapper around plain
-    text with no such marker — is the classic scanner-evasion pattern this
-    rule targets.
+    Hiding markup is not, by itself, a phishing signal — virtually every
+    marketing email does it: the inbox preview/preheader snippet and its
+    zero-width-space spacer are wrapped in ``display:none``, responsive
+    layouts toggle ``display:none`` per breakpoint, and tracking pixels are
+    sized to zero. Flagging any hidden text produced constant false
+    positives on legitimate ESP mail.
+
+    So we only treat hidden content as evasive when it hides something that
+    matters: a **hyperlink** (a hidden link the victim can't see is a real
+    cloaking technique) or a **credential/payment phrase** (keyword-stuffed
+    or scanner-evading body text). Hidden prose, whitespace, ZWNJ padding or
+    images alone are ignored.
     """
     for match in _HIDDEN_TAG_RE.finditer(body_html):
-        if _BENIGN_HIDDEN_CLASS_RE.search(match.group("attrs")):
-            continue
-        inner_text = _strip_html(match.group("inner")).strip()
-        if inner_text:
+        inner = match.group("inner")
+        if _HIDDEN_LINK_RE.search(inner):
+            return True
+        inner_text = _strip_html(inner).lower()
+        if any(phrase in inner_text for phrase in CREDENTIAL_PHRASES):
             return True
     return False
 

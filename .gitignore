@@ -73,3 +73,8 @@ API/.coverage
 API/htmlcov/
 API/src/tmp
 .claude
+
+# ============================================
+# Análisis interno
+# ============================================
+MEJORAS.md

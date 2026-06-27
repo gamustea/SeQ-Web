@@ -11,11 +11,14 @@ Coordinates the analysis lifecycle:
 
 from __future__ import annotations
 
+import os
 import logging
+from dataclasses import replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import src.modules.system.config_reading as CR
+from src.modules.aegis.exceptions import DocumentNotFoundError
 from src.modules.infrastructure import UnitOfWork
 from src.modules.infrastructure.session import get_db_session
 from src.modules.system.taskqueue import ITaskQueue, TaskQueue, TaskTrackingMixin, job_context
@@ -27,10 +30,13 @@ from .exceptions import (
     IrisInvalidInputError,
     IrisInvalidStateError,
 )
-from .model import IrisAnalysis, IrisRuleResult
-from .repositories import IrisAnalysisRepository, IrisRuleResultRepository
+from .model import IrisAnalysis, IrisDocument, IrisRuleResult
+from .repositories import IrisAnalysisRepository, IrisReportRepository, IrisRuleResultRepository
 from .rules import iris_rules, RuleResult
+from .rules.display_name_spoof import FREE_PROVIDER_DOMAINS
 from .services import parse_raw_headers, parse_raw_message
+from .services.received_parser import build_path
+from .services.reports import IrisPDFCreator
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +47,22 @@ _CANCELLABLE_STATES = frozenset({"pending", "running"})
 # toward a *worse* category, never improve it.
 _VERDICT_ORDER = ["Legitimate", "Suspicious", "Phishing"]
 _VERDICT_SEVERITY = {v: i for i, v in enumerate(_VERDICT_ORDER)}
+
+# Subtractive risk model: an analysis starts from this clean ceiling and
+# rules can only *subtract* from it. A passing rule contributes nothing; a
+# failing rule subtracts its (negative) score. This removes the historical
+# "authentication cushion", where dozens of small positive credits (SPF/DKIM/
+# DMARC pass, etc.) buried a few strong phishing signals — a clean-auth BEC
+# from Gmail used to net *positive* despite a -23 risk payload underneath.
+_CEILING = 100.0
+
+
+def _is_free_provider(domain: Optional[str]) -> bool:
+    """True when *domain* is (a subdomain of) a known free webmail provider."""
+    if not domain:
+        return False
+    domain = domain.lower()
+    return any(domain == d or domain.endswith("." + d) for d in FREE_PROVIDER_DOMAINS)
 
 
 class IrisManager(TaskTrackingMixin):
@@ -211,6 +233,21 @@ class IrisManager(TaskTrackingMixin):
             "user": username,
             "rules": rules_data,
             "recommendations": recommendations,
+        }
+
+    def get_analysis_path(self, analysis_id: int, user_id: int) -> Dict[str, Any]:
+        """Return the parsed Received-chain path for an analysis.
+
+        The path is derived on demand from ``raw_headers`` — no extra
+        column is needed. Returns ``available: false`` for headers-only
+        submissions (no full ``.eml`` means no Received chain to
+        inspect).
+        """
+        analysis = self.assert_analysis_ownership(analysis_id, user_id)
+        context = parse_raw_message(analysis.raw_headers or "")
+        return {
+            "analysisId": analysis.id,
+            **build_path(context.received_headers),
         }
 
     def cancel_analysis(self, analysis_id: int, user_id: int) -> bool:
@@ -441,6 +478,13 @@ class IrisManager(TaskTrackingMixin):
                         recommendation=f"La regla '{rule_def['name']}' falló durante la ejecución.",
                     )
 
+                # Subtractive contract: a rule can only *subtract*. Whatever a
+                # rule returns on a pass (historically +5/+3/+1 "credibility"
+                # bonuses), the score it contributes — and the score shown in
+                # the UI — is clamped to <= 0. Passing a rule means "no
+                # deduction", never a bonus. The verdict/details are untouched.
+                result = replace(result, score=min(0.0, float(result.score)))
+
                 self._persist_rule_result(analysis_id, rule_def, result, idx)
                 results.append(result)
                 named_results[rule_def["name"]] = result
@@ -450,7 +494,7 @@ class IrisManager(TaskTrackingMixin):
                 if sq_task:
                     job.progress(progress)
 
-            total_score = sum(r.score for r in results)
+            total_score = self._aggregate_score(results)
             base_verdict = self._determine_verdict(total_score)
             verdict = self._apply_verdict_gates(base_verdict, named_results)
 
@@ -495,15 +539,27 @@ class IrisManager(TaskTrackingMixin):
         except Exception as e:
             logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}", exc_info=True)
 
+    @staticmethod
+    def _aggregate_score(results: List[RuleResult]) -> float:
+        """Combine per-rule results into a single 0–100 score.
+
+        Subtractive model: start at :data:`_CEILING` and add only the
+        *negative* part of each rule's score (``min(0, score)``), so passing
+        a rule never inflates the total. Clamped to ``[0, _CEILING]``.
+        """
+        penalties = sum(min(0.0, r.score) for r in results)
+        return max(0.0, _CEILING + penalties)
+
     def _determine_verdict(self, total_score: float) -> str:
-        """Map a numeric total score to a textual verdict.
+        """Map a numeric 0–100 score to a textual verdict.
 
-        Thresholds come from ``SecOpsConfig.json``:
-            - ``iris.legitimate_threshold`` (default 0)
-            - ``iris.suspicious_threshold``  (default -15)
+        Thresholds come from ``SecOpsConfig.json`` (0–100 subtractive scale):
+            - ``iris.legitimate_threshold`` (default 80)
+            - ``iris.suspicious_threshold``  (default 55)
 
-        This is only the additive baseline — high-confidence findings can
-        still override it via :meth:`_apply_verdict_gates`.
+        A clean message stays near 100; each failing rule subtracts. This is
+        only the numeric baseline — high-confidence findings can still push
+        the verdict to a worse category via :meth:`_apply_verdict_gates`.
         """
         legitimate = CR.get_iris_legitimate_threshold()
         suspicious = CR.get_iris_suspicious_threshold()
@@ -515,7 +571,134 @@ class IrisManager(TaskTrackingMixin):
         return "Phishing"
 
     @staticmethod
-    def _apply_verdict_gates(base_verdict: str,
+    def _extract_verdict_signals(named_results: Dict[str, RuleResult]) -> Dict[str, Any]:
+        """Reduce the per-rule results to the named booleans the gates need.
+
+        Centralises all the ``named_results.get(...)`` lookups so
+        :meth:`_evaluate_gates` can stay a pure boolean-combination function.
+        """
+        def res(name: str) -> Optional[RuleResult]:
+            return named_results.get(name)
+
+        def verdict_is(name: str, *verdicts: str) -> bool:
+            r = res(name)
+            return r is not None and r.verdict in verdicts
+
+        spf_fail = verdict_is("SPF", "fail", "hardfail")
+        dmarc_fail = verdict_is("DMARC", "fail")
+        align_fail = verdict_is("Domain Alignment", "fail")
+
+        spoof = res("Display Name Spoofing")
+        spoof_any = spoof is not None and spoof.verdict == "spoof"
+        spoof_free = spoof_any and bool(spoof.details.get("is_free_provider"))
+
+        bec = res("BEC Wire Transfer Pattern")
+        bec_fail = bec is not None and bec.verdict == "fail"
+        # A financial-action request whose sender (or reply target) sits on a
+        # free webmail provider is the textbook CEO-fraud / payroll-diversion
+        # pattern — it passes SPF/DKIM/DMARC trivially, so only the body and
+        # the free-provider tell give it away.
+        bec_free = bec_fail and (
+            _is_free_provider(bec.details.get("from_domain"))
+            or _is_free_provider(bec.details.get("reply_domain"))
+        )
+
+        body_links = res("Body Links")
+        link_types = (body_links.details.get("types") or []) if body_links is not None else []
+        body_links_failed = body_links is not None and body_links.verdict == "fail"
+        cloaked_link_any = body_links_failed and "cloaked_link" in link_types
+        link_impersonation = body_links_failed and "brand_impersonation" in link_types
+
+        path_anomaly = res("Received Path Anomaly")
+        path_anomaly_fail = path_anomaly is not None and path_anomaly.verdict == "fail"
+        path_signals = (
+            (path_anomaly.details.get("unique_signals") or [])
+            if path_anomaly is not None else []
+        )
+
+        return {
+            "spf_fail": spf_fail,
+            "dmarc_fail": dmarc_fail,
+            "align_fail": align_fail,
+            "lookalike": verdict_is("Lookalike Sender Domain", "fail"),
+            "attach": verdict_is("Suspicious Attachments", "fail"),
+            "replyfree": verdict_is("Reply-To Free Provider", "fail"),
+            "spoof_any": spoof_any,
+            "spoof_free": spoof_free,
+            "alarming_strong": verdict_is("Alarming Keywords", "alarming_high", "alarming_medium"),
+            "cloaked_link_any": cloaked_link_any,
+            "link_impersonation": link_impersonation,
+            "body_links_fail": verdict_is("Body Links", "fail"),
+            "body_content_fail": verdict_is("Body Content", "fail"),
+            "received_chain_fail": verdict_is("Received Chain", "fail"),
+            "path_tls_downgrade": path_anomaly_fail and "tls_downgrade" in path_signals,
+            "path_long_chain": path_anomaly_fail and "long_chain" in path_signals,
+            "auth_fail": spf_fail or dmarc_fail or align_fail,
+            "bec_fail": bec_fail,
+            "bec_free": bec_free,
+        }
+
+    @staticmethod
+    def _evaluate_gates(base_verdict: str, signals: Dict[str, Any]) -> tuple[str, list[str]]:
+        """Apply the high-confidence gates to ``signals`` and return the result.
+
+        Pure function: given the extracted signals, raises ``base_verdict`` to
+        a worse category whenever a gate fires, never improves it.
+
+        Returns:
+            Tuple of (final verdict, list of human-readable triggered reasons).
+        """
+        ceiling = _VERDICT_SEVERITY[base_verdict]
+        triggered: list[str] = []
+
+        def gate(condition: bool, level: str, reason: str) -> None:
+            nonlocal ceiling
+            if condition:
+                triggered.append(reason)
+                ceiling = max(ceiling, _VERDICT_SEVERITY[level])
+
+        spf_fail = signals["spf_fail"]
+        dmarc_fail = signals["dmarc_fail"]
+        align_fail = signals["align_fail"]
+        spoof_any = signals["spoof_any"]
+        alarming_strong = signals["alarming_strong"]
+        attach = signals["attach"]
+        body_links_fail = signals["body_links_fail"]
+        auth_fail = signals["auth_fail"]
+
+        # Single high-confidence indicators.
+        gate(signals["lookalike"], "Phishing", "lookalike sender domain")
+        gate(signals["spoof_free"], "Phishing", "brand impersonation from free provider")
+        gate(signals["cloaked_link_any"], "Phishing", "cloaked body link (visible domain differs from href)")
+        gate(signals["link_impersonation"], "Phishing", "body link impersonates a brand/sender via subdomain trick")
+        gate(spoof_any, "Suspicious", "display-name brand spoofing")
+        gate(align_fail, "Suspicious", "SPF/DKIM not aligned with From")
+        gate(attach, "Suspicious", "dangerous attachment")
+        gate(spf_fail or dmarc_fail, "Suspicious", "SPF/DMARC failure")
+        gate(signals["replyfree"], "Suspicious", "reply target is free webmail")
+        gate(body_links_fail, "Suspicious", "suspicious body links")
+        gate(signals["body_content_fail"], "Suspicious", "phishing phrasing or hidden text in body")
+        gate(signals["received_chain_fail"], "Suspicious", "Received chain anomaly")
+        gate(signals["bec_fail"], "Suspicious", "BEC financial-action request in body")
+
+        # Combinations that escalate to Phishing.
+        gate(signals["bec_free"], "Phishing",
+             "BEC financial-action request from a free-webmail sender/reply target")
+        gate(auth_fail and (spoof_any or alarming_strong), "Phishing",
+             "authentication failure combined with impersonation/urgency")
+        gate(attach and (auth_fail or spoof_any), "Phishing",
+             "dangerous attachment combined with authentication failure or spoofing")
+        gate(body_links_fail and (auth_fail or spoof_any), "Phishing",
+             "suspicious body links combined with authentication failure or spoofing")
+        gate(signals["path_tls_downgrade"] and auth_fail, "Suspicious",
+             "TLS downgrade in Received chain combined with authentication failure")
+        gate(signals["path_long_chain"] and auth_fail, "Suspicious",
+             "Unusually long Received chain combined with authentication failure")
+
+        return _VERDICT_ORDER[ceiling], triggered
+
+    @classmethod
+    def _apply_verdict_gates(cls, base_verdict: str,
                              named_results: Dict[str, RuleResult]) -> str:
         """Override the additive verdict when high-confidence signals fire.
 
@@ -532,64 +715,9 @@ class IrisManager(TaskTrackingMixin):
         Returns:
             The final verdict after applying all gates.
         """
-        ceiling = _VERDICT_SEVERITY[base_verdict]
-        triggered: list[str] = []
+        signals = cls._extract_verdict_signals(named_results)
+        final, triggered = cls._evaluate_gates(base_verdict, signals)
 
-        def gate(condition: bool, level: str, reason: str) -> None:
-            nonlocal ceiling
-            if condition:
-                triggered.append(reason)
-                ceiling = max(ceiling, _VERDICT_SEVERITY[level])
-
-        def res(name: str) -> Optional[RuleResult]:
-            return named_results.get(name)
-
-        def verdict_is(name: str, *verdicts: str) -> bool:
-            r = res(name)
-            return r is not None and r.verdict in verdicts
-
-        spf_fail = verdict_is("SPF", "fail", "hardfail")
-        dmarc_fail = verdict_is("DMARC", "fail")
-        align_fail = verdict_is("Domain Alignment", "fail")
-        lookalike = verdict_is("Lookalike Sender Domain", "fail")
-        attach = verdict_is("Suspicious Attachments", "fail")
-        replyfree = verdict_is("Reply-To Free Provider", "fail")
-        spoof = res("Display Name Spoofing")
-        spoof_any = spoof is not None and spoof.verdict == "spoof"
-        spoof_free = spoof_any and bool(spoof.details.get("is_free_provider"))
-        alarming_strong = verdict_is("Alarming Keywords", "alarming_high", "alarming_medium")
-        cloaked_link = res("Body Links")
-        cloaked_link_any = (
-            cloaked_link is not None and cloaked_link.verdict == "fail"
-            and "cloaked_link" in (cloaked_link.details.get("types") or [])
-        )
-        body_links_fail = verdict_is("Body Links", "fail")
-        body_content_fail = verdict_is("Body Content", "fail")
-        received_chain_fail = verdict_is("Received Chain", "fail")
-        auth_fail = spf_fail or dmarc_fail or align_fail
-
-        # Single high-confidence indicators.
-        gate(lookalike, "Phishing", "lookalike sender domain")
-        gate(spoof_free, "Phishing", "brand impersonation from free provider")
-        gate(cloaked_link_any, "Phishing", "cloaked body link (visible domain differs from href)")
-        gate(spoof_any, "Suspicious", "display-name brand spoofing")
-        gate(align_fail, "Suspicious", "SPF/DKIM not aligned with From")
-        gate(attach, "Suspicious", "dangerous attachment")
-        gate(spf_fail or dmarc_fail, "Suspicious", "SPF/DMARC failure")
-        gate(replyfree, "Suspicious", "reply target is free webmail")
-        gate(body_links_fail, "Suspicious", "suspicious body links")
-        gate(body_content_fail, "Suspicious", "phishing phrasing or hidden text in body")
-        gate(received_chain_fail, "Suspicious", "Received chain anomaly")
-
-        # Combinations that escalate to Phishing.
-        gate(auth_fail and (spoof_any or alarming_strong), "Phishing",
-             "authentication failure combined with impersonation/urgency")
-        gate(attach and (auth_fail or spoof_any), "Phishing",
-             "dangerous attachment combined with authentication failure or spoofing")
-        gate(body_links_fail and (auth_fail or spoof_any), "Phishing",
-             "suspicious body links combined with authentication failure or spoofing")
-
-        final = _VERDICT_ORDER[ceiling]
         if triggered and final != base_verdict:
             logger.info("Verdict gated %s -> %s (%s)", base_verdict, final, "; ".join(triggered))
         return final
@@ -624,3 +752,160 @@ class IrisManager(TaskTrackingMixin):
         except Exception as e:
             logger.warning(f"Error checking cancellation for analysis {analysis_id}", exc_info=True)
         return False # type: ignore
+
+
+class IrisReportManager:
+    """Manager for IrisDocument lifecycle and async PDF report generation.
+
+    Mirrors ``SentinelReportManager``: creates an ``IrisDocument`` row in
+    ``running`` state, submits a TaskQueue job (category ``"iris.report"``)
+    that renders the PDF via :class:`IrisPDFCreator`, and exposes the
+    CRUD/ownership operations the endpoints need.
+    """
+
+    def __init__(self, task_queue: ITaskQueue | None = None) -> None:
+        self._tq: ITaskQueue = task_queue or TaskQueue.get_instance()
+
+    @staticmethod
+    def _create_document(analysis: IrisAnalysis) -> int:
+        """Create an IrisDocument for a finished analysis and return its ID."""
+        with UnitOfWork() as uow:
+            document = IrisDocument(
+                analysis_id=analysis.id,
+                document_type="iris",
+                filename="",
+                format="pdf",
+                status="running",
+                user_id=analysis.user_id,
+                verdict=analysis.verdict,
+                is_ai_generated=0,
+            )
+            IrisReportRepository(uow).save(document)
+        return document.id  # type: ignore
+
+    def get_document_by_id(self, document_id: int) -> Optional[IrisDocument]:
+        """Retrieve an IrisDocument by its primary key."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_by_id(document_id)
+
+    def get_latest_document_by_analysis_id(self, analysis_id: int) -> Optional[IrisDocument]:
+        """Retrieve the most recently created document for an analysis."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_latest_document(analysis_id)
+
+    def get_documents_for_user(self, user_id: int) -> List[IrisDocument]:
+        """Retrieve all documents belonging to a user."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_documents_by_user(user_id)
+
+    def get_documents_by_analysis_id(self, analysis_id: int) -> List[IrisDocument]:
+        """Retrieve all documents generated for a specific analysis."""
+        session = get_db_session()
+        return IrisReportRepository(session=session).get_documents_by_analysis(analysis_id)
+
+    def delete_document(self, document_id: int) -> bool:
+        """Delete a document and its associated file on disk.
+
+        Raises:
+            DocumentNotFoundError: If the document was not found.
+        """
+        with UnitOfWork() as uow:
+            doc_repo = IrisReportRepository(uow)
+            doc = doc_repo.get_by_id(document_id)
+            if not doc:
+                raise DocumentNotFoundError(document_id)
+
+            if doc.filename and os.path.exists(doc.filename):  # type: ignore
+                try:
+                    os.remove(doc.filename)  # type: ignore
+                except (OSError, IOError) as e:
+                    logger.warning(f"No se pudo eliminar el archivo {doc.filename}: {e}", exc_info=True)
+
+            doc_repo.delete(doc)
+        return True
+
+    def assert_document_ownership(self, document_id: int, user_id: int) -> IrisDocument:
+        """Verify document ownership and return the document.
+
+        Raises:
+            DocumentNotFoundError: If document not found or not owned by
+                user (same error for both cases to prevent ID enumeration).
+        """
+        session = get_db_session()
+        doc = IrisReportRepository(session=session).get_by_id(document_id)
+        if not doc or doc.user_id != user_id:  # type: ignore
+            raise DocumentNotFoundError(document_id)
+        return doc
+
+    def generate_report(self, analysis_id: int, user_id: int) -> int:
+        """Create an IrisDocument and start async PDF generation.
+
+        Args:
+            analysis_id: Primary key of the finished analysis.
+            user_id:     Owner of the analysis (ownership is verified here).
+
+        Returns:
+            Primary key of the created IrisDocument.
+
+        Raises:
+            IrisAnalysisNotFoundError: If the analysis does not exist or
+                is not owned by ``user_id``.
+            IrisAnalysisNotReadyError: If the analysis is not ``finished``.
+        """
+        analysis = IrisManager.assert_analysis_ownership(analysis_id, user_id)
+        if analysis.status != "finished":
+            raise IrisAnalysisNotReadyError(analysis_id, analysis.status)
+
+        doc_id = self._create_document(analysis)
+
+        self._tq.submit(
+            func=IrisReportManager.execute_report_generation,
+            args=(doc_id, analysis_id),
+            name=f"PDFGeneration-Analysis-{analysis_id}",
+            category="iris.report",
+            external_id=f"iris-doc:{doc_id}",
+        )
+        return doc_id  # type: ignore
+
+    @staticmethod
+    def execute_report_generation(doc_id: int, analysis_id: int) -> None:
+        """Entry point submitted to the TaskQueue for background PDF generation."""
+        IrisReportManager()._generate_pdf_async(doc_id, analysis_id)
+
+    def _generate_pdf_async(self, document_id: int, analysis_id: int) -> None:
+        """Generate the PDF in a background thread and update document status."""
+        try:
+            report = IrisManager().get_analysis_results(analysis_id)
+
+            session = get_db_session()
+            analysis = IrisAnalysisRepository(session=session).get_by_id(analysis_id)
+            path = None
+            if analysis is not None:
+                context = parse_raw_message(analysis.raw_headers or "")
+                path = {"analysisId": analysis_id, **build_path(context.received_headers)}
+
+            pdf_creator = IrisPDFCreator(report=report, path=path)
+            pdf_path = pdf_creator.print_pdf()
+
+            with UnitOfWork() as uow:
+                doc = IrisReportRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.filename = pdf_path  # type: ignore
+                    doc.status = "done"  # type: ignore
+                    doc.generated_at = datetime.utcnow()  # type: ignore
+
+            logger.info(f"PDF generado exitosamente para documento {document_id}")
+
+        except Exception as e:
+            logger.error(f"Error generando PDF para documento {document_id}: {e}", exc_info=True)
+            self._update_document_status(document_id, "error")
+
+    def _update_document_status(self, document_id: int, status: str) -> None:
+        """Update document status in database."""
+        try:
+            with UnitOfWork() as uow:
+                doc = IrisReportRepository(uow).get_by_id(document_id)
+                if doc:
+                    doc.status = status  # type: ignore
+        except Exception:
+            logger.exception(f"Error updating document status for document {document_id}")

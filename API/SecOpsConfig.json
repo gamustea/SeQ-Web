@@ -145,7 +145,7 @@
       "sentinel": "ollama"
     }
   },
-  "appVersion": "3.0.0",
+  "appVersion": "3.2",
   "database": {
     "isolation_level": "READ COMMITTED"
   },
@@ -161,9 +161,12 @@
     }
   },
   "iris": {
-    "legitimate_threshold": 0,
+    "directories": {
+      "output": "data/iris/output"
+    },
+    "legitimate_threshold": 80,
     "min_headers": 2,
-    "suspicious_threshold": -15
+    "suspicious_threshold": 55
   },
   "redis": {
     "db": 0,

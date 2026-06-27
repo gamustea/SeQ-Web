@@ -1,11 +1,10 @@
 import logging
-import uuid
+import sys
 
 import psutil
 
 from flask_smorest import Blueprint as SmorestBlueprint
 from flask import request
-from marshmallow import ValidationError as MarshmallowValidationError
 
 from src.modules.users.services.permissions import Role
 from src.modules.shared._endpoints import limiter, current_actor
@@ -19,6 +18,7 @@ from src.modules.users import require_oauth_token, require_role
 from src.modules.system.taskqueue import TaskQueue, Task, TaskStatus
 from .schemas import (
     HelloResponseSchema,
+    SystemInfoSchema,
     SystemStatusSchema,
     TaskSchema,
     TaskListResponseSchema,
@@ -46,7 +46,24 @@ def hello():
     return {
         "message": "You did it! You reached an endpoint!",
         "status":  "ok",
-        "version": "3.2",
+        "version": CR.get_app_version(),
+    }
+
+
+@system_blp.get("/info")
+@system_blp.response(200, SystemInfoSchema, description="System information")
+@system_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@system_blp.alt_response(403, schema=ErrorSchema, description="Insufficient role")
+@limiter.limit("60 per minute")
+@require_oauth_token
+@require_role(minimum_role=Role.ADMIN)
+def system_info():
+    """Metainformacion de la aplicacion: version, entorno, etc."""
+    return {
+        "name": "SeQ",
+        "version": CR.get_app_version(),
+        "environment": "development" if CR.is_development() else "production",
+        "pythonVersion": sys.version,
     }
 
 

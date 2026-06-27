@@ -170,7 +170,7 @@ async function onDrop(e) {
     if (tooBig) {
       toast.show('Archivo muy grande: solo se cargaron las cabeceras.', 'info')
     } else {
-      toast.show(subject ? `Correo cargado · ${subject}` : 'Correo cargado.', 'success')
+      toast.show('Correo cargado.', 'success')
     }
   } catch {
     flashReject()

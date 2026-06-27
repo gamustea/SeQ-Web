@@ -14,7 +14,7 @@
         type="text"
         class="form-title"
         maxlength="120"
-        placeholder="Título opcional para identificar el análisis (ej: Correo de Amazon)"
+        placeholder="Título opcional para identificar el análisis (ej: Correo sospechoso)"
       />
       <textarea
         v-model="headers"
