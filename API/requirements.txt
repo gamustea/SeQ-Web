@@ -5,6 +5,7 @@ flask-cors>=4.0.0
 # Database & ORM
 SQLAlchemy>=2.0.23
 psycopg2-binary
+alembic>=1.13
 
 # PDF Generation
 reportlab>=4.0.7

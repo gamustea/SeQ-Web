@@ -128,7 +128,7 @@ def _worker_thread(worker_num: int):
     from run import create_app
     # create_app importa todos los módulos (blueprints), lo que dispara el
     # registro de categorías en QueueRegistry antes de construir las colas.
-    app = create_app(start_scheduler=False)
+    app = create_app(start_scheduler=False, run_migrations=False)
     with app.app_context():
         # blocking=True: el bucle del worker saca jobs con BLPOP; un
         # socket_timeout abortaría el dequeue bloqueante.
