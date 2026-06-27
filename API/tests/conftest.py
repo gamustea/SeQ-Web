@@ -191,7 +191,7 @@ def app(_initialized_db):
     # neutralizamos para no depender de un Redis real ni pagar su timeout.
     with mock.patch("redis.Redis.ping", return_value=True), \
          mock.patch("redis.Redis.close", return_value=None):
-        application = run.create_app(fresh_db_init=False, start_scheduler=False)
+        application = run.create_app(fresh_db_init=False, start_scheduler=False, run_migrations=False)
 
     application.config.update(TESTING=True)
 

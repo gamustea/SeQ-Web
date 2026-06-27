@@ -176,7 +176,7 @@ def _graceful_shutdown(signum, *args) -> None:
         )
     os._exit(0)
 
-def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Flask:
+def create_app(fresh_db_init: bool = False, start_scheduler: bool = True, run_migrations: bool = True) -> Flask:
     """
     Factory de la aplicación Flask SeQ.
 
@@ -232,7 +232,7 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
 
     if fresh_db_init:
         _init_db()
-    else:
+    elif run_migrations:
         _run_migrations()
 
     _logger.info("Inicializando base de datos...")
@@ -416,6 +416,9 @@ def _run_migrations() -> None:
     Safe to call on every startup: if the schema is already up to date,
     this is a no-op. Replaces the legacy ``Base.metadata.create_all()``
     which could not handle schema evolution (alter column, add table, etc.).
+
+    Only the main API process (``python run.py``) calls this — RQ workers
+    and tests pass ``run_migrations=False`` to ``create_app()``.
     """
     import os as _os
     from alembic.config import Config
