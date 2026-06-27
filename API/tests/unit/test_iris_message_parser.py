@@ -181,6 +181,38 @@ def test_body_content_passes_on_benign_text():
     assert result.verdict == "pass"
 
 
+def test_body_content_ignores_preheader_and_tracking_pixel_inline_styles():
+    # Real-world ESP pattern: a hidden "preheader" preview snippet, a
+    # zero-size tracking pixel, and a responsive show/hide cell — all
+    # inline display:none/font-size:0, none of it scanner-evasion.
+    html = (
+        '<div class="preheader" style="font-size: 1px; display: none !important;">'
+        "Te esperamos!</div>"
+        '<div style="font-size:0; line-height:0;"><img src="https://track.example.com/open"></div>'
+        '<td class="mobile-only" style="display: none;">'
+        '<img src="https://example.com/banner.png"></td>'
+    )
+    ctx = MessageContext(headers={}, body_text="Hola, nos vemos en el evento.", body_html=html)
+    result = check_body_content(ctx)
+    assert result.verdict == "pass"
+    assert result.score == 0
+
+
+def test_body_content_ignores_responsive_css_in_style_block():
+    # Standard ESP responsive-design CSS (show/hide breakpoints) must not be
+    # mistaken for evasive hidden text — it's a stylesheet rule, not content.
+    html = (
+        "<html><head><style>"
+        ".lg-hidden { display: none !important; opacity: 0 !important; }"
+        ".sm-hidden { display: table !important; opacity: 1 !important; }"
+        "</style></head><body><p>Hola equipo, aquí el boletín de mayo.</p></body></html>"
+    )
+    ctx = MessageContext(headers={}, body_text="Hola equipo, aquí el boletín de mayo.", body_html=html)
+    result = check_body_content(ctx)
+    assert result.verdict == "pass"
+    assert result.score == 0
+
+
 # --------------------------------------------------------------- Suspicious attachments (C11)
 
 def test_attachments_falls_back_to_headers_when_no_parts():
