@@ -65,16 +65,27 @@ def _find_typosquats(text: str) -> list[dict]:
             })
             continue
 
-        # Check single-character edits (insertion, deletion, substitution)
+        # Check for a genuine single-character typosquat. This branch is kept
+        # deliberately strict — a loose Levenshtein threshold matches ordinary
+        # words across languages (e.g. Spanish "aviso" is within 2 edits of
+        # "visa", "marca" of "amex", etc.), which floods legitimate mail with
+        # false positives. A real typosquat keeps the brand's first letter and
+        # differs by exactly one edit, so we require all of:
+        #   * brand length >= 5 (short brands like visa/ebay/amex/aws are
+        #     indistinguishable from common words at edit distance 1),
+        #   * same initial character,
+        #   * length difference <= 1,
+        #   * edit distance exactly 1.
+        # Homoglyph substitution (paypa1, g00gle) is handled above and remains
+        # the high-signal detector for the digit/symbol evasion technique.
         for brand in CANONICAL_BRANDS:
-            if len(brand) < 4:
+            if len(brand) < 5:
                 continue
-            # Skip if length difference > 2
-            if abs(len(word) - len(brand)) > 2:
+            if word[0] != brand[0]:
                 continue
-
-            # Check for common typos: double letters, missing letters
-            if _levenshtein(word, brand) <= 2:
+            if abs(len(word) - len(brand)) > 1:
+                continue
+            if _levenshtein(word, brand) == 1:
                 results.append({
                     "found": word,
                     "normalized": brand,

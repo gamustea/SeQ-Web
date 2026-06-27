@@ -447,10 +447,7 @@ watch(
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--text);
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .report-date {

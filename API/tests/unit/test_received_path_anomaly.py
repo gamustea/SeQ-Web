@@ -107,6 +107,29 @@ def test_tls_downgrade_multi_hop():
     assert len(result.details["tls_downgrade_hops"]) == 1
 
 
+def test_internal_by_only_handoff_is_not_a_downgrade():
+    # Final internal handoff ("Received: by <ip> with SMTP id ...", no `from`)
+    # after a TLS relay is normal Gmail/Outlook delivery, not a downgrade.
+    chain = [
+        f"by 2002:a05:6022:82a6 with SMTP id bf38csp45297lab; {TS1}",
+        f"from a69-17.smtp-out.amazonses.com [54.240.69.17] by mx.google.com with ESMTPS; {TS0}",
+    ]
+    result = check_received_path_anomaly(_ctx(chain))
+    assert result.verdict == "pass"
+    assert "tls_downgrade" not in result.details["unique_signals"]
+
+
+def test_https_handoff_is_encrypted_not_a_downgrade():
+    # Microsoft internal "with HTTPS" hop is encrypted, not a cleartext relay.
+    chain = [
+        f"from EX1.prod.outlook.com by EX2.prod.outlook.com with HTTPS; {TS1}",
+        f"from mail.sender.com [203.0.113.5] by mx.outlook.com with ESMTPS; {TS0}",
+    ]
+    result = check_received_path_anomaly(_ctx(chain))
+    assert result.verdict == "pass"
+    assert "tls_downgrade" not in result.details["unique_signals"]
+
+
 # ======================================================================
 # Long chain
 # ======================================================================

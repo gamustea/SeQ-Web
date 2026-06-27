@@ -39,10 +39,12 @@ def check_dkim(headers: dict) -> RuleResult:
         )
 
     if not dkim_header:
+        # A missing DKIM signature (or auth header not captured in the paste)
+        # is not evidence of risk on its own — only a DKIM *fail* is. Neutral.
         return RuleResult(
-            score=-3, verdict="missing",
+            score=0, verdict="missing",
             details={"dkim": "no DKIM-Signature header"},
-            recommendation="El correo no incluye firma DKIM. Sin esta firma, no se puede verificar la integridad del mensaje.",
+            recommendation="El correo no incluye firma DKIM. No se pudo verificar la integridad del mensaje.",
         )
 
     return RuleResult(

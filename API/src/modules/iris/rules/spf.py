@@ -76,8 +76,11 @@ def check_spf(headers: dict) -> RuleResult:
             recommendation="Error al consultar el registro SPF del dominio (error temporal o permanente de DNS).",
         )
 
+    # Absence of SPF data (common when headers are pasted/exported partially)
+    # is not itself evidence of risk under the subtractive model — only an
+    # actual SPF *fail* indicates spoofing. Stay neutral.
     return RuleResult(
-        score=-3, verdict="missing",
+        score=0, verdict="missing",
         details={"spf": "no SPF information found"},
-        recommendation="No se encontraron cabeceras SPF. Sin autenticación SPF, el correo puede ser falsificado fácilmente.",
+        recommendation="No se encontraron cabeceras SPF. No se pudo verificar la autenticación del remitente.",
     )

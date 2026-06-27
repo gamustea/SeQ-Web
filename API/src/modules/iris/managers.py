@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import logging
+from dataclasses import replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +33,7 @@ from .exceptions import (
 from .model import IrisAnalysis, IrisDocument, IrisRuleResult
 from .repositories import IrisAnalysisRepository, IrisReportRepository, IrisRuleResultRepository
 from .rules import iris_rules, RuleResult
+from .rules.display_name_spoof import FREE_PROVIDER_DOMAINS
 from .services import parse_raw_headers, parse_raw_message
 from .services.received_parser import build_path
 from .services.reports import IrisPDFCreator
@@ -45,6 +47,22 @@ _CANCELLABLE_STATES = frozenset({"pending", "running"})
 # toward a *worse* category, never improve it.
 _VERDICT_ORDER = ["Legitimate", "Suspicious", "Phishing"]
 _VERDICT_SEVERITY = {v: i for i, v in enumerate(_VERDICT_ORDER)}
+
+# Subtractive risk model: an analysis starts from this clean ceiling and
+# rules can only *subtract* from it. A passing rule contributes nothing; a
+# failing rule subtracts its (negative) score. This removes the historical
+# "authentication cushion", where dozens of small positive credits (SPF/DKIM/
+# DMARC pass, etc.) buried a few strong phishing signals — a clean-auth BEC
+# from Gmail used to net *positive* despite a -23 risk payload underneath.
+_CEILING = 100.0
+
+
+def _is_free_provider(domain: Optional[str]) -> bool:
+    """True when *domain* is (a subdomain of) a known free webmail provider."""
+    if not domain:
+        return False
+    domain = domain.lower()
+    return any(domain == d or domain.endswith("." + d) for d in FREE_PROVIDER_DOMAINS)
 
 
 class IrisManager(TaskTrackingMixin):
@@ -460,6 +478,13 @@ class IrisManager(TaskTrackingMixin):
                         recommendation=f"La regla '{rule_def['name']}' falló durante la ejecución.",
                     )
 
+                # Subtractive contract: a rule can only *subtract*. Whatever a
+                # rule returns on a pass (historically +5/+3/+1 "credibility"
+                # bonuses), the score it contributes — and the score shown in
+                # the UI — is clamped to <= 0. Passing a rule means "no
+                # deduction", never a bonus. The verdict/details are untouched.
+                result = replace(result, score=min(0.0, float(result.score)))
+
                 self._persist_rule_result(analysis_id, rule_def, result, idx)
                 results.append(result)
                 named_results[rule_def["name"]] = result
@@ -469,7 +494,7 @@ class IrisManager(TaskTrackingMixin):
                 if sq_task:
                     job.progress(progress)
 
-            total_score = sum(r.score for r in results)
+            total_score = self._aggregate_score(results)
             base_verdict = self._determine_verdict(total_score)
             verdict = self._apply_verdict_gates(base_verdict, named_results)
 
@@ -514,15 +539,27 @@ class IrisManager(TaskTrackingMixin):
         except Exception as e:
             logger.error(f"Failed to persist rule result for analysis {analysis_id}: {e}", exc_info=True)
 
+    @staticmethod
+    def _aggregate_score(results: List[RuleResult]) -> float:
+        """Combine per-rule results into a single 0–100 score.
+
+        Subtractive model: start at :data:`_CEILING` and add only the
+        *negative* part of each rule's score (``min(0, score)``), so passing
+        a rule never inflates the total. Clamped to ``[0, _CEILING]``.
+        """
+        penalties = sum(min(0.0, r.score) for r in results)
+        return max(0.0, _CEILING + penalties)
+
     def _determine_verdict(self, total_score: float) -> str:
-        """Map a numeric total score to a textual verdict.
+        """Map a numeric 0–100 score to a textual verdict.
 
-        Thresholds come from ``SecOpsConfig.json``:
-            - ``iris.legitimate_threshold`` (default 0)
-            - ``iris.suspicious_threshold``  (default -15)
+        Thresholds come from ``SecOpsConfig.json`` (0–100 subtractive scale):
+            - ``iris.legitimate_threshold`` (default 80)
+            - ``iris.suspicious_threshold``  (default 55)
 
-        This is only the additive baseline — high-confidence findings can
-        still override it via :meth:`_apply_verdict_gates`.
+        A clean message stays near 100; each failing rule subtracts. This is
+        only the numeric baseline — high-confidence findings can still push
+        the verdict to a worse category via :meth:`_apply_verdict_gates`.
         """
         legitimate = CR.get_iris_legitimate_threshold()
         suspicious = CR.get_iris_suspicious_threshold()
@@ -555,11 +592,22 @@ class IrisManager(TaskTrackingMixin):
         spoof_any = spoof is not None and spoof.verdict == "spoof"
         spoof_free = spoof_any and bool(spoof.details.get("is_free_provider"))
 
-        cloaked_link = res("Body Links")
-        cloaked_link_any = (
-            cloaked_link is not None and cloaked_link.verdict == "fail"
-            and "cloaked_link" in (cloaked_link.details.get("types") or [])
+        bec = res("BEC Wire Transfer Pattern")
+        bec_fail = bec is not None and bec.verdict == "fail"
+        # A financial-action request whose sender (or reply target) sits on a
+        # free webmail provider is the textbook CEO-fraud / payroll-diversion
+        # pattern — it passes SPF/DKIM/DMARC trivially, so only the body and
+        # the free-provider tell give it away.
+        bec_free = bec_fail and (
+            _is_free_provider(bec.details.get("from_domain"))
+            or _is_free_provider(bec.details.get("reply_domain"))
         )
+
+        body_links = res("Body Links")
+        link_types = (body_links.details.get("types") or []) if body_links is not None else []
+        body_links_failed = body_links is not None and body_links.verdict == "fail"
+        cloaked_link_any = body_links_failed and "cloaked_link" in link_types
+        link_impersonation = body_links_failed and "brand_impersonation" in link_types
 
         path_anomaly = res("Received Path Anomaly")
         path_anomaly_fail = path_anomaly is not None and path_anomaly.verdict == "fail"
@@ -579,12 +627,15 @@ class IrisManager(TaskTrackingMixin):
             "spoof_free": spoof_free,
             "alarming_strong": verdict_is("Alarming Keywords", "alarming_high", "alarming_medium"),
             "cloaked_link_any": cloaked_link_any,
+            "link_impersonation": link_impersonation,
             "body_links_fail": verdict_is("Body Links", "fail"),
             "body_content_fail": verdict_is("Body Content", "fail"),
             "received_chain_fail": verdict_is("Received Chain", "fail"),
             "path_tls_downgrade": path_anomaly_fail and "tls_downgrade" in path_signals,
             "path_long_chain": path_anomaly_fail and "long_chain" in path_signals,
             "auth_fail": spf_fail or dmarc_fail or align_fail,
+            "bec_fail": bec_fail,
+            "bec_free": bec_free,
         }
 
     @staticmethod
@@ -619,6 +670,7 @@ class IrisManager(TaskTrackingMixin):
         gate(signals["lookalike"], "Phishing", "lookalike sender domain")
         gate(signals["spoof_free"], "Phishing", "brand impersonation from free provider")
         gate(signals["cloaked_link_any"], "Phishing", "cloaked body link (visible domain differs from href)")
+        gate(signals["link_impersonation"], "Phishing", "body link impersonates a brand/sender via subdomain trick")
         gate(spoof_any, "Suspicious", "display-name brand spoofing")
         gate(align_fail, "Suspicious", "SPF/DKIM not aligned with From")
         gate(attach, "Suspicious", "dangerous attachment")
@@ -627,8 +679,11 @@ class IrisManager(TaskTrackingMixin):
         gate(body_links_fail, "Suspicious", "suspicious body links")
         gate(signals["body_content_fail"], "Suspicious", "phishing phrasing or hidden text in body")
         gate(signals["received_chain_fail"], "Suspicious", "Received chain anomaly")
+        gate(signals["bec_fail"], "Suspicious", "BEC financial-action request in body")
 
         # Combinations that escalate to Phishing.
+        gate(signals["bec_free"], "Phishing",
+             "BEC financial-action request from a free-webmail sender/reply target")
         gate(auth_fail and (spoof_any or alarming_strong), "Phishing",
              "authentication failure combined with impersonation/urgency")
         gate(attach and (auth_fail or spoof_any), "Phishing",

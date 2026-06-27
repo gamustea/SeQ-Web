@@ -118,11 +118,39 @@ def _detect_tls(line: str, with_value: Optional[str], protocol: Optional[str]) -
             return True
         if "TLS" in upper:
             return True
+        # HTTPS / internal Microsoft handoffs ("with HTTPS") are encrypted.
+        if "HTTPS" in upper:
+            return True
     if protocol and "TLS" in protocol.upper():
         return True
     if "version=TLS" in line:
         return True
     return False
+
+
+def _is_cleartext_smtp_relay(hop: Dict[str, Any]) -> bool:
+    """True only when a hop accepted mail over *unencrypted* SMTP/ESMTP.
+
+    A genuine TLS downgrade means an encrypted hop handed off to a hop that
+    received the message in clear text over SMTP *from another host*. The
+    final internal delivery hops (``with HTTPS``, ``with LMTP``, local
+    mailstore handoffs, ``Received: by ... with SMTP id`` notes that carry no
+    ``from``, or hops with no ``with`` token at all) are not cleartext relays
+    — treating their absence of a TLS marker as a "downgrade" was the source
+    of constant false positives on ordinary Gmail/Outlook-routed mail.
+    """
+    if hop.get("tls"):
+        return False
+    # A real inbound relay names the host it received *from*. A ``by``-only
+    # hop is an internal handoff, not a cleartext network relay.
+    if not hop.get("from"):
+        return False
+    with_value = (hop.get("with") or "").upper()
+    if not with_value:
+        return False
+    # ESMTP/SMTP without an "S" (already excluded by tls=False) is a real
+    # cleartext relay; LMTP/HTTP/local deliveries are not.
+    return with_value.startswith("ESMTP") or with_value.startswith("SMTP")
 
 
 def parse_received_line(line: str) -> Dict[str, Any]:
@@ -257,7 +285,7 @@ def build_path(received_headers: List[str]) -> Dict[str, Any]:
         delay = _delay_ms(prev_ts, curr_ts)
 
         reasons: List[str] = []
-        if prev_hop["tls"] and not curr_hop["tls"]:
+        if prev_hop["tls"] and _is_cleartext_smtp_relay(curr_hop):
             reasons.append("tls_downgrade")
         if delay is not None and delay < 0:
             reasons.append("time_inversion")

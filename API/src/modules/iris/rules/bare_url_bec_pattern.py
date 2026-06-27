@@ -83,7 +83,7 @@ def check_bec_wire_pattern(context) -> RuleResult:
         reply_domain and reply_domain != from_domain
     )
 
-    base = -12
+    base = -15
     if len(matches) >= 2:
         base -= 6
     if suspicious_redirect:

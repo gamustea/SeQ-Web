@@ -139,6 +139,32 @@ def test_body_links_flags_known_shortener():
     assert "shortener" in result.details["types"]
 
 
+def test_body_links_flags_brand_subdomain_impersonation():
+    # github.com.<evil> — brand used as a subdomain of an attacker domain.
+    # Visible text carries no domain, so only host-based detection catches it.
+    raw = (
+        "From: GitHub <noreply@github.com>\r\nSubject: Re: token\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n\r\n"
+        "<a href=\"https://github.com.sessions-security.com/x\">Review and rotate token</a>\r\n"
+    )
+    ctx = parse_raw_message(raw)
+    result = check_body_links(ctx)
+    assert result.verdict == "fail"
+    assert "brand_impersonation" in result.details["types"]
+
+
+def test_body_links_legit_brand_subdomain_passes():
+    # app.slack.com is a genuine subdomain of the sender's domain — not impersonation.
+    raw = (
+        "From: Slack <feedback@slack.com>\r\nSubject: Unread\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n\r\n"
+        "<a href=\"https://app.slack.com/client\">open Slack</a>\r\n"
+    )
+    ctx = parse_raw_message(raw)
+    result = check_body_links(ctx)
+    assert result.verdict == "pass"
+
+
 def test_body_links_passes_when_clean():
     raw = (
         "From: a@b.com\r\nSubject: Hi\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
@@ -164,15 +190,39 @@ def test_body_content_flags_credential_phrase():
     assert result.score < 0
 
 
-def test_body_content_flags_hidden_text():
+def test_body_content_flags_hidden_link():
+    # Hidden text only counts as evasive when it conceals something that
+    # matters — here a hidden hyperlink the victim cannot see.
     ctx = MessageContext(
         headers={},
         body_text="Hello, this is a normal message.",
-        body_html='<div style="font-size:0px">hidden tracking text</div>',
+        body_html='<div style="display:none"><a href="http://evil.example/login">x</a></div>',
     )
     result = check_body_content(ctx)
     assert result.verdict == "fail"
     assert result.details["hidden_text"] is True
+
+
+def test_body_content_flags_hidden_credential_phrase():
+    ctx = MessageContext(
+        headers={},
+        body_text="Hello",
+        body_html='<span style="font-size:0px">verify your password now</span>',
+    )
+    result = check_body_content(ctx)
+    assert result.verdict == "fail"
+
+
+def test_body_content_ignores_hidden_plain_text():
+    # Pure hidden prose with no link/phrase is the legitimate preheader
+    # pattern used by virtually every ESP — must NOT be flagged.
+    ctx = MessageContext(
+        headers={},
+        body_text="Hello, this is a normal message.",
+        body_html='<div style="display:none">Take a look at your weekly stats.</div>',
+    )
+    result = check_body_content(ctx)
+    assert result.verdict == "pass"
 
 
 def test_body_content_passes_on_benign_text():

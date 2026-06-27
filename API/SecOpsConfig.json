@@ -164,9 +164,9 @@
     "directories": {
       "output": "data/iris/output"
     },
-    "legitimate_threshold": 0,
+    "legitimate_threshold": 80,
     "min_headers": 2,
-    "suspicious_threshold": -15
+    "suspicious_threshold": 55
   },
   "redis": {
     "db": 0,

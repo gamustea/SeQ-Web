@@ -13,7 +13,8 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from .registry import iris_rules, RuleResult
+from .registry import iris_rules, RuleResult, extract_domain, registrable_domain
+from .subdomain_impersonation import find_brand_in_subdomain
 
 _DOMAIN_IN_TEXT_RE = re.compile(
     r"\b((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})\b",
@@ -54,6 +55,8 @@ def check_body_links(context) -> RuleResult:
     if not links:
         return RuleResult(score=0, verdict="neutral", details={"link_count": 0})
 
+    sender_domain = registrable_domain(extract_domain(context.headers.get("from", "")))
+
     findings: list[dict] = []
     score = 0
     seen_types: set[str] = set()
@@ -62,6 +65,30 @@ def check_body_links(context) -> RuleResult:
         host = _host(link.href)
         if not host:
             continue
+
+        # Brand-as-subdomain impersonation: a known brand (or the sender's own
+        # domain) appears as a left-hand label while the real registrable
+        # domain is someone else's — e.g. ``github.com.sessions-security.com``.
+        # This is the highest-confidence body-link phishing signal and the
+        # most common one missed by visible-text cloak detection (the visible
+        # text often carries no domain at all).
+        brand_hit = find_brand_in_subdomain(host)
+        host_reg = registrable_domain(host)
+        sender_impersonation = bool(
+            sender_domain
+            and host_reg != sender_domain
+            and ("." + sender_domain + ".") in ("." + host + ".")
+        )
+        if brand_hit or sender_impersonation:
+            findings.append({
+                "type": "brand_impersonation",
+                "href": link.href,
+                "host": host,
+                "real_domain": host_reg,
+                "impersonates": (brand_hit or {}).get("brand") or sender_domain,
+            })
+            seen_types.add("brand_impersonation")
+            score -= 20
 
         if any(label.startswith("xn--") for label in host.split(".")):
             findings.append({"type": "punycode", "href": link.href})

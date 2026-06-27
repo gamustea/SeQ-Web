@@ -61,8 +61,11 @@ def check_dmarc(headers: dict) -> RuleResult:
             recommendation=None,
         )
 
+    # No DMARC line found — often just absent from a partial header paste.
+    # Not a risk signal by itself under the subtractive model; only a
+    # dmarc=fail / dmarc=none is. Stay neutral.
     return RuleResult(
-        score=-3, verdict="missing",
+        score=0, verdict="missing",
         details={"dmarc": "no DMARC information found"},
-        recommendation="No se encontró información DMARC. El dominio remitente no tiene protección contra suplantación.",
+        recommendation="No se encontró información DMARC en las cabeceras proporcionadas.",
     )

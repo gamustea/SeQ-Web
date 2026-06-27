@@ -43,6 +43,32 @@ def _is_trusted_brand_domain(domain: str) -> bool:
     return label in CANONICAL_BRANDS
 
 
+def find_brand_in_subdomain(domain: str) -> dict | None:
+    """Detect a known brand used as a *non-registrable* label of ``domain``.
+
+    ``github.com.sessions-security.com`` -> brand ``github`` appears to the
+    left while the real registrable domain is ``sessions-security.com``. This
+    is the brand-as-subdomain deception, reusable for both the From domain
+    and body-link hosts. Returns ``{"brand", "label"}`` or ``None`` when the
+    domain genuinely belongs to the brand (or no brand is embedded).
+    """
+    if not domain or "xn--" in domain:
+        return None
+    labels = [l for l in domain.lower().strip(".").split(".") if l]
+    if len(labels) < 3:
+        return None
+    if _registrable_label(domain) in CANONICAL_BRANDS:
+        return None  # genuinely the brand's own domain (e.g. mail.github.com)
+    pre_labels = (
+        labels[:-3] if ".".join(labels[-2:]) in _MULTI_LEVEL_TLDS else labels[:-2]
+    )
+    for lbl in pre_labels:
+        for token in re.split(r"[^a-z0-9]+", lbl):
+            if token in CANONICAL_BRANDS:
+                return {"brand": token, "label": lbl}
+    return None
+
+
 @iris_rules.register(
     name="Subdomain Impersonation",
     category="header_analysis",

@@ -565,13 +565,15 @@ def get_iris_config() -> dict:
 
 @_lazy_load
 def get_iris_legitimate_threshold() -> float:
+    # 0–100 subtractive scale: >= 80 is Legitimate (see IrisManager._aggregate_score).
     cfg = get_iris_config()
-    return float(cfg.get("legitimate_threshold", 0))
+    return float(cfg.get("legitimate_threshold", 80))
 
 @_lazy_load
 def get_iris_suspicious_threshold() -> float:
+    # 0–100 subtractive scale: >= 55 is Suspicious, below is Phishing.
     cfg = get_iris_config()
-    return float(cfg.get("suspicious_threshold", -15))
+    return float(cfg.get("suspicious_threshold", 55))
 
 @_lazy_load
 def get_iris_min_headers() -> int:
