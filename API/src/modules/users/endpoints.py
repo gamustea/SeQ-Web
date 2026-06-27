@@ -55,6 +55,27 @@ def get_current_user() -> "User":
     return request.current_user  # type: ignore
 
 
+def _serialize_user_profile(user: "User", *, include_attributes: bool = False) -> dict[str, Any]:
+    """Construye el dict de perfil de usuario compartido por los endpoints.
+
+    Args:
+        user: instancia ORM de ``User``.
+        include_attributes: si True, añade la lista de nombres de atributos ABAC.
+    """
+    profile: dict[str, Any] = {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": user.role,
+        "created_at": user.created_at,
+    }
+    if include_attributes:
+        profile["attributes"] = [a.attribute_name for a in user.attributes]
+    return profile
+
+
 # =========================================================================
 # OAUTH ENDPOINTS
 # =========================================================================
@@ -204,15 +225,7 @@ def change_password(data: dict[str, Any]):
 def get_current_profile():
     """Obtener el perfil del usuario autenticado"""
     user = get_current_user()
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "role": user.role,
-        "created_at": user.created_at,
-    }
+    return _serialize_user_profile(user)
 
 
 @users_blp.put("/me")
@@ -230,15 +243,7 @@ def update_current_profile(data: dict[str, Any]):
     user = get_current_user()
     user = USER_MANAGER.update_user_profile(user.id, first_name, last_name)
 
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "role": user.role,
-        "created_at": user.created_at,
-    }
+    return _serialize_user_profile(user)
 
 
 @users_blp.post("/sign-up")
@@ -291,19 +296,7 @@ def sign_up_user(data: dict[str, Any]):
 def list_all_users():
     """Listar todos los usuarios del sistema con sus atributos"""
     users = USER_MANAGER.get_all_users()
-    result = []
-    for user in users:
-        result.append({
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "role": user.role,
-            "created_at": user.created_at,
-            "attributes": [a.attribute_name for a in user.attributes],
-        })
-    return result
+    return [_serialize_user_profile(user, include_attributes=True) for user in users]
 
 
 @users_blp.get("/<int:target_user_id>/attributes")

@@ -66,10 +66,15 @@ Thumbs.db
 # ============================================
 *.pdf
 .pritierrc.json
+package-lock.json
 API/.mypy_cache/
 API/.pytest_cache/
 API/.coverage
 API/htmlcov/
 API/src/tmp
-PLAN_MEJORAS.md
 .claude
+
+# ============================================
+# Análisis interno
+# ============================================
+MEJORAS.md

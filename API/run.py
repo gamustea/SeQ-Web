@@ -30,7 +30,8 @@ from flask_smorest          import Api as FlaskSmorestApi
 from sqlalchemy             import create_engine, text
 from urllib.parse           import quote_plus
 
-from src.modules.shared     import BaseManager, Base, limiter
+from src.modules.shared     import limiter
+from src.modules.infrastructure import unit_of_work
 from src.modules.shared._exceptions import (
     MissingParameterError,
     MissingJsonBodyError,
@@ -135,7 +136,7 @@ def _run_shutdown_cleanup() -> None:
 
     _logger.info("[Shutdown] Cerrando sesiones de base de datos...")
     try:
-        BaseManager.close_all_sessions()
+        unit_of_work.close_all()
     except Exception as e:
         _logger.error(f"Error cerrando sesiones de BD: {e}")
 
@@ -175,7 +176,7 @@ def _graceful_shutdown(signum, *args) -> None:
         )
     os._exit(0)
 
-def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Flask:
+def create_app(fresh_db_init: bool = False, start_scheduler: bool = True, run_migrations: bool = True) -> Flask:
     """
     Factory de la aplicación Flask SeQ.
 
@@ -206,7 +207,7 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
 
     _logger.info("Inicializando documentación OpenAPI...")
     app.config["API_TITLE"]             = "SeQ API"
-    app.config["API_VERSION"]           = "3.2"
+    app.config["API_VERSION"]           = CR.get_app_version()
     app.config["OPENAPI_VERSION"]       = "3.0.3"
     app.config["OPENAPI_URL_PREFIX"]    = "/api-docs"
     app.config["OPENAPI_SWAGGER_UI_PATH"] = "/swagger"
@@ -231,14 +232,22 @@ def create_app(fresh_db_init: bool = False, start_scheduler: bool = True) -> Fla
 
     if fresh_db_init:
         _init_db()
+    elif run_migrations:
+        _run_migrations()
 
     _logger.info("Inicializando base de datos...")
-    engine = BaseManager._initialize_engine()
-    Base.metadata.create_all(engine)
-    BaseManager.warmup_connection()
+    engine = unit_of_work.initialize()
+    unit_of_work.warmup()
 
     _logger.info("Configurando sesión por-request...")
-    from src.modules.infrastructure.session import shutdown_request_session
+    from src.modules.infrastructure.session import (
+        init_request_session,
+        shutdown_request_session,
+    )
+    # Abrir la sesión al inicio de la petición (no de forma perezosa) hace que
+    # un fallo de conexión se detecte pronto, y garantiza que g.db_session
+    # exista para que UnitOfWork la comparta de forma consistente.
+    app.before_request(init_request_session)
     app.teardown_request(shutdown_request_session)
 
     if start_scheduler:
@@ -400,6 +409,25 @@ def _register_request_audit(app: Flask) -> None:
         )
         return response
 
+def _run_migrations() -> None:
+    """
+    Run all pending Alembic migrations against the database.
+
+    Safe to call on every startup: if the schema is already up to date,
+    this is a no-op. Replaces the legacy ``Base.metadata.create_all()``
+    which could not handle schema evolution (alter column, add table, etc.).
+
+    Only the main API process (``python run.py``) calls this — RQ workers
+    and tests pass ``run_migrations=False`` to ``create_app()``.
+    """
+    import os as _os
+    from alembic.config import Config
+    from alembic import command
+
+    cfg = Config(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "alembic.ini"))
+    command.upgrade(cfg, "head")
+
+
 def _init_db() -> None:
     """
     Inicializa la base de datos completa de SeQ desde cero.
@@ -410,7 +438,7 @@ def _init_db() -> None:
     1. Conexión a PostgreSQL con AUTOCOMMIT.
     2. Eliminación de conexiones activas a la DB.
     3. DROP DATABASE IF EXISTS + CREATE DATABASE.
-    4. Conexión a la nueva DB y creación de tablas via SQLAlchemy.
+    4. Aplica migraciones Alembic (crea todas las tablas).
     5. Inserción de usuario root por defecto.
     6. Inserción de temas iniciales de concienciación (Topics).
 
@@ -458,11 +486,11 @@ def _init_db() -> None:
 
     engine_postgres.dispose()
 
+    _run_migrations()
+
     database_url = f"{dialect}://{username}:{quote_plus(password)}@{host}:{port}/{dbname}"
     engine = create_engine(database_url)
 
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
     root_password_hash = _hash_password("root")
     with engine.connect() as conn:
         conn.execute(

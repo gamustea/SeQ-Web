@@ -47,6 +47,16 @@ from .queue import QueueRegistry
 _workers = []
 _workers_lock = threading.Lock()
 
+# TTL del registro de cada worker en Redis (clave ``rq:worker:<name>``).
+# RQ lo refresca con cada heartbeat; si el worker muere de forma abrupta
+# (kill -9, contenedor reiniciado con otro hostname) la clave caduca como mucho
+# este tiempo después del último heartbeat y deja de contarse como "vivo". El
+# valor por defecto de RQ (420 s) hacía que los "workers fantasma" inflaran el
+# contador durante ~8 min; con 120 s la ventana baja a ~3 min y el panel
+# "X / max workers" se auto-sanea mucho antes. Es especialmente importante en
+# despliegue por contenedores, donde el PID no es verificable cross-host.
+_WORKER_TTL_SECONDS = 120
+
 
 class _ThreadSafeWorker(SimpleWorker):
     """SimpleWorker que evita usar señales fuera del hilo principal.
@@ -65,6 +75,22 @@ class _ThreadSafeWorker(SimpleWorker):
     def _install_signal_handlers(self):
         pass
 
+    def perform_job(self, job, queue):
+        """Ejecuta el job y limpia la sesión scoped del hilo al terminar.
+
+        Los hilos de worker viven indefinidamente y ``scoped_session`` está
+        keyed por hilo, así que la misma ``Session`` se reutilizaría entre
+        jobs. Sin esta limpieza, un job que deje la transacción en estado
+        abortado (``PendingRollbackError``) u objetos colgando en la
+        identity-map envenenaría el siguiente job del mismo hilo. Este es el
+        único choke-point por el que pasan todos los tipos de job, por lo que
+        ``close_all()`` aquí cubre nmap/nikto/openvas/aegis/iris.
+        """
+        try:
+            return super().perform_job(job, queue)
+        finally:
+            from src.modules.infrastructure.unit_of_work import close_all
+            close_all()
 
 def _worker_thread(worker_num: int):
     """Hilo de trabajo independiente que escucha y ejecuta jobs de una o más colas.
@@ -102,14 +128,14 @@ def _worker_thread(worker_num: int):
     from run import create_app
     # create_app importa todos los módulos (blueprints), lo que dispara el
     # registro de categorías en QueueRegistry antes de construir las colas.
-    app = create_app(start_scheduler=False)
+    app = create_app(start_scheduler=False, run_migrations=False)
     with app.app_context():
         # blocking=True: el bucle del worker saca jobs con BLPOP; un
         # socket_timeout abortaría el dequeue bloqueante.
         conn = RedisConnectionFactory.raw(blocking=True)
         queues = [Queue(name, connection=conn) for name in QueueRegistry.names()]
         worker_name = f"worker-{worker_num}-{uuid.uuid4().hex[:8]}"
-        worker = _ThreadSafeWorker(queues, name=worker_name)
+        worker = _ThreadSafeWorker(queues, name=worker_name, worker_ttl=_WORKER_TTL_SECONDS)
         with _workers_lock:
             _workers.append(worker)
         try:
@@ -134,7 +160,6 @@ def _stop_workers():
                 worker.register_death()
             except Exception as exc:
                 logging.warning("Failed to deregister worker %s: %s", worker.name, exc)
-
 
 def _purge_dead_workers() -> None:
     """Reconcilia el registro ``rq:workers`` eliminando workers ya muertos.
@@ -222,6 +247,10 @@ def start_worker() -> None:
 
     taskqueue_cfg = CR.get_taskqueue_config()
     max_workers = int(taskqueue_cfg.get("max_workers", 4))
+    # Nota: max_workers se lee solo aquí, al arrancar el proceso worker. Si se
+    # cambia vía PUT /system/tasks/config, el cambio entra en vigor solo cuando
+    # se reinicia este proceso (contenedor docker-compose up, o Ctrl+C + python -m).
+    # El API process hablará de nuevos max_workers, pero este worker no lo sabe.
 
     if max_workers == 1:
         try:

@@ -409,19 +409,6 @@ class NiktoResultProcessor(ScanResultProcessor):
             logger.error(f"Error parseando XML Nikto: {e}")
             return []
 
-    def _normalize_parsed(self, parsed: dict) -> dict:
-        """Normaliza el dict parseado para que siempre tenga la estructura esperada por _extract_nikto_items."""
-        niktoscan = parsed.get('niktoscan', {})
-        if 'scandetails' not in niktoscan:
-            for key, value in niktoscan.items():
-                if isinstance(value, dict) and 'item' in value:
-                    return {'niktoscan': {**niktoscan, 'scandetails': value}}
-                if isinstance(value, list) and value and isinstance(value[0], dict):
-                    first = value[0]
-                    if 'item' in first or 'scandetails' in first:
-                        return {'niktoscan': {**niktoscan, 'scandetails': {**niktoscan, key: value}}}
-        return parsed
-
 
 class OpenVASResultProcessor(ScanResultProcessor):
     """Procesa resultados de escaneos OpenVAS/GVM."""

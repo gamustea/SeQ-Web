@@ -1,0 +1,151 @@
+{
+  "cases": [
+    {
+      "kdf": "Argon2",
+      "masterPassword": "Master-Argon2-123!",
+      "username": "alice",
+      "vault": {
+        "version": 1,
+        "checker": "pqRf95CEXIxz5DkSjHBEif112ksY1oKgRS5BQFdP/RI89fi5zdLiCkQ6+dVW0y9TINaI1uCVBwtorHhDqnmlRx6tJA4AKuUoEb+1l8WsXZjQ0L8e08PfqPNsRDk\u003d",
+        "vaultKey": "bt3DVXvv5nooAYFpYgJ7qXITmnnYORt8dvU3Ja5avFnLLmCVuPrER/4v3/0/wpkRnnDumwgtP4+KYndhOzmoPLGB6e/PikAS",
+        "algorithm": {
+          "transformation": "AES/GCM/NoPadding",
+          "kdf": "Argon2",
+          "kdfIterations": 3,
+          "kdfMemoryKiB": 65536,
+          "kdfParallelism": 1,
+          "salt": "gQE9hiqmeK5VUJ950um6Lw\u003d\u003d"
+        },
+        "accounts": [
+          {
+            "id": "ACC0",
+            "title": "Vy/J52ul8nzW5vhyuWoIo813juUFrSx2Vw8UR9/ll2uF",
+            "createdAt": "2026-01-01T01:00:00+01:00",
+            "updatedAt": "2026-01-01T01:00:00+01:00",
+            "allowedUsers": [],
+            "username": "2TvPZ2cfwjcTgf2e0Zy43OQF7b8MHa8fiAZOZ9/uGru5aF5Z3yxCM8DW+g\u003d\u003d",
+            "domain": "IprqMlkQOl8k76XoGOUnuHWgeE5b3M6atfothAm7KPWpSCdaWluv0VVMbQ\u003d\u003d",
+            "password": "HHm2TW23+XSyR0J0BuVXkIKSF8QVhIy0naD63JKplV4n3ONsIsZ7KeCf"
+          }
+        ],
+        "creditcards": [
+          {
+            "id": "CDC0",
+            "title": "5EkK2/UGrsqp7UKTs248itSQdveuWNqfl3fxHe7YcDxC5ac7Rf4ngng\u003d",
+            "createdAt": "2026-01-01T01:00:00+01:00",
+            "updatedAt": "2026-01-01T01:00:00+01:00",
+            "allowedUsers": [],
+            "cardHolderName": "yu3tWU+Hpqbl3tWlxrWgB2FeyZ3JcagfDthVZovWKvJ2zihh5g\u003d\u003d",
+            "cardNumber": "LWQuzsvhmNSc0V2SXS+Mv9yhYwkfgM3yC7xEHdGQ+IJYxMDK2fmEZTbrB2I\u003d",
+            "expirationDate": "Ijp5bpNINbAl/FKmK5qFu1jDQvIdE3mChjU2SAc8bCs/",
+            "postalCode": "N9xjv7Q6MjdwDKSnM+GbhR+tOdxBqvrqed1e+8aWCYZa",
+            "cvv": "t6A41U/9/tOSXL0UZzZhsHi3vxaJ6fnTSkDsRoecGQ\u003d\u003d"
+          }
+        ],
+        "securenotes": [
+          {
+            "id": "SCN0",
+            "title": "Yah8FNttaSrP2thMpLzTaLXpM1vO3BVVP3Z/zoEdJ4ixbBvmz6xF/0t/",
+            "createdAt": "2026-01-01T01:00:00+01:00",
+            "updatedAt": "2026-01-01T01:00:00+01:00",
+            "allowedUsers": [],
+            "content": "wbM1JfyVJh7V+KG0tppvcvoGkWlbWEC2qKMBGHPKwpyeaeuYOt/XDsialtwXqaVPVo7kd13iHXQW"
+          }
+        ]
+      },
+      "expected": {
+        "ACC0": {
+          "title": "Gmail",
+          "username": "alice@gmail.com",
+          "domain": "mail.google.com",
+          "password": "P@ssw0rd-acc-0"
+        },
+        "CDC0": {
+          "title": "Personal Card",
+          "cardHolderName": "ALICE DOE",
+          "cardNumber": "4111111111111111",
+          "expirationDate": "12/29",
+          "postalCode": "28001",
+          "cvv": "123"
+        },
+        "SCN0": {
+          "title": "Recovery codes",
+          "content": "8F3K-2L9P-77QX\n1A2B-3C4D-5E6F"
+        }
+      }
+    },
+    {
+      "kdf": "PBKDF2",
+      "masterPassword": "Master-PBKDF2-123!",
+      "username": "alice",
+      "vault": {
+        "version": 1,
+        "checker": "lXHXxG3m6Dd+tuEQwGJRNmAtWWEO0evv+G7t5esLbTHC9yuAtVDCFAkW2/KC4VRqlITpvLPpr4l1aX5+LiBQh58Kixd6tqUhfykbZ+7NIaWvoKNWJq5jqvmj4yw\u003d",
+        "vaultKey": "5NLNFdhDjsa4Dhh3ff0JAOnD7+lwulViMJCMi1/bOBYqMSJWNCLF2XoMKf5PIpc00phu3PEz9l3EvpevK6G0vgk/tSewIJJP",
+        "algorithm": {
+          "transformation": "AES/GCM/NoPadding",
+          "kdf": "PBKDF2",
+          "kdfIterations": 600000,
+          "kdfKeyLength": 256,
+          "salt": "jb5d7dcGQkpa6rVcrtOi3A\u003d\u003d"
+        },
+        "accounts": [
+          {
+            "id": "ACC0",
+            "title": "wcnfv1IDj03TVDADDWQ3V8KoAj8CS63BHLBctLN4urke",
+            "createdAt": "2026-01-01T01:00:00+01:00",
+            "updatedAt": "2026-01-01T01:00:00+01:00",
+            "allowedUsers": [],
+            "username": "8rwu5NO9HmzRtZDyu6aSnXQyBxGP2nWeCvjN9w5VLdWoM5t4li6n4OaxkQ\u003d\u003d",
+            "domain": "IGC1HjBL8dQ5x3jYgAC8Hju0DydunBb6RXpW7s+Sc5gFD15TG56rY0DZjw\u003d\u003d",
+            "password": "7ByF+Rv8oucEtD7UFXrORnOpIFIAx/fcAngbl8Cz0vcCuyTSATIyLGfr"
+          }
+        ],
+        "creditcards": [
+          {
+            "id": "CDC0",
+            "title": "mBTNLKDffFi8x9jiIg+d23MSNQFxebAH8NIbJJjZXoOoTmLnT9E1SOI\u003d",
+            "createdAt": "2026-01-01T01:00:00+01:00",
+            "updatedAt": "2026-01-01T01:00:00+01:00",
+            "allowedUsers": [],
+            "cardHolderName": "S8Ud4dmi5HSwSi60pUCTIchAzENvhhgXHHna00ctkx5F4Rtctw\u003d\u003d",
+            "cardNumber": "X33/wFW+c4TMOkiMYTRFKVDn3mLnObbHlNTSwlULsQSg4rfRTOhk52qlsTs\u003d",
+            "expirationDate": "IS3AImMviBTG9e5nB9lQYUK1MCEiUoi/Br05ZkZk2TYV",
+            "postalCode": "MD3uqO/abH33v1zM5uRwIaSBpUiavHI0y9Fre38Lpw73",
+            "cvv": "7A4gqWT19m1kmXcM3P4UeUOelrOGB05zdCjhThaBkQ\u003d\u003d"
+          }
+        ],
+        "securenotes": [
+          {
+            "id": "SCN0",
+            "title": "5xeIvpLYHC2KpyIHn74Ay2yD8EgBAVEpLM0Axhsjem1YSdLS44esFnCR",
+            "createdAt": "2026-01-01T01:00:00+01:00",
+            "updatedAt": "2026-01-01T01:00:00+01:00",
+            "allowedUsers": [],
+            "content": "ju90M/gu5DW600F+IXBjwbndGTy0ttAMOUEEabcsTSMj3+jqKBWF+Z9brAtWuuyBxiU6YUSirOAt"
+          }
+        ]
+      },
+      "expected": {
+        "ACC0": {
+          "title": "Gmail",
+          "username": "alice@gmail.com",
+          "domain": "mail.google.com",
+          "password": "P@ssw0rd-acc-0"
+        },
+        "CDC0": {
+          "title": "Personal Card",
+          "cardHolderName": "ALICE DOE",
+          "cardNumber": "4111111111111111",
+          "expirationDate": "12/29",
+          "postalCode": "28001",
+          "cvv": "123"
+        },
+        "SCN0": {
+          "title": "Recovery codes",
+          "content": "8F3K-2L9P-77QX\n1A2B-3C4D-5E6F"
+        }
+      }
+    }
+  ]
+}

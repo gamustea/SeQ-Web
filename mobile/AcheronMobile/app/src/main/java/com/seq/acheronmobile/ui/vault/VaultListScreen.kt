@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,22 +22,23 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -47,38 +49,41 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.seq.acheronmobile.data.vault.StorableUi
-import com.seq.acheronmobile.ui.theme.AcheronGold
 import com.seq.acheronmobile.ui.theme.AcheronMark
 import com.seq.acheronmobile.ui.theme.BrandSpace
-
-private enum class VaultFilter(val label: String) { ALL("Todos"), ACCOUNTS("Cuentas"), CARDS("Tarjetas") }
+import kotlinx.coroutines.launch
 
 @Composable
 fun VaultListScreen(
     viewModel: VaultViewModel = viewModel(),
-    onAddAccount: () -> Unit,
-    onAddCard: () -> Unit,
+    onAdd: (kind: String) -> Unit,
     onStorableClick: (StorableUi) -> Unit,
     onLock: () -> Unit,
     onLogout: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var showLockDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
-    var filter by remember { mutableStateOf(VaultFilter.ALL) }
+    var showChangePasswordDialog by remember { mutableStateOf(false) }
+    // null = "Todos"; en otro caso, el kind seleccionado.
+    var filterKind by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let {
@@ -105,6 +110,19 @@ fun VaultListScreen(
         )
     }
 
+    if (showChangePasswordDialog) {
+        ChangePasswordDialog(
+            busy = uiState.syncing,
+            onDismiss = { showChangePasswordDialog = false },
+            onConfirm = { current, next ->
+                scope.launch {
+                    val ok = viewModel.changeMasterPassword(current, next)
+                    if (ok) showChangePasswordDialog = false
+                }
+            }
+        )
+    }
+
     if (showLogoutDialog) {
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
@@ -127,13 +145,10 @@ fun VaultListScreen(
         )
     }
 
-    val accounts = uiState.storables.count { it.kind == "account" }
-    val cards = uiState.storables.count { it.kind == "creditcard" }
-    val visible = when (filter) {
-        VaultFilter.ALL -> uiState.storables
-        VaultFilter.ACCOUNTS -> uiState.storables.filter { it.kind == "account" }
-        VaultFilter.CARDS -> uiState.storables.filter { it.kind == "creditcard" }
-    }
+    // Recuento por tipo, respetando el orden del registro.
+    val countsByKind = uiState.storables.groupingBy { it.kind }.eachCount()
+    val presentTypes = StorableTypes.all.filter { (countsByKind[it.kind] ?: 0) > 0 }
+    val visible = filterKind?.let { k -> uiState.storables.filter { it.kind == k } } ?: uiState.storables
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -142,15 +157,16 @@ fun VaultListScreen(
             VaultHeader(
                 syncing = uiState.syncing,
                 onSync = { viewModel.syncToRemote() },
+                onChangePassword = { showChangePasswordDialog = true },
                 onLock = { showLockDialog = true },
                 onLogout = { showLogoutDialog = true }
             )
         },
-        floatingActionButton = { AddMenu(onAddAccount = onAddAccount, onAddCard = onAddCard) }
+        floatingActionButton = { AddMenu(onAdd = onAdd) }
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (uiState.storables.isEmpty() && !uiState.isLoading) {
-                EmptyVault(onAdd = onAddAccount)
+                EmptyVault(onAdd = { onAdd("account") })
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -165,9 +181,11 @@ fun VaultListScreen(
                     }
                     item {
                         CategoryFilter(
-                            filter = filter,
-                            onSelect = { filter = it },
-                            all = uiState.storables.size, accounts = accounts, cards = cards
+                            selected = filterKind,
+                            onSelect = { filterKind = it },
+                            allCount = uiState.storables.size,
+                            presentTypes = presentTypes,
+                            countsByKind = countsByKind
                         )
                     }
                     items(visible, key = { it.id }) { storable ->
@@ -191,6 +209,7 @@ fun VaultListScreen(
 private fun VaultHeader(
     syncing: Boolean,
     onSync: () -> Unit,
+    onChangePassword: () -> Unit,
     onLock: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -220,6 +239,8 @@ private fun VaultHeader(
         }
         HeaderAction(icon = Icons.Filled.Sync, desc = "Sincronizar", loading = syncing, onClick = onSync)
         Spacer(Modifier.width(BrandSpace.sm))
+        HeaderAction(icon = Icons.Filled.Password, desc = "Cambiar contraseña", onClick = onChangePassword)
+        Spacer(Modifier.width(BrandSpace.sm))
         HeaderAction(icon = Icons.Filled.Lock, desc = "Bloquear", onClick = onLock)
         Spacer(Modifier.width(BrandSpace.sm))
         HeaderAction(icon = Icons.AutoMirrored.Filled.Logout, desc = "Cerrar sesión", onClick = onLogout)
@@ -228,7 +249,7 @@ private fun VaultHeader(
 
 @Composable
 private fun HeaderAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     desc: String,
     loading: Boolean = false,
     onClick: () -> Unit
@@ -246,6 +267,88 @@ private fun HeaderAction(
         } else {
             Icon(icon, contentDescription = desc, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
         }
+    }
+}
+
+// ── Cambio de contraseña maestra ────────────────────────────────────────────────
+
+@Composable
+private fun ChangePasswordDialog(
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (current: String, next: String) -> Unit
+) {
+    var current by remember { mutableStateOf("") }
+    var next by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        icon = { Icon(Icons.Filled.Password, null, tint = MaterialTheme.colorScheme.primary) },
+        title = { Text("Cambiar contraseña maestra") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(BrandSpace.sm)) {
+                Text(
+                    "La nueva contraseña se aplica en este dispositivo: se vuelve a " +
+                        "cifrar la clave de la bóveda. Tus elementos no cambian.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = current, onValueChange = { current = it },
+                    label = { Text("Contraseña actual") },
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = next, onValueChange = { next = it },
+                    label = { Text("Nueva contraseña") },
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = confirm, onValueChange = { confirm = it },
+                    label = { Text("Repite la nueva contraseña") },
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                localError?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy,
+                onClick = {
+                    val err = validateNewPassword(current, next, confirm)
+                    if (err != null) {
+                        localError = err
+                        return@TextButton
+                    }
+                    localError = null
+                    onConfirm(current, next)
+                }
+            ) { Text("Cambiar") }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+private fun validateNewPassword(current: String, next: String, confirm: String): String? {
+    val minLength = 8
+    return when {
+        current.isEmpty() -> "Introduce tu contraseña actual."
+        next.length < minLength -> "La nueva contraseña debe tener al menos $minLength caracteres."
+        next != confirm -> "Las contraseñas nuevas no coinciden."
+        next == current -> "La nueva contraseña debe ser distinta de la actual."
+        else -> null
     }
 }
 
@@ -302,17 +405,27 @@ private fun CountPill(count: Int) {
 
 @Composable
 private fun CategoryFilter(
-    filter: VaultFilter,
-    onSelect: (VaultFilter) -> Unit,
-    all: Int, accounts: Int, cards: Int
+    selected: String?,
+    onSelect: (String?) -> Unit,
+    allCount: Int,
+    presentTypes: List<StorableTypeSpec>,
+    countsByKind: Map<String, Int>
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = BrandSpace.xs),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = BrandSpace.xs),
         horizontalArrangement = Arrangement.spacedBy(BrandSpace.sm)
     ) {
-        FilterChip(VaultFilter.ALL.label, all, filter == VaultFilter.ALL) { onSelect(VaultFilter.ALL) }
-        FilterChip(VaultFilter.ACCOUNTS.label, accounts, filter == VaultFilter.ACCOUNTS) { onSelect(VaultFilter.ACCOUNTS) }
-        FilterChip(VaultFilter.CARDS.label, cards, filter == VaultFilter.CARDS) { onSelect(VaultFilter.CARDS) }
+        FilterChip("Todos", allCount, selected == null) { onSelect(null) }
+        presentTypes.forEach { type ->
+            FilterChip(
+                label = type.plural,
+                count = countsByKind[type.kind] ?: 0,
+                selected = selected == type.kind
+            ) { onSelect(type.kind) }
+        }
     }
 }
 
@@ -331,7 +444,8 @@ private fun FilterChip(label: String, count: Int, selected: Boolean, onClick: ()
             "$label · $count",
             style = MaterialTheme.typography.labelMedium,
             color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1
         )
     }
 }
@@ -340,8 +454,8 @@ private fun FilterChip(label: String, count: Int, selected: Boolean, onClick: ()
 
 @Composable
 private fun StorableCard(storable: StorableUi, onClick: () -> Unit) {
-    val isAccount = storable.kind == "account"
-    val accent = if (isAccount) MaterialTheme.colorScheme.primary else AcheronGold
+    val spec = StorableTypes.of(storable.kind)
+    val accent = spec.accentColor()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -360,8 +474,8 @@ private fun StorableCard(storable: StorableUi, onClick: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                if (isAccount) Icons.Filled.Person else Icons.Filled.CreditCard,
-                contentDescription = if (isAccount) "Cuenta" else "Tarjeta",
+                spec.icon,
+                contentDescription = spec.label,
                 tint = accent,
                 modifier = Modifier.size(22.dp)
             )
@@ -375,7 +489,7 @@ private fun StorableCard(storable: StorableUi, onClick: () -> Unit) {
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
-            val sub = if (isAccount) storable.details["username"] else storable.details["cardNumber"]
+            val sub = spec.subtitleKey?.let { storable.details[it] }
             if (!sub.isNullOrBlank()) {
                 Text(
                     sub,
@@ -412,7 +526,7 @@ private fun EmptyVault(onAdd: () -> Unit) {
         )
         Spacer(Modifier.height(BrandSpace.xs))
         Text(
-            "Guarda tu primera cuenta o tarjeta. Todo se cifra antes de salir de este dispositivo.",
+            "Guarda tu primer secreto. Todo se cifra antes de salir de este dispositivo.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = BrandSpace.md),
@@ -430,16 +544,19 @@ private fun EmptyVault(onAdd: () -> Unit) {
 // ── Menu de añadir ────────────────────────────────────────────────────────────
 
 @Composable
-private fun AddMenu(onAddAccount: () -> Unit, onAddCard: () -> Unit) {
+private fun AddMenu(onAdd: (kind: String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(BrandSpace.sm)) {
         AnimatedVisibility(visible = open, enter = fadeIn(), exit = fadeOut()) {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(BrandSpace.sm)) {
-                AddMenuItem("Nueva cuenta", Icons.Filled.Person, MaterialTheme.colorScheme.primary) {
-                    open = false; onAddAccount()
-                }
-                AddMenuItem("Nueva tarjeta", Icons.Filled.CreditCard, AcheronGold) {
-                    open = false; onAddCard()
+                StorableTypes.all.forEach { type ->
+                    AddMenuItem(
+                        label = type.newLabel,
+                        icon = type.icon,
+                        accent = type.accent ?: MaterialTheme.colorScheme.primary
+                    ) {
+                        open = false; onAdd(type.kind)
+                    }
                 }
             }
         }
@@ -456,7 +573,7 @@ private fun AddMenu(onAddAccount: () -> Unit, onAddCard: () -> Unit) {
 @Composable
 private fun AddMenuItem(
     label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     accent: Color,
     onClick: () -> Unit
 ) {

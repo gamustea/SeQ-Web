@@ -3,6 +3,7 @@ package com.seq.acheronmobile.ui.vault
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,17 +17,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -41,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,18 +48,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.seq.acheronmobile.data.vault.StorableUi
-import com.seq.acheronmobile.ui.theme.AcheronGold
 import com.seq.acheronmobile.ui.theme.BrandField
 import com.seq.acheronmobile.ui.theme.BrandPanel
 import com.seq.acheronmobile.ui.theme.BrandPrimaryButton
@@ -117,8 +115,8 @@ fun StorableDetailScreen(
     val uiState by vaultViewModel.uiState.collectAsState()
     val currentStorable = uiState.storables.find { it.id == storable.id } ?: storable
 
-    val isAccount = currentStorable.kind == "account"
-    val accent = if (isAccount) MaterialTheme.colorScheme.primary else AcheronGold
+    val spec = StorableTypes.of(currentStorable.kind)
+    val accent = spec.accentColor()
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -178,7 +176,7 @@ fun StorableDetailScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        if (isAccount) Icons.Filled.Person else Icons.Filled.CreditCard,
+                        spec.icon,
                         contentDescription = null, tint = accent, modifier = Modifier.size(26.dp)
                     )
                 }
@@ -190,7 +188,7 @@ fun StorableDetailScreen(
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        if (isAccount) "Cuenta" else "Tarjeta",
+                        spec.label,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         letterSpacing = 1.sp
@@ -205,13 +203,14 @@ fun StorableDetailScreen(
                 ) {
                     SectionLabel("Detalles")
                     currentStorable.details.forEach { (key, value) ->
+                        val field = spec.field(key)
                         DetailField(
-                            label = fieldLabel(key),
+                            label = field?.label ?: key,
                             value = value,
-                            masked = shouldMask(key),
+                            masked = field?.secret == true,
                             onCopy = {
                                 clipboard.setText(AnnotatedString(value))
-                                scope.launch { snackbarHostState.showSnackbar("${fieldLabel(key)} copiado") }
+                                scope.launch { snackbarHostState.showSnackbar("${field?.label ?: key} copiado") }
                             }
                         )
                     }
@@ -284,31 +283,42 @@ fun StorableFormScreen(
 ) {
     val isEdit = storable != null
     var kind by remember { mutableStateOf(storable?.kind ?: defaultKind) }
-    var title by remember { mutableStateOf(storable?.title ?: "") }
-    var username by remember { mutableStateOf(storable?.details?.get("username") ?: "") }
-    var domain by remember { mutableStateOf(storable?.details?.get("domain") ?: "") }
-    var password by remember { mutableStateOf("") }
-    var holder by remember { mutableStateOf(storable?.details?.get("cardHolderName") ?: "") }
-    // El numero de tarjeta llega enmascarado ("****1234") desde el listado/detalle;
-    // pre-rellenarlo aqui corromperia el PAN real al guardar (ver hallazgo #4).
-    var number by remember { mutableStateOf("") }
-    var expiry by remember { mutableStateOf(storable?.details?.get("expirationDate") ?: "") }
-    var cvv by remember { mutableStateOf("") }
-    var postal by remember { mutableStateOf(storable?.details?.get("postalCode") ?: "") }
+    val spec = StorableTypes.of(kind)
+    val accent = spec.accentColor()
+
+    var title by remember(kind) { mutableStateOf(storable?.title ?: "") }
+
+    // Valores y visibilidad por campo. Se reinician al cambiar de tipo (alta).
+    // En edición, los campos `prefill` se pre-rellenan con el valor actual; los
+    // secretos no prefill (p. ej. el PAN llega enmascarado) se dejan vacíos para
+    // que "vacío = sin cambios" y nunca se corrompa el valor real al guardar.
+    val values = remember(kind) {
+        mutableStateMapOf<String, String>().apply {
+            spec.fields.forEach { f ->
+                put(f.key, if (isEdit && f.prefill) storable?.details?.get(f.key).orEmpty() else "")
+            }
+        }
+    }
+    val revealed = remember(kind) { mutableStateMapOf<String, Boolean>() }
+
     var saving by remember { mutableStateOf(false) }
-    var passwordVisible by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val uiState by vaultViewModel.uiState.collectAsState()
-    val isCardKind = kind == "creditcard"
-    // En alta, el numero es obligatorio; en edicion, vacio = sin cambios,
-    // pero si se reintroduce debe tener al menos 4 cifras (evita el crash de #5).
-    val cardNumberValid = !isCardKind || (isEdit && number.isBlank()) || number.trim().length >= 4
+
+    // Validación de longitud mínima (p. ej. número de tarjeta ≥ 4):
+    // en alta exige el mínimo; en edición, vacío = sin cambios.
+    fun fieldValid(f: FieldSpec): Boolean {
+        if (f.minLength <= 0) return true
+        val v = values[f.key].orEmpty().trim()
+        return (isEdit && v.isBlank()) || v.length >= f.minLength
+    }
+    val allValid = spec.fields.all { fieldValid(it) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             BrandTopBar(
-                title = if (isEdit) "Editar" else if (isCardKind) "Nueva tarjeta" else "Nueva cuenta",
+                title = if (isEdit) "Editar" else spec.newLabel,
                 onBack = onBack
             )
         }
@@ -322,7 +332,7 @@ fun StorableFormScreen(
             verticalArrangement = Arrangement.spacedBy(BrandSpace.md)
         ) {
             if (!isEdit) {
-                KindSelector(kind = kind, onSelect = { kind = it })
+                KindSelector(selected = kind, onSelect = { kind = it })
             }
 
             BrandPanel(modifier = Modifier.fillMaxWidth()) {
@@ -330,49 +340,39 @@ fun StorableFormScreen(
                     modifier = Modifier.padding(BrandSpace.md),
                     verticalArrangement = Arrangement.spacedBy(BrandSpace.md)
                 ) {
-                    SectionLabel(if (isCardKind) "Datos de la tarjeta" else "Datos de la cuenta")
+                    SectionLabel("Datos · ${spec.label}")
 
                     BrandField(value = title, onValueChange = { title = it }, label = "Título")
 
-                    if (kind == "account") {
-                        BrandField(value = username, onValueChange = { username = it }, label = "Usuario / Email")
-                        BrandField(value = domain, onValueChange = { domain = it }, label = "Dominio / Servicio")
+                    spec.fields.forEach { f ->
+                        val visible = revealed[f.key] == true
                         BrandField(
-                            value = password, onValueChange = { password = it },
-                            label = if (isEdit) "Nueva contraseña (vacío = sin cambios)" else "Contraseña",
-                            visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
-                            textStyle = secretTextStyle(),
-                            trailing = {
-                                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                    Icon(
-                                        if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                        contentDescription = if (passwordVisible) "Ocultar" else "Mostrar"
-                                    )
+                            value = values[f.key].orEmpty(),
+                            onValueChange = { values[f.key] = it },
+                            label = when {
+                                isEdit && f.secret && !f.prefill -> "${f.label} (vacío = sin cambios)"
+                                else -> f.label
+                            },
+                            singleLine = !f.multiline,
+                            isError = !fieldValid(f),
+                            supportingText = if (!fieldValid(f)) "Debe tener al menos ${f.minLength} caracteres" else null,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = if (f.numeric) KeyboardType.Number else KeyboardType.Text,
+                                imeAction = if (f == spec.fields.last()) ImeAction.Done else ImeAction.Next
+                            ),
+                            visualTransformation = if (f.secret && !visible) PasswordVisualTransformation() else VisualTransformation.None,
+                            textStyle = if (f.secret) secretTextStyle() else MaterialTheme.typography.bodyLarge,
+                            trailing = if (f.secret) {
+                                {
+                                    IconButton(onClick = { revealed[f.key] = !visible }) {
+                                        Icon(
+                                            if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                            contentDescription = if (visible) "Ocultar" else "Mostrar"
+                                        )
+                                    }
                                 }
-                            }
+                            } else null
                         )
-                    } else {
-                        BrandField(value = holder, onValueChange = { holder = it }, label = "Titular")
-                        BrandField(
-                            value = number, onValueChange = { number = it },
-                            label = if (isEdit) "Nuevo número (vacío = sin cambios)" else "Número de tarjeta",
-                            isError = !cardNumberValid,
-                            supportingText = if (!cardNumberValid) "Debe tener al menos 4 cifras" else null,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            textStyle = secretTextStyle()
-                        )
-                        BrandField(
-                            value = expiry, onValueChange = { expiry = it },
-                            label = "Caducidad (MM/YY)"
-                        )
-                        BrandField(
-                            value = cvv, onValueChange = { cvv = it },
-                            label = if (isEdit) "Nuevo CVV (vacío = sin cambios)" else "CVV",
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                            visualTransformation = PasswordVisualTransformation(),
-                            textStyle = secretTextStyle()
-                        )
-                        BrandField(value = postal, onValueChange = { postal = it }, label = "Código postal")
                     }
 
                     uiState.errorMessage?.let { message ->
@@ -387,21 +387,17 @@ fun StorableFormScreen(
                     saving = true
                     scope.launch {
                         val ok = if (isEdit && storable != null) {
-                            if (kind == "account")
-                                vaultViewModel.updateAccount(storable.id, title.ifBlank { null }, username.ifBlank { null }, domain.ifBlank { null }, password.ifBlank { null })
-                            else
-                                vaultViewModel.updateCreditCard(storable.id, title.ifBlank { null }, holder.ifBlank { null }, number.ifBlank { null }, expiry.ifBlank { null }, cvv.ifBlank { null }, postal.ifBlank { null })
+                            val changes = spec.fields.associate { it.key to values[it.key]?.ifBlank { null } }
+                            vaultViewModel.updateStorable(storable.id, title.ifBlank { null }, changes)
                         } else {
-                            if (kind == "account")
-                                vaultViewModel.addAccount(title, username, domain, password)
-                            else
-                                vaultViewModel.addCreditCard(title, holder, number, expiry, cvv, postal)
+                            val fields = spec.fields.associate { it.key to values[it.key].orEmpty() }
+                            vaultViewModel.addStorable(kind, title, fields)
                         }
                         saving = false
                         if (ok) onSaved()
                     }
                 },
-                enabled = !saving && title.isNotBlank() && cardNumberValid,
+                enabled = !saving && title.isNotBlank() && allValid,
                 loading = saving,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -411,52 +407,51 @@ fun StorableFormScreen(
 }
 
 @Composable
-private fun KindSelector(kind: String, onSelect: (String) -> Unit) {
+private fun KindSelector(selected: String, onSelect: (String) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(BrandSpace.sm)
     ) {
-        KindOption("Cuenta", Icons.Filled.Person, MaterialTheme.colorScheme.primary, kind == "account", Modifier.weight(1f)) { onSelect("account") }
-        KindOption("Tarjeta", Icons.Filled.CreditCard, AcheronGold, kind == "creditcard", Modifier.weight(1f)) { onSelect("creditcard") }
+        StorableTypes.all.forEach { type ->
+            KindOption(
+                label = type.label,
+                icon = type.icon,
+                accent = type.accent ?: MaterialTheme.colorScheme.primary,
+                selected = type.kind == selected,
+                onClick = { onSelect(type.kind) }
+            )
+        }
     }
 }
 
 @Composable
 private fun KindOption(
-    label: String, icon: ImageVector, accent: Color, selected: Boolean,
-    modifier: Modifier = Modifier, onClick: () -> Unit
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+    selected: Boolean,
+    onClick: () -> Unit
 ) {
     Row(
-        modifier = modifier
+        modifier = Modifier
             .clip(RoundedCornerShape(14.dp))
             .background(if (selected) accent.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, if (selected) accent else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
             .clickable { onClick() }
-            .padding(vertical = 14.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(BrandSpace.sm))
+        Spacer(Modifier.width(BrandSpace.xs))
         Text(
             label,
             style = MaterialTheme.typography.titleSmall,
             color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1
         )
     }
 }
-
-private fun fieldLabel(key: String): String = when (key) {
-    "username" -> "Usuario"
-    "domain" -> "Dominio"
-    "password" -> "Contraseña"
-    "cardHolderName" -> "Titular"
-    "cardNumber" -> "Número de tarjeta"
-    "expirationDate" -> "Caducidad"
-    "postalCode" -> "Código postal"
-    "cvv" -> "CVV"
-    else -> key
-}
-
-private fun shouldMask(key: String): Boolean = key in setOf("password", "cvv", "cardNumber")

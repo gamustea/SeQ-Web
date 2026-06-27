@@ -114,6 +114,7 @@ class ScanManager(TaskTrackingMixin, ABC):
     _registry: Dict[ScanType, type["ScanManager"]] = {}
 
     SCAN_TYPE: Optional[ScanType] = None
+    _MODEL: Optional[type] = None  # Concrete Scan subclass; set by each subclass.
 
     EXTERNAL_ID_PREFIX = "scan:"
     TASK_CATEGORY = "sentinel.scan"
@@ -135,37 +136,38 @@ class ScanManager(TaskTrackingMixin, ABC):
 
     def get_scan_by_id(self, scan_id: int) -> Optional[Scan]:
         """
-        Retrieve a scan by its primary key.
+        Retrieve a scan by its primary key, typed to ``self._MODEL``.
+
+        With request-scoped sessions, lazy loading of the subclass-specific
+        relationships (open_ports_relation, incidents, results…) works
+        transparently.
 
         Args:
             scan_id: Primary key of the scan.
 
         Returns:
-            Scan instance (polymorphic subtype), or None if not found.
+            Scan instance (typed to ``self._MODEL``), or None if not found.
         """
         session = get_db_session()
-        scan = ScanRepository(session=session).get_by_id(scan_id)
+        scan = ScanRepository(session=session).get_by_id_and_type(self._MODEL, scan_id)
 
         if not scan:
-            logger.warning(f"Escaneo {scan_id} no encontrado")
+            logger.warning(f"Escaneo {self.SCAN_TYPE.value if self.SCAN_TYPE else ''} {scan_id} no encontrado")
 
         return scan
 
     def get_scans_for_user(self, user_id: int) -> List[Scan]:
         """
-        Retrieve all scans belonging to the active user.
-
-        Subclasses override this to apply joinedload for type-specific
-        relationships (open_ports_relation, incidents, results…).
+        Retrieve all scans of ``self._MODEL`` belonging to the active user.
 
         Returns:
             List of Scan instances ordered by start time descending.
         """
         session = get_db_session()
-        scans = ScanRepository(session=session).get_by_user(user_id) # pyright: ignore[reportArgumentType]
+        scans = ScanRepository(session=session).get_by_type_and_user(self._MODEL, user_id)
 
         logger.info(
-            f"Se obtuvieron {len(scans)} escaneos para el usuario {user_id}"
+            f"Se obtuvieron {len(scans)} escaneos {self.SCAN_TYPE.value if self.SCAN_TYPE else ''} para el usuario {user_id}"
         )
         return scans
 
@@ -360,6 +362,20 @@ class ScanManager(TaskTrackingMixin, ABC):
 
         return scan
 
+    @classmethod
+    def resolve_owned_scan(cls, scan_id: int, user_id: int) -> tuple["ScanManager", Scan]:
+        """
+        Resolve the manager for ``scan_id`` and assert the user owns it.
+
+        Combines ``resolve_manager`` with ``assert_scan_ownership`` in one call,
+        avoiding a second lookup of the same scan in callers that need both.
+
+        Raises:
+            ScanNotFoundError: If the scan does not exist or is not owned by ``user_id``.
+        """
+        scan = cls.assert_scan_ownership(scan_id, user_id)
+        return cls.resolve_manager(scan_id), scan
+
     # =========================================================================
     # LIFECYCLE OPERATIONS
     # =========================================================================
@@ -525,7 +541,7 @@ class ScanManager(TaskTrackingMixin, ABC):
             logger.info(f"Escaneo {scan_id} completado exitosamente")
             thread_manager._log_to_csv(scan_id, fresh_scan, task)
 
-        except (OSError, RuntimeError) as e:
+        except Exception as e:
             if task.status == TaskStatus.CANCELLED:
                 logger.info(f"Escaneo {scan_id} cancelado por el usuario")
                 thread_manager.update_scan_status(scan_id, ScanStatus.CANCELLED)
@@ -704,6 +720,125 @@ class ScanManager(TaskTrackingMixin, ABC):
             result["documentStatus"] = doc.status
 
     @staticmethod
+    def _expand_octal_range(rango_str: str) -> List[str]:
+        """Expand an octet-range/wildcard IP spec (e.g. ``192.168.1-2.1-10``)."""
+        rango_str = rango_str.replace("*", "0-255")
+        octetos = rango_str.split(".")
+
+        if len(octetos) != 4:
+            raise IPValidationError(
+                message="Deben ser exactamente 4 octetos",
+                ip_spec=rango_str
+            )
+
+        rangos_octetos: List[range | List[int]] = []
+
+        for octeto in octetos:
+            if "-" in octeto:
+                partes = octeto.split("-")
+                if len(partes) != 2:
+                    raise IPValidationError(
+                        message="Rango de octeto inválido",
+                        ip_spec=rango_str
+                    )
+                try:
+                    inicio = int(partes[0])
+                    fin = int(partes[1])
+                except ValueError:
+                    raise IPValidationError(
+                        message="Los límites del rango deben ser numéricos",
+                        ip_spec=rango_str
+                    )
+                if inicio > fin:
+                    raise IPValidationError(
+                        message="El inicio del rango no puede ser mayor que el fin",
+                        ip_spec=rango_str
+                    )
+                rangos_octetos.append(range(inicio, fin + 1))
+            else:
+                try:
+                    valor = int(octeto)
+                except ValueError:
+                    raise IPValidationError(
+                        message="El octeto debe ser numérico",
+                        ip_spec=rango_str
+                    )
+                rangos_octetos.append([valor])
+
+        lista_ips = []
+        for combinacion in itertools.product(*rangos_octetos):
+            ip_str = ".".join(map(str, combinacion))
+            try:
+                ipaddress.ip_address(ip_str)
+                lista_ips.append(ip_str)
+            except ValueError:
+                continue
+
+        if not lista_ips:
+            raise IPValidationError(
+                message="No se generaron IPs válidas desde el rango",
+                ip_spec=rango_str
+            )
+        return lista_ips
+
+    @staticmethod
+    def _expand_cidr_segment(segmento: str, max_hosts: int) -> List[str]:
+        """Expand a CIDR segment (e.g. ``192.168.1.0/24``) into host IPs."""
+        try:
+            red = ipaddress.ip_network(segmento, strict=False)
+            num_hosts = red.num_addresses - 2 if red.num_addresses > 2 else red.num_addresses
+
+            if num_hosts > max_hosts:
+                raise MaxHostsExceededError(max_hosts=max_hosts, found=num_hosts)
+
+            lista_ips = [str(ip) for ip in red.hosts()]
+            if not lista_ips or red.prefixlen >= 31:
+                lista_ips.extend([str(ip) for ip in red])
+            return lista_ips
+        except ValueError as e:
+            raise IPValidationError(
+                message=f"Notación CIDR inválida: {str(e)}",
+                ip_spec=segmento
+            )
+
+    @staticmethod
+    def _expand_dash_range_segment(segmento: str, max_hosts: int) -> List[str]:
+        """Expand an octet-range segment (e.g. ``192.168.1.1-10``)."""
+        try:
+            ips_expandidas = ScanManager._expand_octal_range(segmento)
+            if len(ips_expandidas) > max_hosts:
+                raise MaxHostsExceededError(max_hosts=max_hosts, found=len(ips_expandidas))
+            return ips_expandidas
+        except (ValueError, OSError) as e:
+            raise IPValidationError(
+                message=f"Error al procesar rango: {str(e)}",
+                ip_spec=segmento
+            )
+
+    @staticmethod
+    def _expand_single_ip_segment(segmento: str) -> List[str]:
+        """Validate a single literal IP segment."""
+        try:
+            ip = ipaddress.ip_address(segmento)
+            return [str(ip)]
+        except ValueError:
+            raise IPValidationError(
+                message="Dirección IP inválida",
+                ip_spec=segmento
+            )
+
+    @staticmethod
+    def _reject_private_ips(lista_ips: List[str]) -> None:
+        """Raise if any IP is private and local IPs aren't allowed by config."""
+        if not CR.are_local_ips_allowed():
+            private_ips = [
+                ip for ip in lista_ips
+                if ipaddress.ip_address(ip).is_private
+            ]
+            if private_ips:
+                raise PrivateIPRequested(private_ips)
+
+    @staticmethod
     def validate_ip(ips_str: str, max_hosts: int = 10) -> List[str]:
         """
         Valida y expande una especificación de IPs/rangos.
@@ -722,66 +857,6 @@ class ScanManager(TaskTrackingMixin, ABC):
         Returns:
             Lista de IPs expandidas (sin duplicados).
         """
-        def _expand_octal(rango_str: str) -> List[str]:
-            rango_str = rango_str.replace("*", "0-255")
-            octetos = rango_str.split(".")
-
-            if len(octetos) != 4:
-                raise IPValidationError(
-                    message="Deben ser exactamente 4 octetos",
-                    ip_spec=rango_str
-                )
-
-            rangos_octetos: List[range | List[int]] = []
-
-            for octeto in octetos:
-                if "-" in octeto:
-                    partes = octeto.split("-")
-                    if len(partes) != 2:
-                        raise IPValidationError(
-                            message="Rango de octeto inválido",
-                            ip_spec=rango_str
-                        )
-                    try:
-                        inicio = int(partes[0])
-                        fin = int(partes[1])
-                    except ValueError:
-                        raise IPValidationError(
-                            message="Los límites del rango deben ser numéricos",
-                            ip_spec=rango_str
-                        )
-                    if inicio > fin:
-                        raise IPValidationError(
-                            message="El inicio del rango no puede ser mayor que el fin",
-                            ip_spec=rango_str
-                        )
-                    rangos_octetos.append(range(inicio, fin + 1))
-                else:
-                    try:
-                        valor = int(octeto)
-                    except ValueError:
-                        raise IPValidationError(
-                            message="El octeto debe ser numérico",
-                            ip_spec=rango_str
-                        )
-                    rangos_octetos.append([valor])
-
-            lista_ips = []
-            for combinacion in itertools.product(*rangos_octetos):
-                ip_str = ".".join(map(str, combinacion))
-                try:
-                    ipaddress.ip_address(ip_str)
-                    lista_ips.append(ip_str)
-                except ValueError:
-                    continue
-
-            if not lista_ips:
-                raise IPValidationError(
-                    message="No se generaron IPs válidas desde el rango",
-                    ip_spec=rango_str
-                )
-            return lista_ips
-
         ips_str = ScanManager._require_non_empty(ips_str, IPValidationError)
 
         segmentos = [s.strip() for s in ips_str.split(",")]
@@ -794,43 +869,11 @@ class ScanManager(TaskTrackingMixin, ABC):
                 )
 
             if "/" in segmento:
-                try:
-                    red = ipaddress.ip_network(segmento, strict=False)
-                    num_hosts = red.num_addresses - 2 if red.num_addresses > 2 else red.num_addresses
-
-                    if num_hosts > max_hosts:
-                        raise MaxHostsExceededError(max_hosts=max_hosts, found=num_hosts)
-                    else:
-                        lista_ips.extend([str(ip) for ip in red.hosts()])
-                        if not lista_ips or red.prefixlen >= 31:
-                            lista_ips.extend([str(ip) for ip in red])
-                except ValueError as e:
-                    raise IPValidationError(
-                        message=f"Notación CIDR inválida: {str(e)}",
-                        ip_spec=segmento
-                    )
-
+                lista_ips.extend(ScanManager._expand_cidr_segment(segmento, max_hosts))
             elif "-" in segmento:
-                try:
-                    ips_expandidas = _expand_octal(segmento)
-                    if len(ips_expandidas) > max_hosts:
-                        raise MaxHostsExceededError(max_hosts=max_hosts, found=len(ips_expandidas))
-                    lista_ips.extend(ips_expandidas)
-                except (ValueError, OSError) as e:
-                    raise IPValidationError(
-                        message=f"Error al procesar rango: {str(e)}",
-                        ip_spec=segmento
-                    )
-
+                lista_ips.extend(ScanManager._expand_dash_range_segment(segmento, max_hosts))
             else:
-                try:
-                    ip = ipaddress.ip_address(segmento)
-                    lista_ips.append(str(ip))
-                except ValueError:
-                    raise IPValidationError(
-                        message="Dirección IP inválida",
-                        ip_spec=segmento
-                    )
+                lista_ips.extend(ScanManager._expand_single_ip_segment(segmento))
 
         if not lista_ips:
             raise IPValidationError(
@@ -838,15 +881,101 @@ class ScanManager(TaskTrackingMixin, ABC):
                 ip_spec=ips_str
             )
 
-        if not CR.are_local_ips_allowed():
-            private_ips = [
-                ip for ip in lista_ips
-                if ipaddress.ip_address(ip).is_private
-            ]
-            if private_ips:
-                raise PrivateIPRequested(private_ips)
+        ScanManager._reject_private_ips(lista_ips)
 
         return list(dict.fromkeys(lista_ips))
+
+    @staticmethod
+    def _parse_port_range_token(segmento: str, ports_str: str) -> tuple[int, int]:
+        """Parse a single port-range token (``-N``, ``N-`` or ``N-M``) into ``(inicio, fin)``."""
+        partes = segmento.split("-")
+
+        if segmento.startswith("-"):
+            if len(partes) != 2 or partes[0] != "":
+                raise PortValidationError(
+                    message=f"Formato de rango incorrecto: '{segmento}'",
+                    port_spec=ports_str
+                )
+            try:
+                fin = int(partes[1])
+            except ValueError:
+                raise PortValidationError(
+                    message=f"Puerto de fin no válido en rango: '{segmento}'",
+                    port_spec=ports_str
+                )
+            if fin < 1 or fin > 65535:
+                raise PortValidationError(
+                    message=f"Puerto de fin fuera de rango (1-65535): {fin}",
+                    port_spec=ports_str
+                )
+            return 1, fin
+
+        if segmento.endswith("-"):
+            if len(partes) != 2 or partes[1] != "":
+                raise PortValidationError(
+                    message=f"Formato de rango incorrecto: '{segmento}'",
+                    port_spec=ports_str
+                )
+            try:
+                inicio = int(partes[0])
+            except ValueError:
+                raise PortValidationError(
+                    message=f"Puerto de inicio no válido en rango: '{segmento}'",
+                    port_spec=ports_str
+                )
+            if inicio < 1 or inicio > 65535:
+                raise PortValidationError(
+                    message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                    port_spec=ports_str
+                )
+            return inicio, 65535
+
+        if len(partes) != 2:
+            raise PortValidationError(
+                message=f"Formato de rango incorrecto (demasiados guiones): '{segmento}'",
+                port_spec=ports_str
+            )
+        try:
+            inicio = int(partes[0])
+            fin = int(partes[1])
+        except ValueError:
+            raise PortValidationError(
+                message=f"Puertos no numéricos en rango: '{segmento}'",
+                port_spec=ports_str
+            )
+        if inicio < 1 or inicio > 65535:
+            raise PortValidationError(
+                message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
+                port_spec=ports_str
+            )
+        if fin < 1 or fin > 65535:
+            raise PortValidationError(
+                message=f"Puerto de fin fuera de rango (1-65535): {fin}",
+                port_spec=ports_str
+            )
+        if inicio >= fin:
+            raise PortValidationError(
+                message=f"Rango inválido: el inicio ({inicio}) debe ser menor que el fin ({fin})",
+                port_spec=ports_str
+            )
+        return inicio, fin
+
+    @staticmethod
+    def _parse_port_token(segmento: str, ports_str: str) -> int:
+        """Parse a single literal port token."""
+        try:
+            puerto = int(segmento)
+        except ValueError:
+            raise PortValidationError(
+                message=f"Puerto no numérico: '{segmento}'",
+                port_spec=ports_str
+            )
+        if puerto < 1 or puerto > 65535:
+            raise PortValidationError(
+                message=f"Puerto fuera de rango (1-65535): {puerto}",
+                port_spec=ports_str
+            )
+        return puerto
 
     @staticmethod
     def validate_port(ports_str: str) -> List[int]:
@@ -882,77 +1011,7 @@ class ScanManager(TaskTrackingMixin, ABC):
                 )
 
             if "-" in segmento:
-                partes = segmento.split("-")
-
-                if segmento.startswith("-"):
-                    if len(partes) != 2 or partes[0] != "":
-                        raise PortValidationError(
-                            message=f"Formato de rango incorrecto: '{segmento}'",
-                            port_spec=ports_str
-                        )
-                    try:
-                        fin = int(partes[1])
-                    except ValueError:
-                        raise PortValidationError(
-                            message=f"Puerto de fin no válido en rango: '{segmento}'",
-                            port_spec=ports_str
-                        )
-                    if fin < 1 or fin > 65535:
-                        raise PortValidationError(
-                            message=f"Puerto de fin fuera de rango (1-65535): {fin}",
-                            port_spec=ports_str
-                        )
-                    inicio = 1
-
-                elif segmento.endswith("-"):
-                    if len(partes) != 2 or partes[1] != "":
-                        raise PortValidationError(
-                            message=f"Formato de rango incorrecto: '{segmento}'",
-                            port_spec=ports_str
-                        )
-                    try:
-                        inicio = int(partes[0])
-                    except ValueError:
-                        raise PortValidationError(
-                            message=f"Puerto de inicio no válido en rango: '{segmento}'",
-                            port_spec=ports_str
-                        )
-                    if inicio < 1 or inicio > 65535:
-                        raise PortValidationError(
-                            message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
-                            port_spec=ports_str
-                        )
-                    fin = 65535
-
-                else:
-                    if len(partes) != 2:
-                        raise PortValidationError(
-                            message=f"Formato de rango incorrecto (demasiados guiones): '{segmento}'",
-                            port_spec=ports_str
-                        )
-                    try:
-                        inicio = int(partes[0])
-                        fin = int(partes[1])
-                    except ValueError:
-                        raise PortValidationError(
-                            message=f"Puertos no numéricos en rango: '{segmento}'",
-                            port_spec=ports_str
-                        )
-                    if inicio < 1 or inicio > 65535:
-                        raise PortValidationError(
-                            message=f"Puerto de inicio fuera de rango (1-65535): {inicio}",
-                            port_spec=ports_str
-                        )
-                    if fin < 1 or fin > 65535:
-                        raise PortValidationError(
-                            message=f"Puerto de fin fuera de rango (1-65535): {fin}",
-                            port_spec=ports_str
-                        )
-                    if inicio >= fin:
-                        raise PortValidationError(
-                            message=f"Rango inválido: el inicio ({inicio}) debe ser menor que el fin ({fin})",
-                            port_spec=ports_str
-                        )
+                inicio, fin = ScanManager._parse_port_range_token(segmento, ports_str)
 
                 if inicio <= ultimo_puerto:
                     raise PortValidationError(
@@ -964,18 +1023,8 @@ class ScanManager(TaskTrackingMixin, ABC):
                 ultimo_puerto = fin
 
             else:
-                try:
-                    puerto = int(segmento)
-                except ValueError:
-                    raise PortValidationError(
-                        message=f"Puerto no numérico: '{segmento}'",
-                        port_spec=ports_str
-                    )
-                if puerto < 1 or puerto > 65535:
-                    raise PortValidationError(
-                        message=f"Puerto fuera de rango (1-65535): {puerto}",
-                        port_spec=ports_str
-                    )
+                puerto = ScanManager._parse_port_token(segmento, ports_str)
+
                 if puerto <= ultimo_puerto:
                     raise PortValidationError(
                         message=f"Los puertos no están en orden ascendente: {puerto} aparece después de {ultimo_puerto}",
@@ -1098,6 +1147,10 @@ class ProgramedScanManager():
             schedule_type=schedule_type,
             schedule_config=schedule_config
         )
+        next_run = Scheduler.calculate_next_run(
+            schedule_type=schedule_type,
+            schedule_config=schedule_config,
+        )
         with UnitOfWork() as uow:
             repo = ProgramedScanRepository(uow)
             ps = repo.create(
@@ -1105,16 +1158,17 @@ class ProgramedScanManager():
                 scan_type=scan_type,
                 arguments=arguments,
                 schedule_type=schedule_type,
-                schedule_config=schedule_config
-            )
-            next_run = Scheduler.calculate_next_run(
                 schedule_config=schedule_config,
-                schedule_type=schedule_type,
-                last_run=ps.last_run_at # type: ignore
+                next_run_at=next_run,
             )
-            repo.update_next_run(ps, next_run)
 
-        Scheduler.schedule(ps)
+        Scheduler.schedule(
+            ps_id=ps.id,
+            scan_type=ps.scan_type,
+            user_id=ps.user_id,
+            schedule_type=schedule_type,
+            schedule_config=schedule_config,
+        )
         return ps
 
     @classmethod
@@ -1616,6 +1670,7 @@ class TracerouteManager(TaskTrackingMixin):
 @ScanManager.register(ScanType.NMAP)
 class NmapScanManager(ScanManager):
     SCAN_TYPE = ScanType.NMAP
+    _MODEL = NmapScan
     _strategy_class = NmapPrintingStrategy
 
     """
@@ -1696,40 +1751,6 @@ class NmapScanManager(ScanManager):
             ScanRepository(uow).save(scan)
         return scan
 
-    def get_scan_by_id(self, scan_id: int) -> Optional[NmapScan]:
-        """
-        Retrieve an NmapScan by its primary key.
-
-        With request-scoped sessions, lazy loading of relationships
-        (host, open_ports_relation) works transparently.
-
-        Args:
-            scan_id: Primary key of the scan.
-
-        Returns:
-            NmapScan instance, or None.
-        """
-        session = get_db_session()
-        scan = ScanRepository(session=session).get_by_id_and_type(NmapScan, scan_id)
-
-        if not scan:
-            logger.warning(f"Escaneo Nmap {scan_id} no encontrado")
-
-        return scan
-
-    def get_scans_for_user(self, user_id: int) -> List[Scan]:
-        """
-        Retrieve all NmapScans for the active user with relationships eagerly loaded.
-
-        Returns:
-            List of NmapScan instances.
-        """
-        session = get_db_session()
-        scans = ScanRepository(session=session).get_by_type_and_user(NmapScan, user_id) # type: ignore
-
-        logger.info(f"Se obtuvieron {len(scans)} escaneos Nmap")
-        return scans
-
     def _persist_scan_results(self, uow, scan, domain_data) -> None:
         """Persist Nmap host and port data into the database."""
         host_data, ports_data = domain_data
@@ -1776,6 +1797,7 @@ class NmapScanManager(ScanManager):
 @ScanManager.register(ScanType.NIKTO)
 class NiktoScanManager(ScanManager):
     SCAN_TYPE = ScanType.NIKTO
+    _MODEL = NiktoScan
     _strategy_class = NiktoPrintingStrategy
 
     """
@@ -1844,41 +1866,6 @@ class NiktoScanManager(ScanManager):
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
-
-    def get_scan_by_id(self, scan_id: int) -> Optional[NiktoScan]:
-        """
-        Retrieve a NiktoScan by its primary key.
-
-        With request-scoped sessions, lazy loading of relationships
-        (incidents, host) works transparently.
-
-        Args:
-            scan_id: Primary key of the scan.
-
-        Returns:
-            NiktoScan instance, or None.
-        """
-        session = get_db_session()
-        scan = ScanRepository(session=session).get_by_id_and_type(NiktoScan, scan_id)
-
-        if not scan:
-            logger.warning(f"Escaneo Nikto {scan_id} no encontrado")
-
-        return scan
-
-    def get_scans_for_user(self, user_id: int) -> List[Scan]:
-        """
-        Retrieve all NiktoScans for the active user with incidents eagerly loaded.
-
-        Returns:
-            List of NiktoScan instances.
-        """
-        session = get_db_session()
-        repo    = ScanRepository(session=session)
-        scans   = repo.get_by_type_and_user(NiktoScan, user_id)
-
-        logger.info(f"Se obtuvieron {len(scans)} escaneos Nikto")
-        return scans
 
     def _persist_scan_results(self, uow, scan, domain_data) -> None:
         """Persist Nikto incidents and associate a host."""
@@ -1951,6 +1938,7 @@ class OpenVASScanManager(ScanManager):
     PORT_LISTS = CR.get_openvas_port_list()
 
     SCAN_TYPE = ScanType.OPENVAS
+    _MODEL = OpenVASScan
     _strategy_class = OpenVASPrintingStrategy
 
     def __init__(self) -> None:
@@ -2039,42 +2027,6 @@ class OpenVASScanManager(ScanManager):
         with UnitOfWork() as uow:
             ScanRepository(uow).save(scan)
         return scan
-
-    def get_scan_by_id(self, scan_id: int) -> Optional[OpenVASScan]:
-        """
-        Retrieve an OpenVASScan by its primary key.
-
-        With request-scoped sessions, lazy loading of relationships
-        (results, vulnerabilities, hosts) works transparently.
-
-        Args:
-            scan_id: Primary key of the scan.
-
-        Returns:
-            OpenVASScan instance, or None.
-        """
-        session = get_db_session()
-        scan = ScanRepository(session=session).get_by_id_and_type(OpenVASScan, scan_id)
-
-        if not scan:
-            logger.warning(f"Escaneo OpenVAS {scan_id} no encontrado")
-
-        return scan
-
-    def get_scans_for_user(self, user_id: int) -> List[Scan]:
-        """
-        Retrieve all OpenVASScans for the active user with relationships eagerly loaded.
-
-        Returns:
-            List of OpenVASScan instances.
-        """
-        session = get_db_session()
-        scans = ScanRepository(session=session).get_by_type_and_user(OpenVASScan, user_id)
-
-        logger.info(
-            f"Se obtuvieron {len(scans)} escaneos OpenVAS"
-        )
-        return scans
 
     def _execute_scan(
         self,

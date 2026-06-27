@@ -1,21 +1,4 @@
 {
-  "appVersion": "3.0.0",
-  "security": {
-    "argon2": {
-      "time_cost": 3,
-      "memory_cost": 65536,
-      "parallelism": 4
-    }
-  },
-  "database": {
-    "isolation_level": "READ COMMITTED"
-  },
-  "redis": {
-    "host": "localhost",
-    "port": 6379,
-    "db": 0,
-    "socket_connect_timeout": 2
-  },
   "aegis": {
     "brands": [
       {
@@ -155,6 +138,17 @@
       "userTemplate": "Ejemplo de output válido para tema \"Phishing Empresarial\":\n\n{\n    \"subtitle\": \"No muerdas el anzuelo: Protección contra el phishing moderno\",\n    \"intro\": \"El phishing representa una de las amenazas cibernéticas más persistentes y evolutivas del panorama actual de seguridad empresarial. Lo que comenzó hace décadas como correos electrónicos obvios y mal escritos se ha transformado en campañas sofisticadas de ingeniería social que explotan la psicología humana y el contexto organizacional. En entornos corporativos modernos, los atacantes han perfeccionado técnicas de suplantación que imitan con precisión alarmante a compañeros de trabajo, directivos e incluso proveedores de confianza, utilizando dominios similares y contextos conversacionales robados de brechas previas. Un solo clic en un enlace malicioso puede desencadenar una cascada de compromisos: desde el robo de credenciales corporativas hasta la instalación de ransomware que paraliza operaciones críticas, pasando por el acceso lateral a sistemas financieros y bases de datos de clientes. Las consecuencias económicas y reputacionales son devastadoras, con costes promedio que superan el millón de euros en medianas empresas. Esta píldora de concienciación profundiza en las señales de alerta sutiles que distinguen un correo legítimo de una trampa diseñada por ciberdelincuentes, proporcionando marcos prácticos de verificación y protocolos de respuesta que todo empleado debe internalizar para proteger los activos digitales de la organización.\",\n    \"tips\": [\n        {\n            \"headline\": \"Verifica siempre el remitente real, no solo el nombre visible\",\n            \"body\": \"Los atacantes configuran nombres de display que imitan a directivos o IT support. Haz clic en el nombre del remitente para ver la dirección email real. Desconfía de dominios similares como 'company-it.com' en lugar de 'company.com'. Una dirección legítima de tu empresa nunca usará dominios externos para comunicaciones internas sensibles.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"No hagas clic en enlaces: navega directamente desde el navegador\",\n            \"body\": \"Si el correo pide acceder a un servicio (banco, RRHH, portal corporativo), escribe la URL directamente en la barra del navegador en lugar de hacer clic en el enlace. Los enlaces de phishing pueden redirigirte a sitios que imitan perfectamente la apariencia del portal legítimo pero capturan tus credenciales en el momento en que las introduces.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Desconfía de la urgencia artificial y las amenazas\",\n            \"body\": \"Los mensajes de phishing suelen crear una falsa sensación de urgencia: 'Tu cuenta será bloqueada en 24 horas' o 'Acción requerida de inmediato'. Las empresas legítimas raramente exigen acciones críticas por correo con plazos muy cortos. Ante cualquier mensaje urgente, verifica su legitimidad contactando directamente al supuesto remitente por teléfono o por un canal independiente.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Comprueba los archivos adjuntos antes de abrirlos\",\n            \"body\": \"Los adjuntos maliciosos pueden contener macros, ejecutables o exploits embebidos en documentos Office o PDF. Nunca abras un adjunto que no esperabas recibir, especialmente si el correo te pide 'habilitar macros' o 'activar el contenido'. En caso de duda, sube el archivo a VirusTotal o consulta con el equipo de IT antes de abrirlo bajo ningún concepto.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Activa la autenticación en dos factores (2FA) en todas tus cuentas\",\n            \"body\": \"Incluso si un atacante consigue tu contraseña mediante phishing, el segundo factor de autenticación actúa como barrera adicional que bloquea el acceso. Usa aplicaciones de autenticación (Microsoft Authenticator, Google Authenticator) en lugar de SMS, ya que el SIM swapping puede comprometer la verificación por mensaje de texto. El 2FA es especialmente crítico para el correo corporativo y la VPN.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Reporta los correos sospechosos en lugar de ignorarlos\",\n            \"body\": \"Si identificas un correo de phishing, no lo elimines simplemente: repórtalo al equipo de seguridad usando el botón habilitado en tu cliente de correo. Un correo reportado permite al equipo bloquear el dominio malicioso para todos los empleados y alertar a compañeros que puedan haber recibido el mismo mensaje. Tu reporte puede evitar que otros caigan en la trampa y proteger a toda la organización.\",\n            \"links\": []\n        },\n        {\n            \"headline\": \"Mantén tu software actualizado para cerrar las puertas que el phishing intenta abrir\",\n            \"body\": \"Muchos ataques de phishing no solo buscan credenciales: también intentan explotar vulnerabilidades en el navegador, visor de PDF o cliente de correo al renderizar el contenido malicioso. Mantener el sistema operativo, navegadores y aplicaciones actualizadas cierra estas vías de entrada. Activa las actualizaciones automáticas siempre que sea posible y aplica los parches de seguridad sin demora cuando aparezcan.\",\n            \"links\": []\n        }\n    ],\n    \"closing\": \"La prevención del phishing es responsabilidad de todos. Cuando tengas dudas sobre un correo sospechoso, contacta directamente al remitente por un canal alternativo antes de interactuar con el mensaje.\",\n    \"contactEmail\": \"seguridad@empresa.com\"\n}\n\nAhora genera el contenido para el tema: {{topic_title}}\n\nSector al que va dirigido: {{sector}}\n\nPerfil de audiencia: {{audience}}\n{{intro_context}}\n\nRespondes EXCLUSIVAMENTE en JSON, sin markdown, sin texto antes del JSON."
     }
   },
+  "ai": {
+    "defaultStrategy": "ollama",
+    "modules": {
+      "aegis": "ollama",
+      "sentinel": "ollama"
+    }
+  },
+  "appVersion": "3.2",
+  "database": {
+    "isolation_level": "READ COMMITTED"
+  },
   "general": {
     "directories": {
       "logdir": "..",
@@ -166,26 +160,41 @@
       "max_workers": 4
     }
   },
+  "iris": {
+    "directories": {
+      "output": "data/iris/output"
+    },
+    "legitimate_threshold": 80,
+    "min_headers": 2,
+    "suspicious_threshold": 55
+  },
+  "redis": {
+    "db": 0,
+    "host": "localhost",
+    "port": 6379,
+    "socket_connect_timeout": 2
+  },
+  "security": {
+    "argon2": {
+      "memory_cost": 65536,
+      "parallelism": 4,
+      "time_cost": 3
+    }
+  },
   "sentinel": {
     "areLocalIpsAllowed": true,
-    "folders": {
-      "defaultFolderName": "Sin carpeta"
-    },
-    "history": {
-      "maxScans": 5
-    },
-    "traceroute": {
-      "cacheHours": 24,
-      "maxHops": 30,
-      "timeout": 60,
-      "retryFailedMinutes": 15
-    },
     "directories": {
       "csv": "data/sentinel/csv",
       "output": "data/sentinel/output",
       "resources": "../resources/sentinel"
     },
     "enabled": true,
+    "folders": {
+      "defaultFolderName": "Sin carpeta"
+    },
+    "history": {
+      "maxScans": 5
+    },
     "hostReachabilityCheck": {
       "enabled": true,
       "port": 80,
@@ -244,22 +253,12 @@
           "full_ultimate": "085569ce-73ed-11df-83c3-002264764cea"
         }
       }
-    }
-  },
-  "iris": {
-    "legitimate_threshold": 30,
-    "suspicious_threshold": -10,
-    "min_headers": 2
-  },
-  "ai": {
-    "defaultStrategy": "ollama",
-    "strategies": {
-      "ollama": {},
-      "openai": {}
     },
-    "modules": {
-      "sentinel": "ollama",
-      "aegis": "ollama"
+    "traceroute": {
+      "cacheHours": 24,
+      "maxHops": 30,
+      "retryFailedMinutes": 15,
+      "timeout": 60
     }
   }
 }

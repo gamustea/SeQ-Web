@@ -96,6 +96,21 @@ CANCELLABLE_STATES = frozenset({"pending", "running"})
 MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024
 
 
+def validate_targets(raw: str, max_hosts: int = 10) -> list[str]:
+    """
+    Validate ``raw`` as a target spec via ``ScanManager.validate_ip``,
+    translating its domain exceptions into the HTTP-facing ones.
+    """
+    try:
+        return ScanManager.validate_ip(raw, max_hosts=max_hosts)
+    except IPValidationError as exc:
+        raise ValidationError(field="target", message=str(exc), value=raw) from exc
+    except MaxHostsExceededError as exc:
+        raise ValidationError(str(exc.user_message or exc))
+    except PrivateIPRequested as exc:
+        raise SecOpsException(str(exc.user_message or exc), status_code=403)
+
+
 @sentinel_blp.get("/scan-status")
 @sentinel_blp.arguments(ScanIdQuerySchema, location="query")
 @sentinel_blp.response(200, ScanStatusResponseSchema, description="Scan status")
@@ -110,11 +125,7 @@ def get_scan_status(args):
     """Estado y progreso de un escaneo"""
     scan_id = args["id"]
     user = get_current_user()
-    manager = ScanManager.resolve_manager(scan_id)
-    scan = manager.get_scan_by_id(scan_id)
-    if not scan:
-        raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
+    manager, scan = ScanManager.resolve_owned_scan(scan_id, user.id) # type: ignore
 
     status = manager.get_scan_status(scan_id)
     progress = manager.get_scan_progress(scan_id)
@@ -147,11 +158,7 @@ def cancel_scan(scan_id: int):
     """Cancelar un escaneo en curso"""
     user = get_current_user()
 
-    manager = ScanManager.resolve_manager(scan_id)
-    scan = manager.get_scan_by_id(scan_id)
-    if not scan:
-        raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
+    manager, scan = ScanManager.resolve_owned_scan(scan_id, user.id) # type: ignore
 
     if scan.status not in CANCELLABLE_STATES:
         raise IllegalStateError(
@@ -197,14 +204,7 @@ def start_nmap_scan(data: dict):
     user = get_current_user()
 
     nmap_manager = NmapScanManager()
-    try:
-        hosts = ScanManager.validate_ip(host)
-    except IPValidationError as exc:
-        raise ValidationError(field="target", message=str(exc), value=host) from exc
-    except MaxHostsExceededError as exc:
-        raise ValidationError(str(exc.user_message or exc))
-    except PrivateIPRequested as exc:
-        raise SecOpsException(str(exc.user_message or exc), status_code=403)
+    hosts = validate_targets(host)
 
     try:
         ScanManager.validate_port(ports)
@@ -277,14 +277,7 @@ def start_openvas_scan(data):
     if user is None:
         raise IllegalStateError("'user' detectado como None")
 
-    try:
-        hosts = ScanManager.validate_ip(target, max_hosts=1)
-    except IPValidationError as exc:
-        raise ValidationError(field="target", message=str(exc), value=target) from exc
-    except MaxHostsExceededError as exc:
-        raise ValidationError(str(exc.user_message or exc))
-    except PrivateIPRequested as exc:
-        raise SecOpsException(str(exc.user_message or exc), status_code=403)
+    hosts = validate_targets(target, max_hosts=1)
 
     openvas_manager = OpenVASScanManager()
     target_ip = hosts[0]
@@ -439,11 +432,7 @@ def retrieve_scan_by_id(scan_id: int):
     """Detalle completo de un escaneo especifico"""
     user = get_current_user()
 
-    manager = ScanManager.resolve_manager(scan_id)
-    scan = manager.get_scan_by_id(scan_id)
-    if not scan:
-        raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
+    manager, scan = ScanManager.resolve_owned_scan(scan_id, user.id) # type: ignore
 
     logger.info(f"Obteniendo detalles para escaneo {scan_id} de tipo {scan.scan_type} por usuario {user.username}")
     result = manager.format_scan(scan_id)
@@ -520,11 +509,7 @@ def is_scan_finished(args):
     """Indicar si un escaneo ha finalizado"""
     user = get_current_user()
     scan_id = args["id"]
-    manager = ScanManager.resolve_manager(scan_id)
-    scan = manager.get_scan_by_id(scan_id)
-    if not scan:
-        raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
+    manager, scan = ScanManager.resolve_owned_scan(scan_id, user.id) # type: ignore
 
     finished = manager.is_scan_finished(scan.id) # type: ignore
 
@@ -550,11 +535,7 @@ def delete_scan(scan_id: int):
     """Eliminar un escaneo del sistema"""
     user = get_current_user()
 
-    manager = ScanManager.resolve_manager(scan_id)
-    scan = manager.get_scan_by_id(scan_id)
-    if not scan:
-        raise ScanNotFoundError(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, user.id) # type: ignore
+    manager, scan = ScanManager.resolve_owned_scan(scan_id, user.id) # type: ignore
 
     if scan.status in CANCELLABLE_STATES:
         logger.info(f"Cancelando escaneo {scan_id} antes de eliminar")
@@ -618,8 +599,7 @@ def generate_pdf(args):
     user = get_current_user()
     uid = user.id
 
-    manager = ScanManager.resolve_manager(scan_id)
-    ScanManager.assert_scan_ownership(scan_id, uid) # type: ignore
+    manager, _scan = ScanManager.resolve_owned_scan(scan_id, uid) # type: ignore
 
     if not manager.is_scan_finished(scan_id):
         raise ValidationError(

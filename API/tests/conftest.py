@@ -12,10 +12,9 @@ Decisiones de diseño (ver el plan de tests):
     ``import`` de la aplicación. Lo mismo aplica a ``run.py``, que evalúa
     ``get_app_context()`` al importarse (necesita ``CREATE_DATABASE``/``DEBUG``).
 
-2.  **BD SQLite en fichero temporal** (no ``:memory:``). La aplicación mantiene
-    DOS singletons de engine independientes —``shared._managers.BaseManager`` y
-    ``infrastructure.unit_of_work``—; con ``:memory:`` cada uno abriría una base
-    distinta. Un fichero compartido garantiza que ambos vean las mismas tablas.
+2.  **BD SQLite en fichero temporal** (no ``:memory:``), para que el engine de
+    ``infrastructure.unit_of_work`` y la conexión de inspección de esquema vean
+    siempre las mismas tablas.
 
 3.  **Shim de tipos PostgreSQL→SQLite.** Los modelos usan ``JSONB`` y ``ARRAY``,
     inexistentes en SQLite. Antes de crear el esquema se sustituyen *en memoria*
@@ -71,8 +70,7 @@ from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
 
 from sqlalchemy.orm import scoped_session, sessionmaker  # noqa: E402
 
-from src.modules.shared import Base, BaseManager  # noqa: E402
-from src.modules.shared import _managers as shared_managers  # noqa: E402
+from src.modules.shared import Base  # noqa: E402
 from src.modules.infrastructure import unit_of_work  # noqa: E402
 from src.modules.users.model import User, UserAttribute  # noqa: E402
 from src.modules.users.repositories import (  # noqa: E402
@@ -140,18 +138,14 @@ def _sqlite_url(tmp_path_factory) -> str:
 
 @pytest.fixture(scope="session")
 def _initialized_db(_sqlite_url):
-    """Crea un engine SQLite e inyecta los singletons en ambos módulos.
+    """Crea un engine SQLite e inyecta el singleton de ``unit_of_work``.
 
-    No se pueden usar ``BaseManager._initialize_engine`` ni
-    ``unit_of_work.initialize`` directamente porque fijan
+    No se puede usar ``unit_of_work.initialize`` directamente porque fija
     ``isolation_level="READ COMMITTED"`` (válido en PostgreSQL, rechazado por
     SQLite — ver IMPROVEMENTS.md). En su lugar construimos aquí un engine
-    compatible con SQLite y lo asignamos a los globales de ``shared._managers``
-    y ``infrastructure.unit_of_work``; como ambas funciones de init son
-    idempotentes (``if ENGINE is None``), después reutilizarán este engine.
-
-    Se comparte UN único engine + scoped_session entre los dos módulos para
-    evitar dos pools sobre el mismo fichero SQLite.
+    compatible con SQLite y lo asignamos a los globales de
+    ``infrastructure.unit_of_work``; como su función de init es idempotente
+    (``if ENGINE is None``), después reutilizará este engine.
     """
     # Importar run arrastra todos los blueprints y, con ellos, TODOS los modelos
     # de cada módulo a Base.metadata. Debe ocurrir antes del shim para que se
@@ -175,8 +169,6 @@ def _initialized_db(_sqlite_url):
         )
     )
 
-    shared_managers.ENGINE = engine
-    shared_managers.SESSION_FACTORY = session_factory
     unit_of_work.ENGINE = engine
     unit_of_work.SESSION_FACTORY = session_factory
 
@@ -199,7 +191,7 @@ def app(_initialized_db):
     # neutralizamos para no depender de un Redis real ni pagar su timeout.
     with mock.patch("redis.Redis.ping", return_value=True), \
          mock.patch("redis.Redis.close", return_value=None):
-        application = run.create_app(fresh_db_init=False, start_scheduler=False)
+        application = run.create_app(fresh_db_init=False, start_scheduler=False, run_migrations=False)
 
     application.config.update(TESTING=True)
 
@@ -228,7 +220,6 @@ def _clean_db(_initialized_db):
     with engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
-    BaseManager.close_all_sessions()
     unit_of_work.close_all()
 
 

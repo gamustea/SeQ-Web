@@ -14,9 +14,9 @@ def check_dkim(headers: dict) -> RuleResult:
     """Evaluate the DKIM result from ``Authentication-Results`` and check for a DKIM-Signature.
 
     Returns:
-        - ``pass`` (score +15) when DKIM verifies.
+        - ``pass`` (score +5) when DKIM verifies (weak positive evidence).
         - ``fail`` (score -15) when the signature is invalid.
-        - ``missing`` (score -5) when no DKIM-Signature header exists.
+        - ``missing`` (score -3) when no DKIM-Signature header exists.
         - ``neutral`` (score 0) when a signature is present but the status is unknown.
     """
     auth_results = headers.get("authentication-results", "")
@@ -26,7 +26,7 @@ def check_dkim(headers: dict) -> RuleResult:
 
     if "dkim=pass" in combined:
         return RuleResult(
-            score=15, verdict="pass",
+            score=5, verdict="pass",
             details={"dkim": "pass", "source": auth_results},
             recommendation=None,
         )
@@ -39,10 +39,12 @@ def check_dkim(headers: dict) -> RuleResult:
         )
 
     if not dkim_header:
+        # A missing DKIM signature (or auth header not captured in the paste)
+        # is not evidence of risk on its own — only a DKIM *fail* is. Neutral.
         return RuleResult(
-            score=-5, verdict="missing",
+            score=0, verdict="missing",
             details={"dkim": "no DKIM-Signature header"},
-            recommendation="El correo no incluye firma DKIM. Sin esta firma, no se puede verificar la integridad del mensaje.",
+            recommendation="El correo no incluye firma DKIM. No se pudo verificar la integridad del mensaje.",
         )
 
     return RuleResult(

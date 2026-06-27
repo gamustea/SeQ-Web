@@ -1,33 +1,34 @@
 """
-Unit of Work pattern for database session lifecycle management.
+Unit of Work — transaction boundary over the ambient database session.
 
-This module encapsulates a single database session and its transaction,
-providing commit, rollback, and close operations with full error handling.
+``UnitOfWork`` marks a transaction. It does **not** create, own, or close
+sessions: the session lifecycle is managed at the two edges of the system —
+``teardown_request`` for HTTP requests and the job boundary (``job_context``
+for RQ workers, ``Scheduler.execute`` for the scheduler) for background work.
+This keeps the request/background distinction in exactly two places instead of
+scattered across every call site.
 
-It is designed to be used as a context manager, ensuring the session is
-always properly closed even in the presence of exceptions.
+What ``__exit__`` does depends only on where it runs:
+
+- **In a request**: no-op. The shared request session is committed/closed by
+  ``teardown_request``, keeping the whole request in one atomic transaction
+  and the session alive for lazy loading.
+- **In a background context**: commits on clean exit, rolls back on error —
+  the per-block transaction boundary that worker jobs rely on.
+- **With an explicitly injected session** (tests): no-op; the caller owns the
+  transaction.
+
+This module also owns the engine/session-factory singletons used everywhere:
+``initialize``, ``get_session``, ``warmup`` and ``close_all``.
 
 Classes:
-    UnitOfWork: Manages a single session's lifecycle and transaction boundary.
+    UnitOfWork: Transaction boundary over the ambient session.
 
 Usage:
-    # As a context manager (recommended):
     with UnitOfWork() as uow:
-        repo = ScanRepository(uow)
-        repo.save(scan)
-        # Commits automatically on __exit__ if no exception was raised.
-
-    # Manual control:
-    uow = UnitOfWork()
-    try:
-        repo = ScanRepository(uow)
-        repo.save(scan)
-        uow.commit()
-    except Exception:
-        uow.rollback()
-        raise
-    finally:
-        uow.close()
+        ScanRepository(uow).save(scan)
+        # In background: commits on clean exit. In a request: deferred to
+        # teardown_request.
 """
 
 from __future__ import annotations
@@ -87,13 +88,24 @@ def initialize(database_url: Optional[str] = None) -> Engine:
     from src.modules.system import config_reading as CR
     isolation_level = CR.get_db_isolation_level()
 
-    ENGINE = create_engine(
-        database_url,
+    engine_kwargs = dict(
         pool_pre_ping=True,
         pool_recycle=3600,
         echo=False,
         isolation_level=isolation_level,
     )
+
+    # Pool sizing applies to QueuePool (PostgreSQL etc.). SQLite uses a
+    # different pool implementation where these args are invalid, so skip them.
+    if not database_url.startswith("sqlite"):
+        pool_cfg = CR.get_db_pool_config()
+        engine_kwargs.update(
+            pool_size=pool_cfg["pool_size"],
+            max_overflow=pool_cfg["max_overflow"],
+            pool_timeout=pool_cfg["pool_timeout"],
+        )
+
+    ENGINE = create_engine(database_url, **engine_kwargs)
 
     SESSION_FACTORY = scoped_session(
         sessionmaker(
@@ -162,71 +174,56 @@ def close_all() -> None:
 
 class UnitOfWork:
     """
-    Manages the lifecycle of a single SQLAlchemy session.
+    Transaction boundary over the *ambient* database session.
 
-    Wraps one session and exposes commit / rollback / close operations
-    with consistent error handling. Supports use as a context manager,
-    committing on clean exit and rolling back on exception.
+    UnitOfWork no longer creates, owns, or closes sessions — the session
+    lifecycle is owned by the request edge (``teardown_request``) and the job
+    edge (``job_context`` / ``Scheduler.execute``). This class only demarcates
+    a transaction over whatever session ``get_db_session()`` resolves for the
+    current context.
+
+    The public surface is unchanged: ``with UnitOfWork() as uow`` and
+    ``uow.session`` work exactly as before.
 
     Attributes:
-        session:        The underlying SQLAlchemy session.
-        _owns_session:  True if this UoW created the session (and must close it).
+        session:  The ambient SQLAlchemy session this transaction runs on.
+        _manage:  True only in a background context with an ambient session —
+                  i.e. when this block is responsible for commit/rollback.
+                  False in a request (teardown commits) or when a session was
+                  injected explicitly (the caller commits).
 
     Example:
     >>> with UnitOfWork() as uow:
-    ...     scan_repo = ScanRepository(uow)
-    ...     scan_repo.save(NmapScan(target="10.0.0.1", user_id=1))
+    ...     ScanRepository(uow).save(NmapScan(target="10.0.0.1", user_id=1))
     """
 
     def __init__(self, session: Optional[Session] = None) -> None:
         """
-        Initialize the Unit of Work with an optional existing session.
-
-        In a Flask request context, reuses ``g.db_session`` (if present)
-        so that reads and writes share the same request-scoped session.
-        In background threads, creates and owns its own session.
+        Bind the Unit of Work to the ambient session (or an explicit one).
 
         Args:
-            session: Optional existing SQLAlchemy session. If not provided,
-                     behaviour depends on the runtime context.
+            session: Optional existing SQLAlchemy session. When provided, the
+                     caller owns the transaction and ``__exit__`` is a no-op.
+                     When omitted, the session is resolved via
+                     ``get_db_session()`` and this block manages the
+                     transaction only in a background context.
         """
+        from flask import has_request_context
+
         if session is not None:
+            # Explicitly injected session — the caller owns the transaction.
             self.session = session
-            self._owns_session = False
+            self._manage = False
         else:
-            self.session = get_session()
-            self._owns_session = True
+            # Resolve the ambient session (request-scoped or thread-local).
+            # Lazy import avoids a circular import with session.py.
+            from .session import get_db_session
 
-        # If we're in a Flask request that already has a session, reuse it.
-        # This prevents UnitOfWork from closing the request-scoped session
-        # on __exit__, which would break lazy loading for the rest of the
-        # request.
-        self._try_share_request_session()
-
-    def _try_share_request_session(self) -> None:
-        """If running inside a Flask request with an active g.db_session,
-        reuse it and relinquish ownership so close() is a no-op.
-
-        The check is intentionally ``has_request_context()`` and **not**
-        ``has_app_context()``. Session sharing is only safe within the HTTP
-        request lifecycle, where ``before_request`` opens ``g.db_session`` and
-        ``teardown_request`` commits/closes it. Background RQ workers run under
-        a long-lived *application* context (see taskqueue/worker.py) with no
-        request and therefore no teardown hook: if we shared ``g.db_session``
-        there, ``__exit__`` would relinquish ownership and never commit, so
-        every write performed in a worker job would be silently discarded."""
-        try:
-            from flask import g, has_request_context
-        except ImportError:
-            return
-        try:
-            if has_request_context() and "db_session" in g:
-                if not self._owns_session:
-                    return  # externally provided session
-                self.session = g.db_session
-                self._owns_session = False
-        except RuntimeError:
-            pass  # working outside of application context
+            self.session = get_db_session()
+            # Manage the transaction only outside a request: in a request the
+            # teardown hook commits/closes, so committing here would break
+            # request-level atomicity and lazy loading.
+            self._manage = not has_request_context()
 
     # =========================================================================
     # CONTEXT MANAGER
@@ -237,18 +234,19 @@ class UnitOfWork:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """
-        Commit on clean exit, rollback on exception, always close.
+        Commit/rollback only when this block manages the transaction.
+
+        In a request (``_manage`` is False) this is a no-op — the request
+        teardown owns commit/close. Never suppresses exceptions.
 
         Returns:
             False — exceptions are never suppressed.
         """
-        if exc_type is None:
-            if self._owns_session:
+        if self._manage:
+            if exc_type is None:
                 self.commit()
-        else:
-            if self._owns_session:
+            else:
                 self.rollback()
-        self.close()
         return False
 
     # =========================================================================
@@ -274,38 +272,23 @@ class UnitOfWork:
         """
         Roll back the current transaction.
 
-        If the rollback itself fails, the session is closed and recreated
-        so that subsequent operations on this UoW can still proceed.
+        If the rollback itself fails the session is poisoned; recovery is the
+        job boundary's responsibility (``close_all()`` removes the thread-local
+        session so the next job starts clean). We log and re-raise rather than
+        recreate a session this object no longer owns.
         """
         try:
             if self.session is not None:
                 self.session.rollback()
         except Exception as rollback_err:
             logger.error("Rollback failed", exc_info=True)
-            if self._owns_session:
-                try:
-                    self.session.close()
-                    self.session = get_session()
-                except Exception as e:
-                    logger.exception("Failed to recreate session after close")
-            raise RuntimeError(
-                f"Rollback failed, session has been recreated: {rollback_err}"
-            ) from rollback_err
+            raise RuntimeError(f"Rollback failed: {rollback_err}") from rollback_err
 
     def close(self) -> None:
         """
-        Close the session if this UoW owns it.
+        No-op, kept for backward compatibility.
 
-        With the session-per-request architecture, the session is no longer
-        expunged or removed from the scoped registry here — that is handled
-        by the Flask teardown_request hook. Objects remain attached to the
-        session for the remainder of the request, allowing lazy loading to
-        work without eager-loading workarounds.
-
-        Safe to call multiple times; subsequent calls are no-ops.
+        The session is owned and closed by the request/job boundary, never by
+        UnitOfWork. Safe to call; does nothing.
         """
-        if self._owns_session and self.session is not None:
-            try:
-                self.session.close()
-            finally:
-                self.session = None
+        return None

@@ -220,6 +220,50 @@ public abstract class VaultEncryptingStrategy {
     }
 
     /**
+     * Re-derives the {@link #derivedKey} from a new master password and salt,
+     * <b>preserving the current {@link #vaultKey}</b>.
+     * <p>
+     * Because the vault data is encrypted with the {@code vaultKey} (not the
+     * derived key), rotating the master password only requires re-deriving the
+     * key-encryption key and re-wrapping the unchanged {@code vaultKey}; the
+     * stored ciphertext of every item stays byte-identical. After calling this,
+     * {@link #exportVaultKey()} and {@link #getChecker(String)} will produce
+     * material bound to the new password, and {@link #toJson()} will report the
+     * new salt.
+     *
+     * @param newMasterPassword the new master password
+     * @param newSaltBase64     a freshly generated Base64-encoded salt
+     * @throws GeneralSecurityException if key derivation fails
+     */
+    public void changePassword(String newMasterPassword, String newSaltBase64)
+            throws GeneralSecurityException {
+        SecretKey newDerivedKey = deriveKey(newMasterPassword, newSaltBase64);
+        this.saltBase64 = newSaltBase64;
+        this.derivedKey = newDerivedKey;
+    }
+
+    /**
+     * Checks, in constant time, whether {@code candidatePassword} derives the
+     * same key as the one currently held in {@link #derivedKey} (using the
+     * current {@link #saltBase64}).
+     * <p>
+     * This is used to verify the current master password before allowing a
+     * password change on an already-unlocked vault, where {@link #derivedKey}
+     * is by definition the key of the correct password.
+     *
+     * @param candidatePassword the master password to verify
+     * @return {@code true} if the candidate derives the current key
+     * @throws GeneralSecurityException if key derivation fails
+     */
+    public boolean matchesPassword(String candidatePassword) throws GeneralSecurityException {
+        if (derivedKey == null) {
+            return false;
+        }
+        SecretKey candidate = deriveKey(candidatePassword, saltBase64);
+        return MessageDigest.isEqual(candidate.getEncoded(), derivedKey.getEncoded());
+    }
+
+    /**
      * Generates a new random 256-bit AES key that can be used as a
      * {@link #vaultKey}.
      *

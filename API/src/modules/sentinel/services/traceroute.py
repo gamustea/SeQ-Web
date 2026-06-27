@@ -120,7 +120,9 @@ class TracerouteService:
             return None
         # -q 1: one probe per hop (faster); -m: max hops; -w: per-hop wait (s).
         # Names are resolved by traceroute itself (no -n) for a richer graph.
-        return [traceroute, "-q", "1", "-m", str(max_hops), "-w", "2", target]
+        # sudo -n: non-interactive (requires NOPASSWD in sudoers) — same pattern
+        # as Nmap scans. Needed because -T (TCP SYN) requires CAP_NET_RAW.
+        return ["sudo", "-n", traceroute, "-T", "-q", "1", "-m", str(max_hops), "-w", "2", target]
 
     def _parse(self, output: str) -> List[Dict[str, Any]]:
         """Parse raw traceroute/tracert output into normalized hops."""

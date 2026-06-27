@@ -32,26 +32,41 @@ Usage:
 
 from __future__ import annotations
 
-from flask import g
+import logging
+
+from flask import g, has_request_context
 
 from .unit_of_work import get_session, close_all
+
+logger = logging.getLogger(__name__)
 
 
 def get_db_session():
     """
-    Return the database session for the current Flask request.
+    Return the database session for the current execution context.
 
-    Creates a new session on first call within a request and caches it
-    in Flask's ``g`` object. Subsequent calls return the same session.
-    Safe to call from any manager or repository during request processing.
+    This is the single session accessor for the whole codebase — it behaves
+    correctly both in an HTTP request and in a background job:
+
+    - **In a Flask request**: returns the request-scoped session cached in
+      ``g.db_session`` (opened by ``init_request_session`` and committed/closed
+      by ``shutdown_request_session``). Subsequent calls return the same one,
+      so lazy loading works for the whole request.
+    - **In a background context** (RQ worker / scheduler thread, no request):
+      returns the thread-local scoped session directly. It is deliberately
+      **not** cached in ``g``: a worker's application context lives as long as
+      the worker, so caching there would pin one session across every job. The
+      job boundary (``job_context`` / ``Scheduler.execute``) calls
+      ``close_all()`` to reset it per job.
 
     Returns:
-        SQLAlchemy Session bound to the current request/thread.
+        SQLAlchemy Session bound to the current request or worker thread.
     """
-    if "db_session" not in g:
-        g.db_session = get_session()
-    return g.db_session
-
+    if has_request_context():
+        if "db_session" not in g:
+            g.db_session = get_session()
+        return g.db_session
+    return get_session()
 
 def init_request_session() -> None:
     """
@@ -63,7 +78,6 @@ def init_request_session() -> None:
     """
     get_db_session()
 
-
 def shutdown_request_session(exception=None) -> None:
     """
     Flask ``teardown_request`` hook — finalize the DB session.
@@ -72,6 +86,13 @@ def shutdown_request_session(exception=None) -> None:
     - Otherwise, attempts to commit the transaction.
     - Always closes the session and removes the scoped session from the
       registry, preventing session leaks.
+
+    Note:
+        A failed commit is rolled back and logged but **not** re-raised. This
+        hook runs after the response has already been produced, so propagating
+        here cannot change what the client receives; integrity is already
+        protected by the rollback, and re-raising would only surface as an
+        unhandled error in a post-response hook.
 
     Args:
         exception: The exception raised during the request, if any.
@@ -88,8 +109,8 @@ def shutdown_request_session(exception=None) -> None:
             try:
                 session.commit()
             except Exception:
+                logger.error("Commit failed during request teardown", exc_info=True)
                 session.rollback()
-                raise
     finally:
         session.close()
         close_all()

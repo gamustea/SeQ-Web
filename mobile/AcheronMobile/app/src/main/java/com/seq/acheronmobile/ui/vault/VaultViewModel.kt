@@ -110,24 +110,14 @@ class VaultViewModel : ViewModel() {
         }
     }
 
-    suspend fun addAccount(title: String, username: String, domain: String, password: String): Boolean {
+    /**
+     * Alta genérica de un storable de cualquier [kind] a partir de un mapa
+     * `campo -> valor` (los nombres de campo provienen del [StorableTypeSpec]).
+     */
+    suspend fun addStorable(kind: String, title: String, fields: Map<String, String>): Boolean {
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         return try {
-            val request = crypto.addAccount(title, username, domain, password)
-            pushStorableResult(remote.addStorable(request))
-        } catch (e: Exception) {
-            _uiState.update {
-                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
-            }
-            false
-        }
-    }
-
-    suspend fun addCreditCard(title: String, holder: String, number: String,
-                      expiry: String, cvv: String, postal: String): Boolean {
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-        return try {
-            val request = crypto.addCreditCard(title, holder, number, expiry, cvv, postal)
+            val request = crypto.addStorable(kind, title, fields)
             pushStorableResult(remote.addStorable(request))
         } catch (e: Exception) {
             _uiState.update {
@@ -155,24 +145,14 @@ class VaultViewModel : ViewModel() {
         }
     }
 
-    suspend fun updateAccount(id: String, title: String?, username: String?, domain: String?, password: String?): Boolean {
+    /**
+     * Actualización genérica de un storable: [fields] contiene `campo -> valor`
+     * para los campos a cambiar (valor `null` = sin cambios).
+     */
+    suspend fun updateStorable(id: String, title: String?, fields: Map<String, String?>): Boolean {
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         return try {
-            val changes = crypto.updateAccount(id, title, username, domain, password)
-            pushStorableUpdate(id, changes)
-        } catch (e: Exception) {
-            _uiState.update {
-                it.copy(isLoading = false, errorMessage = e.localizedMessage ?: "Error")
-            }
-            false
-        }
-    }
-
-    suspend fun updateCreditCard(id: String, title: String?, holder: String?, number: String?,
-                         expiry: String?, cvv: String?, postal: String?): Boolean {
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-        return try {
-            val changes = crypto.updateCreditCard(id, title, holder, number, expiry, cvv, postal)
+            val changes = crypto.updateStorable(id, title, fields)
             pushStorableUpdate(id, changes)
         } catch (e: Exception) {
             _uiState.update {
@@ -223,6 +203,52 @@ class VaultViewModel : ViewModel() {
                 _uiState.update {
                     it.copy(isLoading = false, errorMessage = "Sin conexión")
                 }
+                false
+            }
+        }
+    }
+
+    /**
+     * Rota la contraseña maestra: re-cifra la clave de la bóveda con la nueva
+     * contraseña (los storables no se tocan) y refresca los metadatos en el
+     * servidor vía `PATCH /vault`. Tras intentarlo, bloquea la bóveda para que
+     * el usuario la vuelva a abrir con la contraseña correspondiente (la nueva
+     * si tuvo éxito; la antigua si falló la persistencia).
+     *
+     * @return `true` si el cambio se aplicó y persistió correctamente.
+     */
+    suspend fun changeMasterPassword(oldPassword: String, newPassword: String): Boolean {
+        _uiState.update { it.copy(syncing = true, errorMessage = null) }
+
+        val metadata = try {
+            crypto.changeMasterPassword(oldPassword, newPassword)
+        } catch (_: com.seq.acheron.exceptions.WrongPasswordException) {
+            // Se lanza antes de mutar el vault: el usuario puede reintentar.
+            _uiState.update { it.copy(syncing = false, errorMessage = "Contraseña actual incorrecta") }
+            return false
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(syncing = false, errorMessage = e.localizedMessage ?: "Error al cambiar la contraseña")
+            }
+            return false
+        }
+
+        return when (val result = remote.changeVaultPassword(metadata)) {
+            is VaultRemoteDataSource.Result.Success -> {
+                _uiState.update { it.copy(syncing = false) }
+                crypto.lock() // re-desbloqueo con la nueva contraseña
+                true
+            }
+            is VaultRemoteDataSource.Result.Error -> {
+                // El vault en memoria ya está rekeyado pero el server no: bloquea
+                // para descartar el estado divergente.
+                _uiState.update { it.copy(syncing = false, errorMessage = result.message) }
+                crypto.lock()
+                false
+            }
+            is VaultRemoteDataSource.Result.NetworkError -> {
+                _uiState.update { it.copy(syncing = false, errorMessage = "Sin conexión") }
+                crypto.lock()
                 false
             }
         }

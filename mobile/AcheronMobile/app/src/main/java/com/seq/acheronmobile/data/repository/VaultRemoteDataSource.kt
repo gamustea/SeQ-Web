@@ -51,6 +51,21 @@ class VaultRemoteDataSource(
         }
     }
 
+    suspend fun changeVaultPassword(metadata: JsonObject): Result<VaultUpsertResponse> {
+        return try {
+            val response = api.changeVaultPassword(metadata)
+            if (response.isSuccessful) {
+                Result.Success(response.body()!!)
+            } else {
+                Result.Error(response.code(), errorMessage(response))
+            }
+        } catch (_: java.io.IOException) {
+            Result.NetworkError
+        } catch (e: Exception) {
+            Result.Error(0, e.localizedMessage ?: "Unknown error")
+        }
+    }
+
     suspend fun addStorable(request: StorableCreateRequest): Result<StorableResponse> {
         return try {
             val response = api.addStorable(request)
@@ -97,19 +112,20 @@ class VaultRemoteDataSource(
     }
 
     private fun errorMessage(response: retrofit2.Response<*>): String {
+        val fallback = when (response.code()) {
+            401 -> "Sesion expirada"
+            403 -> "No tienes permisos para realizar esta accion"
+            404 -> "No encontrado"
+            409 -> "Ya existe"
+            429 -> "Demasiadas peticiones"
+            else -> "Error ${response.code()}"
+        }
         return try {
             val body = response.errorBody()?.string() ?: ""
             json.decodeFromString<com.seq.acheronmobile.data.model.ApiErrorResponse>(body)
-                .userMessage ?: "Error ${response.code()}"
+                .displayMessage() ?: fallback
         } catch (_: Exception) {
-            when (response.code()) {
-                401 -> "Sesion expirada"
-                403 -> "Permisos insuficientes"
-                404 -> "No encontrado"
-                409 -> "Ya existe"
-                429 -> "Demasiadas peticiones"
-                else -> "Error ${response.code()}"
-            }
+            fallback
         }
     }
 }

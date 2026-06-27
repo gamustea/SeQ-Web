@@ -24,7 +24,7 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy.orm import Session, joinedload
@@ -86,8 +86,9 @@ class ScanRepository(BaseRepository[Scan]):
     # EAGER-LOADED QUERIES (background-thread use only)
     # ─────────────────────────────────────────────────────────────────────────
     # These methods eagerly load relationships via joinedload so that objects
-    # survive UnitOfWork.close() in background threads where lazy loading
-    # is unavailable. Foreground (request-context) code should use
+    # remain usable after the per-job session is reset at the job boundary
+    # (job_context / Scheduler.execute call close_all()), where lazy loading is
+    # no longer available. Foreground (request-context) code should use
     # get_by_id_and_type() instead — lazy loading works with request-scoped
     # sessions.
     # =========================================================================
@@ -276,8 +277,9 @@ class ScanRepository(BaseRepository[Scan]):
             for target, scan_type, count, last_scanned in rows
         ]
 
-    # Eager-loading options per subtype so the returned scans survive
-    # UnitOfWork.close() in background threads (report generation).
+    # Eager-loading options per subtype so the returned scans remain usable
+    # after the per-job session is reset at the job boundary (report
+    # generation runs in a background worker).
     _HISTORY_OPTIONS = {
         ScanType.NMAP: (
             NmapScan,
@@ -614,7 +616,7 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
     Repository for the ProgramedScan entity (scheduled/recurring scans).
 
     Manages programed scan lifecycle: querying by user and type,
-    finding due executions for the scheduler, and recording run timestamps.
+    restoring active jobs on scheduler startup, and recording run timestamps.
 
     Attributes:
         _model:  ProgramedScan (inherited from BaseRepository).
@@ -623,9 +625,8 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
     Example:
     >>> with UnitOfWork() as uow:
     ...     repo = ProgramedScanRepository(uow)
-    ...     due_scans = repo.get_due()
-    ...     for ps in due_scans:
-    ...         repo.update_last_run(ps)
+    ...     ps = repo.get_by_id(ps_id)
+    ...     repo.update_run_timestamps(ps, last_run=now, next_run=next_run)
     """
 
     def __init__(self, uow: UnitOfWork | None = None, session: Session | None = None) -> None:
@@ -693,26 +694,6 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
             .all()
         )
 
-    def get_due(self) -> List[ProgramedScan]:
-        """
-        Retrieve all active programed scans whose next_run_at is in the past.
-
-        Used by the scheduler to find scans that are due for execution. Only
-        returns scans that have both is_active=True and next_run_at populated.
-
-        Returns:
-            List of ProgramedScan instances that need to run.
-        """
-        return (
-            self._session.query(ProgramedScan)
-            .filter(
-                ProgramedScan.is_active.is_(True),
-                ProgramedScan.next_run_at.isnot(None),
-                ProgramedScan.next_run_at <= datetime.utcnow(),  # type: ignore
-            )
-            .all()
-        )
-
     def get_all_active(self) -> List[ProgramedScan]:
         """
         Retrieve all active programed scans regardless of user.
@@ -734,32 +715,29 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
     # MUTATION METHODS
     # =========================================================================
 
-    def update_last_run(self, ps: ProgramedScan) -> ProgramedScan:
+    def update_run_timestamps(
+        self,
+        ps: ProgramedScan,
+        last_run: datetime,
+        next_run: Optional[datetime],
+    ) -> ProgramedScan:
         """
-        Record that a programed scan has just executed.
+        Record a completed execution of a programed scan.
 
-        Sets last_run_at to the current UTC time and advances next_run_at
-        by the configured interval so the scheduler picks up the next
-        occurrence automatically.
+        Both timestamps are computed by the caller (the Scheduler owns the
+        scheduling math, this repository only persists). ``next_run`` may be
+        ``None`` for one-shot schedules.
 
         Args:
-            ps: The ProgramedScan that executed.
+            ps:        The ProgramedScan that executed.
+            last_run:  Timestamp of the execution just performed (naive UTC).
+            next_run:  Timestamp of the next planned execution (naive UTC).
 
         Returns:
             The same ProgramedScan instance after flush.
         """
-        ps.last_run_at = datetime.utcnow()  # type: ignore
-        ps.next_run_at = self._compute_next_run(
-            ps.schedule_type, ps.schedule_config
-        )  # type: ignore
-        return self.update(ps)
-
-    def update_next_run(
-        self,
-        ps: ProgramedScan,
-        next_run_at: datetime
-    ) -> ProgramedScan:
-        ps.next_run_at = next_run_at   # type: ignore
+        ps.last_run_at = last_run  # type: ignore
+        ps.next_run_at = next_run  # type: ignore
         return self.update(ps)
 
     def create(
@@ -769,12 +747,10 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
         arguments: dict,
         schedule_type: str,
         schedule_config: dict,
+        next_run_at: Optional[datetime],
     ) -> ProgramedScan:
         """
         Create and persist a new programed scan.
-
-        Computes an initial next_run_at from schedule_config so the
-        scheduler can pick it up immediately.
 
         Args:
             user_id:         Owner user primary key.
@@ -782,31 +758,18 @@ class ProgramedScanRepository(BaseRepository[ProgramedScan]):
             arguments:       Scan parameters (e.g. {"ports": "22,80"}).
             schedule_type:   "interval" or "cron".
             schedule_config: Schedule definition (e.g. {"every": 60, "unit": "minutes"}).
+            next_run_at:     First planned execution time (computed by the caller
+                             via Scheduler.calculate_next_run).
 
         Returns:
             The newly persisted ProgramedScan instance.
         """
-        next_run = self._compute_next_run(schedule_type, schedule_config)
-
         ps = ProgramedScan(
             user_id=user_id,
             scan_type=scan_type,
             arguments=arguments,
             schedule_type=schedule_type,
             schedule_config=schedule_config,
-            next_run_at=next_run,
+            next_run_at=next_run_at,
         )
         return self.save(ps)
-
-    @staticmethod
-    def _compute_next_run(
-        schedule_type: str,
-        schedule_config: dict,
-    ) -> datetime:
-        if schedule_type == "interval":
-            every = schedule_config.get("every", 60)
-            unit = schedule_config.get("unit", "minutes")
-            kwargs = {unit: every}
-            return datetime.utcnow() + timedelta(**kwargs)
-        # "cron" or unknown: run immediately
-        return datetime.utcnow()

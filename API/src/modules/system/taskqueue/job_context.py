@@ -50,7 +50,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
+from flask import has_request_context
 from rq import get_current_job
+
+from src.modules.infrastructure.unit_of_work import close_all
 
 from .queue import TaskQueue
 from .stores import ProgressStore
@@ -146,11 +149,26 @@ def job_context() -> Iterator[JobHandle]:
 
     **Control de flujo**:
         - try: yield el JobHandle al usuario (quien lo usa en el with)
-        - finally: clear_cancel() **siempre** ejecuta (éxito, excepción, todo)
+        - finally: clear_cancel() + close_all() **siempre** ejecutan
         - No atrapa excepciones (dejar que RQ las maneje)
+
+    **Sesión por job**: en el ``finally`` se llama ``close_all()``
+    (``SESSION_FACTORY.remove()``), el espejo del ``teardown_request`` de Flask.
+    Los hilos-worker son de vida larga y ``scoped_session`` está keyed por hilo,
+    así que sin esto el siguiente job de este worker reutilizaría la misma
+    ``Session`` — heredando cualquier transacción abortada o estado del
+    identity-map del job anterior. (El scheduler hace lo mismo en
+    ``Scheduler.execute``.)
+
+    Sólo se resetea la sesión cuando este job **es** el borde: si hay un
+    request activo (p. ej. un job ejecutado inline en tests), el
+    ``teardown_request`` es el dueño de la sesión y quitarla aquí cerraría la
+    sesión del request y haría rollback de sus escrituras sin confirmar.
     """
     handle = JobHandle(get_current_job())
     try:
         yield handle
     finally:
         handle.clear_cancel()
+        if not has_request_context():
+            close_all()

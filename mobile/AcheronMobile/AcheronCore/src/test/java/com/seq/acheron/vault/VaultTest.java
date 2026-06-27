@@ -1,5 +1,6 @@
 package com.seq.acheron.vault;
 
+import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.CryptoUtils;
@@ -167,7 +168,7 @@ public class VaultTest {
 
             assertNotNull(mockVault);
             assertFalse(mockVault.isEncrypted(), "El mockVault debe estar descifrado por defecto");
-            assertEquals(5, mockVault.getStorables().size(), "El mockVault inicializa 5 storables de demo");
+            assertEquals(10, mockVault.getStorables().size(), "El mockVault inicializa 10 storables de demo (cuentas, tarjetas, nota, identidad, banco, wifi y licencia)");
         }
 
         @Test
@@ -219,6 +220,83 @@ public class VaultTest {
             Account restoredCustomAcc = (Account) restoredVault.get("CUSTOM_ID");
             assertEquals("gabriel", restoredCustomAcc.getUsername());
             assertEquals("SecretPass!1", restoredCustomAcc.getPassword(), "El password descifrado debe coincidir exactamente");
+        }
+    }
+
+    @Nested
+    @DisplayName("Tests de cambio de contraseña maestra (changePassword)")
+    class ChangePasswordTests {
+
+        private static final String OLD_PASSWORD = "MiPassSuperSegura123";
+        private static final String NEW_PASSWORD = "NuevaClaveAunMasSegura456";
+
+        @Test
+        @DisplayName("changePassword lanza IllegalStateException si el Vault está cifrado")
+        void testChangePasswordRequiresDecrypted() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+            vault.add(new Account("ACC", "user", "dom", "pass", false));
+            vault.encryptAll();
+
+            assertTrue(vault.isEncrypted());
+            assertThrows(IllegalStateException.class,
+                    () -> vault.changePassword(OLD_PASSWORD, NEW_PASSWORD),
+                    "No debe permitirse cambiar la contraseña con el Vault cifrado");
+        }
+
+        @Test
+        @DisplayName("changePassword lanza WrongPasswordException si la contraseña actual es incorrecta")
+        void testChangePasswordWrongCurrent() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+            vault.add(new Account("ACC", "user", "dom", "pass", false));
+
+            assertThrows(WrongPasswordException.class,
+                    () -> vault.changePassword("contraseñaIncorrecta", NEW_PASSWORD),
+                    "La contraseña actual incorrecta debe rechazarse");
+        }
+
+        @Test
+        @DisplayName("changePassword rota salt y checker conservando la vaultKey")
+        void testChangePasswordRotatesMaterial() throws GeneralSecurityException {
+            Vault vault = new Vault(testStrategy, testUser, false);
+            String saltBefore = testStrategy.getSaltBase64();
+            String checkerBefore = vault.getChecker();
+
+            vault.changePassword(OLD_PASSWORD, NEW_PASSWORD);
+
+            assertNotEquals(saltBefore, testStrategy.getSaltBase64(), "El salt debe rotarse");
+            assertNotEquals(checkerBefore, vault.getChecker(), "El checker debe recalcularse con la nueva clave");
+            assertFalse(vault.isEncrypted(), "El Vault sigue descifrado tras el cambio");
+        }
+
+        @Test
+        @DisplayName("Tras cambiar la contraseña, la antigua falla y la nueva abre con los storables intactos")
+        void testChangePasswordFullLifecycle() throws GeneralSecurityException {
+            // 1. Vault descifrado con un storable conocido.
+            Vault vault = new Vault(testStrategy, testUser, false);
+            vault.add(new Account("CUSTOM_ID", "Cuenta", "gabriel", "test.com", "SecretPass!1", false));
+
+            // 2. Cambiamos la contraseña maestra.
+            vault.changePassword(OLD_PASSWORD, NEW_PASSWORD);
+
+            // 3. Ciframos y serializamos con la nueva contraseña ya aplicada.
+            vault.encryptAll();
+            String json = vault.toJson();
+
+            VaultFactory factory = new VaultFactory(testUser);
+
+            // 4. La contraseña antigua ya no abre el vault.
+            assertThrows(WrongPasswordException.class,
+                    () -> factory.fromJson(json, OLD_PASSWORD),
+                    "La contraseña antigua no debe abrir el vault tras el cambio");
+
+            // 5. La nueva contraseña abre el vault y los storables se descifran intactos.
+            Vault reopened = factory.fromJson(json, NEW_PASSWORD);
+            reopened.decryptAll();
+
+            Account acc = (Account) reopened.get("CUSTOM_ID");
+            assertNotNull(acc, "El storable debe seguir presente con su id estable");
+            assertEquals("gabriel", acc.getUsername());
+            assertEquals("SecretPass!1", acc.getPassword(), "El valor descifrado debe coincidir exactamente");
         }
     }
 }

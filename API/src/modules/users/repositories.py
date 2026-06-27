@@ -167,6 +167,35 @@ class TokenRepository(BaseRepository[AccessToken]):
         super().__init__(AccessToken, uow=uow, session=session)
 
     # =========================================================================
+    # INTERNAL HELPERS (shared by AccessToken / RefreshToken)
+    # =========================================================================
+
+    def _get_token(self, model, token: str):
+        """Retrieve a token record of ``model`` by its raw token string."""
+        return (
+            self._session.query(model)
+            .filter(model.token == token)
+            .one_or_none()
+        )
+
+    def _revoke_all(self, model, user_id: int) -> None:
+        """Mark every token of ``model`` owned by ``user_id`` as revoked."""
+        self._session.query(model).filter(
+            model.user_id == user_id
+        ).update({"revoked": 1}, synchronize_session=False)
+        self._session.flush()
+
+    def _delete_expired(self, model, before: datetime) -> int:
+        """Delete tokens of ``model`` whose ``expires_at`` is before ``before``."""
+        deleted = (
+            self._session.query(model)
+            .filter(model.expires_at < before)
+            .delete(synchronize_session=False)
+        )
+        self._session.flush()
+        return deleted
+
+    # =========================================================================
     # ACCESS TOKEN
     # =========================================================================
 
@@ -180,11 +209,7 @@ class TokenRepository(BaseRepository[AccessToken]):
         Returns:
             AccessToken instance, or None if not found.
         """
-        return (
-            self._session.query(AccessToken)
-            .filter(AccessToken.token == token)
-            .one_or_none()
-        )
+        return self._get_token(AccessToken, token)
 
     def save_access_token(self, token: AccessToken) -> AccessToken:
         """
@@ -223,10 +248,7 @@ class TokenRepository(BaseRepository[AccessToken]):
         Args:
             user_id: User primary key.
         """
-        self._session.query(AccessToken).filter(
-            AccessToken.user_id == user_id
-        ).update({"revoked": 1}, synchronize_session=False)
-        self._session.flush()
+        self._revoke_all(AccessToken, user_id)
 
     def delete_expired_access_tokens(self, before: datetime) -> int:
         """
@@ -238,13 +260,7 @@ class TokenRepository(BaseRepository[AccessToken]):
         Returns:
             Number of rows deleted.
         """
-        deleted = (
-            self._session.query(AccessToken)
-            .filter(AccessToken.expires_at < before)
-            .delete(synchronize_session=False)
-        )
-        self._session.flush()
-        return deleted
+        return self._delete_expired(AccessToken, before)
 
     # =========================================================================
     # REFRESH TOKEN
@@ -260,11 +276,7 @@ class TokenRepository(BaseRepository[AccessToken]):
         Returns:
             RefreshToken instance, or None if not found.
         """
-        return (
-            self._session.query(RefreshToken)
-            .filter(RefreshToken.token == token)
-            .one_or_none()
-        )
+        return self._get_token(RefreshToken, token)
 
     def save_refresh_token(self, token: RefreshToken) -> RefreshToken:
         """
@@ -276,10 +288,7 @@ class TokenRepository(BaseRepository[AccessToken]):
         Returns:
             The same instance with server-generated fields populated.
         """
-        self._session.add(token)
-        self._session.flush()
-        self._session.refresh(token)
-        return token
+        return self.save(token)
 
     def revoke_all_refresh_tokens(self, user_id: int) -> None:
         """
@@ -288,10 +297,7 @@ class TokenRepository(BaseRepository[AccessToken]):
         Args:
             user_id: User primary key.
         """
-        self._session.query(RefreshToken).filter(
-            RefreshToken.user_id == user_id
-        ).update({"revoked": 1}, synchronize_session=False)
-        self._session.flush()
+        self._revoke_all(RefreshToken, user_id)
 
     def delete_expired_refresh_tokens(self, before: datetime) -> int:
         """
@@ -303,13 +309,7 @@ class TokenRepository(BaseRepository[AccessToken]):
         Returns:
             Number of rows deleted.
         """
-        deleted = (
-            self._session.query(RefreshToken)
-            .filter(RefreshToken.expires_at < before)
-            .delete(synchronize_session=False)
-        )
-        self._session.flush()
-        return deleted
+        return self._delete_expired(RefreshToken, before)
 
     # =========================================================================
     # COMBINED OPERATIONS

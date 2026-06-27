@@ -42,6 +42,8 @@ class DirectoryType(Enum):
     CSV_SENTINEL       = "sentinel.csv"
     RESOURCES_SENTINEL = "sentinel.resources"
 
+    OUTPUT_IRIS        = "iris.output"
+
 
 # =============================================================================
 # CLASES ÚTILES
@@ -101,9 +103,15 @@ def reload() -> None:
     _configs_path = None
 
 
-def is_loaded() -> bool:
-    """Indica si la configuración ya ha sido cargada."""
-    return _configs is not None
+def _require_configs() -> dict:
+    """Devuelve la configuración cargada o lanza si aún no lo está.
+
+    Centraliza el guard ``_configs is None`` que comparten los getters, de modo
+    que cada uno se reduzca a una sola línea de lectura.
+    """
+    if _configs is None:
+        raise IllegalStateError("'_configs' detectado como nulo")
+    return _configs
 
 
 # =============================================================================
@@ -244,52 +252,66 @@ def verify_directory(directory: DirectoryType) -> Path:
 
     return dir_path
 
-@_lazy_load
-def get_directory_of(directory_type) -> str:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
+_DIRECTORY_ENV_MAPPING = {
+    "tempdir": "TEMP_DIR",
+    "logdir": "LOG_DIR",
+    "output": "OUTPUT_DIR",
+    "stack": "OUTPUT_DIR",
+    "sentinel.csv": "CSV_SENTINEL_DIR",
+}
 
-    dir_key = directory_type.value if hasattr(directory_type, 'value') else directory_type
 
-    env_mapping = {
-        "tempdir": "TEMP_DIR",
-        "logdir": "LOG_DIR",
-        "output": "OUTPUT_DIR",
-        "stack": "OUTPUT_DIR",
-        "sentinel.csv": "CSV_SENTINEL_DIR",
-    }
+def _normalize_dir_key(directory_type) -> str:
+    """Acepta un ``DirectoryType`` (enum) o un string y devuelve la clave plana."""
+    return directory_type.value if hasattr(directory_type, "value") else directory_type
 
-    env_var = env_mapping.get(dir_key)
+
+def _env_override_for(dir_key: str) -> Optional[str]:
+    """Devuelve el valor de la variable de entorno que sobreescribe ``dir_key``, si existe."""
+    env_var = _DIRECTORY_ENV_MAPPING.get(dir_key)
     if env_var:
-        env_value = os.getenv(env_var)
-        if env_value:
-            return env_value
+        return os.getenv(env_var) or None
+    return None
 
+
+def _lookup_raw_path(cfg: dict, dir_key: str) -> str:
+    """Resuelve la ruta cruda en la config: rama anidada ``module.subkey`` o plana ``general``."""
     if "." in dir_key:
-        parts = dir_key.split(".")
-        module_key = parts[0]
-        if module_key not in _configs:
+        module_key, sub_key = dir_key.split(".")
+        if module_key not in cfg:
             raise ValueError(f"Módulo '{module_key}' no encontrado en la configuración.")
-        module_config = _configs[module_key]
+        module_config = cfg[module_key]
         if "directories" not in module_config:
             raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
         directories = module_config["directories"]
-        sub_key = parts[1]
         if sub_key not in directories:
             raise ValueError(f"Directorio '{sub_key}' no encontrado en la configuración.")
-        raw_path = directories[sub_key]
-    else:
-        if dir_key not in _configs.get("general", {}).get("directories", {}):
-            raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
-        raw_path = _configs["general"]["directories"][dir_key]
+        return directories[sub_key]
 
+    if dir_key not in cfg.get("general", {}).get("directories", {}):
+        raise ValueError(f"Directorio '{dir_key}' no encontrado en la configuración.")
+    return cfg["general"]["directories"][dir_key]
+
+
+def _to_absolute(raw_path: str) -> str:
+    """Convierte una ruta relativa en absoluta respecto al raíz de la app."""
     path = Path(raw_path)
-
     if not path.is_absolute():
         app_root = Path(__file__).resolve().parent.parent.parent
         path = app_root / path
-
     return str(path)
+
+
+@_lazy_load
+def get_directory_of(directory_type) -> str:
+    dir_key = _normalize_dir_key(directory_type)
+
+    override = _env_override_for(dir_key)
+    if override:
+        return override
+
+    raw_path = _lookup_raw_path(_require_configs(), dir_key)
+    return _to_absolute(raw_path)
 
 
 # =============================================================================
@@ -298,41 +320,26 @@ def get_directory_of(directory_type) -> str:
 
 @_lazy_load
 def get_aegis_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.get("aegis", {})
+    return _require_configs().get("aegis", {})
 
 @_lazy_load
 def get_aegis_tips_amount() -> int:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("aegis", {})
+    cfg = _require_configs().get("aegis", {})
     return int(cfg.get("tipsAmount", 7))
 
 @_lazy_load
 def get_aegis_vulnerabilities_antiquity() -> int:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("aegis", {})
+    cfg = _require_configs().get("aegis", {})
     return int(cfg.get("vulnerabilitiesAntiquity", 5))
 
 @_lazy_load
 def get_aegis_brands() -> list[dict]:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("aegis", {})
+    cfg = _require_configs().get("aegis", {})
     return list(cfg.get("brands", []))
 
 @_lazy_load
 def get_aegis_prompts() -> dict:
-    if _configs is None:
-        raise IllegalStateError(f"_configs encontrado como None")
-
-    aegis = _configs.get("aegis", {})
+    aegis = _require_configs().get("aegis", {})
     return aegis.get("prompts", {})
 
 
@@ -343,10 +350,7 @@ def get_aegis_prompts() -> dict:
 @_lazy_load
 def get_ai_config() -> dict:
     """Devuelve el bloque 'ai' de SecOpsConfig.json (puede estar vacío)."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.get("ai", {})
+    return _require_configs().get("ai", {})
 
 
 @_lazy_load
@@ -375,17 +379,11 @@ def get_ai_strategy_for(module: str | None = None) -> str:
 
 @_lazy_load
 def get_sentinel_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.get("sentinel", {})
+    return _require_configs().get("sentinel", {})
 
 @_lazy_load
 def get_prompts_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
 
     return {
         "nmap": sentinel.get("nmap", {}).get("prompts", {}),
@@ -401,10 +399,7 @@ def get_tool_prompts(tool: str) -> dict:
 @_lazy_load
 def get_tool_color_palette(tool) -> dict:
     from src.modules.sentinel.services.reports import SentinelTool
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
 
     tool_key = tool
     if tool_key not in sentinel:
@@ -415,10 +410,7 @@ def get_tool_color_palette(tool) -> dict:
 
 @_lazy_load
 def are_local_ips_allowed() -> bool:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como None")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
     are_allowed = sentinel.get("areLocalIpsAllowed", None)
 
     if are_allowed is None:
@@ -462,10 +454,7 @@ def get_sentinel_csv_dir() -> str:
 @_lazy_load
 def get_sentinel_default_folder_name() -> str:
     """Devuelve el nombre mostrado para la carpeta virtual de escaneos sueltos."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    sentinel = _configs.get("sentinel", {})
+    sentinel = _require_configs().get("sentinel", {})
     return sentinel.get("folders", {}).get("defaultFolderName", "Sin carpeta")
 
 
@@ -516,10 +505,7 @@ def get_sentinel_traceroute_retry_failed_minutes() -> float:
 @_lazy_load
 def get_full_config() -> dict:
     """Devuelve toda la configuración."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    return _configs.copy()
+    return _require_configs().copy()
 
 def save_full_config(new_config: dict) -> dict:
     """Guarda la configuración completa."""
@@ -545,10 +531,7 @@ def get_redis_config() -> dict:
     REDIS_PASSWORD. Las env vars REDIS_HOST/PORT/DB sobreescriben la config si
     están presentes (útil en contenedores).
     """
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("redis", {})
+    cfg = _require_configs().get("redis", {})
     host    = os.getenv("REDIS_HOST", str(cfg.get("host", "localhost")))
     port    = int(os.getenv("REDIS_PORT", str(cfg.get("port", 6379))))
     db      = int(os.getenv("REDIS_DB",   str(cfg.get("db", 0))))
@@ -565,10 +548,7 @@ def get_redis_config() -> dict:
 
 @_lazy_load
 def get_taskqueue_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("general", {}).get("taskqueue", {})
+    cfg = _require_configs().get("general", {}).get("taskqueue", {})
     max_workers_env = os.getenv("TASKQUEUE_MAX_WORKERS")
     if max_workers_env is not None:
         cfg["max_workers"] = int(max_workers_env)
@@ -581,19 +561,19 @@ def get_taskqueue_config() -> dict:
 
 @_lazy_load
 def get_iris_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-    return _configs.get("iris", {})
+    return _require_configs().get("iris", {})
 
 @_lazy_load
 def get_iris_legitimate_threshold() -> float:
+    # 0–100 subtractive scale: >= 80 is Legitimate (see IrisManager._aggregate_score).
     cfg = get_iris_config()
-    return float(cfg.get("legitimate_threshold", 50))
+    return float(cfg.get("legitimate_threshold", 80))
 
 @_lazy_load
 def get_iris_suspicious_threshold() -> float:
+    # 0–100 subtractive scale: >= 55 is Suspicious, below is Phishing.
     cfg = get_iris_config()
-    return float(cfg.get("suspicious_threshold", 0))
+    return float(cfg.get("suspicious_threshold", 55))
 
 @_lazy_load
 def get_iris_min_headers() -> int:
@@ -602,15 +582,39 @@ def get_iris_min_headers() -> int:
 
 
 # =============================================================================
-# CONFIGURACIÓN DE BASE DE DATOS (no secretos)
+# VERSI�N DE LA APLICACI�N
+# =============================================================================
+
+@_lazy_load
+def get_app_version() -> str:
+    """Versi�n de la aplicaci�n desde SecOpsConfig.json."""
+    return str(_require_configs().get("appVersion", "0.0.0"))
+
+
+# =============================================================================
+# CONFIGURACI�N DE BASE DE DATOS (no secretos)
 # =============================================================================
 
 @_lazy_load
 def get_db_isolation_level() -> str:
     """Devuelve el isolation level de SQLAlchemy desde SecOpsConfig.json."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-    return _configs.get("database", {}).get("isolation_level", "READ COMMITTED")
+    return _require_configs().get("database", {}).get("isolation_level", "READ COMMITTED")
+
+
+@_lazy_load
+def get_db_pool_config() -> dict:
+    """Devuelve la configuración del pool de conexiones desde SecOpsConfig.json.
+
+    Claves: pool_size, max_overflow, pool_timeout. Aplica defaults sensatos si
+    faltan, de modo que el sistema arranca aunque el bloque no esté completo.
+    """
+    defaults = {"pool_size": 10, "max_overflow": 20, "pool_timeout": 30}
+    db_cfg = _require_configs().get("database", {})
+    return {
+        "pool_size": int(db_cfg.get("pool_size", defaults["pool_size"])),
+        "max_overflow": int(db_cfg.get("max_overflow", defaults["max_overflow"])),
+        "pool_timeout": int(db_cfg.get("pool_timeout", defaults["pool_timeout"])),
+    }
 
 
 # =============================================================================
@@ -620,10 +624,8 @@ def get_db_isolation_level() -> str:
 @_lazy_load
 def get_argon2_config() -> dict:
     """Devuelve los parámetros de Argon2id para hashing de contraseñas."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
     defaults = {"time_cost": 3, "memory_cost": 65536, "parallelism": 4}
-    return {**defaults, **_configs.get("security", {}).get("argon2", {})}
+    return {**defaults, **_require_configs().get("security", {}).get("argon2", {})}
 
 
 # =============================================================================

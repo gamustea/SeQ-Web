@@ -31,3 +31,10 @@ def test_delete_requires_delete_attribute(client, regular_user, auth_headers):
     # role_user no tiene iris_delete -> 403 antes de tocar la BD.
     resp = client.delete("/iris/results/1", headers=auth_headers(regular_user))
     assert resp.status_code == 403
+
+
+def test_analyze_rejects_request_without_headers_or_message(client, root_headers):
+    # Fase 2: 'headers' ya no es obligatorio si se envía 'message', pero al
+    # menos uno de los dos debe estar presente (validado en el schema).
+    resp = client.post("/iris/analyze", headers=root_headers, json={"title": "x"})
+    assert resp.status_code == 422

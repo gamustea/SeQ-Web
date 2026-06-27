@@ -22,9 +22,10 @@
         </dependency>
 
         <dependency>
-            <groupId>de.mkammerer</groupId>
-            <artifactId>argon2-jvm</artifactId>
-            <version>2.12</version>
+            <!-- Argon2id puro-Java; el codigo migro de de.mkammerer a BouncyCastle. -->
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.78.1</version>
         </dependency>
         <dependency>
             <groupId>org.jetbrains</groupId>

@@ -20,6 +20,7 @@ from .schemas import (
     StorableDeleteSchema,
     BulkOperationSchema,
     VaultUpsertResponseSchema,
+    VaultPasswordChangeSchema,
     StorableResponseSchema,
     BulkUpdateResponseSchema,
 )
@@ -90,6 +91,34 @@ def upsert_vault():
     return result, 200
 
 
+@acheron_blp.patch("/vault")
+@acheron_blp.arguments(VaultPasswordChangeSchema)
+@acheron_blp.response(200, VaultUpsertResponseSchema, description="Vault metadata updated")
+@acheron_blp.alt_response(400, schema=ErrorSchema, description="Invalid body")
+@acheron_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@acheron_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@acheron_blp.alt_response(404, schema=ErrorSchema, description="Vault not found")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.ACHERON_UPDATE])
+@limiter.limit("60 per hour; 300 per day")
+@handle_exceptions(default_exception=VaultError, logger=logger)
+def change_vault_metadata(data):
+    """Refrescar los metadatos cripto del vault tras un cambio de contraseña maestra.
+
+    Actualiza unicamente checker, vaultKey y algorithm; los storables (cifrados con
+    la misma vaultKey) permanecen intactos.
+    """
+    with get_vault_manager() as mgr:
+        vault = mgr.update_vault_metadata(data)
+        if not vault:
+            raise VaultNotFoundError()
+        logger.info("Metadatos del vault %s refrescados | user=%s", vault.id, current_actor())
+    return {
+        "message": "Vault metadata updated",
+        "vaultId": vault.id,
+    }
+
+
 @acheron_blp.patch("/storables")
 @acheron_blp.arguments(BulkOperationSchema(many=True))
 @acheron_blp.response(200, BulkUpdateResponseSchema, description="Bulk update completed")
@@ -121,7 +150,7 @@ def patch_vault_storables(data):
 @limiter.limit("60 per hour; 300 per day")
 @handle_exceptions(default_exception=VaultError, logger=logger)
 def add_vault_storable(data):
-    """Anadir un nuevo Account o CreditCard al vault del usuario"""
+    """Anadir un nuevo Storable (de cualquier kind soportado) al vault del usuario"""
     kind = data["kind"]
 
     internal_id = data.get("internalId")
@@ -129,14 +158,13 @@ def add_vault_storable(data):
     created_at = _parse_dt(data.get("createdAt"))
     updated_at = _parse_dt(data.get("updatedAt"))
 
-    payload = {}
     if kind == "account":
         payload = {
             "username": data.get("username", ""),
             "domain": data.get("domain", ""),
             "password": data.get("password", ""),
         }
-    else:
+    elif kind == "creditcard":
         payload = {
             "cardholder_name": data.get("cardHolderName", ""),
             "card_number": data.get("cardNumber", ""),
@@ -144,6 +172,43 @@ def add_vault_storable(data):
             "postal_code": data.get("postalCode", ""),
             "cvv": data.get("cvv", ""),
         }
+    elif kind == "securenote":
+        payload = {
+            "content": data.get("content", ""),
+        }
+    elif kind == "identity":
+        payload = {
+            "full_name": data.get("fullName", ""),
+            "email": data.get("email", ""),
+            "phone": data.get("phone", ""),
+            "address": data.get("address", ""),
+            "city": data.get("city", ""),
+            "country": data.get("country", ""),
+            "document_id": data.get("documentId", ""),
+        }
+    elif kind == "bankaccount":
+        payload = {
+            "bank_name": data.get("bankName", ""),
+            "holder": data.get("holder", ""),
+            "iban": data.get("iban", ""),
+            "swift_bic": data.get("swiftBic", ""),
+            "account_number": data.get("accountNumber", ""),
+        }
+    elif kind == "wifi":
+        payload = {
+            "ssid": data.get("ssid", ""),
+            "password": data.get("password", ""),
+            "security_type": data.get("securityType", ""),
+        }
+    elif kind == "license":
+        payload = {
+            "product": data.get("product", ""),
+            "license_key": data.get("licenseKey", ""),
+            "licensed_to": data.get("licensedTo", ""),
+            "version": data.get("version", ""),
+        }
+    else:
+        payload = {}
 
     with get_vault_manager() as mgr:
         vault = mgr.get_vault_for_user()
