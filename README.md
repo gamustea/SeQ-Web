@@ -5,7 +5,7 @@
 
 # SeQ — Security Operations Platform
 
-Plataforma de operaciones de seguridad modular: escaneo de vulnerabilidades, análisis anti-phishing, gestión de secretos cifrados y concienciación potenciada por IA local.
+Plataforma modular de operaciones de seguridad: escaneo de vulnerabilidades, análisis anti-phishing, vault de secretos cifrado y concienciación potenciada por IA local.
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![Flask 3.0](https://img.shields.io/badge/Flask-3.0-000?style=flat-square)](https://flask.palletsprojects.com)
@@ -13,10 +13,10 @@ Plataforma de operaciones de seguridad modular: escaneo de vulnerabilidades, an�
 [![Kotlin](https://img.shields.io/badge/Android-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15432-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org)
 [![Ollama](https://img.shields.io/badge/Ollama-llama3.2-ff7000?style=flat-square)](https://ollama.com)
-[![API v3.2](https://img.shields.io/badge/API-3.2-2496ED?style=flat-square)](#)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com)
+[![API v3.2](https://img.shields.io/badge/API-3.2-2496ED?style=flat-square)](#)
 
-[Visión general](#visión-general) · [Módulos](#módulos) · [Quick start](#quick-start) · [API](#referencia-de-la-api) · [Docker](#docker) · [Stack](#stack-tecnológico)
+[Visión general](#visión-general) · [Arquitectura](#arquitectura) · [Módulos](#módulos) · [Quick start](#quick-start) · [Autenticación](#autenticación) · [API](#referencia-de-la-api) · [Docker](#docker) · [Stack](#stack-tecnológico)
 
 </div>
 
@@ -39,6 +39,31 @@ Plataforma de operaciones de seguridad modular: escaneo de vulnerabilidades, an�
 - **Cola de tareas persistente** (RQ): trabajos que sobreviven a reinicios de la API, workers en procesos aislados, cancelación cooperativa.
 - **OAuth 2.0 + JWT** con `jti`, refresh tokens, revocación global y hash Argon2id de contraseñas.
 
+## Arquitectura
+
+```
+                ┌─────────────────────────────────────────────────────────┐
+                │                    SeQ API (Flask)                      │
+                │  system · oauth · users · sentinel · acheron · iris ·   │
+                │                     aegis · pages                       │
+                │                                                         │
+   Web SPA ───► │  APScheduler ──► TaskQueue (RQ + Redis) ──► RQ Workers  │ ──► Nmap / Nikto / OpenVAS
+  (Vue 3)       │                       ▲                                 │ ──► Ollama (llama3.2) / OpenAI
+                │                       │                                 │ ──► INCIBE-CERT · CIRCL · NVD
+  Android  ───► │                       │                                 │
+  (Kotlin)      │                  PostgreSQL (15432)                     │
+                └─────────────────────────────────────────────────────────┘
+```
+
+```
+SeQ/
+├── API/        # Backend Flask (punto de entrada a la API REST)
+├── web/        # SPA Vue 3 (Vite + Pinia)
+├── mobile/     # AcheronMobile (Android/Kotlin) + AcheronCore (Java)
+├── tests/      # Suite de pruebas
+└── docker-compose.yml
+```
+
 ## Módulos
 
 | Módulo | Descripción | Estado |
@@ -50,19 +75,10 @@ Plataforma de operaciones de seguridad modular: escaneo de vulnerabilidades, an�
 | **SeQ Web** | SPA Vue 3 (Vite + Pinia + Vue Router) con dashboard Hub central. | Operativo |
 | **AcheronMobile** | App Android/Kotlin + Jetpack Compose con motor de cifrado AcheronCore (Java). | Operativo |
 
-```
-SeQ/
-├── API/        # Backend Flask (punto de entrada a la API REST)
-├── web/        # SPA Vue 3 (Vite + Pinia)
-├── mobile/     # AcheronMobile (Android/Kotlin) + AcheronCore (Java)
-├── tests/      # Suite de pruebas
-└── docker-compose.yml
-```
-
 ## Quick start
 
 > [!NOTE]
-> Necesitas PostgreSQL, Redis, Docker y Python 3.10+ en la máquina (o WSL). Para Aegis/Sentinel-IA: **Ollama** con `llama3.2`. Para escaneos: Nmap, Nikto y OpenVAS/GVM.
+> Necesitas PostgreSQL, Redis, Docker y Python 3.10+ (o WSL). Para IA: **Ollama** con `llama3.2`. Para escaneos: Nmap, Nikto y OpenVAS/GVM.
 
 ```bash
 # 1. Clonar
@@ -149,7 +165,7 @@ Content-Type: application/json
 | `POST` | `/iris/analyze/<id>/cancel` | `IRIS_UPDATE` | Cancela un análisis en curso |
 | `DELETE` | `/iris/results/<id>` | `IRIS_DELETE` | Elimina un análisis |
 
-Iris aplica **8 reglas atómicas** (SPF, DKIM, DMARC, Reply-To, Return-Path, Message-ID, Content-Type, From) y suma un veredicto: `Legitimate` / `Suspicious` / `Phishing`. Umbrales en `SecOpsConfig.json` (`iris.legitimate_threshold`, `iris.suspicious_threshold`, `iris.min_headers`).
+Iris aplica **8 reglas atómicas** (SPF, DKIM, DMARC, Reply-To, Return-Path, Message-ID, Content-Type, From) y devuelve un veredicto: `Legitimate` / `Suspicious` / `Phishing`. Umbrales en `SecOpsConfig.json` (`iris.legitimate_threshold`, `iris.suspicious_threshold`, `iris.min_headers`).
 
 ### Aegis — concienciación y alertas
 
@@ -204,7 +220,7 @@ Sustituye al SeQueue legacy. Los trabajos persisten en Redis y **sobreviven a re
 - `TaskQueue.get_instance().submit(func, name=, category=, external_id=, args=, timeout=)`.
 - Categorías: `sentinel.scan`, `sentinel.report`, `aegis.generate`, `iris.analyze`.
 - External IDs: `scan:<id>`, `sentinel-doc:<id>`, `aegis-doc:<id>`, `iris-analysis:<id>`.
-- Cancelación: Redis key `taskqueue:cancel:<job_id>` verificada cooperativamente por el worker vía `_Task.wait(cancel_check=…)`.
+- Cancelación: clave Redis `taskqueue:cancel:<job_id>` verificada cooperativamente por el worker vía `_Task.wait(cancel_check=…)`.
 - Cada módulo expone funciones standalone en `services/rq_tasks.py` (reconstruyen manager/tarea dentro del worker y reportan progreso en `job.meta["progress"]`).
 
 > [!WARNING]
@@ -287,7 +303,7 @@ OPENAI_MODEL=gpt-4o-mini
 
 El sistema de configuración (`API/src/modules/system/config_reading.py`, importado como `CR`) carga en orden:
 
-1. `API/SecOpsConfig.json` — JSON (DB fallback, prompts de IA, directorios, taskqueue).
+1. `API/SecOpsConfig.json` — JSON (DB fallback, prompts de IA, directorios, taskqueue, `appVersion`).
 2. `API/.env` — variables que **sobreescriben** el JSON. Obligatorias para OAuth (JWT_SECRET_KEY, JWT_ALGORITHM…) y la BD.
 3. `.env` raíz — solo para docker-compose (Postgres, Redis, OpenVAS). No para la API.
 
@@ -301,5 +317,5 @@ Todas las claves se cargan perezosamente vía `@_lazy_load`. Los cambios en `Sec
 - OpenVAS solo acepta **un host** por escaneo (no rangos CIDR) y tarda ~15 min la primera vez.
 - PostgreSQL usa el puerto **15432** en desarrollo local (no el estándar 5432).
 - `sentinel/services/tasks.py` define su propio `TaskStatus`, **distinto** de `taskqueue.TaskStatus`.
-- Los tokens JWT incluyen el claim `jti` desde 2026-06-16 — obligatorio en nueva emisión.
-- La versión de la API (**3.2**) está *hardcodeada* en `create_app()` (`run.py`), no en config.
+- Los tokens JWT incluyen el claim `jti` — obligatorio en nueva emisión.
+- La versión de la API (**3.2**) se declara como `appVersion` en `SecOpsConfig.json` (leída por `CR.get_app_version()`).
