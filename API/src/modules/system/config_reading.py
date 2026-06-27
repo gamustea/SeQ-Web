@@ -532,10 +532,7 @@ def get_redis_config() -> dict:
 
 @_lazy_load
 def get_taskqueue_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-
-    cfg = _configs.get("general", {}).get("taskqueue", {})
+    cfg = _require_configs().get("general", {}).get("taskqueue", {})
     max_workers_env = os.getenv("TASKQUEUE_MAX_WORKERS")
     if max_workers_env is not None:
         cfg["max_workers"] = int(max_workers_env)
@@ -548,9 +545,7 @@ def get_taskqueue_config() -> dict:
 
 @_lazy_load
 def get_iris_config() -> dict:
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-    return _configs.get("iris", {})
+    return _require_configs().get("iris", {})
 
 @_lazy_load
 def get_iris_legitimate_threshold() -> float:
@@ -575,9 +570,7 @@ def get_iris_min_headers() -> int:
 @_lazy_load
 def get_db_isolation_level() -> str:
     """Devuelve el isolation level de SQLAlchemy desde SecOpsConfig.json."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
-    return _configs.get("database", {}).get("isolation_level", "READ COMMITTED")
+    return _require_configs().get("database", {}).get("isolation_level", "READ COMMITTED")
 
 
 @_lazy_load
@@ -587,10 +580,8 @@ def get_db_pool_config() -> dict:
     Claves: pool_size, max_overflow, pool_timeout. Aplica defaults sensatos si
     faltan, de modo que el sistema arranca aunque el bloque no esté completo.
     """
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
     defaults = {"pool_size": 10, "max_overflow": 20, "pool_timeout": 30}
-    db_cfg = _configs.get("database", {})
+    db_cfg = _require_configs().get("database", {})
     return {
         "pool_size": int(db_cfg.get("pool_size", defaults["pool_size"])),
         "max_overflow": int(db_cfg.get("max_overflow", defaults["max_overflow"])),
@@ -605,10 +596,8 @@ def get_db_pool_config() -> dict:
 @_lazy_load
 def get_argon2_config() -> dict:
     """Devuelve los parámetros de Argon2id para hashing de contraseñas."""
-    if _configs is None:
-        raise IllegalStateError("'_configs' detectado como nulo")
     defaults = {"time_cost": 3, "memory_cost": 65536, "parallelism": 4}
-    return {**defaults, **_configs.get("security", {}).get("argon2", {})}
+    return {**defaults, **_require_configs().get("security", {}).get("argon2", {})}
 
 
 # =============================================================================
