@@ -588,12 +588,12 @@ def get_iris_config() -> dict:
 @_lazy_load
 def get_iris_legitimate_threshold() -> float:
     cfg = get_iris_config()
-    return float(cfg.get("legitimate_threshold", 50))
+    return float(cfg.get("legitimate_threshold", 0))
 
 @_lazy_load
 def get_iris_suspicious_threshold() -> float:
     cfg = get_iris_config()
-    return float(cfg.get("suspicious_threshold", 0))
+    return float(cfg.get("suspicious_threshold", -15))
 
 @_lazy_load
 def get_iris_min_headers() -> int:

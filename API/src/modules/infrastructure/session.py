@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 
-from flask import g
+from flask import g, has_request_context
 
 from .unit_of_work import get_session, close_all
 
@@ -43,19 +43,30 @@ logger = logging.getLogger(__name__)
 
 def get_db_session():
     """
-    Return the database session for the current Flask request.
+    Return the database session for the current execution context.
 
-    Creates a new session on first call within a request and caches it
-    in Flask's ``g`` object. Subsequent calls return the same session.
-    Safe to call from any manager or repository during request processing.
+    This is the single session accessor for the whole codebase — it behaves
+    correctly both in an HTTP request and in a background job:
+
+    - **In a Flask request**: returns the request-scoped session cached in
+      ``g.db_session`` (opened by ``init_request_session`` and committed/closed
+      by ``shutdown_request_session``). Subsequent calls return the same one,
+      so lazy loading works for the whole request.
+    - **In a background context** (RQ worker / scheduler thread, no request):
+      returns the thread-local scoped session directly. It is deliberately
+      **not** cached in ``g``: a worker's application context lives as long as
+      the worker, so caching there would pin one session across every job. The
+      job boundary (``job_context`` / ``Scheduler.execute``) calls
+      ``close_all()`` to reset it per job.
 
     Returns:
-        SQLAlchemy Session bound to the current request/thread.
+        SQLAlchemy Session bound to the current request or worker thread.
     """
-    if "db_session" not in g:
-        g.db_session = get_session()
-    return g.db_session
-
+    if has_request_context():
+        if "db_session" not in g:
+            g.db_session = get_session()
+        return g.db_session
+    return get_session()
 
 def init_request_session() -> None:
     """
@@ -66,7 +77,6 @@ def init_request_session() -> None:
     available.
     """
     get_db_session()
-
 
 def shutdown_request_session(exception=None) -> None:
     """

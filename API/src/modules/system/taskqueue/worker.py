@@ -92,7 +92,6 @@ class _ThreadSafeWorker(SimpleWorker):
             from src.modules.infrastructure.unit_of_work import close_all
             close_all()
 
-
 def _worker_thread(worker_num: int):
     """Hilo de trabajo independiente que escucha y ejecuta jobs de una o más colas.
 
@@ -161,7 +160,6 @@ def _stop_workers():
                 worker.register_death()
             except Exception as exc:
                 logging.warning("Failed to deregister worker %s: %s", worker.name, exc)
-
 
 def _purge_dead_workers() -> None:
     """Reconcilia el registro ``rq:workers`` eliminando workers ya muertos.
