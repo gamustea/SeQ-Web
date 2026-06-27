@@ -20,6 +20,7 @@ import random
 import re
 import threading
 import time
+import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -355,7 +356,6 @@ class AegisAlertFetcher:
     @retry_on_failure(max_retries=3)
     def _fetch_incibe(self, brands: list[str], max_per_brand: int) -> list[AegisAlert]:
         """Fetch de alertas desde INCIBE."""
-        import urllib.request
         from email.utils import parsedate_to_datetime
 
         cache_key = f"incibe_{','.join(sorted(brands))}"
@@ -440,8 +440,6 @@ class AegisAlertFetcher:
     @retry_on_failure(max_retries=3)
     def _fetch_circl(self, brands: list[str], max_per_brand: int) -> list[AegisAlert]:
         """Fetch de alertas desde CIRCL/NVD."""
-        import urllib.request
-
         cache_key = f"circl_{','.join(sorted(brands))}"
         cached = self._get_cached(cache_key)
         if cached:
@@ -737,7 +735,6 @@ class AegisAIWriter:
                 "Seguridad avanzada en",
                 "Manual de supervivencia ante"
             ]
-            import random
             prefix = random.choice(prefixes)
             raw_subtitle = f"{prefix} {topic_title}"
         
