@@ -3,7 +3,10 @@
  *
  * Extrae el bloque de cabeceras crudo y el asunto ("concepto") del correo,
  * decodificando las palabras codificadas MIME (=?charset?B/Q?...?=) habituales.
- * No interpreta el cuerpo ni los adjuntos: a Iris solo le interesan las cabeceras.
+ * Se usa solo para rellenar el formulario (vista previa); el texto completo
+ * del .eml se envía aparte a la API en el campo `message`, para que las
+ * reglas de Fase 2 (enlaces del cuerpo, adjuntos reales, cadena Received)
+ * puedan analizarlo.
  *
  * @example
  * import { parseEml } from '@/composables/useEml'

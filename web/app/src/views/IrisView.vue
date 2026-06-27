@@ -91,8 +91,10 @@ const formKey = ref(0)
 // Relleno automático del formulario a partir de un .eml arrastrado.
 const prefill = ref(null)
 
-// Solo necesitamos la cabecera; leemos como mucho los primeros 512 KB del archivo.
-const HEADER_READ_LIMIT = 512 * 1024
+// Fase 2: enviamos el .eml completo (cuerpo, enlaces, adjuntos) para que las
+// reglas de contenido puedan analizarlo. Tope generoso para correos con
+// adjuntos grandes en base64, evitando cargar archivos descomunales.
+const MESSAGE_READ_LIMIT = 20 * 1024 * 1024
 
 // --- Intake por arrastre ---
 // dragDepth cuenta enter/leave para no parpadear sobre los hijos; rejecting
@@ -147,17 +149,29 @@ async function onDrop(e) {
   }
 
   try {
-    const text = await file.slice(0, HEADER_READ_LIMIT).text()
+    const tooBig = file.size > MESSAGE_READ_LIMIT
+    const text = await (tooBig ? file.slice(0, MESSAGE_READ_LIMIT) : file).text()
     const { rawHeaders, subject } = parseEml(text)
     if (!rawHeaders) {
       flashReject()
       toast.show('No se pudieron leer las cabeceras del correo.', 'error')
       return
     }
-    // Si hay un informe abierto, volvemos al formulario antes de rellenarlo.
-    prefill.value = { headers: rawHeaders, title: subject || '', token: Date.now() }
+    // Conservamos el mensaje completo (cuerpo, enlaces, adjuntos) para que
+    // Iris pueda aplicar las reglas de Fase 2; si el archivo se truncó por
+    // tamaño, solo enviamos las cabeceras extraídas como respaldo.
+    prefill.value = {
+      headers: rawHeaders,
+      message: tooBig ? null : text,
+      title: subject || '',
+      token: Date.now(),
+    }
     if (store.currentId || store.currentReport.data) store.selectAnalysis(null)
-    toast.show(subject ? `Cabeceras cargadas · ${subject}` : 'Cabeceras cargadas.', 'success')
+    if (tooBig) {
+      toast.show('Archivo muy grande: solo se cargaron las cabeceras.', 'info')
+    } else {
+      toast.show(subject ? `Correo cargado · ${subject}` : 'Correo cargado.', 'success')
+    }
   } catch {
     flashReject()
     toast.show('No se pudo leer el archivo.', 'error')
@@ -193,8 +207,8 @@ onMounted(async () => {
   }
 })
 
-async function handleSubmit({ headers, title }) {
-  const id = await store.submitAnalysis(headers, title)
+async function handleSubmit({ headers, message, title }) {
+  const id = await store.submitAnalysis({ headers, message, title })
   if (id) {
     prefill.value = null
     formKey.value++

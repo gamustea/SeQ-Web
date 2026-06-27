@@ -2,7 +2,10 @@
   <div class="iris-form">
     <div class="form-header">
       <h2>Nuevo Análisis</h2>
-      <p class="form-hint">Pega las cabeceras completas del correo electrónico para analizar su veracidad.</p>
+      <p class="form-hint">
+        Arrastra un archivo .eml para analizar el correo completo (cuerpo, enlaces y adjuntos),
+        o pega aquí solo las cabeceras.
+      </p>
     </div>
 
     <div class="form-body">
@@ -48,12 +51,18 @@ import { ref, watch } from 'vue'
 const emit = defineEmits(['submit'])
 const props = defineProps({
   submitting: { type: Boolean, default: false },
-  // Relleno automático al arrastrar un .eml: { headers, title, token }
+  // Relleno automático al arrastrar un .eml: { headers, message, title, token }
   prefill: { type: Object, default: null },
 })
 
 const headers = ref(props.prefill?.headers ?? '')
 const title = ref(props.prefill?.title ?? '')
+// Mensaje .eml completo (Fase 2), si el archivo arrastrado se cargó entero.
+const message = ref(props.prefill?.message ?? null)
+// Cabeceras tal como llegaron del prefill: si el usuario las edita, ya no
+// podemos garantizar que sigan correspondiendo al mensaje completo cargado,
+// así que dejamos de enviarlo y caemos de vuelta a solo-cabeceras.
+const loadedHeaders = ref(headers.value)
 
 // Cuando llega un nuevo .eml (token distinto), reemplaza el contenido del formulario.
 watch(
@@ -62,12 +71,19 @@ watch(
     if (!props.prefill) return
     headers.value = props.prefill.headers ?? ''
     title.value = props.prefill.title ?? ''
+    message.value = props.prefill.message ?? null
+    loadedHeaders.value = headers.value
   },
 )
 
 function handleSubmit() {
   if (headers.value.length < 10 || props.submitting) return
-  emit('submit', { headers: headers.value, title: title.value || undefined })
+  const useFullMessage = message.value && headers.value === loadedHeaders.value
+  emit('submit', {
+    headers: headers.value,
+    message: useFullMessage ? message.value : undefined,
+    title: title.value || undefined,
+  })
 }
 </script>
 

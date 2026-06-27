@@ -20,10 +20,14 @@ export const useIrisStore = defineStore('iris', () => {
 
   let pollTimer = null
 
-  async function submitAnalysis(rawHeaders, title) {
+  // Fase 2: si hay un mensaje completo (.eml arrastrado) se envía en
+  // "message" para que el backend analice cuerpo, enlaces y adjuntos
+  // reales; "headers" se mantiene como respaldo cuando solo se pegaron
+  // cabeceras a mano.
+  async function submitAnalysis({ headers, message, title } = {}) {
     submitting.value = true
     try {
-      const body = { headers: rawHeaders }
+      const body = message ? { message } : { headers }
       if (title) body.title = title
 
       const res = await apiFetch('/iris/analyze', {
