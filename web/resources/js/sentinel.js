@@ -471,7 +471,7 @@ function renderScanPreview(scan, type, documents = []) {
           <label class="doc-checkbox">
             <input type="checkbox" id="ai-report-check-preview" />
             <span class="doc-checkmark"></span>
-            <span class="doc-checklabel">Análisis IA con Ollama</span>
+            <span class="doc-checklabel">Análisis IA</span>
           </label>
           <button class="preview-btn" onclick="generatePdfFromPreview(${scan.id}, '${type}')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -885,7 +885,7 @@ function buildDocumentsSection(scanId, scanType, documents) {
           <label class="doc-checkbox">
             <input type="checkbox" id="ai-report-check" />
             <span class="doc-checkmark"></span>
-            <span class="doc-checklabel">Análisis IA con Ollama</span>
+            <span class="doc-checklabel">Análisis IA</span>
           </label>
         </div>
         <button class="doc-gen-btn" onclick="generatePDF(${scanId}, '${scanType}')">

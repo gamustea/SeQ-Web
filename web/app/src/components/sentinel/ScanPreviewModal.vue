@@ -80,7 +80,7 @@
             </div>
           </div>
           <div class="pv-gen-bar">
-            <label class="pv-checkbox"><input type="checkbox" v-model="useAi" /><span>Análisis IA con Ollama</span></label>
+            <label class="pv-checkbox"><input type="checkbox" v-model="useAi" /><span>Análisis IA</span></label>
             <button class="pv-gen-btn" @click="$emit('generate-pdf', scan.id, type, useAi)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="pv-gen-icon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
               Generar PDF
@@ -166,7 +166,9 @@ function fmtDate(iso) { if (!iso) return ''; return new Date(iso).toLocaleDateSt
 .pv-doc-status.error   { background: var(--danger-dim); color: var(--danger); }
 .pv-gen-bar { display: flex; align-items: center; justify-content: space-between; padding-top: 0.65rem; border-top: 1px solid var(--border); }
 .pv-checkbox { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--text-dim); cursor: pointer; user-select: none; }
-.pv-checkbox input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+.pv-checkbox input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; padding: 0; border: 1.5px solid var(--text-muted); border-radius: 3px; background: transparent; cursor: pointer; margin: 0; flex-shrink: 0; position: relative; }
+.pv-checkbox input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.pv-checkbox input[type="checkbox"]:checked::after { content: ''; position: absolute; top: 1px; left: 2px; width: 3px; height: 6px; border: solid var(--surface-1); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
 .pv-gen-btn { display: flex; align-items: center; gap: 0.35rem; padding: 0.4rem 0.75rem; font-size: 0.75rem; font-weight: 600; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 6px; color: var(--accent-bright); cursor: pointer; transition: all var(--transition); }
 .pv-gen-btn:hover { background: var(--accent); color: #0b0c10; }
 .pv-gen-icon { width: 12px; height: 12px; }

@@ -1,8 +1,11 @@
 name: Generate and Sync Documentation
-
+#
+# DISABLED — paired with static.yml. No longer auto-generates nor
+# pushes pdoc API docs to the `docs` branch, because Pages now
+# serves the landing site from `gh-pages`. Re-enable by restoring
+# `push: branches: ["main"]` and re-enabling static.yml.
 on:
-  push:
-    branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   contents: write

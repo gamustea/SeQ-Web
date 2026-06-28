@@ -42,8 +42,7 @@
     <ScanPreviewModal :show="store.preview.show" :scan="store.preview.scan" :type="store.preview.type" :docs="store.preview.docs" :docs-loading="store.preview.docsLoading"
       :traceroute="store.preview.traceroute" :traceroute-loading="store.preview.tracerouteLoading"
       @close="store.closePreview()" @refresh-docs="store.refreshPreviewDocs()" @download-doc="store.downloadDocument" @delete-doc="handleDeletePreviewDoc" @generate-pdf="handlePreviewPdf" @refresh-traceroute="store.loadPreviewTraceroute(true)" />
-    <ScanDetailsModal :show="store.details.show" :scan="store.details.scan" :type="store.details.type" :docs="store.details.docs" :docs-loading="store.details.docsLoading"
-      @close="store.closeDetails()" @refresh-docs="store.refreshDetailsDocs()" @download-doc="store.downloadDocument" @delete-doc="handleDeleteDetailsDoc" @generate-pdf="handleDetailsPdf" />
+
     <FolderFormModal
       :key="'create-folder'"
       :show="store.folderForms.create.show"
@@ -116,7 +115,6 @@ import ScanTable from '@/components/sentinel/ScanTable.vue'
 import ScanFolderView from '@/components/sentinel/ScanFolderView.vue'
 import HistoryPanel from '@/components/sentinel/HistoryPanel.vue'
 import ScanPreviewModal from '@/components/sentinel/ScanPreviewModal.vue'
-import ScanDetailsModal from '@/components/sentinel/ScanDetailsModal.vue'
 import FolderFormModal from '@/components/sentinel/FolderFormModal.vue'
 import MoveScanModal from '@/components/sentinel/MoveScanModal.vue'
 import BatchActionModal from '@/components/sentinel/BatchActionModal.vue'
@@ -181,9 +179,9 @@ async function handleDeleteFolder(folderId) { if (confirm('¿Eliminar esta carpe
 function handleOpenMoveScan(scanId, folderId) { store.openMoveScan(scanId, folderId) }
 async function handleRemoveScan(scanId, folderId) { await store.removeScanFromFolder(scanId, folderId) }
 async function handlePreviewPdf(id, type, useAi) { await store.generatePdf(id, useAi); await new Promise(r => setTimeout(r, 600)); await store.refreshCurrent(); await store.refreshPreviewDocs() }
-async function handleDetailsPdf(id, type, useAi) { await store.generatePdf(id, useAi); await new Promise(r => setTimeout(r, 600)); await store.refreshCurrent(); await store.refreshDetailsDocs() }
+
 async function handleDeletePreviewDoc(docId) { await store.deleteDocument(docId); await store.refreshPreviewDocs() }
-async function handleDeleteDetailsDoc(docId) { await store.deleteDocument(docId); await store.refreshDetailsDocs() }
+
 async function handleCreateScheduled(payload) { await store.createScheduledScan(payload) }
 async function handleDeactivateScheduled(id) { await store.deactivateScheduledScan(id) }
 async function handleDeleteScheduled(id) { await store.deleteScheduledScan(id) }

@@ -26,6 +26,12 @@
             </div>
           </div>
           <button type="button" class="toolbar-btn" @click="emit('preview')">Vista previa</button>
+          <button
+            v-if="viewerDoc.data.status === 'done'"
+            type="button"
+            class="toolbar-btn"
+            @click="emit('edit')"
+          >Editar</button>
           <button type="button" class="toolbar-btn toolbar-close" @click="emit('close')">&times;</button>
         </div>
 
@@ -82,7 +88,7 @@ import { useUtils } from '@/composables/useUtils'
 
 const { formatDate } = useUtils()
 defineProps({ viewerDoc: { type: Object, default: () => ({ loading: false, data: null }) } })
-const emit = defineEmits(['close', 'export', 'preview'])
+const emit = defineEmits(['close', 'export', 'preview', 'edit'])
 const exportOpen = ref(false)
 
 const sevIcons = { critica: '🔴', alta: '🟠', media: '🟡', baja: '🟢', informativa: '🔵' }
@@ -114,12 +120,12 @@ function emitExport(fmt) { exportOpen.value = false; emit('export', fmt) }
 .pill-subtitle { font-size: 0.85rem; color: var(--text-dim); margin: 0 0 1.25rem; }
 .pill-section { margin-bottom: 1.25rem; }
 .pill-section h3 { font-size: 0.95rem; font-weight: 700; color: var(--accent); margin: 0 0 0.65rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); font-family: var(--font-display); }
-.pill-intro, .pill-closing { font-size: 0.85rem; line-height: 1.6; color: var(--text); }
+.pill-intro, .pill-closing { font-size: 0.85rem; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
 .pill-tip { display: flex; gap: 0.65rem; margin-bottom: 0.85rem; }
 .tip-num { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; background: var(--accent); color: #0b0c10; font-size: 0.72rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .tip-body { flex: 1; min-width: 0; }
 .tip-body h4 { font-size: 0.88rem; font-weight: 700; color: var(--text); margin: 0 0 0.15rem; }
-.tip-body p { font-size: 0.8rem; line-height: 1.5; color: var(--text-dim); margin: 0 0 0.3rem; }
+.tip-body p { font-size: 0.8rem; line-height: 1.5; color: var(--text-dim); margin: 0 0 0.3rem; white-space: pre-wrap; }
 .tip-links { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .tip-link { font-size: 0.72rem; color: var(--accent); text-decoration: none; font-weight: 600; }
 .tip-link:hover { text-decoration: underline; }

@@ -10,6 +10,26 @@ class DocumentIdQuerySchema(Schema):
     id = fields.Integer(required=True)
 
 
+class AegisLinkSchema(Schema):
+    text = fields.String(required=True, validate=validate.Length(min=1, max=200))
+    url = fields.Url(required=True, schemes={"http", "https"})
+
+
+class AegisTipUpdateSchema(Schema):
+    headline = fields.String(required=True, validate=validate.Length(min=1, max=150))
+    body = fields.String(required=True, validate=validate.Length(min=1))
+    links = fields.List(fields.Nested(AegisLinkSchema), load_default=[])
+
+
+class AegisPillUpdateSchema(Schema):
+    subtitle = fields.String(required=True, validate=validate.Length(min=1, max=256))
+    intro = fields.String(load_default="")
+    closing = fields.String(load_default="")
+    contactEmail = fields.String(load_default="", validate=validate.Length(max=128))
+    company = fields.String(load_default="", validate=validate.Length(max=128))
+    tips = fields.List(fields.Nested(AegisTipUpdateSchema), load_default=[])
+
+
 class ExportRequestBodySchema(Schema):
     format = fields.String(load_default="md", validate=validate.OneOf(["md", "json", "html"]))
     options = fields.Dict(load_default={})

@@ -35,6 +35,10 @@ export const useAegisStore = defineStore('aegis', () => {
   const generating = ref(false)
   /** Carga de historial en curso */
   const loading = ref(false)
+  /** Modo edición del documento en el visor */
+  const editing = ref(false)
+  /** Guardado de edición en curso */
+  const saving = ref(false)
 
   /** Parámetros de generación (tweaks) */
   const tweaks = reactive({
@@ -173,6 +177,46 @@ export const useAegisStore = defineStore('aegis', () => {
   function closeViewer() {
     currentDocId.value = null
     viewerDoc.data = null
+    editing.value = false
+  }
+
+  /* ── EDICIÓN ── */
+
+  /** Entra en modo edición de la píldora actual */
+  function startEdit() {
+    if (viewerDoc.data?.status === 'done') editing.value = true
+  }
+
+  /** Sale del modo edición descartando cambios no guardados */
+  function cancelEdit() {
+    editing.value = false
+  }
+
+  /**
+   * Persiste el contenido editado de la píldora vía PUT /aegis/document?id=<id>.
+   * @param {number|string} docId - ID del documento
+   * @param {object} pillData - { subtitle, intro, closing, contactEmail, company, tips }
+   * @returns {Promise<boolean>} True si se guardó correctamente
+   */
+  async function savePill(docId, pillData) {
+    saving.value = true
+    try {
+      const res = await apiFetch(`/aegis/document?id=${docId}`, {
+        method: 'PUT',
+        body: JSON.stringify(pillData),
+      })
+      const data = await res?.json().catch(() => ({}))
+      if (!res?.ok) {
+        toast.show(data.message || 'No se pudieron guardar los cambios.', 'error')
+        return false
+      }
+      viewerDoc.data = data
+      docCache.set(docId, data)
+      editing.value = false
+      toast.show('Píldora actualizada.', 'success')
+      await loadHistory()
+      return true
+    } finally { saving.value = false }
   }
 
   /* ── ACCIONES SOBRE DOCUMENTOS ── */
@@ -242,8 +286,9 @@ export const useAegisStore = defineStore('aegis', () => {
 
   return {
     topics, brands, documents, selectedTopicId, currentDocId, sortMode, selectedBrands,
-    generating, loading, tweaks, viewerDoc,
+    generating, loading, editing, saving, tweaks, viewerDoc,
     loadTopics, loadBrands, loadHistory, sortedDocuments, generate,
     loadDocument, closeViewer, deleteDocument, downloadExport, previewMarkdown,
+    startEdit, cancelEdit, savePill,
   }
 })
