@@ -19,6 +19,11 @@ import java.util.Date;
 @Setter
 public class SoftwareLicense extends VaultObject {
 
+    /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "licenses";
+
     private String product;
 
     /**
@@ -80,7 +85,7 @@ public class SoftwareLicense extends VaultObject {
 
     @Override
     public String category() {
-        return "licenses";
+        return CATEGORY;
     }
 
     @Override

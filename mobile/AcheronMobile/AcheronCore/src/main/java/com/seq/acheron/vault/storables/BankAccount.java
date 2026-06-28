@@ -18,6 +18,11 @@ import java.util.Date;
 @Setter
 public class BankAccount extends VaultObject {
 
+    /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "bankaccounts";
+
     private String bankName;
     private String holder;
 
@@ -92,7 +97,7 @@ public class BankAccount extends VaultObject {
 
     @Override
     public String category() {
-        return "bankaccounts";
+        return CATEGORY;
     }
 
     @Override

@@ -1,6 +1,5 @@
 package com.seq.acheron.vault;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -8,13 +7,7 @@ import com.seq.acheron.exceptions.AcheronException;
 import com.seq.acheron.exceptions.WrongPasswordException;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategyFactory;
-import com.seq.acheron.vault.storables.Account;
-import com.seq.acheron.vault.storables.BankAccount;
-import com.seq.acheron.vault.storables.CreditCard;
-import com.seq.acheron.vault.storables.Identity;
-import com.seq.acheron.vault.storables.SecureNote;
-import com.seq.acheron.vault.storables.SoftwareLicense;
-import com.seq.acheron.vault.storables.WifiNetwork;
+import com.seq.acheron.vault.storables.StorableTypes;
 import org.jetbrains.annotations.NotNull;
 
 import javax.crypto.AEADBadTagException;
@@ -54,13 +47,8 @@ public record VaultFactory(User user) {
      *   <li>{@code "checker"}  — encrypted password verifier</li>
      *   <li>{@code "vaultKey"} — vault key encrypted with the derived key</li>
      *   <li>{@code "algorithm"} — object with at least a {@code "kdf"} and {@code "salt"} field</li>
-     *   <li>{@code "accounts"} — optional array of Account objects</li>
-     *   <li>{@code "creditcards"} — optional array of CreditCard objects</li>
-     *   <li>{@code "securenotes"} — optional array of SecureNote objects</li>
-     *   <li>{@code "identities"} — optional array of Identity objects</li>
-     *   <li>{@code "bankaccounts"} — optional array of BankAccount objects</li>
-     *   <li>{@code "wifinetworks"} — optional array of WifiNetwork objects</li>
-     *   <li>{@code "licenses"} — optional array of SoftwareLicense objects</li>
+     *   <li>one optional array per {@link StorableTypes#categories() registered storable
+     *       category} (e.g. {@code "accounts"}, {@code "creditcards"}, ...)</li>
      * </ul>
      *
      * @param json           JSON string previously produced by {@link Vault#toJson()}
@@ -121,47 +109,11 @@ public record VaultFactory(User user) {
                 true
         );
 
-        if (root.has("accounts")) {
-            JsonArray accounts = root.getAsJsonArray("accounts");
-            for (JsonElement element : accounts) {
-                vault.add(Account.fromJson(element.getAsJsonObject()));
-            }
-        }
-
-        if (root.has("creditcards")) {
-            JsonArray creditCards = root.getAsJsonArray("creditcards");
-            for (JsonElement element : creditCards) {
-                vault.add(CreditCard.fromJson(element.getAsJsonObject()));
-            }
-        }
-
-        if (root.has("securenotes")) {
-            for (JsonElement element : root.getAsJsonArray("securenotes")) {
-                vault.add(SecureNote.fromJson(element.getAsJsonObject()));
-            }
-        }
-
-        if (root.has("identities")) {
-            for (JsonElement element : root.getAsJsonArray("identities")) {
-                vault.add(Identity.fromJson(element.getAsJsonObject()));
-            }
-        }
-
-        if (root.has("bankaccounts")) {
-            for (JsonElement element : root.getAsJsonArray("bankaccounts")) {
-                vault.add(BankAccount.fromJson(element.getAsJsonObject()));
-            }
-        }
-
-        if (root.has("wifinetworks")) {
-            for (JsonElement element : root.getAsJsonArray("wifinetworks")) {
-                vault.add(WifiNetwork.fromJson(element.getAsJsonObject()));
-            }
-        }
-
-        if (root.has("licenses")) {
-            for (JsonElement element : root.getAsJsonArray("licenses")) {
-                vault.add(SoftwareLicense.fromJson(element.getAsJsonObject()));
+        for (String category : StorableTypes.categories()) {
+            if (root.has(category)) {
+                for (JsonElement element : root.getAsJsonArray(category)) {
+                    vault.add(StorableTypes.fromJson(category, element.getAsJsonObject()));
+                }
             }
         }
 
@@ -202,7 +154,8 @@ public record VaultFactory(User user) {
             int memoryKiB,
             int parallelism
     ) throws GeneralSecurityException {
-        return VaultEncryptingStrategyFactory.reopen(kdfId, masterPassword, salt, iterations, memoryKiB, parallelism);
+        return VaultEncryptingStrategyFactory.reopen(kdfId, masterPassword, salt,
+                iterations, memoryKiB, parallelism);
     }
 
     private static int parseIntOrZero(JsonObject obj, String key) {

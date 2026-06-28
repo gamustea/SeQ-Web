@@ -18,6 +18,11 @@ import java.util.Date;
 public class CreditCard extends VaultObject {
 
     /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "creditcards";
+
+    /**
      * Cardholder name printed on the card.
      */
     private String cardHolderName;
@@ -134,7 +139,7 @@ public class CreditCard extends VaultObject {
 
     @Override
     public String category() {
-        return "creditcards";
+        return CATEGORY;
     }
 
     @Override

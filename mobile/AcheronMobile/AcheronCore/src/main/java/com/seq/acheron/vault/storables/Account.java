@@ -19,6 +19,11 @@ import java.util.Date;
 public class Account extends VaultObject {
 
     /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "accounts";
+
+    /**
      * Username used to log in.
      */
     private String username;
@@ -108,7 +113,7 @@ public class Account extends VaultObject {
 
     @Override
     public String category() {
-        return "accounts";
+        return CATEGORY;
     }
 
     @Override

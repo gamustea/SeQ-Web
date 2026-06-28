@@ -20,6 +20,11 @@ import java.util.Date;
 @Setter
 public class Identity extends VaultObject {
 
+    /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "identities";
+
     private String fullName;
     private String email;
     private String phone;
@@ -98,7 +103,7 @@ public class Identity extends VaultObject {
 
     @Override
     public String category() {
-        return "identities";
+        return CATEGORY;
     }
 
     @Override

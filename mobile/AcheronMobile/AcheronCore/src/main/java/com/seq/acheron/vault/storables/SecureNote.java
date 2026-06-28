@@ -22,6 +22,11 @@ import java.util.Date;
 public class SecureNote extends VaultObject {
 
     /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "securenotes";
+
+    /**
      * Free-form note body. Considered sensitive.
      */
     private String content;
@@ -62,7 +67,7 @@ public class SecureNote extends VaultObject {
 
     @Override
     public String category() {
-        return "securenotes";
+        return CATEGORY;
     }
 
     @Override

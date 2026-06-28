@@ -19,6 +19,11 @@ import java.util.Date;
 public class WifiNetwork extends VaultObject {
 
     /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "wifinetworks";
+
+    /**
      * Network name (SSID).
      */
     private String ssid;
@@ -79,7 +84,7 @@ public class WifiNetwork extends VaultObject {
 
     @Override
     public String category() {
-        return "wifinetworks";
+        return CATEGORY;
     }
 
     @Override
