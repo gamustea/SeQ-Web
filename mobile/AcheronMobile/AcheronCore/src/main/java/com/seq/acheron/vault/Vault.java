@@ -473,11 +473,16 @@ public class Vault implements JsonSerializable {
      *                               {@link #isEncrypted} state
      */
     private Vault toggleEncrypt(boolean encrypt) {
-        if (encrypt && isEncrypted) {
-            throw new IllegalStateException("Vault is already encrypted.");
-        }
-        if (!encrypt && !isEncrypted) {
-            throw new IllegalStateException("Vault is already decrypted.");
+        final boolean cannotEncrypt = encrypt && isEncrypted;
+        final boolean cannotDecrypt = !encrypt && !isEncrypted;
+        if (cannotEncrypt || cannotDecrypt) {
+            throw new IllegalStateException(
+                "Vault is already " + (
+                    encrypt ?
+                    "encrypted" : 
+                    "decrypted"
+                ) + "."
+            );
         }
 
         for (Cypher storable : storables) {
