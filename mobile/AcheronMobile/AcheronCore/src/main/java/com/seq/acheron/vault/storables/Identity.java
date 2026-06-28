@@ -128,7 +128,7 @@ public class Identity extends VaultObject {
         json.addProperty("address", address);
         json.addProperty("city", city);
         json.addProperty("country", country);
-        json.addProperty("documentId", isEncrypted ? documentId : "***");
+        json.addProperty("documentId", revealOrMask(documentId, "***"));
         return json.toString();
     }
 

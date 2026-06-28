@@ -116,9 +116,9 @@ public class BankAccount extends VaultObject {
         JsonObject json = super.toJsonObject();
         json.addProperty("bankName", bankName);
         json.addProperty("holder", holder);
-        json.addProperty("iban", isEncrypted ? iban : maskTail(iban));
-        json.addProperty("swiftBic", isEncrypted ? swiftBic : "***");
-        json.addProperty("accountNumber", isEncrypted ? accountNumber : maskTail(accountNumber));
+        json.addProperty("iban", revealOrMask(iban, maskTail(iban)));
+        json.addProperty("swiftBic", revealOrMask(swiftBic, "***"));
+        json.addProperty("accountNumber", revealOrMask(accountNumber, maskTail(accountNumber)));
         return json.toString();
     }
 

@@ -80,7 +80,7 @@ public class SecureNote extends VaultObject {
     @Override
     public String toJson() {
         JsonObject json = super.toJsonObject();
-        json.addProperty("content", isEncrypted ? content : "***");
+        json.addProperty("content", revealOrMask(content, "***"));
         return json.toString();
     }
 

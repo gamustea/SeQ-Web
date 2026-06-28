@@ -150,6 +150,26 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
         }
     }
 
+    /**
+     * Resolves what a sensitive field should render as in {@link #toJson()},
+     * depending on this object's current {@link #isEncrypted} state.
+     * <p>
+     * {@code toJson()} intentionally serves two purposes with a single, always-safe
+     * representation: while encrypted, {@code rawValue} is cipher-text — safe to
+     * persist or transmit as-is (this is the path {@link com.seq.acheron.vault.Vault}
+     * relies on to serialise items); while decrypted, the true {@code rawValue} must
+     * never leave this object, so {@code displayValue} (e.g. {@code "***"} or a masked
+     * tail) is shown instead. This helper makes that decision explicit at each call
+     * site instead of repeating the {@code isEncrypted ? raw : masked} ternary.
+     *
+     * @param rawValue     the field's current value (cipher-text once encrypted)
+     * @param displayValue the safe stand-in to show while the field still holds plain-text
+     * @return {@code rawValue} if {@link #isEncrypted}, otherwise {@code displayValue}
+     */
+    protected String revealOrMask(String rawValue, String displayValue) {
+        return isEncrypted ? rawValue : displayValue;
+    }
+
     @Override
     public boolean isAllowed(User user) {
         return allowedUsers.contains(user);

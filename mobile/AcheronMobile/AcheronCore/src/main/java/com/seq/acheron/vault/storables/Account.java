@@ -129,7 +129,7 @@ public class Account extends VaultObject {
     public String toJson() {
         com.google.gson.JsonObject json = super.toJsonObject();
 
-        String safePassword = isEncrypted ? password : "***";
+        String safePassword = revealOrMask(password, "***");
         json.addProperty("username", username);
         json.addProperty("domain", domain);
         json.addProperty("password", safePassword);

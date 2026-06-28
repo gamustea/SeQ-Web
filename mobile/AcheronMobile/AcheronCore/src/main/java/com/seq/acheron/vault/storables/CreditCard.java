@@ -157,10 +157,8 @@ public class CreditCard extends VaultObject {
     public String toJson() {
         com.google.gson.JsonObject json = super.toJsonObject();
 
-        String safeCardNumber = isEncrypted
-                ? this.cardNumber
-                : maskCardNumber(this.cardNumber);
-        String safeCvv = isEncrypted ? this.cvv : "***";
+        String safeCardNumber = revealOrMask(cardNumber, maskCardNumber(cardNumber));
+        String safeCvv = revealOrMask(cvv, "***");
 
         json.addProperty("cardHolderName", cardHolderName);
         json.addProperty("cardNumber", safeCardNumber);

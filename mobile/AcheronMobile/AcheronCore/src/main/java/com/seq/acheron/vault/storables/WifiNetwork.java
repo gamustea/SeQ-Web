@@ -100,7 +100,7 @@ public class WifiNetwork extends VaultObject {
     public String toJson() {
         JsonObject json = super.toJsonObject();
         json.addProperty("ssid", ssid);
-        json.addProperty("password", isEncrypted ? password : "***");
+        json.addProperty("password", revealOrMask(password, "***"));
         json.addProperty("securityType", securityType);
         return json.toString();
     }

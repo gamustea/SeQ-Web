@@ -102,7 +102,7 @@ public class SoftwareLicense extends VaultObject {
     public String toJson() {
         JsonObject json = super.toJsonObject();
         json.addProperty("product", product);
-        json.addProperty("licenseKey", isEncrypted ? licenseKey : "***");
+        json.addProperty("licenseKey", revealOrMask(licenseKey, "***"));
         json.addProperty("licensedTo", licensedTo);
         json.addProperty("version", version);
         return json.toString();

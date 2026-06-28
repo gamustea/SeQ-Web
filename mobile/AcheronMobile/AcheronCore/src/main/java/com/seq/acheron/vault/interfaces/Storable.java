@@ -27,10 +27,18 @@ public interface Storable extends Cypher {
     String getId();
 
     /**
-     * Returns a JSON representation of this entry.
-     * <p>
-     * Implementations must ensure that highly sensitive values (e.g. full card
-     * numbers, CVV codes) are masked when the entry is in plain-text state.
+     * Returns a JSON representation of this entry. This single representation
+     * intentionally serves two purposes, both "safe to expose as-is":
+     * <ul>
+     *   <li>While encrypted, it is the persistence/transport format — every
+     *       field is cipher-text, so it is safe to store or transmit verbatim
+     *       (this is what {@link com.seq.acheron.vault.Vault#toJson()} relies on).</li>
+     *   <li>While in plain-text state, it is a display-safe snapshot — implementations
+     *       must mask highly sensitive values (e.g. full card numbers, CVV codes)
+     *       instead of revealing them.</li>
+     * </ul>
+     * Implementations typically delegate the per-field choice to a helper such as
+     * {@code VaultObject.revealOrMask(String, String)} to make this explicit.
      *
      * @return a JSON string representing this entry's current state
      */
