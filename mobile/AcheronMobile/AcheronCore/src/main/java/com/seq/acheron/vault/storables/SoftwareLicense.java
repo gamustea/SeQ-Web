@@ -7,7 +7,6 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.Date;
 
@@ -19,6 +18,11 @@ import java.util.Date;
 @Getter
 @Setter
 public class SoftwareLicense extends VaultObject {
+
+    /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "licenses";
 
     private String product;
 
@@ -65,19 +69,13 @@ public class SoftwareLicense extends VaultObject {
 
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        SoftwareLicense old = (SoftwareLicense) copy();
+        String snapshot = toString();
         super.transform(encryptor, encrypt);
-
-        try {
-            product    = encrypt ? encryptor.encrypt(product)    : encryptor.decrypt(product);
-            licenseKey = encrypt ? encryptor.encrypt(licenseKey) : encryptor.decrypt(licenseKey);
-            licensedTo = encrypt ? encryptor.encrypt(licensedTo) : encryptor.decrypt(licensedTo);
-            version    = encrypt ? encryptor.encrypt(version)    : encryptor.decrypt(version);
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming software license fields", e);
-        }
-
-        return old.toString();
+        product    = apply(encryptor, encrypt, product);
+        licenseKey = apply(encryptor, encrypt, licenseKey);
+        licensedTo = apply(encryptor, encrypt, licensedTo);
+        version    = apply(encryptor, encrypt, version);
+        return snapshot;
     }
 
     @Override
@@ -87,7 +85,7 @@ public class SoftwareLicense extends VaultObject {
 
     @Override
     public String category() {
-        return "licenses";
+        return CATEGORY;
     }
 
     @Override
@@ -109,14 +107,14 @@ public class SoftwareLicense extends VaultObject {
     public String toJson() {
         JsonObject json = super.toJsonObject();
         json.addProperty("product", product);
-        json.addProperty("licenseKey", isEncrypted ? licenseKey : "***");
+        json.addProperty("licenseKey", revealOrMask(licenseKey, "***"));
         json.addProperty("licensedTo", licensedTo);
         json.addProperty("version", version);
         return json.toString();
     }
 
     /**
-     * Reconstruye una SoftwareLicense a partir de su representación JSON devuelta por el Vault.
+     * Reconstructs a SoftwareLicense from the JSON representation returned by the Vault.
      */
     public static SoftwareLicense fromJson(JsonObject json) {
         return new SoftwareLicense(

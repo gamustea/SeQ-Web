@@ -33,7 +33,7 @@ public class RsaKeyPair extends AbstractAsymmetricKeyPair {
      * Generates a new RSA key pair with the given key size (in bits).
      * <p>
      * Common sizes are 2048 or 3072 bits; 4096 bits can be used for
-     * long-term security. [web:132][web:134]
+     * long-term security.
      *
      * @param keySize the RSA modulus size in bits (e.g. 2048)
      * @return a new {@code RsaKeyPair} instance

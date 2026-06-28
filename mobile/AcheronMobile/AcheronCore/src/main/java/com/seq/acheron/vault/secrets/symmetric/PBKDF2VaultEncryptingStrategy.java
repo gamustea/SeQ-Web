@@ -1,5 +1,7 @@
 package com.seq.acheron.vault.secrets.symmetric;
 
+import com.google.gson.JsonObject;
+
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
@@ -35,8 +37,8 @@ public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy
      * Creates a new PBKDF2-based strategy instance.
      * <p>
      * Derives {@link #derivedKey} from the master password and salt using
-     * {@code PBKDF2WithHmacSHA256} with {@value #ITERATIONS} iterations and a
-     * {@value #KEY_LENGTH_BITS}-bit output key.
+     * {@code PBKDF2WithHmacSHA256} with {@value #DEFAULT_ITERATIONS} iterations and a
+     * {@value #DEFAULT_KEY_LENGTH_BITS}-bit output key.
      * If {@code generateVaultKey} is {@code true}, a new random 256-bit AES
      * {@link #vaultKey} is generated automatically; otherwise {@link #vaultKey}
      * remains {@code null} until {@link VaultEncryptingStrategy#importVaultKey(String)}
@@ -60,7 +62,7 @@ public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy
             int iterations,
             int keyLengthBits
     ) throws GeneralSecurityException {
-        super(masterPassword, "AES/GCM/NoPadding", saltBase64, generateVaultKey);
+        super("AES/GCM/NoPadding", saltBase64, generateVaultKey);
         this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
         this.keyLengthBits = keyLengthBits > 0 ? keyLengthBits : DEFAULT_KEY_LENGTH_BITS;
         this.derivedKey = deriveKey(masterPassword, saltBase64);
@@ -84,7 +86,7 @@ public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy
             int iterations,
             int keyLengthBits
     ) throws GeneralSecurityException {
-        super(masterPassword, "AES/GCM/NoPadding", saltBase64, vaultKey);
+        super("AES/GCM/NoPadding", saltBase64, vaultKey);
         this.iterations = iterations > 0 ? iterations : DEFAULT_ITERATIONS;
         this.keyLengthBits = keyLengthBits > 0 ? keyLengthBits : DEFAULT_KEY_LENGTH_BITS;
         this.derivedKey = deriveKey(masterPassword, saltBase64);
@@ -107,12 +109,12 @@ public final class PBKDF2VaultEncryptingStrategy extends VaultEncryptingStrategy
     }
 
     public String toJson() {
-        return "{"
-                + "\"transformation\": \"" + transformation + "\","
-                + "\"kdf\": \"PBKDF2\","
-                + "\"kdfIterations\": " + iterations + ","
-                + "\"kdfKeyLength\": " + keyLengthBits + ","
-                + "\"salt\": \"" + saltBase64 + "\""
-                + "}";
+        JsonObject json = new JsonObject();
+        json.addProperty("transformation", transformation);
+        json.addProperty("kdf", "PBKDF2");
+        json.addProperty("kdfIterations", iterations);
+        json.addProperty("kdfKeyLength", keyLengthBits);
+        json.addProperty("salt", saltBase64);
+        return json.toString();
     }
 }

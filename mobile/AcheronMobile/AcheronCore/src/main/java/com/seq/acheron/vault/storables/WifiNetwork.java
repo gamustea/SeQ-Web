@@ -7,7 +7,6 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.Date;
 
@@ -18,6 +17,11 @@ import java.util.Date;
 @Getter
 @Setter
 public class WifiNetwork extends VaultObject {
+
+    /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "wifinetworks";
 
     /**
      * Network name (SSID).
@@ -65,18 +69,12 @@ public class WifiNetwork extends VaultObject {
 
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        WifiNetwork old = (WifiNetwork) copy();
+        String snapshot = toString();
         super.transform(encryptor, encrypt);
-
-        try {
-            ssid         = encrypt ? encryptor.encrypt(ssid)         : encryptor.decrypt(ssid);
-            password     = encrypt ? encryptor.encrypt(password)     : encryptor.decrypt(password);
-            securityType = encrypt ? encryptor.encrypt(securityType) : encryptor.decrypt(securityType);
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming wifi network fields", e);
-        }
-
-        return old.toString();
+        ssid         = apply(encryptor, encrypt, ssid);
+        password     = apply(encryptor, encrypt, password);
+        securityType = apply(encryptor, encrypt, securityType);
+        return snapshot;
     }
 
     @Override
@@ -86,7 +84,7 @@ public class WifiNetwork extends VaultObject {
 
     @Override
     public String category() {
-        return "wifinetworks";
+        return CATEGORY;
     }
 
     @Override
@@ -107,13 +105,13 @@ public class WifiNetwork extends VaultObject {
     public String toJson() {
         JsonObject json = super.toJsonObject();
         json.addProperty("ssid", ssid);
-        json.addProperty("password", isEncrypted ? password : "***");
+        json.addProperty("password", revealOrMask(password, "***"));
         json.addProperty("securityType", securityType);
         return json.toString();
     }
 
     /**
-     * Reconstruye un WifiNetwork a partir de su representación JSON devuelta por el Vault.
+     * Reconstructs a WifiNetwork from the JSON representation returned by the Vault.
      */
     public static WifiNetwork fromJson(JsonObject json) {
         return new WifiNetwork(

@@ -18,7 +18,7 @@ public class AccountTest {
     private static class TestVaultStrategy extends VaultEncryptingStrategy {
 
         TestVaultStrategy() throws GeneralSecurityException {
-            super("test-master-password", "AES/GCM/NoPadding", generateSalt(), true);
+            super("AES/GCM/NoPadding", generateSalt(), true);
             byte[] dk = new byte[32];
             SecureRandom.getInstanceStrong().nextBytes(dk);
             this.derivedKey = new SecretKeySpec(dk, "AES");

@@ -1,5 +1,6 @@
 package com.seq.acheron.vault.secrets.symmetric;
 
+import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.vault.User;
 import lombok.Getter;
 
@@ -11,7 +12,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 
 import static com.seq.acheron.util.CryptoUtils.constantTimeEquals;
@@ -69,7 +69,6 @@ public abstract class VaultEncryptingStrategy {
      * @throws GeneralSecurityException if key generation fails
      */
     protected VaultEncryptingStrategy(
-            String masterPassword,
             String transformation,
             String saltBase64,
             boolean generateVaultKey
@@ -89,7 +88,6 @@ public abstract class VaultEncryptingStrategy {
      * @param vaultKey       an existing vault key to reuse
      */
     protected VaultEncryptingStrategy(
-            String masterPassword,
             String transformation,
             String saltBase64,
             SecretKey vaultKey
@@ -194,29 +192,11 @@ public abstract class VaultEncryptingStrategy {
      */
     public boolean isValidChecker(String encryptedChecker, String validator) throws GeneralSecurityException {
         String decryptedChecker = decryptWithDerivedKey(encryptedChecker);
-
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hashBytes = digest.digest(
-                validator.getBytes(StandardCharsets.UTF_8)
-        );
-        StringBuilder hex = new StringBuilder();
-        for (byte b : hashBytes) {
-            hex.append(String.format("%02x", b));
-        }
-        String hashedValidator = hex.toString();
-
-        return constantTimeEquals(hashedValidator, decryptedChecker);
+        return constantTimeEquals(CryptoUtils.sha256Hex(validator), decryptedChecker);
     }
 
     public String getChecker(String validator) throws GeneralSecurityException {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hashBytes = digest.digest(validator.getBytes(StandardCharsets.UTF_8));
-
-        StringBuilder hex = new StringBuilder();
-        for (byte b : hashBytes) {
-            hex.append(String.format("%02x", b));
-        }
-        return encryptWithDerivedKey(hex.toString());
+        return encryptWithDerivedKey(CryptoUtils.sha256Hex(validator));
     }
 
     /**

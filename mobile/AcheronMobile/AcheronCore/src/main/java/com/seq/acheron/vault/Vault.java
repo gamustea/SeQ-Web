@@ -7,7 +7,6 @@ import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
 import com.seq.acheron.vault.interfaces.Storable;
 import com.seq.acheron.vault.storables.VaultObject;
-import lombok.Getter;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
@@ -15,13 +14,12 @@ import com.google.gson.JsonParser;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.TreeMap;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A secure container that stores and manages {@link Storable} objects,
@@ -60,7 +58,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @see Storable
  * @see VaultEncryptingStrategy
  */
-@Getter
 public class Vault implements JsonSerializable {
 
     /* ═══════════════════════════════════════
@@ -82,13 +79,6 @@ public class Vault implements JsonSerializable {
      * {@link java.lang.Comparable}) every time a new element is added.
      */
     private final List<Storable> storables = new ArrayList<>();
-
-    /**
-     * Per-prefix sequential counters for auto-generating stable IDs
-     * within this vault.  Shared by all storable types.  Synchronised
-     * with explicit IDs on {@link #add(Storable)} and {@link #syncPrefixSequence}.
-     */
-    private final Map<String, AtomicInteger> prefixSequences = new ConcurrentHashMap<>();
 
     /**
      * {@code true} if all items currently hold encrypted (cipher-text) values;
@@ -175,6 +165,40 @@ public class Vault implements JsonSerializable {
 
 
     /* ────────────────────────────────────
+     *              ACCESSORS
+     * ──────────────────────────────────── */
+
+    /** @return the owner of this vault */
+    public User getUser() {
+        return user;
+    }
+
+    /** @return the encrypted password verifier bound to the master password */
+    public String getChecker() {
+        return checker;
+    }
+
+    /**
+     * @return {@code true} if the items currently hold cipher-text;
+     *         {@code false} if they hold plain-text
+     */
+    public boolean isEncrypted() {
+        return isEncrypted;
+    }
+
+    /**
+     * Returns a read-only view of the stored items. Use {@link #add(Storable)}
+     * and {@link #remove(Storable)} to change the contents; the encryption
+     * {@link #strategy} (which holds key material) is intentionally not exposed.
+     *
+     * @return an unmodifiable list of the stored items
+     */
+    public List<Storable> getStorables() {
+        return Collections.unmodifiableList(storables);
+    }
+
+
+    /* ────────────────────────────────────
      *              CRUD
      * ──────────────────────────────────── */
 
@@ -196,10 +220,9 @@ public class Vault implements JsonSerializable {
      * Adds an item to the vault.
      * <p>
      * If the storable was constructed with auto-ID generation
-     * ({@link VaultObject#needsIdAssignment()}), a fresh ID is assigned
-     * from this vault's per-prefix sequence.  Explicit IDs (e.g. from
-     * {@code fromJson}) automatically advance the sequence to avoid
-     * future collisions.
+     * ({@link VaultObject#needsIdAssignment()}), a deterministic content-based
+     * ID is assigned (see {@link #assignContentBasedId(VaultObject)}). Items
+     * loaded with an explicit ID (e.g. from {@code fromJson}) keep it.
      * <p>
      * After insertion, the internal list of items is re-sorted according to
      * the natural ordering of {@link Storable}.
@@ -209,18 +232,8 @@ public class Vault implements JsonSerializable {
      */
     public Vault add(Storable storable) {
         Objects.requireNonNull(storable, "storable must not be null");
-        if (storable instanceof VaultObject vo) {
-            if (vo.needsIdAssignment()) {
-                // copy()/toJson() require a non-null id; assign a placeholder so the
-                // hash can be computed, then overwrite it with the real content hash.
-                vo.assignIdDirect("");
-                Storable copy = vo.copy();
-                ((Cypher) copy).encrypt(strategy);
-                String hashId = VaultObject.generateIdFromContent(copy.toJson());
-                vo.assignIdDirect(hashId);
-            } else {
-                syncPrefixSequence(vo.getId());
-            }
+        if (storable instanceof VaultObject vo && vo.needsIdAssignment()) {
+            assignContentBasedId(vo);
         }
         storables.add(storable);
         storables.sort(null);
@@ -442,7 +455,7 @@ public class Vault implements JsonSerializable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(strategy, user, checker, storables, isEncrypted);
+        return Objects.hash(user, checker, storables, isEncrypted);
     }
 
 
@@ -460,11 +473,16 @@ public class Vault implements JsonSerializable {
      *                               {@link #isEncrypted} state
      */
     private Vault toggleEncrypt(boolean encrypt) {
-        if (encrypt && isEncrypted) {
-            throw new IllegalStateException("Vault is already encrypted.");
-        }
-        if (!encrypt && !isEncrypted) {
-            throw new IllegalStateException("Vault is already decrypted.");
+        final boolean cannotEncrypt = encrypt && isEncrypted;
+        final boolean cannotDecrypt = !encrypt && !isEncrypted;
+        if (cannotEncrypt || cannotDecrypt) {
+            throw new IllegalStateException(
+                "Vault is already " + (
+                    encrypt ?
+                    "encrypted" : 
+                    "decrypted"
+                ) + "."
+            );
         }
 
         for (Cypher storable : storables) {
@@ -495,30 +513,20 @@ public class Vault implements JsonSerializable {
     }
 
     /**
-     * Advance the per-prefix sequence counter past the given ID so that
-     * auto-generated IDs never collide with explicit ones.
+     * Assigns a deterministic, content-based ID to a freshly created item.
+     * <p>
+     * {@link VaultObject#copy()} and {@code toJson()} require a non-null id, so a
+     * temporary placeholder is set first; the item's encrypted JSON is then
+     * hashed and the resulting 16-char hash becomes the final ID. Hashing a
+     * throwaway encrypted copy leaves the live, plain-text item untouched.
      *
-     * @param id an already-assigned ID such as {@code "ACC3"} or {@code "CDC0"}
+     * @param vo a vault object that still needs an ID assigned
      */
-    protected void syncPrefixSequence(String id) {
-        String prefix = extractPrefix(id);
-        try {
-            int num = Integer.parseInt(id.substring(prefix.length()));
-            prefixSequences
-                    .computeIfAbsent(prefix, k -> new AtomicInteger(0))
-                    .updateAndGet(cur -> Math.max(cur, num + 1));
-        } catch (NumberFormatException ignored) {
-            // non-standard ID format — leave sequence unchanged
-        }
-    }
-
-    private static String extractPrefix(String id) {
-        StringBuilder letters = new StringBuilder();
-        for (int i = 0; i < id.length(); i++) {
-            char c = id.charAt(i);
-            if (Character.isDigit(c)) break;
-            letters.append(c);
-        }
-        return letters.toString();
+    private void assignContentBasedId(VaultObject vo) {
+        vo.assignIdDirect("");
+        Storable copy = vo.copy();
+        ((Cypher) copy).encrypt(strategy);
+        String hashId = VaultObject.generateIdFromContent(copy.toJson());
+        vo.assignIdDirect(hashId);
     }
 }

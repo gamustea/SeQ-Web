@@ -7,7 +7,6 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.Date;
 
@@ -21,6 +20,11 @@ import java.util.Date;
 @Getter
 @Setter
 public class SecureNote extends VaultObject {
+
+    /**
+     * Persistence category (JSON array key) for this type. See {@code StorableTypes}.
+     */
+    public static final String CATEGORY = "securenotes";
 
     /**
      * Free-form note body. Considered sensitive.
@@ -50,16 +54,10 @@ public class SecureNote extends VaultObject {
 
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        SecureNote old = (SecureNote) copy();
+        String snapshot = toString();
         super.transform(encryptor, encrypt);
-
-        try {
-            content = encrypt ? encryptor.encrypt(content) : encryptor.decrypt(content);
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming secure note fields", e);
-        }
-
-        return old.toString();
+        content = apply(encryptor, encrypt, content);
+        return snapshot;
     }
 
     @Override
@@ -69,7 +67,7 @@ public class SecureNote extends VaultObject {
 
     @Override
     public String category() {
-        return "securenotes";
+        return CATEGORY;
     }
 
     @Override
@@ -87,12 +85,12 @@ public class SecureNote extends VaultObject {
     @Override
     public String toJson() {
         JsonObject json = super.toJsonObject();
-        json.addProperty("content", isEncrypted ? content : "***");
+        json.addProperty("content", revealOrMask(content, "***"));
         return json.toString();
     }
 
     /**
-     * Reconstruye un SecureNote a partir de su representación JSON devuelta por el Vault.
+     * Reconstructs a SecureNote from the JSON representation returned by the Vault.
      */
     public static SecureNote fromJson(JsonObject json) {
         return new SecureNote(
