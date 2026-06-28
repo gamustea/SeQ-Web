@@ -7,7 +7,6 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.Date;
 
@@ -95,26 +94,6 @@ public class CreditCard extends VaultObject {
     }
 
     public CreditCard(
-            @NotNull String title,
-            @NotNull String cardHolderName,
-            @NotNull String cardNumber,
-            @NotNull String expirationDate,
-            @NotNull String cvv,
-            @NotNull String postalCode,
-            @NotNull Date createdAt,
-            @NotNull Date updatedAt,
-            boolean isEncrypted
-    ) {
-        super("CDC", title, isEncrypted, createdAt, updatedAt, true);
-
-        this.cardHolderName = cardHolderName;
-        this.cardNumber = cardNumber;
-        this.expirationDate = expirationDate;
-        this.cvv = cvv;
-        this.postalCode = postalCode;
-    }
-
-    public CreditCard(
             @NotNull String id,
             @NotNull String title,
             @NotNull String cardHolderName,
@@ -138,39 +117,24 @@ public class CreditCard extends VaultObject {
 
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        CreditCard oldCreditCard = (CreditCard) this.copy();
+        String snapshot = toString();
         super.transform(encryptor, encrypt);
-
-        try {
-            cardHolderName = encrypt
-                    ? encryptor.encrypt(cardHolderName)
-                    : encryptor.decrypt(cardHolderName);
-            cardNumber = encrypt
-                    ? encryptor.encrypt(cardNumber)
-                    : encryptor.decrypt(cardNumber);
-
-            expirationDate = encrypt
-                    ? encryptor.encrypt(expirationDate)
-                    : encryptor.decrypt(expirationDate);
-
-            cvv = encrypt
-                    ? encryptor.encrypt(cvv)
-                    : encryptor.decrypt(cvv);
-
-            postalCode = encrypt
-                    ? encryptor.encrypt(postalCode)
-                    : encryptor.decrypt(postalCode);
-
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming credit card fields", e);
-        }
-
-        return oldCreditCard.toString();
+        cardHolderName = apply(encryptor, encrypt, cardHolderName);
+        cardNumber     = apply(encryptor, encrypt, cardNumber);
+        expirationDate = apply(encryptor, encrypt, expirationDate);
+        cvv            = apply(encryptor, encrypt, cvv);
+        postalCode     = apply(encryptor, encrypt, postalCode);
+        return snapshot;
     }
 
     @Override
     public boolean share(PublicKey publicKey, VaultEncryptingStrategy vaultEncryptingStrategy) {
         return false;
+    }
+
+    @Override
+    public String category() {
+        return "creditcards";
     }
 
     @Override
@@ -214,18 +178,8 @@ public class CreditCard extends VaultObject {
         return "****" + cardNumber.substring(cardNumber.length() - 4);
     }
 
-    String toStorageJson() {
-        com.google.gson.JsonObject json = super.toJsonObject();
-        json.addProperty("cardHolderName", cardHolderName);
-        json.addProperty("cardNumber", cardNumber);
-        json.addProperty("expirationDate", expirationDate);
-        json.addProperty("postalCode", postalCode);
-        json.addProperty("cvv", cvv);
-        return json.toString();
-    }
-
     /**
-     * Reconstruye un CreditCard a partir de su representación JSON devuelta por el Vault.
+     * Reconstructs a CreditCard from the JSON representation returned by the Vault.
      */
     public static CreditCard fromJson(JsonObject json) {
         return new CreditCard(

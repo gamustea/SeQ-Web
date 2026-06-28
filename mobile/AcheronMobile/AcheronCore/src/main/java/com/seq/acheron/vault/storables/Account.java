@@ -7,7 +7,6 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.Date;
 
@@ -77,21 +76,6 @@ public class Account extends VaultObject {
     }
 
     public Account(
-            @NotNull String username,
-            @NotNull String title,
-            @NotNull String domain,
-            @NotNull String password,
-            @NotNull Date createdAt,
-            @NotNull Date updatedAt,
-            boolean isEncrypted
-    ) {
-        super("ACC", title, isEncrypted, createdAt, updatedAt, true);
-        this.username = username;
-        this.domain = domain;
-        this.password = password;
-    }
-
-    public Account(
             @NotNull String id,
             @NotNull String title,
             @NotNull String username,
@@ -109,29 +93,22 @@ public class Account extends VaultObject {
 
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        Account oldAccount = (Account) copy();
+        String snapshot = toString();
         super.transform(encryptor, encrypt);
-
-        try {
-            username = encrypt ?
-                    encryptor.encrypt(username) :
-                    encryptor.decrypt(username);
-            domain = encrypt ?
-                    encryptor.encrypt(domain) :
-                    encryptor.decrypt(domain);
-            password = encrypt ?
-                    encryptor.encrypt(password) :
-                    encryptor.decrypt(password);
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming account fields", e);
-        }
-
-        return oldAccount.toString();
+        username = apply(encryptor, encrypt, username);
+        domain   = apply(encryptor, encrypt, domain);
+        password = apply(encryptor, encrypt, password);
+        return snapshot;
     }
 
     @Override
     public boolean share(PublicKey publicKey, VaultEncryptingStrategy vaultEncryptingStrategy) {
         return false;
+    }
+
+    @Override
+    public String category() {
+        return "accounts";
     }
 
     @Override
@@ -160,16 +137,8 @@ public class Account extends VaultObject {
         return json.toString();
     }
 
-    String toStorageJson() {
-        com.google.gson.JsonObject json = super.toJsonObject();
-        json.addProperty("username", username);
-        json.addProperty("domain", domain);
-        json.addProperty("password", password);
-        return json.toString();
-    }
-
     /**
-     * Reconstruye un Account a partir de su representación JSON devuelta por el Vault.
+     * Reconstructs an Account from the JSON representation returned by the Vault.
      */
     public static Account fromJson(JsonObject json) {
         return new Account(
@@ -178,7 +147,7 @@ public class Account extends VaultObject {
                 json.get("username").getAsString(),
                 json.get("domain").getAsString(),
                 json.get("password").getAsString(),
-                // Se asume el formato estándar ISO-8601 guardado por DateTimeFormatter
+                // Assumes the standard ISO-8601 format written by DateTimeFormatter
                 java.util.Date.from(java.time.Instant.parse(json.get("createdAt").getAsString())),
                 java.util.Date.from(java.time.Instant.parse(json.get("updatedAt").getAsString())),
                 true

@@ -7,7 +7,6 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.Date;
 
@@ -80,22 +79,16 @@ public class Identity extends VaultObject {
 
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        Identity old = (Identity) copy();
+        String snapshot = toString();
         super.transform(encryptor, encrypt);
-
-        try {
-            fullName   = encrypt ? encryptor.encrypt(fullName)   : encryptor.decrypt(fullName);
-            email      = encrypt ? encryptor.encrypt(email)      : encryptor.decrypt(email);
-            phone      = encrypt ? encryptor.encrypt(phone)      : encryptor.decrypt(phone);
-            address    = encrypt ? encryptor.encrypt(address)    : encryptor.decrypt(address);
-            city       = encrypt ? encryptor.encrypt(city)       : encryptor.decrypt(city);
-            country    = encrypt ? encryptor.encrypt(country)    : encryptor.decrypt(country);
-            documentId = encrypt ? encryptor.encrypt(documentId) : encryptor.decrypt(documentId);
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming identity fields", e);
-        }
-
-        return old.toString();
+        fullName   = apply(encryptor, encrypt, fullName);
+        email      = apply(encryptor, encrypt, email);
+        phone      = apply(encryptor, encrypt, phone);
+        address    = apply(encryptor, encrypt, address);
+        city       = apply(encryptor, encrypt, city);
+        country    = apply(encryptor, encrypt, country);
+        documentId = apply(encryptor, encrypt, documentId);
+        return snapshot;
     }
 
     @Override
@@ -140,7 +133,7 @@ public class Identity extends VaultObject {
     }
 
     /**
-     * Reconstruye una Identity a partir de su representación JSON devuelta por el Vault.
+     * Reconstructs an Identity from the JSON representation returned by the Vault.
      */
     public static Identity fromJson(JsonObject json) {
         return new Identity(

@@ -21,7 +21,7 @@ public class EcKeyPair extends AbstractAsymmetricKeyPair {
     /**
      * Standard curve name used by default, e.g. NIST P-256.
      * <p>
-     * Also known as "prime256v1". [web:147][web:154]
+     * Also known as "prime256v1".
      */
     public static final String DEFAULT_CURVE = "secp256r1";
 
@@ -42,7 +42,7 @@ public class EcKeyPair extends AbstractAsymmetricKeyPair {
     /**
      * Generates a new EC key pair using the given named curve.
      * <p>
-     * For example, {@code "secp256r1"} is a widely used NIST P-256 curve. [web:147][web:154]
+     * For example, {@code "secp256r1"} is a widely used NIST P-256 curve.
      *
      * @param curveName the standard curve name (e.g. "secp256r1")
      * @return a new {@code EcKeyPair} instance

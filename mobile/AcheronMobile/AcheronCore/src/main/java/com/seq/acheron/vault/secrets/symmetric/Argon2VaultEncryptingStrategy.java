@@ -1,5 +1,6 @@
 package com.seq.acheron.vault.secrets.symmetric;
 
+import com.google.gson.JsonObject;
 import org.bouncycastle.crypto.generators.Argon2BytesGenerator;
 import org.bouncycastle.crypto.params.Argon2Parameters;
 
@@ -27,8 +28,8 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
     private static final int DEFAULT_MEMORY_KIB   = 65536;
     private static final int DEFAULT_PARALLELISM  = 1;
 
-    // Largo de la clave derivada en bytes (AES-256). Coincide con el largo por
-    // defecto que producia de.mkammerer Argon2.rawHash(...).
+    // Derived key length in bytes (AES-256). Matches the default length that
+    // de.mkammerer Argon2.rawHash(...) used to produce.
     private static final int DERIVED_KEY_LENGTH   = 32;
 
     private final int iterations;
@@ -66,7 +67,6 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
             int parallelism
     ) throws GeneralSecurityException {
         super(
-            masterPassword,
             "AES/GCM/NoPadding",
             saltBase64,
             generateVaultKey
@@ -105,7 +105,6 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
             int parallelism
     ) throws GeneralSecurityException {
         super(
-                masterPassword,
                 "AES/GCM/NoPadding",
                 saltBase64,
                 vaultKey
@@ -126,8 +125,8 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
         try {
             byte[] saltBytes = Base64.getDecoder().decode(saltBase64);
 
-            // Argon2id v1.3, mismos parametros que producia de.mkammerer, para
-            // mantener compatibilidad e interoperar con otros clientes.
+            // Argon2id v1.3, same parameters that de.mkammerer used to produce, to
+            // preserve compatibility and interoperate with other clients.
             Argon2Parameters params = new Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
                     .withVersion(Argon2Parameters.ARGON2_VERSION_13)
                     .withIterations(iterations)
@@ -173,14 +172,14 @@ public final class Argon2VaultEncryptingStrategy extends VaultEncryptingStrategy
      * }
      */
     public String toJson() {
-        return "{" +
-                    "\"transformation\": \"" + transformation + "\", " +
-                    "\"kdf\": \"Argon2\", " +
-                    "\"kdfIterations\": " + iterations + ", " +
-                    "\"kdfMemoryKiB\": " + memoryKiB + ", " +
-                    "\"kdfParallelism\": " + parallelism + ", " +
-                    "\"salt\": \"" + saltBase64 + "\"" +
-                "}";
+        JsonObject json = new JsonObject();
+        json.addProperty("transformation", transformation);
+        json.addProperty("kdf", "Argon2");
+        json.addProperty("kdfIterations", iterations);
+        json.addProperty("kdfMemoryKiB", memoryKiB);
+        json.addProperty("kdfParallelism", parallelism);
+        json.addProperty("salt", saltBase64);
+        return json.toString();
     }
 
 }

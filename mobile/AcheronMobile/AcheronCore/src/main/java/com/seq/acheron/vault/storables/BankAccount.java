@@ -7,7 +7,6 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
-import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.Date;
 
@@ -76,20 +75,14 @@ public class BankAccount extends VaultObject {
 
     @Override
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        BankAccount old = (BankAccount) copy();
+        String snapshot = toString();
         super.transform(encryptor, encrypt);
-
-        try {
-            bankName      = encrypt ? encryptor.encrypt(bankName)      : encryptor.decrypt(bankName);
-            holder        = encrypt ? encryptor.encrypt(holder)        : encryptor.decrypt(holder);
-            iban          = encrypt ? encryptor.encrypt(iban)          : encryptor.decrypt(iban);
-            swiftBic      = encrypt ? encryptor.encrypt(swiftBic)      : encryptor.decrypt(swiftBic);
-            accountNumber = encrypt ? encryptor.encrypt(accountNumber) : encryptor.decrypt(accountNumber);
-        } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming bank account fields", e);
-        }
-
-        return old.toString();
+        bankName      = apply(encryptor, encrypt, bankName);
+        holder        = apply(encryptor, encrypt, holder);
+        iban          = apply(encryptor, encrypt, iban);
+        swiftBic      = apply(encryptor, encrypt, swiftBic);
+        accountNumber = apply(encryptor, encrypt, accountNumber);
+        return snapshot;
     }
 
     @Override
@@ -137,7 +130,7 @@ public class BankAccount extends VaultObject {
     }
 
     /**
-     * Reconstruye un BankAccount a partir de su representación JSON devuelta por el Vault.
+     * Reconstructs a BankAccount from the JSON representation returned by the Vault.
      */
     public static BankAccount fromJson(JsonObject json) {
         return new BankAccount(

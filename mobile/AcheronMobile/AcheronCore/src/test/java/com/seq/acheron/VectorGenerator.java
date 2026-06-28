@@ -27,23 +27,23 @@ import java.time.Instant;
 import java.util.Date;
 
 /**
- * Genera los VECTORES DE PRUEBA COMPARTIDOS entre AcheronCore (Java) y el
- * cliente web (JS). Es la fuente de verdad de la interoperabilidad: AcheronCore
- * cifra unos vaults con master password y salt conocidos y vuelca su JSON (en
- * el mismo formato que devuelve {@code GET /vault}) junto con los valores en
- * texto plano esperados. El test JS (web/app/test/acheron.interop.test.mjs)
- * abre esos vaults y comprueba que descifra exactamente lo esperado.
+ * Generates the SHARED TEST VECTORS between AcheronCore (Java) and the web
+ * client (JS). It is the source of truth for interoperability: AcheronCore
+ * encrypts a few vaults with known master password and salt and dumps their
+ * JSON (in the same format returned by {@code GET /vault}) together with the
+ * expected plain-text values. The JS test (web/app/test/acheron.interop.test.mjs)
+ * opens those vaults and checks that it decrypts exactly what is expected.
  *
- * No es un test de aserción: es un generador. Se ejecuta a propósito con:
+ * This is not an assertion test: it is a generator. Run it on purpose with:
  *
  *   mvn -q -Dtest=VectorGenerator -DfailIfNoTests=false \
  *       -Dvectors.out=&lt;repo&gt;/tests/acheron-vectors.json test
  *
- * Salida por defecto: target/acheron-vectors.json (si no se pasa vectors.out).
+ * Default output: target/acheron-vectors.json (if vectors.out is not provided).
  */
 public class VectorGenerator {
 
-    /** createdAt/updatedAt fijos para que la salida sea determinista. */
+    /** Fixed createdAt/updatedAt so the output is deterministic. */
     private static final Date FIXED_DATE = Date.from(Instant.parse("2026-01-01T00:00:00Z"));
 
     @Test
@@ -63,7 +63,7 @@ public class VectorGenerator {
         try (Writer w = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
             gson.toJson(root, w);
         }
-        System.out.println("[VectorGenerator] vectores escritos en " + path);
+        System.out.println("[VectorGenerator] vectors written to " + path);
     }
 
     private JsonObject buildCase(String kdf) throws Exception {
@@ -79,7 +79,7 @@ public class VectorGenerator {
 
         Vault vault = new Vault(strategy, user, false);
 
-        // ── storables en texto plano (ids explícitos para que sean estables) ──
+        // ── plain-text storables (explicit ids so they stay stable) ──
         Account account = new Account(
                 "ACC0", "Gmail", "alice@gmail.com", "mail.google.com",
                 "P@ssw0rd-acc-0", FIXED_DATE, FIXED_DATE, false);
@@ -92,7 +92,7 @@ public class VectorGenerator {
 
         vault.add(account).add(card).add(note);
 
-        // ── lo que el cliente web debe obtener al descifrar ──
+        // ── what the web client must obtain after decryption ──
         JsonObject expected = new JsonObject();
         expected.add("ACC0", obj(
                 "title", "Gmail",
@@ -110,7 +110,7 @@ public class VectorGenerator {
                 "title", "Recovery codes",
                 "content", "8F3K-2L9P-77QX\n1A2B-3C4D-5E6F"));
 
-        // ── cifrar y serializar igual que persistiría el vault ──
+        // ── encrypt and serialise just as the vault would persist ──
         vault.encryptAll();
         JsonObject vaultJson = JsonParser.parseString(vault.toJson()).getAsJsonObject();
 
@@ -123,7 +123,7 @@ public class VectorGenerator {
         return c;
     }
 
-    /** Construye un JsonObject a partir de pares clave/valor. */
+    /** Builds a JsonObject from key/value pairs. */
     private static JsonObject obj(String... kv) {
         JsonObject o = new JsonObject();
         for (int i = 0; i < kv.length; i += 2) {

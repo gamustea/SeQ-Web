@@ -34,24 +34,24 @@ public class VaultObjectCompareToTest {
         public String toJson() {
             return "";
         }
+
+        @Override
+        public String category() {
+            return "concretevaultobjects";
+        }
     }
 
-    @BeforeEach
-    void noOp() {
-        // Counter is per-vault now — no global reset needed
-    }
-
-    // ─── 1. Misma referencia ─────────────────────────────────────────────────
+    // ─── 1. Same reference ───────────────────────────────────────────────────
     @Test
-    @DisplayName("compareTo(self) debe devolver 0")
+    @DisplayName("compareTo(self) must return 0")
     void compareTo_sameReference_returnsZero() {
         ConcreteVaultObject obj = new ConcreteVaultObject("ACC0", false);
         assertEquals(0, obj.compareTo(obj));
     }
 
-    // ─── 2. IDs idénticos ────────────────────────────────────────────────────
+    // ─── 2. Identical IDs ────────────────────────────────────────────────────
     @Test
-    @DisplayName("Dos objetos con el mismo ID devuelven 0")
+    @DisplayName("Two objects with the same ID return 0")
     void compareTo_identicalIds_returnsZero() {
         ConcreteVaultObject obj1 = new ConcreteVaultObject("ACC0", false);
         ConcreteVaultObject obj2 = new ConcreteVaultObject("ACC0", false);
@@ -61,40 +61,40 @@ public class VaultObjectCompareToTest {
         assertEquals(0, obj1.compareTo(obj2));
     }
 
-    // ─── 3. Prefijo menor → resultado negativo ───────────────────────────────
+    // ─── 3. Smaller prefix → negative result ─────────────────────────────────
     @Test
-    @DisplayName("compareTo devuelve negativo cuando el prefijo propio < prefijo ajeno")
+    @DisplayName("compareTo returns negative when this prefix < other prefix")
     void compareTo_thisPrefixLessThanOther_returnsNegative() {
         ConcreteVaultObject acc = new ConcreteVaultObject("ACC0", false);
         ConcreteVaultObject cdc = new ConcreteVaultObject("CDC0", false);
 
-        assertTrue(acc.compareTo(cdc) < 0, "ACC debería ser anterior a CDC");
+        assertTrue(acc.compareTo(cdc) < 0, "ACC should come before CDC");
     }
 
-    // ─── 4. Prefijo mayor → resultado positivo ───────────────────────────────
+    // ─── 4. Greater prefix → positive result ─────────────────────────────────
     @Test
-    @DisplayName("compareTo devuelve positivo cuando el prefijo propio > prefijo ajeno")
+    @DisplayName("compareTo returns positive when this prefix > other prefix")
     void compareTo_thisPrefixGreaterThanOther_returnsPositive() {
         ConcreteVaultObject acc = new ConcreteVaultObject("ACC0", false);
         ConcreteVaultObject cdc = new ConcreteVaultObject("CDC0", false);
 
-        assertTrue(cdc.compareTo(acc) > 0, "CDC debería ser posterior a ACC");
+        assertTrue(cdc.compareTo(acc) > 0, "CDC should come after ACC");
     }
 
-    // ─── 5. Mismo prefijo, número distinto ───────────────────────────────────
+    // ─── 5. Same prefix, different number ─────────────────────────────────────
     @Test
-    @DisplayName("Mismo prefijo con número distinto NO debe devolver 0")
+    @DisplayName("Same prefix with a different number must NOT return 0")
     void compareTo_samePrefixDifferentCounter_returnsNonZero() {
         ConcreteVaultObject first  = new ConcreteVaultObject("ACC0", false);
         ConcreteVaultObject second = new ConcreteVaultObject("ACC1", false);
 
         assertNotEquals(0, first.compareTo(second),
-                "ACC0 y ACC1 comparten prefijo pero difieren en número.");
+                "ACC0 and ACC1 share a prefix but differ in number.");
     }
 
-    // ─── 6. Antisimetría ─────────────────────────────────────────────────────
+    // ─── 6. Antisymmetry ─────────────────────────────────────────────────────
     @Test
-    @DisplayName("compareTo es antisimétrico: signo(a.compareTo(b)) == -signo(b.compareTo(a))")
+    @DisplayName("compareTo is antisymmetric: signum(a.compareTo(b)) == -signum(b.compareTo(a))")
     void compareTo_isAntisymmetric() {
         ConcreteVaultObject acc = new ConcreteVaultObject("ACC0", false);
         ConcreteVaultObject cdc = new ConcreteVaultObject("CDC0", false);
@@ -103,12 +103,12 @@ public class VaultObjectCompareToTest {
         int ba = cdc.compareTo(acc);
 
         assertEquals(Integer.signum(ab), -Integer.signum(ba),
-                "compareTo debe ser antisimétrico");
+                "compareTo must be antisymmetric");
     }
 
-    // ─── 7. Ordenación en TreeSet ─────────────────────────────────────────────
+    // ─── 7. Ordering in a TreeSet ─────────────────────────────────────────────
     @Test
-    @DisplayName("Un TreeSet ordena VaultObjects alfabéticamente por prefijo")
+    @DisplayName("A TreeSet sorts VaultObjects alphabetically by prefix")
     void compareTo_treeSetSorting_sortsByPrefixAlphabetically() {
         ConcreteVaultObject acc = new ConcreteVaultObject("ACC0", false);
         ConcreteVaultObject bcc = new ConcreteVaultObject("BCC0", false);
@@ -120,14 +120,14 @@ public class VaultObjectCompareToTest {
         sorted.add(acc);
 
         List<VaultObject> list = new ArrayList<>(sorted);
-        assertEquals(acc, list.get(0), "ACC debe ser el primero");
-        assertEquals(bcc, list.get(1), "BCC debe ser el segundo");
-        assertEquals(cdc, list.get(2), "CDC debe ser el último");
+        assertEquals(acc, list.get(0), "ACC must be first");
+        assertEquals(bcc, list.get(1), "BCC must be second");
+        assertEquals(cdc, list.get(2), "CDC must be last");
     }
 
-    // ─── 8. Comparación de números en IDs ───────────────────────────────────
+    // ─── 8. Numeric comparison of IDs ────────────────────────────────────────
     @Test
-    @DisplayName("Los números en IDs se comparan numéricamente")
+    @DisplayName("Numbers in IDs are compared numerically")
     void compareTo_numbers_comparedNumerically() {
         ConcreteVaultObject acc9  = new ConcreteVaultObject("ACC9", false);
         ConcreteVaultObject acc10 = new ConcreteVaultObject("ACC10", false);
@@ -136,6 +136,6 @@ public class VaultObjectCompareToTest {
         assertEquals("ACC10", acc10.getId());
 
         assertTrue(acc9.compareTo(acc10) < 0,
-                "ACC9 debe ser menor que ACC10 numéricamente");
+                "ACC9 must be less than ACC10 numerically");
     }
 }

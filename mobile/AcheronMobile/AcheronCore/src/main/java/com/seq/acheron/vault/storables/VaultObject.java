@@ -2,8 +2,8 @@
 package com.seq.acheron.vault.storables;
 
 import com.google.gson.JsonObject;
+import com.seq.acheron.util.CryptoUtils;
 import com.seq.acheron.vault.User;
-import com.seq.acheron.vault.interfaces.Cypher;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
 import com.seq.acheron.util.Pair;
 import com.seq.acheron.vault.interfaces.JsonSerializable;
@@ -14,7 +14,6 @@ import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 
 import java.security.GeneralSecurityException;
-import java.security.MessageDigest;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
@@ -69,13 +68,7 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
      */
     public static String generateIdFromContent(@NotNull String encryptedJson) {
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(encryptedJson.getBytes());
-            StringBuilder hex = new StringBuilder();
-            for (byte b : hash) {
-                hex.append(String.format("%02x", b));
-            }
-            return hex.substring(0, 16);
+            return CryptoUtils.sha256Hex(encryptedJson).substring(0, 16);
         } catch (GeneralSecurityException e) {
             throw new RuntimeException("SHA-256 hash algorithm not available", e);
         }
@@ -102,15 +95,6 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
 
     public boolean needsIdAssignment() {
         return pendingPrefix != null;
-    }
-
-    public String getPendingPrefix() {
-        return pendingPrefix;
-    }
-
-    public void assignId(String prefix, int seq) {
-        this.id = prefix + seq;
-        this.pendingPrefix = null;
     }
 
     /**
@@ -141,19 +125,29 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
     }
 
     String transform(VaultEncryptingStrategy encryptor, boolean encrypt) {
-        VaultObject oldVaultObject = (VaultObject) copy();
+        String snapshot = toString();
+        title = apply(encryptor, encrypt, title);
+        isEncrypted = encrypt;
+        return snapshot;
+    }
 
+    /**
+     * Encrypts or decrypts a single field value with the given strategy,
+     * re-throwing any {@link GeneralSecurityException} as an unchecked
+     * {@link RuntimeException}. Subclasses use this to transform their own
+     * sensitive fields without repeating the try/catch boilerplate.
+     *
+     * @param encryptor the strategy to use
+     * @param encrypt   {@code true} to encrypt the value, {@code false} to decrypt it
+     * @param value     the field value to transform
+     * @return the transformed value
+     */
+    protected String apply(VaultEncryptingStrategy encryptor, boolean encrypt, String value) {
         try {
-            title = encrypt ?
-                    encryptor.encrypt(title) :
-                    encryptor.decrypt(title);
-
-            isEncrypted = encrypt;
+            return encrypt ? encryptor.encrypt(value) : encryptor.decrypt(value);
         } catch (GeneralSecurityException e) {
-            throw new RuntimeException("Error transforming account fields", e);
+            throw new RuntimeException("Failed to transform vault object fields", e);
         }
-
-        return oldVaultObject.toString();
     }
 
     @Override
@@ -170,26 +164,26 @@ public abstract class VaultObject implements Sharable, Storable, JsonSerializabl
     public boolean equals(Object obj) {
         if (obj == this) return true;
         if (!(obj instanceof VaultObject other)) return false;
-        return this.id.equals(other.id);
+        return Objects.equals(this.id, other.id);
     }
 
     @Override
     public int hashCode() {
-        return id.hashCode();
+        return Objects.hashCode(id);
     }
 
     public Pair<String, String> sliceCode() {
-        StringBuilder letras = new StringBuilder();
-        StringBuilder numeros = new StringBuilder();
+        StringBuilder letters = new StringBuilder();
+        StringBuilder numbers = new StringBuilder();
         for (int i = 0; i < id.length(); i++) {
             char c = id.charAt(i);
             if (Character.isDigit(c)) {
-                numeros.append(id.substring(i));
+                numbers.append(id.substring(i));
                 break;
             }
-            letras.append(c);
+            letters.append(c);
         }
-        return new Pair<>(letras.toString(), numeros.toString());
+        return new Pair<>(letters.toString(), numbers.toString());
     }
 
     @Override

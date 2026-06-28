@@ -1,5 +1,8 @@
 package com.seq.acheron.util;
 
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -22,31 +25,31 @@ public final class CryptoUtils {
 
 
     /**
-     * Genera una contraseña segura de longitud personalizada.
-     * Garantiza al menos un carácter de cada categoría y mezcla aleatoriamente.
+     * Generates a secure password of the requested length.
+     * Guarantees at least one character of each category and shuffles randomly.
      *
-     * @param length longitud deseada (mínimo 12 recomendado)
-     * @return contraseña generada
+     * @param length desired length (12 or more recommended)
+     * @return the generated password
      */
     public static String generatePassword(int length) {
         if (length < 4) {
-            throw new IllegalArgumentException("La longitud mínima es 4.");
+            throw new IllegalArgumentException("Minimum length is 4.");
         }
 
         List<Character> chars = new ArrayList<>(length);
 
-        // Garantiza al menos uno de cada tipo
+        // Guarantee at least one of each type
         chars.add(UPPERCASE.charAt(SECURE_RANDOM.nextInt(UPPERCASE.length())));
         chars.add(LOWERCASE.charAt(SECURE_RANDOM.nextInt(LOWERCASE.length())));
         chars.add(DIGITS   .charAt(SECURE_RANDOM.nextInt(DIGITS.length())));
         chars.add(SPECIALS .charAt(SECURE_RANDOM.nextInt(SPECIALS.length())));
 
-        // Rellena el resto con caracteres aleatorios del pool completo
+        // Fill the rest with random characters from the full pool
         for (int i = 4; i < length; i++) {
             chars.add(ALL_CHARS.charAt(SECURE_RANDOM.nextInt(ALL_CHARS.length())));
         }
 
-        /* Mezcla para evitar posiciones predecibles (ej.: especial siempre al final) */
+        /* Shuffle to avoid predictable positions (e.g. the special char always last) */
         Collections.shuffle(chars, SECURE_RANDOM);
 
         StringBuilder sb = new StringBuilder(length);
@@ -55,7 +58,7 @@ public final class CryptoUtils {
     }
 
     /**
-     * Sobrecarga con longitud por defecto (16 caracteres).
+     * Overload using the default length (16 characters).
      */
     public static String generatePassword() {
         return generatePassword(16);
@@ -110,12 +113,35 @@ public final class CryptoUtils {
 
         byte[] salt = new byte[length];
         SECURE_RANDOM.nextBytes(salt);
+        return toHex(salt);
+    }
 
-        StringBuilder hex = new StringBuilder(length * 2);
-        for (byte b : salt) {
+    /**
+     * Encodes a byte array as a lowercase hexadecimal string (2 chars per byte).
+     *
+     * @param bytes the bytes to encode
+     * @return the hex representation
+     */
+    public static String toHex(byte[] bytes) {
+        StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
             hex.append(String.format("%02x", b));
         }
         return hex.toString();
+    }
+
+    /**
+     * Computes the SHA-256 digest of the UTF-8 bytes of {@code value} and returns
+     * it as a lowercase hexadecimal string.
+     *
+     * @param value the input to hash
+     * @return the SHA-256 digest as hex
+     * @throws GeneralSecurityException if SHA-256 is unavailable
+     */
+    public static String sha256Hex(String value) throws GeneralSecurityException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+        return toHex(hash);
     }
 
     /**
