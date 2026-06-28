@@ -9,11 +9,20 @@
       </aside>
 
       <section class="panel panel--center">
+        <DocumentEditor
+          v-if="store.editing && store.viewerDoc.data"
+          :doc="store.viewerDoc.data"
+          :saving="store.saving"
+          @save="(pill) => store.savePill(store.currentDocId, pill)"
+          @cancel="store.cancelEdit()"
+        />
         <DocumentViewer
+          v-else
           :viewer-doc="store.viewerDoc"
           @close="store.closeViewer()"
           @export="(fmt) => store.downloadExport(store.currentDocId, fmt)"
           @preview="() => store.previewMarkdown(store.currentDocId)"
+          @edit="store.startEdit()"
         />
       </section>
 
@@ -44,6 +53,7 @@ import AppToast from '@/components/shared/AppToast.vue'
 import { useAegisStore } from '@/stores/aegisStore'
 import TweaksForm from '@/components/aegis/TweaksForm.vue'
 import DocumentViewer from '@/components/aegis/DocumentViewer.vue'
+import DocumentEditor from '@/components/aegis/DocumentEditor.vue'
 import HistoryPanel from '@/components/aegis/HistoryPanel.vue'
 
 const store = useAegisStore()
