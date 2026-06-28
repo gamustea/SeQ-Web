@@ -114,6 +114,103 @@ class AegisManager:
 
         return result
 
+    def update_pill(self, doc_id: int, pill: dict) -> dict:
+        """
+        Reemplaza el contenido editable de una píldora ya generada (upsert).
+
+        Persiste subtitle, intro, closing, contactEmail, company y la lista de
+        tips. Las alertas permanecen inmutables. Mantiene sincronizado el
+        'title' interno (etiqueta del historial) con el nuevo subtitle y
+        regenera el JSON de archivo en disco para que /download no quede
+        desincronizado con /document y /export.
+
+        Args:
+            doc_id: ID del documento a actualizar (debe existir y ser del usuario).
+            pill: Diccionario validado con subtitle, intro, closing,
+                  contactEmail, company y tips.
+
+        Returns:
+            El documento actualizado (mismo formato que get_document).
+        """
+        subtitle = pill["subtitle"]
+        intro = pill.get("intro", "") or None
+        closing = pill.get("closing", "") or None
+        contact_email = pill.get("contactEmail", "") or None
+        company = pill.get("company", "") or None
+
+        tips_data = [
+            {
+                "headline": tip["headline"],
+                "body": tip["body"],
+                "links": (
+                    [{"text": lk["text"], "url": lk["url"]} for lk in tip.get("links") or []]
+                    or None
+                ),
+            }
+            for tip in pill.get("tips", [])
+        ]
+
+        with UnitOfWork() as uow:
+            repo = AegisDocumentRepository(uow)
+            doc = repo.update_content_fields(
+                doc_id=doc_id,
+                subtitle=subtitle,
+                intro=intro,
+                closing=closing,
+                contact_email=contact_email,
+                company=company,
+            )
+            if doc is not None:
+                # Mantener sincronizada la etiqueta del historial (title interno).
+                doc.title = subtitle[:64]
+            repo.save_tips(doc_id, tips_data)
+            logger.info(f"Píldora {doc_id} actualizada: {len(tips_data)} tips")
+
+        self._rewrite_archive_file(doc_id, subtitle, intro, closing, contact_email, tips_data)
+
+        return self.get_document(doc_id)
+
+    def _rewrite_archive_file(
+        self,
+        doc_id: int,
+        subtitle: str | None,
+        intro: str | None,
+        closing: str | None,
+        contact_email: str | None,
+        tips_data: list[dict],
+    ) -> None:
+        """
+        Reescribe el subárbol 'pill' del JSON de archivo en disco conservando
+        metadata y alerts. Si el fichero no existe, registra warning y continúa
+        (la BD es la fuente de verdad).
+        """
+        try:
+            path = self.get_document_path(doc_id)
+
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+
+            data["pill"] = {
+                "subtitle": subtitle or "",
+                "intro": intro or "",
+                "tips": [
+                    {
+                        "position": i + 1,
+                        "headline": t["headline"],
+                        "body": t["body"],
+                        "links": t["links"] or [],
+                    }
+                    for i, t in enumerate(tips_data)
+                ],
+                "closing": closing or "",
+                "contactEmail": contact_email or "",
+            }
+
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            logger.warning(f"Error reescribiendo archivo de doc {doc_id}: {exc}", exc_info=True)
+
     def get_document_path(self, document_id: int) -> Path:
         """Devuelve la ruta al archivo generado, validando propiedad y existencia."""
         self.assert_document_ownership(document_id)

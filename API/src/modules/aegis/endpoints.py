@@ -25,6 +25,7 @@ from .services import (
 )
 from .schemas import (
     AegisGenerateRequestSchema,
+    AegisPillUpdateSchema,
     DocumentIdQuerySchema,
     ExportRequestBodySchema,
     ExportDownloadQuerySchema,
@@ -153,6 +154,32 @@ def aegis_get_document(args):
         raise DocumentNotReadyError(doc_id, doc_info["status"])
 
     return doc_info
+
+
+@aegis_blp.put("/document")
+@aegis_blp.arguments(DocumentIdQuerySchema, location="query")
+@aegis_blp.arguments(AegisPillUpdateSchema)
+@aegis_blp.response(200, description="Pill updated")
+@aegis_blp.alt_response(400, schema=ErrorSchema, description="Validation error")
+@aegis_blp.alt_response(401, schema=ErrorSchema, description="Not authenticated")
+@aegis_blp.alt_response(403, schema=ErrorSchema, description="Insufficient permissions")
+@aegis_blp.alt_response(404, schema=ErrorSchema, description="Document not found")
+@aegis_blp.alt_response(409, schema=ErrorSchema, description="Document not ready")
+@limiter.limit("30 per hour; 100 per day")
+@require_oauth_token
+@require_attributes(at_least_one=[AttributeType.AEGIS_UPDATE])
+@handle_exceptions(default_exception=DocumentError, logger=logger)
+def aegis_update_document(args, data):
+    """Reemplazar (upsert) el contenido editable de una pildora generada"""
+    doc_id = args["id"]
+    user = get_current_user()
+    mgr = AegisManager(user)
+
+    _get_document_checked(mgr, doc_id, user.id)
+    updated = mgr.update_pill(doc_id, data)
+
+    logger.info("Aegis doc %s actualizado | user=%s", doc_id, current_actor())
+    return updated
 
 
 @aegis_blp.get("/download")
