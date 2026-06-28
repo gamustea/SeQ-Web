@@ -6,9 +6,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.seq.acheron.exceptions.AcheronException;
 import com.seq.acheron.exceptions.WrongPasswordException;
-import com.seq.acheron.vault.secrets.symmetric.Argon2VaultEncryptingStrategy;
-import com.seq.acheron.vault.secrets.symmetric.PBKDF2VaultEncryptingStrategy;
 import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategy;
+import com.seq.acheron.vault.secrets.symmetric.VaultEncryptingStrategyFactory;
 import com.seq.acheron.vault.storables.Account;
 import com.seq.acheron.vault.storables.BankAccount;
 import com.seq.acheron.vault.storables.CreditCard;
@@ -19,7 +18,6 @@ import com.seq.acheron.vault.storables.WifiNetwork;
 import org.jetbrains.annotations.NotNull;
 
 import javax.crypto.AEADBadTagException;
-import javax.crypto.SecretKey;
 import java.security.GeneralSecurityException;
 import java.util.Objects;
 
@@ -204,12 +202,7 @@ public record VaultFactory(User user) {
             int memoryKiB,
             int parallelism
     ) throws GeneralSecurityException {
-        if ("PBKDF2".equalsIgnoreCase(kdfId)) {
-            return new PBKDF2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null,
-                    iterations, 256);
-        }
-        return new Argon2VaultEncryptingStrategy(masterPassword, salt, (SecretKey) null,
-                iterations, memoryKiB, parallelism);
+        return VaultEncryptingStrategyFactory.reopen(kdfId, masterPassword, salt, iterations, memoryKiB, parallelism);
     }
 
     private static int parseIntOrZero(JsonObject obj, String key) {
@@ -224,5 +217,4 @@ public record VaultFactory(User user) {
         }
         return 0;
     }
-
 }
