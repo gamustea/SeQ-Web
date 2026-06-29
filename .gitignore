@@ -15,7 +15,6 @@ __pycache__/
 # Entornos y credenciales
 # ============================================
 .env
-.env.*
 .agents
 skills-lock.json
 
