@@ -73,6 +73,7 @@ API/.coverage
 API/htmlcov/
 API/src/tmp
 .claude
+.codebase-memory
 
 # ============================================
 # Análisis interno
