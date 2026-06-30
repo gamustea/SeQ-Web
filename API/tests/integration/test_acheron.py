@@ -121,3 +121,30 @@ def test_change_vault_password_updates_metadata_and_keeps_storables(client, make
     assert account["id"] == "acc0001"
     assert account["password"] == "enc-pass"
     assert account["username"] == "enc-user"
+
+
+def test_metadata_version_starts_at_one_and_bumps_on_password_change(client, make_user, auth_headers):
+    user = make_user(role="role_user", attributes=["acheron_create", "acheron_update"])
+    headers = auth_headers(user)
+
+    client.post("/acheron/vault", headers=headers, json=_vault_payload())
+
+    first = client.get("/acheron/vault", headers=headers).get_json()
+    assert first["metadataVersion"] == 1
+
+    patch = client.patch("/acheron/vault", headers=headers, json={
+        "checker": "checker-new",
+        "vaultKey": "vaultkey-new",
+        "algorithm": {
+            "transformation": "AES/GCM/NoPadding",
+            "kdf": "Argon2",
+            "kdfIterations": "3",
+            "kdfMemoryKiB": "65536",
+            "kdfParallelism": "1",
+            "salt": "salt-new",
+        },
+    })
+    assert patch.status_code == 200
+
+    second = client.get("/acheron/vault", headers=headers).get_json()
+    assert second["metadataVersion"] == 2
