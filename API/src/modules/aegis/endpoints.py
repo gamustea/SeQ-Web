@@ -117,7 +117,6 @@ def aegis_status(args):
 
     mgr = AegisManager(user)
     mgr.assert_document_ownership(doc_id)
-
     doc_info = mgr.get_document(doc_id)
 
     if doc_info["status"] != "done":
