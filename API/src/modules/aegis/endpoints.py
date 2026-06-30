@@ -119,8 +119,6 @@ def aegis_status(args):
     mgr.assert_document_ownership(doc_id)
 
     doc_info = mgr.get_document(doc_id)
-    if not doc_info:
-        raise DocumentNotFoundError(doc_id)
 
     if doc_info["status"] != "done":
         raise DocumentNotReadyError(doc_id, doc_info["status"])

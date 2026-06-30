@@ -21,7 +21,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from src.modules.aegis.exceptions import DocumentError
+from src.modules.aegis.exceptions import DocumentError, DocumentNotFoundError
 import src.modules.system.config_reading as CR
 from src.modules.users import User
 from src.modules.system.taskqueue import ITaskQueue, TaskQueue, job_context
@@ -86,7 +86,7 @@ class AegisManager:
         repo = AegisDocumentRepository(session=session)
         doc = repo.get_by_id(doc_id)
         if not doc:
-            return None
+            raise DocumentNotFoundError(doc_id)
 
         result = {
             "id": doc.id,
