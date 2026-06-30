@@ -5,7 +5,7 @@ from typing import List, Optional, Set
 
 from flask import request, jsonify
 
-from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException
+from src.modules.shared._exceptions import MissingParameterError, MissingJsonBodyError, SecOpsException, ErrorCode
 
 from ..managers import OAuthTokenManager
 from ..repositories import AttributeRepository
@@ -217,9 +217,18 @@ def require_oauth_token(f):
                 }), 401
 
             token = parts[1]
-            payload = OAuthTokenManager().verify_access_token(token)
+            manager = OAuthTokenManager()
+            payload = manager.verify_access_token(token)
 
             if not payload:
+                # Distinguir un token obsoleto por cambio de contraseña de un fallo
+                # genérico, para que el cliente muestre la pantalla dedicada.
+                if manager.is_token_stale_by_password(token):
+                    return jsonify({
+                        "error": "password_changed",
+                        "error_description": "Tu contraseña ha cambiado. Inicia sesión de nuevo.",
+                        "code": ErrorCode.PASSWORD_CHANGED.value,
+                    }), 401
                 return jsonify({
                     "error": "invalid_token",
                     "error_description": "The access token is invalid or expired",

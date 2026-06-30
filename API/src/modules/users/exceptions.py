@@ -47,6 +47,22 @@ class InvalidCredentialsError(AuthenticationError):
         )
 
 
+class PasswordChangedError(AuthenticationError):
+    """La sesión/token quedó obsoleto porque la contraseña de acceso cambió.
+
+    Se distingue de ``InvalidCredentialsError`` para que el cliente pueda mostrar
+    una pantalla dedicada ("tu contraseña ha cambiado; inicia sesión de nuevo")
+    en lugar de un error genérico. Se identifica por ``code == 1609``.
+    """
+    default_code = ErrorCode.PASSWORD_CHANGED
+
+    def __init__(self):
+        super().__init__(
+            message="La contraseña fue cambiada; el token/sesión ya no es válido",
+            user_message="Tu contraseña ha cambiado. Inicia sesión de nuevo.",
+        )
+
+
 class UserNotFoundError(AuthenticationError):
     default_code = ErrorCode.USER_NOT_FOUND
 
