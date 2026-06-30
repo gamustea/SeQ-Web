@@ -20,7 +20,7 @@ Classes:
 
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from typing import List, Optional, Tuple
 
@@ -54,6 +54,18 @@ logger = logging.getLogger(__name__)
     JWT_SECRET_KEY,
     JWT_ALGORITHM,
 ) = CR.get_oauth_config()
+
+
+def _to_utc_epoch(dt: Optional[datetime]) -> Optional[int]:
+    """Convierte un datetime *naive en UTC* (como ``datetime.utcnow()``) a epoch
+    en segundos, de forma consistente con cómo PyJWT codifica ``iat``/``exp``
+    (siempre tratando el valor como UTC). Devuelve ``None`` si ``dt`` es ``None``.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
 
 class UserManager:
     """
@@ -291,6 +303,7 @@ Raises:
 
             user.password_hash = hash_password(new_password)
             user.password_salt = ""
+            user.password_changed_at = datetime.utcnow()
 
         logger.info(f"Contraseña actualizada para usuario {user_id}")
 
@@ -516,7 +529,13 @@ class OAuthTokenManager:
     # TOKEN CREATION
     # =========================================================================
 
-    def create_access_token(self, user_id: int, username: str, role: str = "role_user") -> str:
+    def create_access_token(
+        self,
+        user_id: int,
+        username: str,
+        role: str = "role_user",
+        password_changed_at: Optional[datetime] = None,
+    ) -> str:
         """
         Create and persist a signed JWT access token.
 
@@ -524,6 +543,10 @@ class OAuthTokenManager:
             user_id:  User primary key to embed in the token payload.
             username: Username to embed in the token payload.
             role:     Role to embed in the token payload.
+            password_changed_at: Timestamp of the user's last access-password
+                change, embedded as the ``pwd_at`` claim (UTC epoch seconds).
+                Lets clients reason about password-change state. ``None`` when
+                the password has never been changed.
 
         Returns:
             Signed JWT string.
@@ -538,6 +561,7 @@ class OAuthTokenManager:
             "jti":      uuid4().hex,
             "type":     "access",
             "role":     role,
+            "pwd_at":   _to_utc_epoch(password_changed_at),
         }
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
@@ -630,6 +654,71 @@ class OAuthTokenManager:
         except Exception as e:
             logger.error(f"Error verificando refresh token: {e}")
             return None
+
+    # =========================================================================
+    # PASSWORD-CHANGE STALENESS
+    # =========================================================================
+
+    def is_token_stale_by_password(self, token: str) -> bool:
+        """True si el access token (firma válida) se emitió ANTES del último
+        cambio de contraseña del usuario.
+
+        Solo debe consultarse cuando ``verify_access_token`` ya devolvió ``None``
+        (token revocado/expirado/ inválido), para distinguir un rechazo causado por
+        un cambio de contraseña de un rechazo genérico. Hace un acceso a BD, así
+        que se llama únicamente en el camino de error.
+        """
+        try:
+            payload = jwt.decode(
+                token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM],
+                options={"verify_exp": False},
+            )
+        except jwt.InvalidTokenError:
+            return False
+
+        iat = payload.get("iat")
+        sub = payload.get("sub")
+        if iat is None or sub is None:
+            return False
+
+        try:
+            session = get_db_session()
+            user = UserRepository(session=session).get_by_id(int(sub))
+        except Exception:
+            return False
+
+        if user is None or user.password_changed_at is None:
+            return False
+
+        changed_epoch = _to_utc_epoch(user.password_changed_at)
+        return changed_epoch is not None and changed_epoch > int(iat)
+
+    def is_refresh_stale_by_password(self, token: str) -> bool:
+        """True si el refresh token existe pero se creó ANTES del último cambio de
+        contraseña del usuario (es decir, quedó obsoleto por dicho cambio).
+
+        Consulta la BD aunque el token esté revocado, para poder dar el motivo
+        ``password_changed`` en el grant ``refresh_token``.
+        """
+        try:
+            session = get_db_session()
+            record = TokenRepository(session=session).get_refresh_token(token)
+            if record is None:
+                return False
+            user = UserRepository(session=session).get_by_id(record.user_id)
+        except Exception:
+            return False
+
+        if user is None or user.password_changed_at is None:
+            return False
+
+        changed_epoch = _to_utc_epoch(user.password_changed_at)
+        created_epoch = _to_utc_epoch(record.created_at)
+        return (
+            changed_epoch is not None
+            and created_epoch is not None
+            and changed_epoch > created_epoch
+        )
 
     # =========================================================================
     # REVOCATION

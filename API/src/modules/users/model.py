@@ -145,6 +145,8 @@ class User(Base):
         created_at: Account creation timestamp (automatic).
         password_hash: Hashed password (max 128 characters).
         password_salt: Salt used for password hashing (max 128 characters).
+        password_changed_at: Timestamp of the last access-password change
+            (nullable; None means never changed since this column was added).
 
     Relationships:
         scans: List of Scan objects (security scans performed).
@@ -167,6 +169,10 @@ class User(Base):
     created_at      = Column(DateTime,      nullable=False, default=datetime.utcnow)
     password_hash   = Column(String(128),   nullable=False)
     password_salt   = Column(String(128),   nullable=False)
+    # Marca de la última vez que se cambió la contraseña de acceso. Permite a los
+    # clientes (web/móvil) detectar que un token/sesión quedó obsoleto por un
+    # cambio de contraseña (ver require_oauth_token y el grant refresh_token).
+    password_changed_at = Column(DateTime,  nullable=True)
 
     scans          = relationship("Scan",         back_populates="user", cascade="all, delete-orphan")
     tokens         = relationship("AccessToken",  back_populates="user", cascade="all, delete-orphan")

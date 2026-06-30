@@ -80,6 +80,7 @@ class UserProfileSchema(Schema):
     last_name = fields.String()
     role = fields.String()
     created_at = fields.DateTime(format="iso", allow_none=True)
+    password_changed_at = fields.DateTime(format="iso", allow_none=True)
 
 
 class UserListItemSchema(Schema):
