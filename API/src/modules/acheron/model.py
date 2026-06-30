@@ -40,6 +40,8 @@ class Vault(Base):
         kdf_memory: Memory in KB for Argon2.
         kdf_parallelism: Parallel threads for Argon2.
         salt: Cryptographic salt (max 128 characters).
+        metadata_version: Counter bumped on each master-password rotation
+            (PATCH /acheron/vault); lets other clients detect the change.
 
     Relationships:
         user: User who owns the vault.
@@ -60,6 +62,11 @@ class Vault(Base):
     kdf_memory = Column(Integer, nullable=False)
     kdf_parallelism = Column(Integer, nullable=False)
     salt = Column(String(128), nullable=False)
+
+    # Se incrementa cada vez que se rotan los metadatos cripto (cambio de la
+    # contraseña maestra vía PATCH /acheron/vault). Permite a otros clientes con
+    # sesión activa detectar que la maestra cambió y forzar un re-desbloqueo.
+    metadata_version = Column(Integer, nullable=False, default=1, server_default="1")
 
     user = relationship("User", back_populates="vaults")
     storables = relationship(

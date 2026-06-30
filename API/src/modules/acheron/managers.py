@@ -301,10 +301,12 @@ class VaultManager:
             vault.kdf_memory = int(algorithm.get("kdfMemoryKiB", 0))
             vault.kdf_parallelism = int(algorithm.get("kdfParallelism", 1))
             vault.salt = algorithm.get("salt", "")
+            # Señal para que otros clientes detecten el cambio de contraseña maestra.
+            vault.metadata_version = (vault.metadata_version or 1) + 1
 
         logger.info(
-            f"Metadatos del vault {vault.id} refrescados (cambio de contraseña) "
-            f"para user {self.active_user.id}"
+            f"Metadatos del vault {vault.id} refrescados (cambio de contraseña, "
+            f"v{vault.metadata_version}) para user {self.active_user.id}"
         )
         return vault
 
@@ -402,6 +404,7 @@ class VaultManager:
         return {
             "checker": vault.checker,
             "vaultKey": vault.vault_key,
+            "metadataVersion": vault.metadata_version,
             "algorithm": algorithm,
             "accounts": accounts_json,
             "creditcards": cards_json,
