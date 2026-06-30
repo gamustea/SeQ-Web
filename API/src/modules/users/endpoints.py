@@ -15,7 +15,7 @@ from src.modules.shared.schemas import ErrorSchema
 
 from .services import Role, require_oauth_token, require_role
 from .managers import ACCESS_TOKEN_EXPIRE_MINUTES, UserManager, OAuthTokenManager
-from .exceptions import InvalidCredentialsError
+from .exceptions import InvalidCredentialsError, PasswordChangedError
 from .model import User
 from .schemas import (
     TokenRequestSchema,
@@ -70,6 +70,7 @@ def _serialize_user_profile(user: "User", *, include_attributes: bool = False) -
         "last_name": user.last_name,
         "role": user.role,
         "created_at": user.created_at,
+        "password_changed_at": user.password_changed_at,
     }
     if include_attributes:
         profile["attributes"] = [a.attribute_name for a in user.attributes]
@@ -104,6 +105,7 @@ def oauth_token(data: dict[str, Any]):
         access_token = OAUTH_MANAGER.create_access_token(
             user_id=uid, username=username,
             role=user.role if user else "role_user",
+            password_changed_at=user.password_changed_at if user else None,
         )
         refresh_token = OAUTH_MANAGER.create_refresh_token(uid)
         user_attrs = USER_MANAGER.get_user_attributes(uid)
@@ -122,13 +124,20 @@ def oauth_token(data: dict[str, Any]):
         refresh_token_str = data["refresh_token"]
         uid = OAUTH_MANAGER.verify_refresh_token(refresh_token_str)
         if not uid:
+            # Si el refresh falló porque la contraseña cambió, devolver un motivo
+            # específico para que el cliente muestre la pantalla dedicada.
+            if OAUTH_MANAGER.is_refresh_stale_by_password(refresh_token_str):
+                raise PasswordChangedError()
             raise InvalidCredentialsError()
 
         user = USER_MANAGER.get_user_by_id(uid)
         if not user:
             raise InvalidCredentialsError()
 
-        access_token = OAUTH_MANAGER.create_access_token(uid, user.username, user.role) # type: ignore
+        access_token = OAUTH_MANAGER.create_access_token(
+            uid, user.username, user.role,  # type: ignore
+            password_changed_at=user.password_changed_at,
+        )
         user_attrs = USER_MANAGER.get_user_attributes(uid)
 
         logger.info(f"Access token renovado para usuario ID: {uid}")
