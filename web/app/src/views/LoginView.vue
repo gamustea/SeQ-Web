@@ -100,7 +100,7 @@
             role="alert"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <template v-if="alertType === 'error'">
+              <template v-if="alertType === 'error' || alertType === 'warning'">
                 <circle cx="12" cy="12" r="10" />
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -422,6 +422,14 @@ onMounted(() => {
   clockTimer = setInterval(tick, 1000)
   renderCipher()
 
+  // Si la sesión terminó por un cambio de contraseña, avisar de forma destacada.
+  if (auth.takeSessionEndReason() === 'password_changed') {
+    showAlert(
+      'Tu contraseña ha cambiado. Inicia sesión de nuevo con la contraseña actual.',
+      'warning',
+    )
+  }
+
   if (booting.value) {
     bootLines.forEach((line, i) => {
       bootTimers.push(
@@ -736,6 +744,7 @@ const links = [
 .alert svg { flex-shrink: 0; margin-top: 1px; }
 .alert-error { background: rgba(217,108,108,0.07); border: 1px solid rgba(217,108,108,0.22); color: #e09090; box-shadow: 0 0 22px rgba(217,108,108,0.07); }
 .alert-success { background: rgba(76,183,130,0.07); border: 1px solid rgba(76,183,130,0.22); color: #6ed9a0; box-shadow: 0 0 22px rgba(76,183,130,0.07); }
+.alert-warning { background: rgba(212,160,74,0.08); border: 1px solid rgba(212,160,74,0.28); color: #e0b060; box-shadow: 0 0 22px rgba(212,160,74,0.08); }
 .alert-enter-active { transition: opacity 0.35s ease, transform 0.35s ease; }
 .alert-enter-from { opacity: 0; transform: translateY(-6px); }
 

@@ -182,6 +182,9 @@ const entries = reactive({})
 const revealed = reactive(new Set())
 let vault = null // instancia OpenVault con la vaultKey en memoria
 let algorithm = null
+// Versión de metadatos con la que se abrió el vault. Si el servidor reporta una
+// mayor, la contraseña maestra cambió en otro dispositivo durante esta sesión.
+let currentMetadataVersion = null
 
 const modal = reactive({ open: false, mode: 'add', category: null, item: null })
 const saving = ref(false)
@@ -245,6 +248,7 @@ async function unlock() {
     for (const cat of STORABLE_CATEGORIES) entries[cat] = decrypted[cat] || []
     vault = opened
     algorithm = vaultJson.algorithm
+    currentMetadataVersion = vaultJson.metadataVersion ?? null
     unlocked.value = true
   } catch (e) {
     if (e instanceof WrongPasswordError) {
@@ -265,9 +269,41 @@ function lock() {
   for (const cat of STORABLE_CATEGORIES) entries[cat] = []
   vault = null
   algorithm = null
+  currentMetadataVersion = null
   unlocked.value = false
   modal.open = false
   nextTick(() => passwordInput.value?.focus())
+}
+
+/* ── detección de cambio de la maestra en otro dispositivo ──
+   El cambio de contraseña maestra incrementa metadataVersion en el servidor
+   (la vaultKey no cambia, así que la sesión abierta sigue operando sin error).
+   Al volver a la pestaña, re-comprobamos: si la versión del servidor es mayor,
+   bloqueamos y pedimos re-desbloquear con la nueva contraseña. */
+async function checkVaultFreshness() {
+  if (!unlocked.value || currentMetadataVersion == null) return
+  let res
+  try {
+    res = await apiFetch('/acheron/vault')
+  } catch {
+    return // problema de red: no molestar
+  }
+  if (!res || !res.ok) return
+  let vaultJson
+  try {
+    vaultJson = await res.json()
+  } catch {
+    return
+  }
+  const serverVersion = vaultJson.metadataVersion ?? null
+  if (serverVersion != null && serverVersion > currentMetadataVersion) {
+    lock()
+    error.value = 'Tu contraseña maestra cambió en otro dispositivo. Vuelve a introducirla.'
+  }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') checkVaultFreshness()
 }
 
 /* ── cambio de contraseña maestra ── */
@@ -402,9 +438,13 @@ async function errMessage(res, fallback) {
   }
 }
 
-onMounted(() => passwordInput.value?.focus())
+onMounted(() => {
+  passwordInput.value?.focus()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
 onBeforeUnmount(() => {
   clearTimeout(noticeTimer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   lock()
 })
 </script>

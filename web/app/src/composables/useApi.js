@@ -52,14 +52,32 @@ export function useApi() {
       return null
     }
 
-    // ── 401 handling: refresh token once and retry ────────────────────
-    if (res.status === 401 && !_isRetry) {
-      const refreshed = await auth.refresh()
-      if (!refreshed) {
-        auth.logout()
+    // ── 401 handling ──────────────────────────────────────────────────
+    if (res.status === 401) {
+      // ¿La sesión cayó porque la contraseña de acceso cambió? → pantalla dedicada
+      let body = null
+      try {
+        body = await res.clone().json()
+      } catch {
+        /* cuerpo no-JSON: ignorar */
+      }
+      if (body && (body.code === 1609 || body.error === 'password_changed')) {
+        auth.endSession('password_changed')
         return null
       }
-      return apiFetch(path, options, true)
+
+      // 401 genérico: refrescar el token una vez y reintentar.
+      if (!_isRetry) {
+        const refreshed = await auth.refreshAccessToken()
+        if (!refreshed) {
+          auth.logout()
+          return null
+        }
+        return apiFetch(path, options, true)
+      }
+
+      auth.logout()
+      return null
     }
 
     return res

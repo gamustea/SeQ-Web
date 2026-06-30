@@ -8,6 +8,13 @@ import { ref, computed } from 'vue'
 const STORAGE_KEY = 'seq_session'
 
 /**
+ * Clave en sessionStorage para el motivo de fin de sesión, de forma que
+ * sobreviva a la recarga de página que provoca endSession().
+ * @type {string}
+ */
+const REASON_KEY = 'seq_session_end_reason'
+
+/**
  * Store de autenticación — gestiona JWT, login, logout y refresh automático.
  *
  * Sustituye al `SeqSession` del legacy (shared.js). Usa Pinia para que los cambios
@@ -29,6 +36,12 @@ export const useAuthStore = defineStore('auth', () => {
   const expiresAt = ref(0)
   /** @type {import('vue').Ref<string>} Rol del usuario (role_user, role_admin, role_root) */
   const role = ref('role_user')
+  /**
+   * Motivo por el que terminó la última sesión, para que LoginView muestre un
+   * mensaje dedicado. 'password_changed' = la contraseña de acceso cambió.
+   * @type {import('vue').Ref<string|null>}
+   */
+  const sessionEndReason = ref(null)
 
   /** @type {import('vue').ComputedRef<boolean>} True si hay un access token vigente */
   const isAuthenticated = computed(() => !!accessToken.value)
@@ -174,6 +187,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshToken.value = null
     expiresAt.value = 0
     role.value = 'role_user'
+    sessionEndReason.value = null
     sessionStorage.removeItem(STORAGE_KEY)
     if (token) {
       fetch('/oauth/revoke', {
@@ -187,10 +201,38 @@ export const useAuthStore = defineStore('auth', () => {
     window.location.href = '/login'
   }
 
+  /**
+   * Termina la sesión por un motivo concreto (p.ej. la contraseña de acceso
+   * cambió en otro dispositivo). A diferencia de logout(), NO intenta revocar
+   * en el servidor (los tokens ya son inválidos) y registra el motivo para que
+   * LoginView muestre el mensaje adecuado.
+   * @param {string} reason - p.ej. 'password_changed'
+   */
+  function endSession(reason) {
+    accessToken.value = null
+    refreshToken.value = null
+    expiresAt.value = 0
+    role.value = 'role_user'
+    sessionEndReason.value = reason || null
+    sessionStorage.removeItem(STORAGE_KEY)
+    // Persistir el motivo: window.location.href recarga la página y reinicia el
+    // store, así que el ref en memoria se perdería.
+    if (reason) sessionStorage.setItem(REASON_KEY, reason)
+    window.location.href = '/login'
+  }
+
+  /** Consume (lee y limpia) el motivo de fin de sesión persistido. */
+  function takeSessionEndReason() {
+    const r = sessionStorage.getItem(REASON_KEY) || sessionEndReason.value
+    sessionStorage.removeItem(REASON_KEY)
+    sessionEndReason.value = null
+    return r
+  }
+
   return {
-    accessToken, refreshToken, expiresAt, role,
+    accessToken, refreshToken, expiresAt, role, sessionEndReason,
     isAuthenticated, isAdmin, isRoot,
     username, loadFromStorage, saveToStorage,
-    login, getToken, logout,
+    login, getToken, logout, refreshAccessToken, endSession, takeSessionEndReason,
   }
 })
