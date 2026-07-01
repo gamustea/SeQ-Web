@@ -71,7 +71,7 @@ const strengthLevel = computed(() => { const p = form.password; if (!p) return '
 const strengthPct = computed(() => ({ weak: 25, medium: 55, strong: 100 }[strengthLevel.value] || 0))
 const strengthLabel = computed(() => ({ weak: 'Débil', medium: 'Media', strong: 'Fuerte' }[strengthLevel.value] || ''))
 
-function reset() { Object.assign(form, { first_name: '', last_name: '', username: '', email: '', password: '', role: 'role_user' }); pwVisible.value = false; errorMsg.value = '' }
+function reset() { Object.assign(form, { first_name: '', last_name: '', username: '', email: '', password: '', role: 'role_user' }); pwVisible.value = false; errorMsg.value = ''; submitting.value = false }
 async function handleSubmit() { errorMsg.value = ''; if (form.password.length < 8) { errorMsg.value = 'La contraseña debe tener al menos 8 caracteres.'; return }; submitting.value = true; emit('created', { ...form }) }
 defineExpose({ reset })
 </script>
