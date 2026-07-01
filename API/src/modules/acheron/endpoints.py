@@ -15,6 +15,7 @@ from src.modules.shared.schemas import ErrorSchema
 from src.modules.acheron.exceptions import VaultError, VaultNotFoundError, StorableNotFoundError, StorableConflictError
 from src.modules.users import require_oauth_token, require_attributes, AttributeType, get_current_user
 from .managers import VaultManager
+from .password_generator import generate_password as generate_password_util
 from .schemas import (
     StorableCreateSchema,
     StorableDeleteSchema,
@@ -23,6 +24,8 @@ from .schemas import (
     VaultPasswordChangeSchema,
     StorableResponseSchema,
     BulkUpdateResponseSchema,
+    GeneratePasswordQuerySchema,
+    GeneratePasswordResponseSchema,
 )
 
 
@@ -117,6 +120,26 @@ def change_vault_metadata(data):
         "message": "Vault metadata updated",
         "vaultId": vault.id,
     }
+
+
+@acheron_blp.get("/generate-password")
+@acheron_blp.arguments(GeneratePasswordQuerySchema, location="query")
+@acheron_blp.response(200, GeneratePasswordResponseSchema, description="Contrasena generada")
+@acheron_blp.alt_response(422, schema=ErrorSchema, description="Invalid parameters")
+@limiter.limit("30 per minute; 300 per hour")
+@handle_exceptions(default_exception=VaultError, logger=logger)
+def generate_password(query):
+    """Generar una contrasena aleatoria segura. Endpoint publico, no requiere autenticacion."""
+    password = generate_password_util(
+        length=query["length"],
+        uppercase=query["uppercase"],
+        lowercase=query["lowercase"],
+        digits=query["digits"],
+        symbols=query["symbols"],
+        exclude_ambiguous=query["excludeAmbiguous"],
+    )
+    logger.info("Password generado (length=%s) | ip=%s", query["length"], request.remote_addr)
+    return {"password": password}
 
 
 @acheron_blp.patch("/storables")
