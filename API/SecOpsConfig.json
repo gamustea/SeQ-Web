@@ -145,7 +145,7 @@
       "sentinel": "openai"
     }
   },
-  "appVersion": "3.2",
+  "appVersion": "4.1",
   "database": {
     "isolation_level": "READ COMMITTED"
   },
