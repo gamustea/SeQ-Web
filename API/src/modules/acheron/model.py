@@ -68,11 +68,12 @@ class Vault(Base):
     # sesión activa detectar que la maestra cambió y forzar un re-desbloqueo.
     metadata_version = Column(Integer, nullable=False, default=1, server_default="1")
 
-    user = relationship("User", back_populates="vaults")
+    user = relationship("User", back_populates="vaults", foreign_keys=[user_id])
     storables = relationship(
         "Storable",
         back_populates="vault",
         cascade="all, delete-orphan",
+        foreign_keys="Storable.vault_id",
     )
 
     def __repr__(self) -> str:

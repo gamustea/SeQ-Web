@@ -177,7 +177,7 @@ class User(Base):
     scans          = relationship("Scan",         back_populates="user", cascade="all, delete-orphan")
     tokens         = relationship("AccessToken",  back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
-    vaults         = relationship("Vault",        back_populates="user")
+    vaults         = relationship("Vault",        back_populates="user", cascade="all, delete-orphan")
 
     analyses = relationship(
         "IrisAnalysis",
