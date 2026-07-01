@@ -148,3 +148,43 @@ def test_metadata_version_starts_at_one_and_bumps_on_password_change(client, mak
 
     second = client.get("/acheron/vault", headers=headers).get_json()
     assert second["metadataVersion"] == 2
+
+
+# ── GET /generate-password (endpoint público) ────────────────────────────────
+
+
+def test_generate_password_no_auth_required(client):
+    resp = client.get("/acheron/generate-password")
+    assert resp.status_code == 200
+    assert isinstance(resp.get_json()["password"], str)
+
+
+def test_generate_password_default_length(client):
+    resp = client.get("/acheron/generate-password")
+    assert len(resp.get_json()["password"]) == 20
+
+
+def test_generate_password_respects_length(client):
+    resp = client.get("/acheron/generate-password?length=32")
+    assert resp.status_code == 200
+    assert len(resp.get_json()["password"]) == 32
+
+
+def test_generate_password_rejects_length_out_of_range(client):
+    assert client.get("/acheron/generate-password?length=200").status_code == 422
+    assert client.get("/acheron/generate-password?length=2").status_code == 422
+
+
+def test_generate_password_rejects_all_charsets_disabled(client):
+    resp = client.get(
+        "/acheron/generate-password"
+        "?uppercase=false&lowercase=false&digits=false&symbols=false"
+    )
+    assert resp.status_code == 422
+
+
+def test_generate_password_exclude_ambiguous(client):
+    resp = client.get("/acheron/generate-password?length=64&excludeAmbiguous=true")
+    assert resp.status_code == 200
+    password = resp.get_json()["password"]
+    assert not set(password) & set("0O1lI")
