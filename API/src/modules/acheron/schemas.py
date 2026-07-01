@@ -98,3 +98,21 @@ class StorableResponseSchema(Schema):
 class BulkUpdateResponseSchema(Schema):
     message = fields.String()
     results = fields.List(fields.Raw())
+
+
+class GeneratePasswordQuerySchema(Schema):
+    length = fields.Integer(load_default=20, validate=validate.Range(min=6, max=128))
+    uppercase = fields.Boolean(load_default=True)
+    lowercase = fields.Boolean(load_default=True)
+    digits = fields.Boolean(load_default=True)
+    symbols = fields.Boolean(load_default=True)
+    excludeAmbiguous = fields.Boolean(load_default=False)
+
+    @validates_schema
+    def validate_at_least_one_set(self, data, **kwargs):
+        if not any([data["uppercase"], data["lowercase"], data["digits"], data["symbols"]]):
+            raise ValidationError("At least one character set must be enabled")
+
+
+class GeneratePasswordResponseSchema(Schema):
+    password = fields.String()
