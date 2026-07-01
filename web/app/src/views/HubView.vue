@@ -121,8 +121,8 @@
           <div class="hero-divider"></div>
         </div>
 
-        <div class="hub-terminal" style="animation-delay: 0.2s">
-          <TerminalConsole />
+        <div class="hub-signal" style="animation-delay: 0.2s">
+          <SignalStream />
         </div>
 
         <div class="hub-quickstats" style="animation-delay: 0.3s">
@@ -263,7 +263,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileStore } from '@/stores/profileStore'
-import TerminalConsole from '@/components/shared/TerminalConsole.vue'
+import SignalStream from '@/components/shared/SignalStream.vue'
 
 import sentinelIcon from '@/assets/images/sentinel/Sentinel-Turqoise-BgN.png'
 import aegisIcon from '@/assets/images/aegis/SeQ-Aegis-Blue-BgN.png'
@@ -619,7 +619,7 @@ const links = [
 
 .hero-divider { margin-top: 1.5rem; width: 100%; height: 1px; background: linear-gradient(90deg, var(--accent), transparent 80%); opacity: 0.35; }
 
-.hub-terminal { animation: seq-fade-up 0.7s ease-out backwards; }
+.hub-signal { animation: seq-fade-up 0.7s ease-out backwards; }
 
 /* Quick stats */
 .hub-quickstats { display: flex; gap: 0.65rem; animation: seq-fade-up 0.7s ease-out backwards; }
