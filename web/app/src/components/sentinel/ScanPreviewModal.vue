@@ -1,4 +1,5 @@
 <template>
+  <Transition name="modal">
   <div v-if="show" class="modal visible" role="dialog" aria-modal="true">
     <div class="modal-backdrop" @click="$emit('close')"></div>
     <div class="modal-content preview-modal">
@@ -94,6 +95,7 @@
       </div>
     </div>
   </div>
+  </Transition>
 </template>
 
 <script setup>
@@ -120,7 +122,16 @@ function fmtDate(iso) { if (!iso) return ''; return new Date(iso).toLocaleDateSt
 </script>
 
 <style scoped>
-.preview-modal { max-width: 520px; }
+.preview-modal { max-width: 520px; animation: none; }
+
+.modal-enter-active, .modal-leave-active { transition: opacity 0.2s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+.modal-enter-active .modal-content, .modal-leave-active .modal-content { transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease; }
+.modal-enter-from .modal-content, .modal-leave-to .modal-content { opacity: 0; transform: scale(0.96) translateY(10px); }
+@media (prefers-reduced-motion: reduce) {
+  .modal-enter-active, .modal-leave-active,
+  .modal-enter-active .modal-content, .modal-leave-active .modal-content { transition: none !important; }
+}
 .pv-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 0.85rem; margin-bottom: 0.65rem; }
 .pv-info-card { border-left: 3px solid var(--accent); }
 .pv-card-top { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.5rem; }

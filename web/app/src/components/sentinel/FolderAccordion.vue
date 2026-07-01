@@ -10,51 +10,55 @@
       <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
 
-    <div v-show="isExpanded" class="accordion-body">
-      <div v-if="!folder.scans?.length" class="empty-folder">No hay escaneos en esta carpeta.</div>
-      <table v-else>
-        <thead><tr><th>ID</th><th>Tipo</th><th>Target</th><th>Estado</th><th>Fecha</th><th>Acciones</th></tr></thead>
-        <tbody>
-          <tr v-for="scan in visibleScans" :key="scan.id">
-            <td class="mono">#{{ scan.id }}</td>
-            <td class="mono type">{{ scan.scanType }}</td>
-            <td class="target">{{ scan.target }}</td>
-            <td><StatusBadge :status="scan.status" /></td>
-            <td class="date">{{ formatDate(scan.startedAt) }}</td>
-            <td class="actions">
-              <button class="act-btn" title="Vista previa" @click="$emit('preview', scan.id, scan.scanType)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              </button>
-              <button class="act-btn" title="Mover a otra carpeta" @click="$emit('move-scan', { scanId: scan.id })">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l7-7 7 7M12 2v14"/></svg>
-              </button>
-              <button v-if="!isDefault" class="act-btn" title="Quitar de la carpeta" @click="$emit('remove-scan', { scanId: scan.id })">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-              <button v-if="isActive(scan.status)" class="act-btn warn" title="Cancelar" @click="$emit('cancel', scan.id)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-              </button>
-              <button class="act-btn danger" title="Eliminar escaneo" @click="$emit('delete', scan.id)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6M9 6V4h6v2"/></svg>
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <button v-if="hasMore" class="load-more" @click="visibleCount += step">
-        Ver más ({{ remaining }} restantes)
-      </button>
-    </div>
+    <div class="accordion-collapse" :class="{ expanded: isExpanded }">
+      <div class="accordion-collapse-inner">
+        <div class="accordion-body">
+          <div v-if="!folder.scans?.length" class="empty-folder">No hay escaneos en esta carpeta.</div>
+          <table v-else>
+            <thead><tr><th>ID</th><th>Tipo</th><th>Target</th><th>Estado</th><th>Fecha</th><th>Acciones</th></tr></thead>
+            <tbody>
+              <tr v-for="scan in visibleScans" :key="scan.id">
+                <td class="mono">#{{ scan.id }}</td>
+                <td class="mono type">{{ scan.scanType }}</td>
+                <td class="target">{{ scan.target }}</td>
+                <td><StatusBadge :status="scan.status" /></td>
+                <td class="date">{{ formatDate(scan.startedAt) }}</td>
+                <td class="actions">
+                  <button class="act-btn" title="Vista previa" @click="$emit('preview', scan.id, scan.scanType)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                  <button class="act-btn" title="Mover a otra carpeta" @click="$emit('move-scan', { scanId: scan.id })">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l7-7 7 7M12 2v14"/></svg>
+                  </button>
+                  <button v-if="!isDefault" class="act-btn" title="Quitar de la carpeta" @click="$emit('remove-scan', { scanId: scan.id })">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  </button>
+                  <button v-if="isActive(scan.status)" class="act-btn warn" title="Cancelar" @click="$emit('cancel', scan.id)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                  </button>
+                  <button class="act-btn danger" title="Eliminar escaneo" @click="$emit('delete', scan.id)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <button v-if="hasMore" class="load-more" @click="visibleCount += step">
+            Ver más ({{ remaining }} restantes)
+          </button>
+        </div>
 
-    <div v-if="!isDefault" v-show="isExpanded" class="accordion-footer">
-      <button class="footer-btn" @click="$emit('rename', folder)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        Renombrar
-      </button>
-      <button class="footer-btn danger" @click="$emit('delete-folder', folder.id)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6M9 6V4h6v2"/></svg>
-        Eliminar carpeta
-      </button>
+        <div v-if="!isDefault" class="accordion-footer">
+          <button class="footer-btn" @click="$emit('rename', folder)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Renombrar
+          </button>
+          <button class="footer-btn danger" @click="$emit('delete-folder', folder.id)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+            Eliminar carpeta
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -100,6 +104,9 @@ function formatDate(iso) {
 .folder-count { font-size: 0.75rem; color: var(--text-muted); background: var(--surface-2); padding: 0.15rem 0.45rem; border-radius: 10px; }
 .chevron { width: 16px; height: 16px; color: var(--text-muted); transition: transform 0.2s ease; flex-shrink: 0; }
 .expanded .chevron { transform: rotate(180deg); }
+.accordion-collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.accordion-collapse.expanded { grid-template-rows: 1fr; }
+.accordion-collapse-inner { overflow: hidden; min-height: 0; }
 .accordion-body { padding: 0 1.1rem 0.75rem; }
 .empty-folder { padding: 1rem 0; text-align: center; color: var(--text-muted); font-size: 0.8rem; }
 table { width: 100%; border-collapse: collapse; }
@@ -123,4 +130,8 @@ tr:hover td { background: rgba(255,255,255,0.012); }
 .footer-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .footer-btn svg { width: 11px; height: 11px; }
 @media (max-width: 768px) { .target { max-width: 80px; } }
+@media (prefers-reduced-motion: reduce) {
+  .accordion-collapse { transition: none; }
+  .chevron { transition: none; }
+}
 </style>

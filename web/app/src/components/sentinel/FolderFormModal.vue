@@ -1,35 +1,37 @@
 <template>
   <Teleport to="body">
-    <div v-if="show" class="modal-overlay" @click.self="close">
-      <div class="modal">
-          <div class="modal-header">
-            <h3>{{ title }}</h3>
-            <button class="close-btn" @click="close">&times;</button>
-          </div>
-          <form @submit.prevent="submit">
-            <div class="modal-body">
-              <label for="folder-name">Nombre de la carpeta</label>
-              <input
-                id="folder-name"
-                v-model="name"
-                type="text"
-                placeholder="Ej. Producción"
-                maxlength="255"
-                :disabled="submitting"
-                required
-              />
-              <p class="hint">Solo letras, números, espacios, guiones y guiones bajos.</p>
+    <Transition name="modal">
+      <div v-if="show" class="modal-overlay" @click.self="close">
+        <div class="modal">
+            <div class="modal-header">
+              <h3>{{ title }}</h3>
+              <button class="close-btn" @click="close">&times;</button>
             </div>
-            <div class="modal-footer">
-              <button type="button" class="btn-secondary" :disabled="submitting" @click="close">Cancelar</button>
-              <button type="submit" class="btn-primary" :disabled="submitting || !isValid">
-                <span v-if="submitting">Guardando…</span>
-                <span v-else>Guardar</span>
-              </button>
-            </div>
-          </form>
+            <form @submit.prevent="submit">
+              <div class="modal-body">
+                <label for="folder-name">Nombre de la carpeta</label>
+                <input
+                  id="folder-name"
+                  v-model="name"
+                  type="text"
+                  placeholder="Ej. Producción"
+                  maxlength="255"
+                  :disabled="submitting"
+                  required
+                />
+                <p class="hint">Solo letras, números, espacios, guiones y guiones bajos.</p>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn-secondary" :disabled="submitting" @click="close">Cancelar</button>
+                <button type="submit" class="btn-primary" :disabled="submitting || !isValid">
+                  <span v-if="submitting">Guardando…</span>
+                  <span v-else>Guardar</span>
+                </button>
+              </div>
+            </form>
+        </div>
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -81,4 +83,13 @@ function submit() {
 .btn-primary { background: var(--accent); border: 1px solid var(--accent); color: #fff; }
 .btn-primary:hover:not(:disabled) { opacity: 0.9; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.modal-enter-active, .modal-leave-active { transition: opacity 0.2s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+.modal-enter-active .modal, .modal-leave-active .modal { transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease; }
+.modal-enter-from .modal, .modal-leave-to .modal { opacity: 0; transform: scale(0.95) translateY(10px); }
+@media (prefers-reduced-motion: reduce) {
+  .modal-enter-active, .modal-leave-active,
+  .modal-enter-active .modal, .modal-leave-active .modal { transition: none !important; }
+}
 </style>
