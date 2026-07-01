@@ -23,6 +23,7 @@
 
     <ol v-else class="tr-chain">
       <li class="tr-node origin">
+        <span class="tr-ttl"></span>
         <span class="tr-dot"></span>
         <div class="tr-body">
           <span class="tr-host">Servidor SeQ</span>
