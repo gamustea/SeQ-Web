@@ -35,7 +35,7 @@
 
           <label class="field">
             <span class="field-label">Nueva contraseña maestra</span>
-            <div class="field-input">
+            <div class="field-input field-input--with-generate">
               <input
                 ref="createPasswordInput"
                 v-model="newPassword"
@@ -46,6 +46,14 @@
                 :disabled="createBusy"
               />
               <button
+                type="button" class="gen-btn" tabindex="-1"
+                aria-label="Generar contraseña"
+                :disabled="createBusy"
+                @click="generateNewPassword"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
+              <button
                 type="button" class="reveal-btn" tabindex="-1"
                 :aria-label="showCreatePassword ? 'Ocultar' : 'Mostrar'"
                 @click="showCreatePassword = !showCreatePassword"
@@ -54,6 +62,7 @@
                 <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
             </div>
+            <PasswordStrengthMeter :password="newPassword" />
           </label>
 
           <label class="field">
@@ -263,9 +272,11 @@ import Topbar from '@/components/shared/Topbar.vue'
 import StarBackground from '@/components/shared/StarBackground.vue'
 import StorableFormModal from '@/components/acheron/StorableFormModal.vue'
 import ChangePasswordModal from '@/components/acheron/ChangePasswordModal.vue'
+import PasswordStrengthMeter from '@/components/acheron/PasswordStrengthMeter.vue'
 import { useApi } from '@/composables/useApi'
 import { useAuthStore } from '@/stores/authStore'
 import { openVault, createVault, WrongPasswordError } from '@/acheron/vault.js'
+import { generatePassword } from '@/acheron/passwordGenerator.js'
 import { STORABLE_CATEGORIES } from '@/acheron/storableFields.js'
 import { TYPE_BY_CATEGORY } from '@/acheron/storableTypes.js'
 
@@ -355,6 +366,14 @@ async function checkVaultExists() {
   }
   vaultState.value = 'exists'
   nextTick(() => passwordInput.value?.focus())
+}
+
+/* ── generación de contraseña maestra ── */
+function generateNewPassword() {
+  const generated = generatePassword()
+  newPassword.value = generated
+  confirmPassword.value = generated
+  showCreatePassword.value = true
 }
 
 /* ── creación de bóveda (usuario sin contraseña maestra todavía) ── */
@@ -684,6 +703,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono); transition: border-color 0.2s ease;
 }
 .field-input input:focus { outline: none; border-color: rgba(160, 122, 192, 0.55); }
+.field-input--with-generate input { padding-right: 4.6rem; }
 .reveal-btn {
   position: absolute; right: 0.5rem; background: none; border: none;
   color: var(--text-muted); cursor: pointer; padding: 0.3rem;
@@ -691,6 +711,14 @@ onBeforeUnmount(() => {
 }
 .reveal-btn:hover { color: #c4a0e0; }
 .reveal-btn svg { width: 18px; height: 18px; }
+.gen-btn {
+  position: absolute; right: 2.5rem; background: none; border: none;
+  color: var(--text-muted); cursor: pointer; padding: 0.3rem;
+  display: grid; place-items: center; transition: color 0.15s ease;
+}
+.gen-btn:hover:not(:disabled) { color: #c4a0e0; }
+.gen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.gen-btn svg { width: 17px; height: 17px; }
 
 .unlock-error {
   color: var(--danger); font-size: 0.82rem; margin-bottom: 0.9rem;
