@@ -385,14 +385,26 @@ class NiktoAIWriter:
             if control_name == "noise" or not findings:
                 continue
 
-            unique_issues = set()
-            for f in findings[:3]:
+            # Show the most severe findings first so a CRITICAL/HIGH incident
+            # never gets silently dropped behind three LOW ones sharing a control.
+            ranked = sorted(findings, key=lambda f: self._severity_rank(f.get("severity", "INFO")), reverse=True)
+
+            unique_issues = []
+            seen = set()
+            for f in ranked[:3]:
                 desc = f.get("description", "")[:120]
-                unique_issues.add(desc)
+                if desc in seen:
+                    continue
+                seen.add(desc)
+                unique_issues.append(f"[{str(f.get('severity', 'INFO')).upper()}] {desc}")
 
             controls_summary[control_name] = {
                 "instancias_detectadas": len(findings),
-                "ejemplos_representativos": list(unique_issues),
+                "severidad_original_nikto": sorted(
+                    {str(f.get("severity", "INFO")).upper() for f in findings},
+                    key=self._severity_rank, reverse=True
+                ),
+                "ejemplos_representativos": unique_issues,
                 "techo_teorico": self._assess_control_severity(control_name, findings)
             }
 
@@ -406,8 +418,20 @@ class NiktoAIWriter:
                     .replace("{{effective_findings}}", str(metrics.get("effective_findings", 0))) \
                     .replace("{{controls_json}}", json.dumps(controls_summary, indent=2, ensure_ascii=False))
 
+    _NIKTO_SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
+
+    def _severity_rank(self, severity: str) -> int:
+        """Rank Nikto's own severity label so real CRITICAL/HIGH findings surface first."""
+        return self._NIKTO_SEVERITY_RANK.get(str(severity).upper(), 0)
+
     def _assess_control_severity(self, control_name: str, findings: list) -> str:
-        """Assess the base severity for a security control."""
+        """Assess the ceiling severity for a security control.
+
+        Starts from the control's static base ceiling, then raises it to match
+        the highest severity Nikto itself already assigned to a finding in that
+        control (e.g. a CRITICAL '.htpasswd' disclosure must never be capped at
+        BAJO just because it got bucketed under information_disclosure).
+        """
         severity_map = {
             "transport_security": "ALTO",
             "session_management": "MEDIO",
@@ -416,7 +440,18 @@ class NiktoAIWriter:
             "information_disclosure": "BAJO",
             "configuration": "BAJO"
         }
-        return severity_map.get(control_name, "BAJO")
+        static_base = severity_map.get(control_name, "BAJO")
+
+        nikto_to_local = {"CRITICAL": "CRÍTICO", "HIGH": "ALTO", "MEDIUM": "MEDIO", "LOW": "BAJO", "INFO": "INFORMATIVO"}
+        risk_order = ["INFORMATIVO", "BAJO", "MEDIO", "ALTO", "CRÍTICO"]
+
+        real_max = "INFORMATIVO"
+        for f in findings:
+            translated = nikto_to_local.get(str(f.get("severity", "INFO")).upper(), "INFORMATIVO")
+            if risk_order.index(translated) > risk_order.index(real_max):
+                real_max = translated
+
+        return real_max if risk_order.index(real_max) > risk_order.index(static_base) else static_base
 
     def generate(self, scan: NiktoScan) -> dict:
         """Generate AI security analysis for a Nikto scan."""
