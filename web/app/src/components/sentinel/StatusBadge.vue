@@ -17,3 +17,10 @@ const MAP = {
 const classMap = computed(() => (MAP[(props.status ?? '').toLowerCase()] ?? ['pending'])[0])
 const label = computed(() => (MAP[(props.status ?? '').toLowerCase()] ?? ['pending', props.status ?? '—'])[1])
 </script>
+
+<style scoped>
+.badge { transition: background-color 0.3s ease, color 0.3s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .badge { transition: none; }
+}
+</style>

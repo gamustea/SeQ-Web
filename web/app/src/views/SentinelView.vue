@@ -6,37 +6,39 @@
     <main class="main">
       <StatsRow :total="store.stats.total" :nmap="store.stats.nmap" :nikto="store.stats.nikto" :openvas="store.stats.openvas" />
       <ViewToggle :model-value="store.viewMode" @update:model-value="store.setViewMode" />
-      <template v-if="store.viewMode === 'full'">
-        <ScanTabs :active="store.activeTab" @switch="handleTabSwitch" />
-        <ScanForm :type="store.activeTab" :launching="store.launching" @launch="handleLaunch" />
-        <ScanTable :type="store.activeTab" :rows="currentData.results" :loading="currentData.loading" :current-page="currentData.page" :total-count="currentData.totalCount" :per-page="currentData.perPage" :selected-ids="batchSelectedArray"
-          @preview="(id, type) => store.openPreview(id, type)" @cancel="handleCancel" @delete="handleDelete" @refresh="store.refreshCurrent()" @page-change="page => store.goToPage(store.activeTab, page)"
-          @toggle-select="batchToggle" @select-all="batchSelectAll">
-          <template #batch-actions="{ selectedCount }">
-            <button v-if="selectedCount > 0" class="batch-btn" @click="openBatchAction('add-to-folder')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-              Añadir a carpeta ({{ selectedCount }})
-            </button>
-            <button v-if="selectedCount > 0" class="batch-btn danger" @click="openBatchAction('bulk-delete')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6M9 6V4h6v2"/></svg>
-              Eliminar ({{ selectedCount }})
-            </button>
-          </template>
-        </ScanTable>
-      </template>
-      <ScanFolderView v-else-if="store.viewMode === 'folders'"
-        :folders="store.folders.items" :loading="store.folders.loading"
-        @refresh="store.loadFolders()"
-        @preview="(id, type) => store.openPreview(id, type)"
-        @cancel="handleCancel"
-        @delete="handleDelete"
-        @create-folder="store.folderForms.create.show = true"
-        @rename-folder="handleRenameFolder"
-        @delete-folder="handleDeleteFolder"
-        @move-scan="handleOpenMoveScan"
-        @remove-scan="handleRemoveScan" />
-      <HistoryPanel v-else-if="store.viewMode === 'history'" />
-      <ScheduledScansPanel v-if="store.viewMode === 'full'" :scheduled="store.scheduled" :scheduling="store.scheduling" :active-tab="store.activeTab" @create="handleCreateScheduled" @deactivate="handleDeactivateScheduled" @delete="handleDeleteScheduled" @toggle-form="store.toggleScheduledForm()" />
+      <Transition name="fade-swap" mode="out-in" appear>
+        <div v-if="store.viewMode === 'full'" key="full" class="view-block">
+          <ScanTabs :active="store.activeTab" @switch="handleTabSwitch" />
+          <ScanForm :type="store.activeTab" :launching="store.launching" @launch="handleLaunch" />
+          <ScanTable :type="store.activeTab" :rows="currentData.results" :loading="currentData.loading" :current-page="currentData.page" :total-count="currentData.totalCount" :per-page="currentData.perPage" :selected-ids="batchSelectedArray"
+            @preview="(id, type) => store.openPreview(id, type)" @cancel="handleCancel" @delete="handleDelete" @refresh="store.refreshCurrent()" @page-change="page => store.goToPage(store.activeTab, page)"
+            @toggle-select="batchToggle" @select-all="batchSelectAll">
+            <template #batch-actions="{ selectedCount }">
+              <button v-if="selectedCount > 0" class="batch-btn" @click="openBatchAction('add-to-folder')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                Añadir a carpeta ({{ selectedCount }})
+              </button>
+              <button v-if="selectedCount > 0" class="batch-btn danger" @click="openBatchAction('bulk-delete')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+                Eliminar ({{ selectedCount }})
+              </button>
+            </template>
+          </ScanTable>
+          <ScheduledScansPanel :scheduled="store.scheduled" :scheduling="store.scheduling" :active-tab="store.activeTab" @create="handleCreateScheduled" @deactivate="handleDeactivateScheduled" @delete="handleDeleteScheduled" @toggle-form="store.toggleScheduledForm()" />
+        </div>
+        <ScanFolderView v-else-if="store.viewMode === 'folders'" key="folders"
+          :folders="store.folders.items" :loading="store.folders.loading"
+          @refresh="store.loadFolders()"
+          @preview="(id, type) => store.openPreview(id, type)"
+          @cancel="handleCancel"
+          @delete="handleDelete"
+          @create-folder="store.folderForms.create.show = true"
+          @rename-folder="handleRenameFolder"
+          @delete-folder="handleDeleteFolder"
+          @move-scan="handleOpenMoveScan"
+          @remove-scan="handleRemoveScan" />
+        <HistoryPanel v-else-if="store.viewMode === 'history'" key="history" />
+      </Transition>
     </main>
 
     <ScanPreviewModal :show="store.preview.show" :scan="store.preview.scan" :type="store.preview.type" :docs="store.preview.docs" :docs-loading="store.preview.docsLoading"
@@ -191,6 +193,22 @@ async function handleDeleteScheduled(id) { await store.deleteScheduledScan(id) }
 .sentinel-page { min-height: 100vh; padding-top: var(--topbar-h); position: relative; }
 .main { max-width: 1100px; margin: 0 auto; padding: 1.25rem; position: relative; z-index: 1; }
 @media (max-width: 768px) { .main { padding: 0.85rem; } }
+
+/* Staggered entrance on page load — mirrors the hub's fade-up language.
+   Only the two static children get it; the switchable view-block below
+   already gets its own motion from the fade-swap transition. */
+.main > :nth-child(1) { animation: seq-fade-up 0.5s ease-out backwards; }
+.main > :nth-child(2) { animation: seq-fade-up 0.5s ease-out 0.06s backwards; }
+
+/* Crossfade between full / folders / history so switching modes reads as
+   one continuous view instead of a hard content swap. */
+.fade-swap-enter-active, .fade-swap-leave-active { transition: opacity 0.2s ease; }
+.fade-swap-enter-from, .fade-swap-leave-to { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .main > :nth-child(1), .main > :nth-child(2) { animation: none !important; }
+  .fade-swap-enter-active, .fade-swap-leave-active { transition: none !important; }
+}
 
 .batch-btn { display: flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.6rem; background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; color: #fff; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; }
 .batch-btn:hover { opacity: 0.9; }

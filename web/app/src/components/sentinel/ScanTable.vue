@@ -10,16 +10,16 @@
         </button>
       </div>
     </div>
-    <div v-if="showLoading" class="empty-state">
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-      <span>Cargando…</span>
-    </div>
-    <div v-else-if="!rows.length" class="empty-state">
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      <span>No hay escaneos todavía. ¡Lanza el primero!</span>
-    </div>
-    <template v-else>
-      <table>
+    <Transition name="fade-swap" mode="out-in">
+      <div v-if="showLoading" key="loading" class="empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        <span>Cargando…</span>
+      </div>
+      <div v-else-if="!rows.length" key="empty" class="empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span>No hay escaneos todavía. ¡Lanza el primero!</span>
+      </div>
+      <table v-else key="table">
         <thead><tr>
           <th class="chk-col"><input type="checkbox" :checked="allSelected" :indeterminate="someSelected" @change="$emit('select-all', rows.map(r => r.id))" /></th>
           <th>ID</th><th>Target</th><th>Estado</th>
@@ -28,7 +28,7 @@
           <template v-if="type === 'openvas'"><th>Vulns</th><th>Críticas</th><th>Altas</th></template>
           <th>Fecha</th><th>Acciones</th>
         </tr></thead>
-        <tbody>
+        <TransitionGroup name="row" tag="tbody">
           <tr v-for="row in rows" :key="row.id" :class="{ selected: _selectedSet.has(row.id) }">
             <td class="chk-col"><input type="checkbox" :checked="_selectedSet.has(row.id)" @change="$emit('toggle-select', row.id)" /></td>
             <td class="mono">#{{ row.id }}</td>
@@ -54,9 +54,9 @@
               </button>
             </td>
           </tr>
-        </tbody>
+        </TransitionGroup>
       </table>
-    </template>
+    </Transition>
     <div class="table-footer">
       <AppPagination v-if="totalCount > perPage" :current="currentPage" :total="totalCount" :per-page="perPage" @go="page => $emit('page-change', page)" />
     </div>
@@ -138,4 +138,17 @@ tr.selected td { background: rgba(99,102,241,0.06); }
 .spin { animation: seq-spin 0.8s linear infinite; }
 .table-footer { border-top: 1px solid var(--border); padding: 0.5rem; }
 @media (max-width: 768px) { .target { max-width: 100px; } }
+
+.fade-swap-enter-active, .fade-swap-leave-active { transition: opacity 0.18s ease; }
+.fade-swap-enter-from, .fade-swap-leave-to { opacity: 0; }
+
+.row-move { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.row-enter-active { transition: opacity 0.25s ease; }
+.row-leave-active { transition: opacity 0.18s ease; }
+.row-enter-from, .row-leave-to { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-swap-enter-active, .fade-swap-leave-active,
+  .row-move, .row-enter-active, .row-leave-active { transition: none !important; }
+}
 </style>
