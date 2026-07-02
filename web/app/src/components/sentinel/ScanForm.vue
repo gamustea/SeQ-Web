@@ -5,48 +5,52 @@
       <Transition name="pop"><span v-if="launched" class="launch-success">Escaneo iniciado</span></Transition>
     </div>
     <div class="launch-fields">
-      <template v-if="type === 'nmap'">
-        <div class="field"><label>Target (IP / CIDR)</label>
-          <input v-model="form.target" placeholder="192.168.1.0/24" /></div>
-        <div class="ports-wrapper">
-          <div class="field field-lg">
-            <label>Puertos</label>
-            <select v-model="portMode" @change="applyPortPreset">
-              <option value="wellknown">Puertos bien conocidos</option>
-              <option value="registered">Puertos registrados</option>
-              <option value="private">Puertos privados</option>
-              <option value="complete">Completo (0-65535)</option>
-              <option value="custom">Personalizado</option>
+      <div class="field-row">
+        <template v-if="type === 'nmap'">
+          <div class="field"><label>Target (IP / CIDR)</label>
+            <input v-model="form.target" placeholder="192.168.1.0/24" /></div>
+          <div class="field field-sm"><label>Timeout (s)</label>
+            <input v-model.number="form.timeout" type="number" min="30" max="86400" class="no-spin" /></div>
+        </template>
+        <template v-if="type === 'nikto'">
+          <div class="field field-lg"><label>Target URL</label>
+            <input v-model="form.target" placeholder="http://example.com" /></div>
+          <div class="field field-sm"><label>Timeout (s)</label>
+            <input v-model.number="form.timeout" type="number" min="10" max="86400" class="no-spin" /></div>
+        </template>
+        <template v-if="type === 'openvas'">
+          <div class="field field-lg"><label>Target (IP única)</label>
+            <input v-model="form.target" placeholder="192.168.1.1" /></div>
+          <div class="field field-md">
+            <label>Configuración</label>
+            <select v-model="form.config">
+              <option value="full_fast">Full &amp; Fast</option>
+              <option value="full_deep">Full &amp; Deep</option>
+              <option value="full_ultimate">Full &amp; Ultimate</option>
             </select>
           </div>
-          <div class="field" :class="{ hidden: portMode !== 'custom' }"><label>Rango de puertos</label>
-            <input v-model="form.ports" placeholder="80,443 o 1-1000" /></div>
+        </template>
+        <button class="btn-launch" :class="launching ? 'loading' : ''" :disabled="launching" @click="handleLaunch">
+          <span class="btn-label">Lanzar</span>
+          <span class="btn-spin"></span>
+        </button>
+      </div>
+      <div v-if="type === 'nmap'" class="ports-row">
+        <div class="field field-lg">
+          <label>Estrategia de puertos</label>
+          <div class="strategy-picker" role="radiogroup" aria-label="Estrategia de puertos">
+            <button v-for="opt in PORT_STRATEGIES" :key="opt.id" type="button"
+              class="strategy-chip" :class="[opt.id, { active: portMode === opt.id }]"
+              role="radio" :aria-checked="portMode === opt.id" :title="opt.hint"
+              @click="selectPortMode(opt.id)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path :d="opt.icon"/></svg>
+              <span class="strategy-label">{{ opt.label }}</span>
+            </button>
+          </div>
         </div>
-        <div class="field field-sm"><label>Timeout (s)</label>
-          <input v-model.number="form.timeout" type="number" min="30" max="86400" class="no-spin" /></div>
-      </template>
-      <template v-if="type === 'nikto'">
-        <div class="field field-lg"><label>Target URL</label>
-          <input v-model="form.target" placeholder="http://example.com" /></div>
-        <div class="field field-sm"><label>Timeout (s)</label>
-          <input v-model.number="form.timeout" type="number" min="10" max="86400" class="no-spin" /></div>
-      </template>
-      <template v-if="type === 'openvas'">
-        <div class="field field-lg"><label>Target (IP única)</label>
-          <input v-model="form.target" placeholder="192.168.1.1" /></div>
-        <div class="field field-md">
-          <label>Configuración</label>
-          <select v-model="form.config">
-            <option value="full_fast">Full &amp; Fast</option>
-            <option value="full_deep">Full &amp; Deep</option>
-            <option value="full_ultimate">Full &amp; Ultimate</option>
-          </select>
-        </div>
-      </template>
-      <button class="btn-launch" :class="launching ? 'loading' : ''" :disabled="launching" @click="handleLaunch">
-        <span class="btn-label">Lanzar</span>
-        <span class="btn-spin"></span>
-      </button>
+        <div class="field" :class="{ hidden: portMode !== 'custom' }"><label>Rango de puertos</label>
+          <input v-model="form.ports" placeholder="80,443 o 1-1000" /></div>
+      </div>
     </div>
   </div>
 </template>
@@ -67,9 +71,17 @@ const form = ref({ ...DEFAULTS.nmap })
 
 // Rangos IANA: bien conocidos (0–1023), registrados (1024–49151), privados/dinámicos (49152–65535), y completo (0–65535).
 const PORT_PRESETS = { wellknown: '1-1023', registered: '1024-49151', private: '49152-65535', complete: '1-65535' }
+const PORT_STRATEGIES = [
+  { id: 'wellknown', label: 'Conocidos', hint: 'Puertos 1-1023 · servicios estándar del sistema', icon: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' },
+  { id: 'registered', label: 'Registrados', hint: 'Puertos 1024-49151 · aplicaciones registradas', icon: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01' },
+  { id: 'private', label: 'Privados', hint: 'Puertos 49152-65535 · uso dinámico/privado', icon: 'M22 12h-4l-3 9L9 3l-3 9H2' },
+  { id: 'complete', label: 'Completo', hint: 'Rango 0-65535 · escaneo exhaustivo', icon: 'M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 010 20 15.3 15.3 0 010-20z' },
+  { id: 'custom', label: 'Personalizado', hint: 'Define tu propio rango de puertos', icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6' },
+]
 const portMode = ref('custom')
-function applyPortPreset() {
-  if (portMode.value !== 'custom') form.value.ports = PORT_PRESETS[portMode.value]
+function selectPortMode(id) {
+  portMode.value = id
+  if (id !== 'custom') form.value.ports = PORT_PRESETS[id]
 }
 
 function resetForm(type) { launched.value = false; form.value = { ...DEFAULTS[type] }; portMode.value = 'custom' }
@@ -98,17 +110,25 @@ function handleLaunch() {
 @media (prefers-reduced-motion: reduce) {
   .pop-enter-active, .pop-leave-active { transition: none !important; }
 }
-.launch-fields { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; }
-.ports-wrapper { display: grid; grid-template-columns: 1fr; gap: 0.6rem; flex: 2; min-width: 200px; }
+.launch-fields { display: flex; flex-direction: column; gap: 0.6rem; }
+.field-row { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+.ports-row { display: grid; grid-template-columns: 1fr; gap: 0.6rem; }
 .field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 130px; }
-.ports-wrapper .field:nth-child(2) { max-height: 70px; overflow: hidden; transition: max-height 0.2s ease, opacity 0.2s ease; opacity: 1; }
-.ports-wrapper .field.hidden { max-height: 0; opacity: 0; pointer-events: none; }
+.ports-row .field:nth-child(2) { max-height: 70px; overflow: hidden; transition: max-height 0.2s ease, opacity 0.2s ease; opacity: 1; }
+.ports-row .field.hidden { max-height: 0; opacity: 0; pointer-events: none; }
 .field label { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; }
 .field input, .field select { padding: 0.5rem 0.65rem; background: var(--surface-2); border: 1px solid var(--border-solid); border-radius: 6px; color: var(--text); font-size: 0.82rem; outline: none; transition: border-color 0.2s; }
 .field input:focus, .field select:focus { border-color: var(--accent); }
 .field-sm { flex: 0 0 100px; min-width: 90px; }
 .field-md { flex: 0 0 160px; }
 .field-lg { flex: 2; min-width: 190px; }
+
+.strategy-picker { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.strategy-chip { display: flex; align-items: center; gap: 0.32rem; padding: 0.5rem 0.6rem; background: var(--surface-2); border: 1px solid var(--border-solid); border-radius: 6px; color: var(--text-muted); font-size: 0.74rem; font-weight: 500; cursor: pointer; transition: all 0.2s ease; white-space: nowrap; }
+.strategy-chip:hover { color: var(--text-dim); border-color: var(--accent); }
+.strategy-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
+.strategy-chip.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-bright); font-weight: 600; }
+@media (max-width: 640px) { .strategy-label { display: none; } .strategy-chip { padding: 0.5rem; } }
 .no-spin::-webkit-outer-spin-button, .no-spin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .no-spin { -moz-appearance: textfield; }
 .btn-launch { height: 34px; padding: 0 1.15rem; margin-bottom: 0; background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent-bright); font-weight: 600; font-size: 0.8rem; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 0.35rem; transition: all 0.2s; white-space: nowrap; position: relative; }
